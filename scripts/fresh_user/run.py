@@ -163,8 +163,11 @@ def main(argv: list[str] | None = None) -> int:
             proc = None
             base = args.upgrade_from
             if not base:
+                # The newest release tag that is not HEAD itself, else five commits back.
+                head = stages.sh(["git", "rev-parse", "HEAD"], Path(args.source)).stdout.strip()
                 tags = stages.sh(["git", "tag", "--list", "v*", "--sort=-creatordate"], Path(args.source)).stdout.split()
-                base = tags[0] if tags else "HEAD~5"
+                behind = [t for t in tags if stages.sh(["git", "rev-parse", t + "^{commit}"], Path(args.source)).stdout.strip() != head]
+                base = behind[0] if behind else "HEAD~5"
             if stages.sh(["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"], Path(args.source)).returncode == 0:
                 stages.upgrade(space, report, Path(args.source), base, args.boot_seconds)
             else:
