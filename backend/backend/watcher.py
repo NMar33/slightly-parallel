@@ -119,10 +119,14 @@ class DebouncedHandler(FileSystemEventHandler):
         stamp = (st.st_mtime_ns, st.st_size)
         if self._stamps is None or len(self._stamps) > 4096:
             self._stamps = {}
-        if self._stamps.get(path) == stamp:
-            return False
+        known = self._stamps.get(path)
         self._stamps[path] = stamp
-        return True
+        if known is not None:
+            return known != stamp
+        # First sight of this path: a write leaves a fresh write time; a
+        # file last written seconds ago or longer was only read.
+        import time
+        return time.time() - st.st_mtime < 2.0
 
     def on_any_event(self, event: FileSystemEvent) -> None:  # type: ignore[override]
         if event.event_type not in self.CHANGES:

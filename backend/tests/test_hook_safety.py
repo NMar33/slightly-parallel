@@ -36,6 +36,9 @@ def test_ancestors_without_proc_call_ps_once_and_walk_in_memory(monkeypatch: pyt
 
 
 def test_ancestors_without_ps_are_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.name == "nt":
+        pytest.skip("Windows reads the process table from the kernel, not from ps")
+
     def no_ps(*_a, **_kw):
         raise FileNotFoundError("ps")
 
