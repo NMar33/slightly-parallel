@@ -16,10 +16,10 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Git identity (tests make commits in temporary repositories)
         run: git config --global user.email ci@example.com && git config --global user.name CI
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip

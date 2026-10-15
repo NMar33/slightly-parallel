@@ -442,16 +442,19 @@ def install_backend() -> bool:
     have = _mark_text(mark)
     if not fresh and want == have:
         return False
-    print("[run] installing backend packages ...", flush=True)
+    print("[run] installing backend packages (a minute on the first start) ...", flush=True)
     if fresh:
         subprocess.run([str(py), "-m", "pip", "install", "-q", "--upgrade", "pip"], check=True)
+    # pip's own lines (Collecting, Downloading, Installing) show that it is
+    # going; its progress bars only in a terminal, not in a log.
+    shown = [] if sys.stdout.isatty() else ["--progress-bar", "off"]
     try:
-        subprocess.run([str(py), "-m", "pip", "install", "-q", "-r", str(source)], check=True)
+        subprocess.run([str(py), "-m", "pip", "install", *shown, "-r", str(source)], check=True)
     except subprocess.CalledProcessError:
         if source == ranges:
             raise
         print("[run] requirements.lock did not install here — using requirements.txt", flush=True)
-        subprocess.run([str(py), "-m", "pip", "install", "-q", "-r", str(ranges)], check=True)
+        subprocess.run([str(py), "-m", "pip", "install", *shown, "-r", str(ranges)], check=True)
     mark.write_text(want, encoding="utf-8")
     return True
 
