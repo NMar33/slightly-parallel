@@ -227,7 +227,9 @@ def test_a_port_someone_listens_on_is_busy(launcher) -> None:
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
         srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
+        # Nobody accepts here: port_free connects once per call, and macOS
+        # refuses the second connection when the backlog is one.
+        srv.listen(5)
         port = srv.getsockname()[1]
         assert launcher.port_free("127.0.0.1", port) is False
         assert launcher.port_free("0.0.0.0", port) is False

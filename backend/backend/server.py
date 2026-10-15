@@ -888,7 +888,7 @@ def _mount_frontend(app: FastAPI) -> None:
     """Serve the production frontend build when present (SPA fallback)."""
     frontend_dist = _REPO_ROOT / "frontend" / "dist"
     if not frontend_dist.exists():
-        @app.get("/")
+        @app.get("/", include_in_schema=False)
         def _root() -> dict[str, Any]:
             return {
                 "name": "Slightly Parallel API",

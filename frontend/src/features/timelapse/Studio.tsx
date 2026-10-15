@@ -19,7 +19,8 @@ import { useQuery } from '@tanstack/react-query'
 
 import { ASPECTS, BRAND, FACES, LAYOUTS, LOGO_KEY, RENDER, aspectById, type Brand } from './brand'
 import { Check, Field, Group, Seg } from './controls'
-import { download, renderStageGif } from './export'
+import { download, renderStageGif, renderStageVideo } from './export'
+import type { Format } from '../tour/video'
 import { buildFilm, wallStamp, type Film } from './film'
 import { DEFAULTS, LENGTHS, PERIODS, RATES, frameCount, type Options } from './options'
 import { drawFilm, type Stage } from './scene'
@@ -219,6 +220,25 @@ export default function Studio({
     }
   }
 
+  const saveVideo = async (format: Format) => {
+    if (!film) return
+    setPlaying(false)
+    try {
+      const blob = await renderStageVideo(
+        film, stage,
+        { seconds: o.seconds, fps: o.fps, out: aspect.w * outScale, format },
+        (done, total) => { setBusyEnded(false); setBusy(t('encoding {done}/{all}', { done, all: total })) },
+      )
+      download(blob, `${(b.title || project).replace(/\s+/g, '-')}-${aspect.name.replace(':', 'x')}.${format}`)
+      setBusyEnded(true)
+      setBusy(t('Saved · {mb} MB', { mb: (blob.size / 1048576).toFixed(1) }))
+      setTimeout(() => setBusy(''), 5000)
+    } catch (e) {
+      setBusyEnded(true)
+      setBusy(t('Could not save the video: {error}', { error: e instanceof Error ? e.message : String(e) }))
+    }
+  }
+
   const saveStill = () => {
     const url = canvas.current?.toDataURL('image/png')
     if (!url) return
@@ -390,6 +410,22 @@ export default function Studio({
           {t('save GIF')}
         </button>
         <button
+          type="button" onClick={() => void saveVideo('mp4')}
+          disabled={Boolean(busy) && !busyEnded}
+          title={t('H.264, every colour; plays in a chat, on a phone and on every video host.')}
+          className="rounded-input border border-brand px-10 py-4 text-12 text-primary hover:bg-elevated disabled:opacity-50"
+        >
+          {t('save MP4')}
+        </button>
+        <button
+          type="button" onClick={() => void saveVideo('webm')}
+          disabled={Boolean(busy) && !busyEnded}
+          title={t('VP9, every colour; a smaller file for the hosts that take it.')}
+          className="rounded-input border border-border-subtle px-10 py-4 text-12 text-primary hover:bg-hover disabled:opacity-50"
+        >
+          {t('save WebM')}
+        </button>
+        <button
           type="button" onClick={saveStill}
           className="rounded-input border border-border-subtle px-10 py-4 text-12 text-primary hover:bg-hover"
         >
@@ -499,9 +535,18 @@ export default function Studio({
           // this codebase uses for it internally.
           const rv = RIVERS.find((x) => x.id === b.band)
           if (!rv || !o.river) return null
+          // A band that reads git is drawn as the pulse when the project has
+          // no repository: say so here, or the caption describes a picture
+          // that is not on the canvas.
+          const fallen = rv.needsGit && !film.git
           return (
             <figcaption className="mt-8 max-w-[76ch] border-l-2 border-border-subtle pl-10">
               <span className="text-11 uppercase tracking-wide font-mono text-tertiary">{rv.name}</span>
+              {fallen ? (
+                <p className="mt-2 text-12 leading-relaxed text-error">
+                  {t('{band} needs a git repository and {project} has none, so the pulse is drawn instead. Open another project: #project=<code> in the address.', { band: rv.name, project })}
+                </p>
+              ) : null}
               <p className="mt-2 text-12 leading-relaxed text-secondary">{rv.caption}</p>
             </figcaption>
           )

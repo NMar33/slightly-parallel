@@ -18,7 +18,7 @@ import { pad2 } from '../../utils/dateUtils'
 import { faceStack, redactedTitle, type Brand, type Layout } from './brand'
 import { drawRiver as drawRiverVariant, type RiverId } from './rivers'
 import { groundBase, mix, paintGround, type Theme } from './theme'
-import { drawPlate, drawSheet, plateWidth, sheetInk } from './spcard'
+import { drawPlate, drawSheet, drawWordmark, plateWidth, sheetInk } from './spcard'
 
 import { locale, t } from '../../i18n/scope/views'
 import { monthShort } from '../../lib/months'
@@ -145,13 +145,19 @@ function drawHeader(
 ) {
   const { g, t: th, k } = c
   const titleSize = big ? 34 : 21
-  const mark = c.s.logo ? drawMark(c, r.x, r.y + (big ? 2 : 1) * k, titleSize * k * 1.05, 'left') : 0
-  const tx = r.x + (mark ? mark + 12 * k : 0)
-
-  g.fillStyle = th.ink
-  g.font = c.font(titleSize, 700)
   g.textBaseline = 'alphabetic'
-  g.fillText(displayName(film, c.b), tx, r.y + titleSize * k)
+  let tx = r.x
+  if (c.b.spCards) {
+    // The brand's own film: the wordmark is the title, and a chosen logo
+    // stays out of it.
+    drawWordmark(g, r.x, r.y + titleSize * k, titleSize * k, th.ink, sheetInk(c.base).lean)
+  } else {
+    const mark = c.s.logo ? drawMark(c, r.x, r.y + (big ? 2 : 1) * k, titleSize * k * 1.05, 'left') : 0
+    tx = r.x + (mark ? mark + 12 * k : 0)
+    g.fillStyle = th.ink
+    g.font = c.font(titleSize, 700)
+    g.fillText(displayName(film, c.b), tx, r.y + titleSize * k)
+  }
 
   const days = Math.ceil((film.t1 - film.t0) / (24 * HOUR))
   const day = Math.floor((f.at - film.t0) / (24 * HOUR)) + 1
@@ -692,11 +698,15 @@ function watermark(c: Ctx, film: Film) {
   g.textAlign = 'right'
   let x = s.w - pad
   if (c.b.spCards) {
+    // The brand's own film: the monogram alone in the corner, no name beside it.
     const h = 22 * k * c.b.logoScale
     const w = plateWidth(h)
-    g.save(); g.globalAlpha = 0.85; drawPlate(g, x - w, s.h - pad - h, h, sheetInk(c.base).lean); g.restore()
-    x -= w + 8 * k
-  } else if (s.logo) {
+    g.globalAlpha = 0.85
+    drawPlate(g, x - w, s.h - pad - h, h, sheetInk(c.base).lean)
+    g.restore()
+    return
+  }
+  if (s.logo) {
     const size = 20 * k * c.b.logoScale
     const w = (size * s.logo.width) / s.logo.height
     g.drawImage(s.logo, x - w, s.h - pad - size, w, size)

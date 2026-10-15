@@ -1066,5 +1066,12 @@
   "Open {project}: {time}": "Открыть {project}: {time}",
   "Couldn't remove": "Не удалось удалить",
   "Couldn't save": "Не удалось сохранить",
-  "Could not save the picture: {error}": "Не удалось сохранить кадр: {error}"
+  "Could not save the picture: {error}": "Не удалось сохранить кадр: {error}",
+  "save MP4": "сохранить MP4",
+  "save WebM": "сохранить WebM",
+  "encoding {done}/{all}": "кодирование {done}/{all}",
+  "Could not save the video: {error}": "Не удалось сохранить видео: {error}",
+  "H.264, every colour; plays in a chat, on a phone and on every video host.": "H.264, все цвета; играет в чате, на телефоне и на любом видеохостинге.",
+  "VP9, every colour; a smaller file for the hosts that take it.": "VP9, все цвета; файл меньше, для хостингов, которые его принимают.",
+  "{band} needs a git repository and {project} has none, so the pulse is drawn instead. Open another project: #project=<code> in the address.": "{band}: нужен git-репозиторий, а у {project} его нет, поэтому нарисован пульс. Другой проект: #project=<код> в адресе."
 }

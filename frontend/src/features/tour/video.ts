@@ -60,6 +60,10 @@ export function encoderConfig(c: Codec, w: number, h: number, fps: number, bitra
   return {
     codec: c.codec, width: w, height: h, bitrate: bitrate ?? bitrateFor(w, h, fps), framerate: fps,
     latencyMode: 'quality',
+    // The software encoder: a hardware one keeps up with the clock by
+    // dropping frames, and past 1080p it dropped two of every three, so
+    // the file played in steps. Software is slower and keeps every frame.
+    hardwareAcceleration: 'prefer-software',
     ...(c.muxed === 'avc' ? { avc: { format: 'avc' } } : {}),
   }
 }
@@ -95,21 +99,26 @@ const breathe = () => new Promise((r) => setTimeout(r, 0))
  */
 export type Sink = (data: Uint8Array, position: number) => void
 
-/** Called before each frame with its time, so the shots it needs can be decoded and the ones behind it closed. */
+/** Called before each frame with its position, 0 to 1 in `encodeVideo` and the time in seconds in `renderTourVideo`, so the shots it needs can be decoded and the ones behind it closed. */
 export type Warm = (t: number) => Promise<void>
 
-export async function renderTourVideo(
-  script: Script,
-  shots: Map<string, Shot>,
-  look: Look,
-  timing: { format: Format; fps: number; out: number; bitrate?: number; sink?: Sink; warm?: Warm },
+/** Paints frame `i` of `total` onto a context of the given size. */
+export type Draw = (ctx: CanvasRenderingContext2D, i: number, total: number, size: { w: number; h: number }) => void
+
+/**
+ * Frames drawn by `draw`, encoded and muxed into a file. The tour and the
+ * timelapse share it: each brings its own scene and its own size.
+ */
+export async function encodeVideo(
+  size: { w: number; h: number },
+  total: number,
+  draw: Draw,
+  timing: { format: Format; fps: number; bitrate?: number; keyEvery?: number; sink?: Sink; warm?: Warm },
   onProgress?: Progress,
 ): Promise<{ blob: Blob; mime: string }> {
-  const stage = stageFor(script, shots, look)
-  const seconds = duration(script)
-  const total = Math.max(2, Math.round(seconds * timing.fps))
-  const w = Math.max(240, Math.round(timing.out)) & ~1
-  const h = Math.round((stage.h * w) / stage.w) & ~1
+  const keyEvery = timing.keyEvery ?? KEY_EVERY
+  const w = Math.max(240, Math.round(size.w)) & ~1
+  const h = Math.max(2, Math.round(size.h)) & ~1
   const chosen = await videoCodec(timing.format, w, h)
   if (!chosen) throw new Error('This browser encodes no video; Chrome and Edge do.')
   onProgress?.(0, total, '')
@@ -145,20 +154,20 @@ export async function renderTourVideo(
       video: { codec: chosen.muxed, width: w, height: h, frameRate: timing.fps },
     })
   let failed: Error | null = null
+  let written = 0
   const encoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    output: (chunk, meta) => { written++; muxer.addVideoChunk(chunk, meta) },
     error: (e) => { failed = e },
   })
   encoder.configure(encoderConfig(chosen, w, h, timing.fps, timing.bitrate))
 
   const frameUs = 1_000_000 / timing.fps
   for (let i = 0; i < total; i++) {
-    const t = (i / total) * seconds
-    if (timing.warm) await timing.warm(t)
-    drawTour(g, script, t, { ...stage, w: scene.width, h: scene.height })
+    if (timing.warm) await timing.warm(i / total)
+    draw(g, i, total, { w: scene.width, h: scene.height })
     og.drawImage(scene, 0, 0, w, h)
     const frame = new VideoFrame(out, { timestamp: Math.round(i * frameUs), duration: Math.round(frameUs) })
-    encoder.encode(frame, { keyFrame: i % KEY_EVERY === 0 })
+    encoder.encode(frame, { keyFrame: i % keyEvery === 0 })
     frame.close()
     if (failed) throw failed
     onProgress?.(i + 1, total, '')
@@ -170,8 +179,33 @@ export async function renderTourVideo(
   await encoder.flush()
   encoder.close()
   if (failed) throw failed
+  // An encoder that cannot keep the rate it was asked for drops frames
+  // rather than refusing: the file then plays at a fraction of its frame
+  // rate, with the motion in steps. Say so instead of handing it over.
+  if (written < total) throw new Error(`The encoder dropped ${total - written} of ${total} frames; choose a smaller size or a lower frame rate.`)
   muxer.finalize()
   const mime = timing.format === 'mp4' ? 'video/mp4' : 'video/webm'
   const buffer = muxer.target instanceof Mp4Target || muxer.target instanceof WebmTarget ? muxer.target.buffer : new ArrayBuffer(0)
   return { blob: new Blob([buffer], { type: mime }), mime }
+}
+
+export async function renderTourVideo(
+  script: Script,
+  shots: Map<string, Shot>,
+  look: Look,
+  timing: { format: Format; fps: number; out: number; bitrate?: number; sink?: Sink; warm?: Warm },
+  onProgress?: Progress,
+): Promise<{ blob: Blob; mime: string }> {
+  const stage = stageFor(script, shots, look)
+  const seconds = duration(script)
+  const total = Math.max(2, Math.round(seconds * timing.fps))
+  const w = Math.max(240, Math.round(timing.out)) & ~1
+  const h = Math.round((stage.h * w) / stage.w) & ~1
+  const warm = timing.warm
+  return encodeVideo(
+    { w, h }, total,
+    (g, i, n, size) => drawTour(g, script, (i / n) * seconds, { ...stage, w: size.w, h: size.h }),
+    { ...timing, warm: warm ? (u) => warm(u * seconds) : undefined },
+    onProgress,
+  )
 }

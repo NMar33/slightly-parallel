@@ -116,17 +116,21 @@ def _compose_opencode_plugin(project_code: str, data_root: Path) -> str:
 _CAPTURE_SCRIPT = _REPO_ROOT / "scripts" / "hooks" / "claude-code-capture.py"
 
 
+def _windows() -> bool:
+    return os.name == "nt"
+
+
 def _venv_python() -> Path:
     """The backend's own interpreter, where each system puts it."""
     v = _REPO_ROOT / "backend" / ".venv"
-    return v / "Scripts" / "python.exe" if os.name == "nt" else v / "bin" / "python"
+    return v / "Scripts" / "python.exe" if _windows() else v / "bin" / "python"
 
 
 def _plugin_python() -> list[str]:
     """The interpreter for the OpenCode plugin, as argv words (its shell
     template spreads an array). The same choice as the hooks: python3 where
     it exists; on Windows the backend's own interpreter, else the py launcher."""
-    if os.name != "nt":
+    if not _windows():
         return ["python3"]
     venv = _venv_python()
     return [str(venv)] if venv.exists() else ["py", "-3"]
@@ -137,7 +141,7 @@ def _hook_python() -> str:
     (a changed line would read as an outdated install). Windows has no
     python3: the backend's own interpreter by its full path, else the py
     launcher."""
-    if os.name != "nt":
+    if not _windows():
         return "python3"
     venv = _venv_python()
     return f'"{venv}"' if venv.exists() else "py -3"
@@ -1000,7 +1004,7 @@ _MCP_PYTHON = _venv_python()
 def mcp_server_entry(api_url: str) -> dict:
     """The one launch line every tool gets: this repo's interpreter, the
     translator module, the server it forwards to."""
-    python = str(_MCP_PYTHON if _MCP_PYTHON.exists() else ("python3" if os.name != "nt" else "python"))
+    python = str(_MCP_PYTHON if _MCP_PYTHON.exists() else ("python3" if not _windows() else "python"))
     return {
         "command": python,
         "args": ["-m", "backend.mcp"],
@@ -1084,7 +1088,7 @@ def _insert_top_level(text: str, line: str) -> str:
 def _codex_notify_line(data_root: Path) -> str:
     # json.dumps quotes each part as TOML reads it: a Windows path's
     # backslashes would otherwise be escapes.
-    program = "python3" if os.name != "nt" else str(_venv_python()) if _venv_python().exists() else "python"
+    program = "python3" if not _windows() else str(_venv_python()) if _venv_python().exists() else "python"
     return "notify = [" + ", ".join(json.dumps(x) for x in (program, str(_CODEX_SCRIPT), "--data-root", str(data_root))) + "]"
 
 

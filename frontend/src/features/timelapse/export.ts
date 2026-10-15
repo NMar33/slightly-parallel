@@ -14,6 +14,7 @@ import { GIFEncoder, quantize } from 'gifenc'
 
 import type { Film } from './film'
 import { drawFilm, type Stage } from './scene'
+import { encodeVideo, type Format } from '../tour/video'
 
 import { t } from '../../i18n/scope/views'
 export type Progress = (done: number, total: number, stage: string) => void
@@ -268,4 +269,37 @@ export async function renderStageGif(
     { supersample: timing.supersample },
     onProgress,
   )
+}
+
+/**
+ * Bits per second for the film: half a bit per pixel per frame, no less
+ * than 8 Mbit/s. The tour's fifth of a bit smears this picture: every frame
+ * of it is a thousand dots and the small numbers of the counters, and at
+ * the tour's rate the counters blur and a frame shows through the next.
+ * A key frame every second, so the picture is rebuilt before the smear
+ * can gather.
+ */
+export const filmBitrate = (w: number, h: number, fps: number) => Math.min(Math.max(Math.round(w * h * fps * 0.5), 8_000_000), 24_000_000)
+
+/**
+ * The film as an MP4 or a WebM: the tour's encoder over the stage. Every
+ * colour, a few megabytes a minute, playable on a phone and on a video
+ * host. A GIF's 256 colours fit a chat; a film of a month does not.
+ */
+export async function renderStageVideo(
+  film: Film,
+  stage: Stage,
+  timing: { seconds: number; fps: number; out: number; format: Format },
+  onProgress?: Progress,
+): Promise<Blob> {
+  const total = Math.max(2, Math.round(timing.seconds * timing.fps))
+  const w = Math.max(240, Math.round(timing.out)) & ~1
+  const h = Math.round((stage.h * w) / stage.w) & ~1
+  const { blob } = await encodeVideo(
+    { w, h }, total,
+    (ctx, i, n, size) => drawFilm(ctx, film, i / n, { ...stage, w: size.w, h: size.h }),
+    { format: timing.format, fps: timing.fps, bitrate: filmBitrate(w, h, timing.fps), keyEvery: Math.round(timing.fps) },
+    onProgress,
+  )
+  return blob
 }

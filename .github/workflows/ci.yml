@@ -124,6 +124,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Start in the background
         run: python sp.py up
+      - name: The supervisor's log (on failure)
+        if: failure()
+        shell: python
+        run: |
+          from pathlib import Path
+          log = Path(".sp/server.log")
+          print(log.read_text(encoding="utf-8", errors="replace")[-6000:] if log.is_file() else "no .sp/server.log")
       - name: Healthy
         run: python sp.py status
       - name: Stop
@@ -152,6 +159,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The upgrade stage installs the last release tag first, then pulls.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -168,6 +178,19 @@ jobs:
         run: npm ci && npx playwright install --with-deps chromium
       - name: From clone to a working setup
         run: python3 scripts/fresh_user/run.py --no-agent
+      - name: The failed checks, with their detail (on failure)
+        if: failure()
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          report = Path(".sp/fresh-user/report.json")
+          if not report.is_file():
+              print("no report: the run stopped before the install stage ended")
+          else:
+              for c in json.loads(report.read_text(encoding="utf-8")).get("checks", []):
+                  if not c.get("ok"):
+                      print(f"[{c.get('stage')}] {c.get('name')}\n    {c.get('detail', '')[-4000:]}")
       - name: Keep the report and the pictures
         if: always()
         uses: actions/upload-artifact@v4

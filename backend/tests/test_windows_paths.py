@@ -45,7 +45,8 @@ def test_the_lock_uses_msvcrt_where_there_is_no_fcntl(tmp_path: Path, monkeypatc
 
 
 def test_windows_hook_and_mcp_lines(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(os, "name", "nt")
+    # Not os.name: on Python 3.11 a Path made while os.name says "nt" is a WindowsPath, which POSIX cannot make.
+    monkeypatch.setattr(setup, "_windows", lambda: True)
     assert setup._venv_python().parts[-2:] == ("Scripts", "python.exe")
     cmd = setup._hook_command("alpha", Path("/data"))
     assert not cmd.startswith("python3 ")

@@ -102,7 +102,8 @@ def install(space: Space, report: Report, source: Path, boot_seconds: int) -> su
     up = wait_for(space, "/api/health", boot_seconds, alive=lambda: proc.poll() is None)
     took = round(time.time() - start)
     report.notes["boot_seconds"] = took
-    tail = (space.root / "server.log").read_text(encoding="utf-8", errors="replace")[-600:]
+    # On a failure the build's own error sits above the launcher's traceback: keep enough of the log to see it.
+    tail = (space.root / "server.log").read_text(encoding="utf-8", errors="replace")[-4000:]
     if not report.add(s, f"./run.sh --prod answers on its port ({took} s)", up, tail):
         stop(proc)
         return None
