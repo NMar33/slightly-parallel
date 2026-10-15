@@ -9,6 +9,7 @@ CORS and the terminal are security settings, and a web page cannot change them.
 | `SP_DATA_ROOT` | `~/.slightly-parallel` | The data folder. Set it in the app; it is saved here. Made on the first start, with the example project in it. `SCAN_DATA_ROOT` and `DATA_ROOT` are also read |
 | `HOST` / `SP_PORT` | `127.0.0.1` / `8123` | The address and port the backend listens on; `SCAN_PORT` and `PORT` are also read |
 | `VITE_PORT` | `5173` | The hot-reload UI's port (`./run.sh` with no flag) |
+| `SP_REBUILD_UI` | off | A production start rebuilds the UI (needs Node 20+); otherwise it serves the build that comes with the release, `frontend/dist` |
 | `SP_ALLOW_LAN` | off | Needed to start with a `HOST` other than `127.0.0.1`; see below |
 | `SP_CORS_ORIGINS` | localhost dev origins | The addresses the pages are opened at; `SCAN_CORS_ORIGINS` is also read |
 | `SP_ENABLE_TERMINAL` | off | Forces the terminal on (it is otherwise a switch in Settings) |

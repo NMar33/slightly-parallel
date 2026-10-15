@@ -361,13 +361,14 @@ def node_major() -> tuple[str, int] | None:
 
 
 def builds_ui(dev: bool) -> bool:
-    """Whether this start builds the UI: always for the hot-reload start,
-    and for a production start whenever Node 20+ and npm are on PATH; a
-    production start without them serves the build the release ships."""
+    """Whether this start builds the UI: the hot-reload start always; a
+    production start only when frontend/dist is missing, or SP_REBUILD_UI
+    is set. A release ships the build, and rebuilding it on every start
+    would change tracked files under the user's feet (the next git pull
+    would refuse)."""
     if dev or not prebuilt_ui():
         return True
-    got = node_major()
-    return bool(shutil.which("npm")) and got is not None and got[1] >= 20
+    return (settings().get("SP_REBUILD_UI") or "").lower() in ("1", "true", "yes", "on")
 
 
 def preflight(dev: bool) -> None:
@@ -385,7 +386,7 @@ def preflight(dev: bool) -> None:
         # `python -m venv` needs ensurepip to give the environment its pip.
         if not importlib.util.find_spec("ensurepip") or not importlib.util.find_spec("venv"):
             fail("Python's venv module is missing — on Debian or Ubuntu: sudo apt install python3-venv")
-    if dev or not prebuilt_ui():
+    if builds_ui(dev):
         # Node builds the UI; with the release's build in place it is optional.
         npm()
         got = node_major()
@@ -504,7 +505,7 @@ def cmd_run(args: list[str]) -> None:
             print("[run] building frontend ...", flush=True)
             subprocess.run([npm(), "run", "build"], cwd=ROOT / "frontend", check=True, env=env)
         else:
-            print("[run] UI: the build shipped in frontend/dist (install Node 20+ to rebuild it)", flush=True)
+            print("[run] UI: the build in frontend/dist (SP_REBUILD_UI=1 in .env rebuilds it; needs Node 20+)", flush=True)
         print(f"[run] launching Slightly Parallel on http://{env['HOST']}:{env['PORT']}", flush=True)
         procs = [spawn(backend, cwd=ROOT / "backend", env=env)]
     else:

@@ -2,8 +2,8 @@
 
 You need **Python 3.11+** and **git**. On Debian or Ubuntu also
 `sudo apt install python3-venv`. The UI comes built (`frontend/dist`);
-**Node 20+** is needed only to rebuild it, which a production start does
-whenever Node is on PATH, and for the hot-reload start. `tmux` is optional: with it, the
+**Node 20+** is needed only to rebuild it (`SP_REBUILD_UI=1` in `.env`, or
+`npm run build` in `frontend/`) and for the hot-reload start. `tmux` is optional: with it, the
 terminals stay open after a reload or a restart.
 
 ```bash
@@ -12,8 +12,7 @@ cd slightly-parallel
 ./run.sh --prod       # serves everything from http://127.0.0.1:8123
 ```
 
-The first start takes a minute: it makes the backend's environment (and,
-with Node, installs the UI's packages and rebuilds the UI). To work on Slightly Parallel's own
+The first start takes a minute: it makes the backend's environment. To work on Slightly Parallel's own
 code, `./run.sh` with no flag starts the backend on :8123 and a hot-reload UI
 on :5173. On Windows: `sp run --prod` and `sp run`.
 

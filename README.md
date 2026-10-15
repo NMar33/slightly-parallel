@@ -22,7 +22,7 @@ The next day, the first agent that works on a project writes yesterday's standup
 
 ## Install
 
-You need Python 3.11+ and git. The UI comes built; Node 20+ is needed only to work on the UI's code.
+You need Python 3.11+ and git. The UI comes built; Node 20+ is needed only to work on the UI's code ([docs/running.md](docs/running.md)).
 
 ```bash
 git clone https://github.com/nmar33/slightly-parallel.git
