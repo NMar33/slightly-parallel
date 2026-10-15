@@ -58,6 +58,8 @@ def readme(space: Space, report: Report) -> None:
     report.add(s, f"every npm script it names exists ({', '.join(sorted(npm_used))})", npm_used <= set(package), f"unknown: {sorted(npm_used - set(package))}")
 
     shipped = {p.name for p in (root / "templates" / "skills").iterdir() if p.is_dir()}
+    # The skills are listed in docs/integration.md; the README links to it.
+    text = text + (root / "docs" / "integration.md").read_text(encoding="utf-8")
     named = set(re.findall(r"`([a-z]+(?:-[a-z]+)+)`", text)) & (shipped | {w for w in re.findall(r"`([a-z]+(?:-[a-z]+)+)`", text) if w.split("-")[0] in ("make", "keep", "map", "update", "daily", "log", "write", "task", "finish", "sp")})
     report.add(s, "the skills it lists are the skills shipped", named == shipped, f"README only: {sorted(named - shipped)}; shipped only: {sorted(shipped - named)}")
 
