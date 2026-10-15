@@ -45,7 +45,10 @@ def test_writes_fire_and_reads_never_reach_the_handler(tmp_path, monkeypatch):
             f.read_text(encoding="utf-8")
             list(os.scandir(tmp_path / "chats"))
         time.sleep(0.3)
-        assert seen == [] and not fired.is_set()
+        # Windows: closing a read handle writes the file's times into its folder, which arrives as the
+        # folder's "modified"; the handler drops a folder's own modified (it says nothing), so nothing fires.
+        assert [e for e in seen if not (os.name == "nt" and e.startswith("modified dir "))] == []
+        assert not fired.is_set(), seen
 
         with f.open("a", encoding="utf-8") as fh:  # a captured turn
             fh.write("two\n")

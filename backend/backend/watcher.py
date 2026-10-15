@@ -115,6 +115,12 @@ class DebouncedHandler(FileSystemEventHandler):
         if event.event_type not in self.CHANGES:
             return
         if event.is_directory:
+            # A folder's own "modified" says nothing a child's event does not
+            # say (created, deleted, moved all pass below), and on Windows
+            # NTFS writes a child's times into the folder when a read handle
+            # closes, so every first read reported the folder as modified.
+            if event.event_type == "modified":
+                return
             # Directory events are useful (new project folder) — pass them,
             # unless they are inside a folder we deliberately ignore.
             if not self._ignored(self._inside(event.src_path, self._root), self._root):
