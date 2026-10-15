@@ -1,0 +1,31 @@
+# The exact versions of requirements.txt's ranges that the test suite ran on.
+# sp.py installs from this file when it is here (and from
+# requirements.txt if it does not install on your system). Written by
+# `pip freeze` in a fresh environment — README, Development, has the
+# commands; do not edit by hand, except for the markers below.
+#
+# A marker keeps a package off a system it has no build for; pip then takes
+# what that system needs from the ranges of the packages above it.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.5.0
+duckdb==1.5.6
+fastapi==0.142.2
+h11==0.16.0
+httptools==0.8.0
+idna==3.20
+opentelemetry-api==1.45.0
+psutil==7.2.2
+pydantic==2.13.5
+pydantic_core==2.46.5
+python-dotenv==1.2.4
+PyYAML==6.0.3
+starlette==1.7.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.54.0
+uvloop==0.23.0 ; sys_platform != "win32"
+watchdog==6.0.0
+watchfiles==1.3.0
+websockets==17.2

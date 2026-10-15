@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8.0
+httpx>=0.27
+pyflakes>=3.2
+pytest-xdist>=3.6

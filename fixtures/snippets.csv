@@ -1,0 +1,9 @@
+id,created_date,created_time,project,agent_id,label,command,position,md_ref
+sn_bc_cd,2608-11,08:00,beta-corp,operator,cd project,cd ~/projects/beta-corp,10,
+sn_bc_claude,2608-11,08:01,beta-corp,operator,claude,claude,20,
+sn_bc_venv,2608-11,08:02,beta-corp,operator,activate venv,source backend/.venv/bin/activate,30,
+sn_bc_backend,2608-11,08:03,beta-corp,operator,start backend,cd backend && PORT=8124 SCAN_DATA_ROOT=../fixtures ./.venv/bin/python -m backend.server,40,
+sn_bc_frontend,2608-11,08:04,beta-corp,operator,frontend dev,cd frontend && npm run dev,50,
+sn__al_cd,2608-11,08:00,alpha-labs,operator,cd project,cd ~/projects/alpha-labs,10,
+sn__al_git,2608-11,08:01,alpha-labs,operator,git status,git status,20,
+sn__al_tests,2608-11,08:02,alpha-labs,operator,run tests,pytest -xvs,30,

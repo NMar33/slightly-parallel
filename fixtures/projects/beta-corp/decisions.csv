@@ -1,0 +1,3 @@
+id,decision_text,rationale,source,agent_id,related_goal_id,tags,created_date
+d_b4,Text + CHECK constraint instead of PG enums,easier to evolve than ALTER TYPE on native enums,explicit,agent-explorer-2608-03,g_b1,migration,2608-04
+d_b5,Confluent schema registry for Kafka topics,schema evolution + compatibility checks built in,explicit,agent-explorer-2608-03,g_b3,messaging,2608-05

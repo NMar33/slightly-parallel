@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Slightly Parallel runs on a laptop — Linux, macOS or Windows. Every system is
+      # tested; one failing does not hide the others.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12"]
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Git identity (tests make commits in temporary repositories)
+        run: git config --global user.email ci@example.com && git config --global user.name CI
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies (the pinned versions users get, plus the test tools)
+        run: pip install -r requirements.lock -r requirements-dev.txt
+      - name: Lint (unused imports and names, undefined names)
+        run: python -m pyflakes backend tests ../scripts ../sp.py
+      - name: Run tests
+        run: python -m pytest -q -p no:warnings tests
+      - name: API reference names every route
+        if: runner.os == 'Linux'
+        run: python ../scripts/check_api_doc.py
+
+  frontend:
+    name: Frontend (Node 20)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Colors come from tokens.css
+        run: bash ../scripts/check-no-raw-hex.sh
+      - name: Build (typecheck-gated)
+        run: npm run build
+      - name: Unit tests
+        run: npx vitest run
+
+  e2e:
+    name: End to end (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Backend environment (the Playwright config starts the server from backend/.venv)
+        working-directory: backend
+        run: python -m venv .venv && .venv/bin/pip install -r requirements.lock -r requirements-dev.txt
+      - name: Frontend build
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Happy path against the demo data
+        working-directory: frontend
+        run: npx playwright test
+      - name: Playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  launcher:
+    # sp.py starts, supervises and stops Slightly Parallel the same way everywhere:
+    # up (makes the backend environment, builds the UI), healthy, down, and
+    # nothing left on the port.
+    name: Launcher (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Start in the background
+        run: python sp.py up
+      - name: Healthy
+        run: python sp.py status
+      - name: Stop
+        run: python sp.py down
+      - name: Nothing left serving
+        shell: python
+        run: |
+          import socket, sys
+          s = socket.socket()
+          s.settimeout(1)
+          busy = s.connect_ex(("127.0.0.1", 8123)) == 0
+          print("port 8123:", "still served" if busy else "free")
+          sys.exit(1 if busy else 0)
+
+  fresh-user:
+    # A new user's path, with no agent: clone, first start, every page,
+    # Setup in a browser, the hook and the MCP server, the terminal,
+    # Disconnect, restart, the background run and the dev start
+    # (scripts/fresh_user/README.md). The stages with a real agent are run
+    # by hand: they need a login and cost tokens.
+    name: Fresh user (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: tmux (the terminal stage)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux; else brew install tmux; fi
+      - name: The browser the test drives
+        working-directory: frontend
+        run: npm ci && npx playwright install --with-deps chromium
+      - name: From clone to a working setup
+        run: python3 scripts/fresh_user/run.py --no-agent
+      - name: Keep the report and the pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-user-${{ matrix.os }}
+          path: .sp/fresh-user/
+          include-hidden-files: true

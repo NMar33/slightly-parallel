@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "kid": "2608-a",
+      "use": "sig",
+      "alg": "RS256",
+      "n": "0vx7\u2026-example-modulus-not-a-real-key",
+      "e": "AQAB"
+    }
+  ]
+}

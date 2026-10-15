@@ -1,0 +1,2 @@
+id,created_date,created_time,project,agent_id,l1,name,kind,description,status,path,files_n,bytes,updated_at,md_ref,source,session_id,source_turn,tags
+ar_b36b8076,2608-20,10:00,alpha-labs,operator,token-format-brief,token-format-brief,document,"What the SDK will see when it reads a token, and how it verifies one.",active,,3,1148,2026-08-20T10:00:00,artifact_details/260820-1000__alpha-labs__operator__ar_b36b8076.md,written,,0,"auth,sdk"

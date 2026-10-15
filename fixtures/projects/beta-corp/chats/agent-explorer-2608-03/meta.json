@@ -1,0 +1,17 @@
+{
+  "agent_id": "agent-explorer-2608-03",
+  "agent_name": "agent-explorer",
+  "project": "beta-corp",
+  "created_date": "2608-03",
+  "last_active": "2608-06T14:30:00",
+  "message_count": 42,
+  "l1_headline": "Migration script tested in staging, Kafka pipeline scaffolded, cutover next week",
+  "parent_agent_id": null,
+  "files_touched": [
+    "docs/migration-plan.md",
+    "scripts/pgloader.conf",
+    "infra/kafka/",
+    "tests/migration/"
+  ],
+  "schema_version": 2
+}

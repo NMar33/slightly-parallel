@@ -1,0 +1,6 @@
+id,created_date,created_time,project,agent_id,title,tags,md_ref
+nt_al_curl,2608-02,16:00,alpha-labs,agent-genesis-2608-01,Curl commands for testing auth flow locally,"auth,dev,reference",note_details/260802-1600__alpha-labs__curl-auth.md
+nt_bc_pgloader,2608-04,11:00,beta-corp,agent-explorer-2608-03,pgloader cast rules that actually worked,"pgloader,migration,reference",note_details/260804-1100__beta-corp__pgloader-casts.md
+nt_mk_ports,2608-08,09:00,pdr-framework-dev,mira-sztern-lenses,Port assignments and env vars cheatsheet,"config,ports,reference",note_details/260808-0900__pdr-framework-dev__ports.md
+nt_bc_kafka_url,2608-07,13:00,beta-corp,agent-explorer-2608-03,Kafka broker URLs staging vs prod,"kafka,ops,reference",note_details/260807-1300__beta-corp__kafka-urls.md
+nt_8ce63585,2608-11,18:00,beta-corp,operator,UI test note from cli,test,note_details/260811-1800__beta-corp__operator.md

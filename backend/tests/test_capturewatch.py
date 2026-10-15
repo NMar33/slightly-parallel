@@ -1,0 +1,82 @@
+"""The capture watchdog: a turn Claude Code saw and Slightly Parallel did not is found."""
+
+from __future__ import annotations
+
+import json
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from backend import capturewatch
+from backend.csvio import append_row
+from backend.db import ViewStore
+
+WORK = "/work/my app"
+
+
+def _utc(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _transcript(root: Path, session: str, prompts: list[float], tool_result_at: float | None = None) -> None:
+    d = root / capturewatch.folder_slug(WORK)
+    d.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"type": "user", "timestamp": _utc(t), "message": {"role": "user", "content": "do the thing"}}) for t in prompts]
+    lines.append(json.dumps({"type": "user", "timestamp": _utc(prompts[-1] + 5), "message": {"role": "user",
+                             "content": "<task-notification>background done</task-notification>"}}))
+    if tool_result_at:
+        lines.append(json.dumps({"type": "user", "timestamp": _utc(tool_result_at), "message": {"role": "user",
+                                 "content": [{"type": "tool_result", "content": "ok"}]}}))
+    (d / f"{session}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _captured(data: Path, session: str, at: float) -> None:
+    d = data / "projects" / "alpha" / "chats" / f"cc-{session[:8]}"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "meta.json").write_text(json.dumps({"last_active": datetime.fromtimestamp(at).strftime("%Y-%m-%dT%H:%M:%S")}))
+
+
+def _setup(tmp_path: Path) -> tuple[ViewStore, Path]:
+    data = tmp_path / "data"
+    (data / "projects" / "alpha").mkdir(parents=True)
+    append_row(data / "integrations.csv", ("project", "path"), {"project": "alpha", "path": WORK})
+    return ViewStore(data), tmp_path / "claude"
+
+
+def test_the_folder_name_is_claude_codes() -> None:
+    assert capturewatch.folder_slug("/home/n/my projects/app") == "-home-n-my-projects-app"
+
+
+def test_captured_sessions_are_fine_and_a_long_turn_is_not_a_gap(tmp_path: Path) -> None:
+    st, claude = _setup(tmp_path)
+    now = time.time()
+    _transcript(claude, "aaaaaaaa-1", [now - 900], tool_result_at=now - 10)   # a turn running for 15 minutes
+    _captured(st.data_root, "aaaaaaaa-1", now - 895)
+    out = capturewatch.check(st, claude_root=claude, now=now)
+    assert out["ok"] and out["watched"] == 1
+
+
+def test_a_missed_turn_and_a_session_never_captured(tmp_path: Path) -> None:
+    st, claude = _setup(tmp_path)
+    now = time.time()
+    _transcript(claude, "bbbbbbbb-2", [now - 1800, now - 300])
+    _captured(st.data_root, "bbbbbbbb-2", now - 1795)                       # the second prompt was lost
+    _transcript(claude, "cccccccc-3", [now - 600])                           # the hook never ran
+    out = capturewatch.check(st, claude_root=claude, now=now)
+    got = {m["agent_id"]: m["why"] for m in out["missed"]}
+    assert not out["ok"]
+    assert got == {"cc-bbbbbbbb": "its latest messages were not captured", "cc-cccccccc": "this session was never captured"}
+
+
+def test_hook_errors_of_the_last_day(tmp_path: Path) -> None:
+    import importlib.util
+    import sys
+    hooks = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
+    sys.path.insert(0, str(hooks))
+    spec = importlib.util.spec_from_file_location("capture_for_watch", hooks / "capture.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    st, claude = _setup(tmp_path)
+    mod.record_failure(st.data_root, "alpha", "cc-dddddddd", "claude-code", "Stop: OSError: disk full")
+    out = capturewatch.check(st, claude_root=claude)
+    assert not out["ok"] and out["errors_n"] == 1 and "disk full" in out["errors"][0]["error"]

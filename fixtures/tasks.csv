@@ -1,0 +1,17 @@
+id,created_date,created_time,project,agent_id,title,status,priority,assignee,due_date,lane,tags,position,impact,effort,projects,md_ref
+tk_bc_replica,2608-06,10:00,beta-corp,operator,Refresh staging replica from prod snapshot,unclassified,high,cutover,2608-12,cutover,"cutover,ops",10,,,beta-corp,
+tk_bc_runbook,2608-07,11:00,beta-corp,operator,Draft cutover-day runbook v2 with rollback SQL,unclassified,med,cutover,2608-12,cutover,docs,10,,,beta-corp,
+tk_bc_oncall,2608-08,09:00,beta-corp,operator,Schedule oncall rotation for cutover window,todo,med,cutover,,cutover,ops,30,,,beta-corp,
+tk_bc_dedup_docs,2608-09,14:00,beta-corp,operator,Update Kafka consumer README with dedup logic,todo,low,kafka,,kafka,"kafka,docs",25,,,beta-corp,task_details/260809-1400__beta-corp__operator.md
+tk_bc_pgloader_fix,2608-08,15:00,beta-corp,ae,Fix pgloader silent-loss detection in post-migrate script,doing,high,pgloader,2608-10,pgloader,"pgloader,bugfix",10,high,S,beta-corp,
+tk_bc_kafka_alert,2608-09,10:00,beta-corp,ae,Add Kafka consumer lag Prometheus alert,doing,med,kafka,,kafka,observability,12.5,med,S,beta-corp,
+tk_bc_checksum,2608-08,12:00,beta-corp,ae,Sample-checksum validation harness for post-migrate,todo,med,cutover,,cutover,"verify,migration",10,high,M,beta-corp,
+tk_bc_backup,2608-05,14:00,beta-corp,ae,Verify PG backup restore procedure works end-to-end,done,med,cutover,,cutover,"ops,verify",10,,,beta-corp,
+tk_bc_baseline,2608-01,09:00,beta-corp,ag,Migrate 001 baseline schema to staging,done,low,cutover,,cutover,migration,20,,,beta-corp,
+tk_bc_pgloader,2608-04,10:00,beta-corp,ae,Land pgloader config with cast rules,done,low,pgloader,,pgloader,pgloader,30,,,beta-corp,
+tk_bc_debezium,2608-11,08:00,beta-corp,operator,Explore Debezium for CDC pipeline (research spike),unclassified,low,kafka,,kafka,research,5,med,L,beta-corp,
+tk_bc_grafana,2608-11,08:30,beta-corp,operator,Add Grafana dashboards for Kafka broker health,doing,med,kafka,,kafka,observability,15,low,M,beta-corp,
+tk_al_sdk_bench,2608-11,09:00,alpha-labs,agent-genesis-2608-01,Benchmark generated SDK vs hand-rolled client latency,todo,med,,,unassigned,"sdk,perf",2.5,,,alpha-labs,
+tk_al_docs_auth,2608-11,10:00,alpha-labs,agent-genesis-2608-01,Write auth API docs section with cURL examples,doing,med,,2608-15,unassigned,"docs,auth",10,,,alpha-labs,
+tk_al_e2e,2608-11,10:15,alpha-labs,agent-genesis-2608-01,End-to-end Playwright suite for auth flow,unclassified,med,agent-genesis-2608-01,,agent-genesis-2608-01,"test,auth",10,high,L,alpha-labs,
+tk_shared_alerts,2608-11,13:00,beta-corp,operator,Shared Prometheus alert-rule library (both stacks),todo,med,kafka,,kafka,observability,20,high,M,"beta-corp,alpha-labs",

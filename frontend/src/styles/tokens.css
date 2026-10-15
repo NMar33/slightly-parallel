@@ -1,0 +1,488 @@
+/* =============================================================================
+   PDR Design Tokens — the single source of truth for all visual style.
+
+   Architecture §6 (locked). Any raw #hex outside this file is a bug.
+
+   ENFORCEMENT
+   -----------
+   A pre-commit hook (see scripts/check-no-raw-hex.sh) greps for
+   /#[0-9a-fA-F]{3,8}\b/ across *.ts / *.tsx / *.css EXCLUDING this file
+   and any file in this /styles/ directory. PR fails if match found.
+
+   Consumption:
+     • Components read tokens as `var(--token-name)` OR via Tailwind classes
+       generated from tailwind.config.ts (which mirrors these names).
+     • Never inline color literals. Never re-declare a hex in a component.
+     • Adding a color? Add it here first, then use it. No exceptions.
+
+   Theme model:
+     • Light is DEFAULT (aesthetic critic §2).
+     • Dark activates on `:root[data-theme="dark"]` (explicit toggle) OR
+       `@media (prefers-color-scheme: dark)` when no explicit override set.
+     • Both themes are first-class — every semantic token exists in both.
+
+   Cyrillic: font stack tested against "матолимп", "рекогниция".
+   Motion: respects `prefers-reduced-motion: reduce`.
+   ============================================================================= */
+
+/* ---------- Font faces (self-hosted; NO Google Fonts CDN — offline req) ------ */
+/* Actual @font-face declarations live in fonts.css (loaded separately once
+   font assets are dropped in /public/fonts/). Stack falls back gracefully. */
+
+/* ============================================================================
+   LIGHT THEME (default)
+   ============================================================================ */
+:root {
+  /* ---- Surfaces ------------------------------------------------------------ */
+  --bg-base:        #FFFFFF;
+  --bg-surface:     #F7F7F8;
+  --bg-elevated:    #EEEEF0;
+  --bg-hover:       #E4E5E7;
+
+  /* ---- Borders ------------------------------------------------------------- */
+  --border-subtle:  rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.10);
+  --border-strong:  rgba(0, 0, 0, 0.16);
+
+  /* ---- Text (WCAG AA verified on --bg-base + --bg-surface) ----------------- */
+  --text-primary:   #101113;
+  --text-secondary: #5E6266;
+  --text-tertiary:  #8A8F98;
+
+  /* ---- Brand (jade — PDR's POV accent, §6.1) ------------------------------- */
+  --brand:          #3E9B84;   /* darkened for AA contrast on white */
+  --brand-lean:     #B5533C;   /* the identity's rust: the leaning stem of the logo, nothing else */
+  --brand-hover:    #4FB39A;
+  --brand-glow:     rgba(62, 155, 132, 0.16);
+
+  /* ---- Status (validated in both modes) ------------------------------------ */
+  --status-green:   #26B24B;
+  --status-amber:   #F2994A;
+  --status-red:     #EB5757;
+  --status-info:    #2563C9;   /* a blue of its own: info must not read as the brand */
+  --status-neutral: #8A8F98;
+  --status-purple:  #9B6BD6;
+
+  /* ---- Ink: a status colour as text on a tint of itself -------------------
+     The light theme's status hues are too pale to read on their own 14%
+     tint (2:1 for amber); these darker inks clear 4.5:1 on that tint over
+     white and over the surface. Dark theme: the hue itself reads. */
+  --status-green-ink:   #18733A;
+  --status-amber-ink:   #9A520E;
+  --status-red-ink:     #B42F2F;
+  --status-info-ink:    #1F56B0;
+  --status-neutral-ink: #5E6266;
+  --brand-ink:          #287261;
+
+  /* ---- Marks of the operator's own — not statuses, so never a status hue -- */
+  --group:          #6B7BFF;   /* an agent group, wherever agents are listed */
+  --star:           #E5A50A;   /* ★ important */
+
+  /* ---- Overlays: one scrim under every dialog and drawer, one hatch ------- */
+  --scrim:        rgba(8, 10, 14, 0.42);
+  --scrim-strong: rgba(8, 10, 14, 0.58);   /* the tour's spotlight */
+  --hatch:        rgba(0, 0, 0, 0.25);     /* stripes over a bar: over plan, a net loss */
+  /* The ground of a web page shown as it is (an artifact's HTML in a frame):
+     white in both themes, as a browser draws a page with no background. */
+  --page-ground:  #FFFFFF;
+
+  /* ---- Focus ring (WCAG AA) ------------------------------------------------ */
+  --focus-ring:     var(--brand);
+  /* ---- Shadows (subtle — never decorative) --------------------------------- */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px -2px rgba(0, 0, 0, 0.06),
+               0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.10),
+               0 2px 6px 0 rgba(0, 0, 0, 0.04);
+
+  /* ---- Agent lane qualitative palette (PostHog 8, both-theme validated) ---- */
+  --lane-1: #1D4AFF;
+  --lane-2: #F54E00;
+  --lane-3: #00B87A;
+  --lane-4: #E5A00D;
+  --lane-5: #621DDF;
+  --lane-6: #00A6ED;
+  --lane-7: #FF6C6C;
+  --lane-8: #89D185;
+
+  /* ---- Typography (§6.2) --------------------------------------------------- */
+  --font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont,
+               system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, 'SF Mono',
+               Menlo, Consolas, monospace;
+
+
+  /* The px type scale lives in tailwind.config.ts (text-10 … text-56);
+     these three feed the base rules below. */
+  --fs-14: 14px;
+  --fw-semibold: 600;
+  --lh-normal: 1.45;
+
+  --tracking-body:    -0.011em;
+  --tracking-heading: -0.022em;
+  --tracking-display: -0.03em;
+
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+
+  /* ---- Row heights (§6.3) -------------------------------------------------- */
+  --row-dense:    32px;
+  --row-tree:     28px;
+  --row-reading:  48px;
+
+  /* ---- Layout -------------------------------------------------------------- */
+  --kpi-min-height:    96px;
+  --sidebar-expanded:  240px;
+  --sidebar-collapsed: 56px;
+  --topbar-height:     48px;
+  --content-max:       1200px;
+  --reading-max:       800px;
+  --modal-width:       640px;
+
+  /* ---- Radii (§6.4) — no radius outside this set, ever --------------------- */
+  --radius-card:  8px;
+  --radius-modal: 12px;
+  --radius-pill:  9999px;
+  --radius-input: 6px;
+  /* Thin marks only — a bar, a cell, a drop line, a swatch: 2px. */
+  --radius-bar:   2px;
+
+  /* ---- Motion (§6.5) ------------------------------------------------------- */
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:   cubic-bezier(0.7, 0, 0.84, 0);
+  --dur-fast:  120ms;
+  --dur-med:   200ms;
+  --dur-slow:  400ms;
+
+}
+
+/* ============================================================================
+   DARK THEME — auto on prefers-color-scheme: dark WHEN no explicit override
+   ============================================================================ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg-base:        #08090A;
+    --bg-surface:     #101113;
+    --bg-elevated:    #1C1D1F;
+    --bg-hover:       #202124;
+
+    --border-subtle:  rgba(255, 255, 255, 0.06);
+    --border-default: rgba(255, 255, 255, 0.10);
+    --border-strong:  rgba(255, 255, 255, 0.16);
+
+    --text-primary:   #F7F8F8;
+    --text-secondary: #8A8F98;
+    --text-tertiary:  #7A7F86;   /* lifted from #62666D per aesthetic critic §9 (AA) */
+
+    --brand:          #4FB39A;
+    --brand-lean:     #D0694F;
+    --brand-hover:    #67C7AF;
+    --brand-glow:     rgba(79, 179, 154, 0.24);
+
+    /* Dark: the two deepest lanes lift to clear 3:1 on the dark surface
+       (checked with the dataviz validator); the rest already do. Info
+       stays a blue of its own, apart from the brand teal. */
+    --lane-1: #4A7BFF;
+    --lane-5: #8B5CF6;
+    --status-info: #6E9CF2;
+
+    /* Ink on a tint: in the dark the hue itself reads. */
+    --status-green-ink:   var(--status-green);
+    --status-amber-ink:   var(--status-amber);
+    --status-red-ink:     var(--status-red);
+    --status-info-ink:    var(--status-info);
+    --status-neutral-ink: var(--status-neutral);
+    --brand-ink:          var(--brand);
+
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.40);
+    --shadow-md: 0 2px 8px -2px rgba(0, 0, 0, 0.50),
+                 0 1px 2px 0 rgba(0, 0, 0, 0.40);
+    --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.60),
+                 0 2px 6px 0 rgba(0, 0, 0, 0.40);
+  }
+}
+
+/* ============================================================================
+   DARK THEME — explicit override (user toggle wins over OS preference)
+   ============================================================================ */
+:root[data-theme='dark'] {
+  --bg-base:        #08090A;
+  --bg-surface:     #101113;
+  --bg-elevated:    #1C1D1F;
+  --bg-hover:       #202124;
+
+  --border-subtle:  rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong:  rgba(255, 255, 255, 0.16);
+
+  --text-primary:   #F7F8F8;
+  --text-secondary: #8A8F98;
+  --text-tertiary:  #7A7F86;
+
+  --brand:          #4FB39A;
+  --brand-lean:     #D0694F;
+  --brand-hover:    #67C7AF;
+  --brand-glow:     rgba(79, 179, 154, 0.24);
+
+  /* Dark: the two deepest lanes lift to clear 3:1 on the dark surface
+     (checked with the dataviz validator); the rest already do. Info
+     stays a blue of its own, apart from the brand teal. */
+  --lane-1: #4A7BFF;
+  --lane-5: #8B5CF6;
+  --status-info: #6E9CF2;
+
+  /* Ink on a tint: in the dark the hue itself reads. */
+  --status-green-ink:   var(--status-green);
+  --status-amber-ink:   var(--status-amber);
+  --status-red-ink:     var(--status-red);
+  --status-info-ink:    var(--status-info);
+  --status-neutral-ink: var(--status-neutral);
+  --brand-ink:          var(--brand);
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 2px 8px -2px rgba(0, 0, 0, 0.50),
+               0 1px 2px 0 rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.60),
+               0 2px 6px 0 rgba(0, 0, 0, 0.40);
+}
+
+/* ============================================================================
+   BASE ELEMENT DEFAULTS — apply tokens to the root
+   ============================================================================ */
+html {
+  color-scheme: light dark;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  line-height: var(--lh-normal);
+  letter-spacing: var(--tracking-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+h1, h2 {
+  letter-spacing: var(--tracking-heading);
+  font-weight: var(--fw-semibold);
+}
+
+h3, h4, h5, h6 {
+  font-weight: var(--fw-semibold);
+}
+
+.display {
+  letter-spacing: var(--tracking-display);
+}
+
+/* Numeric cells: tabular figures (§6.2 hard rule) */
+.num,
+td.num,
+.kpi,
+.tabular {
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   FOCUS RING — WCAG AA visible, brand-colored, works on any bg
+   ============================================================================ */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-input);
+}
+
+/* Kill the default browser focus outline in favor of :focus-visible only */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ============================================================================
+   MOTION — reduced-motion respected (§6.5 rule 4)
+   ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================================
+   SELECTION — brand-tinted
+   ============================================================================ */
+::selection {
+  background: var(--brand-glow);
+  color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Accent variants — the "Accent color" variant set (src/lib/variants.ts).
+ * Applied as data-accent on <html>; absent attribute = meridian teal above.
+ * Each accent defines light values, then dark overrides for both the
+ * explicit dark theme and the system-dark default.
+ * ------------------------------------------------------------------------- */
+
+:root[data-accent='indigo'] {
+  --brand: #4A5FC0;
+  --brand-hover: #5B72D6;
+  --brand-glow: rgba(74, 95, 192, 0.16);
+}
+:root[data-theme='dark'][data-accent='indigo'] {
+  --brand: #6B82E0;
+  --brand-hover: #8296E8;
+  --brand-glow: rgba(107, 130, 224, 0.24);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light'])[data-accent='indigo'] {
+    --brand: #6B82E0;
+    --brand-hover: #8296E8;
+    --brand-glow: rgba(107, 130, 224, 0.24);
+  }
+}
+
+:root[data-accent='violet'] {
+  --brand: #7C4FD0;
+  --brand-hover: #8F66DB;
+  --brand-glow: rgba(124, 79, 208, 0.16);
+}
+:root[data-theme='dark'][data-accent='violet'] {
+  --brand: #9B78E8;
+  --brand-hover: #AE8FF0;
+  --brand-glow: rgba(155, 120, 232, 0.24);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light'])[data-accent='violet'] {
+    --brand: #9B78E8;
+    --brand-hover: #AE8FF0;
+    --brand-glow: rgba(155, 120, 232, 0.24);
+  }
+}
+
+:root[data-accent='ember'] {
+  --brand: #C2661F;
+  --brand-hover: #D57A33;
+  --brand-glow: rgba(194, 102, 31, 0.16);
+}
+:root[data-theme='dark'][data-accent='ember'] {
+  --brand: #E8944A;
+  --brand-hover: #F0A660;
+  --brand-glow: rgba(232, 148, 74, 0.24);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light'])[data-accent='ember'] {
+    --brand: #E8944A;
+    --brand-hover: #F0A660;
+    --brand-glow: rgba(232, 148, 74, 0.24);
+  }
+}
+
+/* ============================================================================
+   SWATCHES — preview-only colors for the Appearance page.
+   Each accent/skin needs to show itself while a different one is active,
+   so the page reads these instead of the live --brand. Values mirror the
+   accent blocks above and the skin blocks in skins.css — keep in sync.
+   ============================================================================ */
+:root {
+  --swatch-accent-meridian: #3E9B84;
+  --swatch-accent-indigo:   #4A5FC0;
+  --swatch-accent-violet:   #7C4FD0;
+  --swatch-accent-ember:    #C2661F;
+
+  --swatch-skin-none-bg:        #FFFFFF;
+  --swatch-skin-none-ink:       #101113;
+  --swatch-skin-none-accent:    #3E9B84;
+  --swatch-skin-terminal-bg:    #000000;
+  --swatch-skin-terminal-ink:   #46ff7d;
+  --swatch-skin-terminal-accent:#46ff7d;
+  --swatch-skin-broadsheet-bg:  #faf6ee;
+  --swatch-skin-broadsheet-ink: #1a1712;
+  --swatch-skin-broadsheet-accent:#8b1e1e;
+  --swatch-skin-mission-bg:     #060b14;
+  --swatch-skin-mission-ink:    #d9e6f5;
+  --swatch-skin-mission-accent: #35c4e8;
+  --swatch-skin-rams-bg:        #edebe7;
+  --swatch-skin-rams-ink:       #2a2926;
+  --swatch-skin-rams-accent:    #b23b11;
+}
+:root[data-theme='dark'] {
+  --swatch-accent-meridian: #4FB39A;
+  --swatch-accent-indigo:   #6B82E0;
+  --swatch-accent-violet:   #9B78E8;
+  --swatch-accent-ember:    #E8944A;
+  --swatch-skin-none-bg:    #101113;
+  --swatch-skin-none-ink:   #F7F8F8; /* = dark --text-primary, kept in sync */
+  --swatch-skin-none-accent:#4FB39A;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --swatch-accent-meridian: #4FB39A;
+    --swatch-accent-indigo:   #6B82E0;
+    --swatch-accent-violet:   #9B78E8;
+    --swatch-accent-ember:    #E8944A;
+    --swatch-skin-none-bg:    #101113;
+    --swatch-skin-none-ink:   #F7F8F8; /* = dark --text-primary, kept in sync */
+    --swatch-skin-none-accent:#4FB39A;
+  }
+}
+
+/* ---- System monitor: one hue per measure, never a status hue -------------
+   CPU, memory, disk, download, upload, connection, temperature. Status
+   colours (green/amber/red) stay for what is wrong. */
+:root {
+  --m-cpu:  #3B6FE0;
+  --m-mem:  #8A5CD6;
+  --m-disk: #1E9E8F;
+  --m-rx:   #2A9BD1;
+  --m-tx:   #C257B8;
+  --m-ping: #6E7A8A;
+  --m-temp: #D2703C;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --m-cpu:  #6E95F2;
+    --m-mem:  #AD8BEB;
+    --m-disk: #3CC2B1;
+    --m-rx:   #5BB8E6;
+    --m-tx:   #DA80D0;
+    --m-ping: #9AA5B4;
+    --m-temp: #EB9466;
+  }
+}
+:root[data-theme='dark'] {
+  --m-cpu:  #6E95F2;
+  --m-mem:  #AD8BEB;
+  --m-disk: #3CC2B1;
+  --m-rx:   #5BB8E6;
+  --m-tx:   #DA80D0;
+  --m-ping: #9AA5B4;
+  --m-temp: #EB9466;
+}
+
+/* ---- Task statistics: how a task was closed (validated for CVD, both themes) */
+:root {
+  --s-done:  #0FA088;   /* closed with #done in the chat */
+  --s-board: #6B7BFF;   /* closed on the board */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) { --s-done: #16A085; --s-board: #7A87F5; }
+}
+:root[data-theme='dark'] { --s-done: #16A085; --s-board: #7A87F5; }
+
+/* ---- The terminal's chrome: dark in both themes, like its screen -------- */
+:root {
+  --term-ground: #0E1013;
+  --term-bar:    #16191E;
+  --term-text:   #E6E8EB;
+  --term-soft:   #C9CDD3;
+  --term-muted:  #8B929C;
+}

@@ -1,0 +1,3 @@
+id,goal_text,parent_goal_id,related,time_est,confidence_pct,success_comment,created_date,agent_id,status,retro_date,retro_notes
+g_a5,Contract test suite pinning v0 SDK behavior,g_a4,sdk,2 days,70,protects v0 users during generator swap,2608-06,agent-genesis-2608-01,active,,
+g_a6,Token blacklist enforcement in refresh rotation,g_a2,security,1 day,85,closes the rotation.py TODO,2608-07,agent-genesis-2608-01,active,,

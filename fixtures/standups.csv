@@ -1,0 +1,10 @@
+id,created_date,created_time,project,agent_id,l1,goals_open_n,goals_closed_n,blockers_n,hours_today,md_ref,for_date
+st_e0c590ce,2608-02,09:15,alpha-labs,agent-genesis-2608-01,"Kickoff week — v1 API scaffolded, OAuth path chosen.",4,0,0,3.5,standup_details/260802-0915__alpha-labs__e0c590ce.md,
+st_41c8ac73,2608-04,09:20,alpha-labs,agent-genesis-2608-01,"Auth flow GREEN — JWT rotation shipped, rate-limit next.",2,2,0,5.0,standup_details/260804-0920__alpha-labs__41c8ac73.md,
+st_aa0c2bac,2608-06,10:00,alpha-labs,agent-genesis-2608-01,v1 API delivered GREEN — SDK generator research active.,1,3,1,4.5,standup_details/260806-1000__alpha-labs__aa0c2bac.md,
+st_2e00edf8,2608-03,08:45,beta-corp,agent-explorer-2608-03,Postgres migration scoped — pgloader spike started.,3,0,0,3.0,standup_details/260803-0845__beta-corp__2e00edf8.md,
+st_876b39b0,2608-05,09:00,beta-corp,agent-explorer-2608-03,Migration script tested in staging — cutover next week.,3,0,1,6.0,standup_details/260805-0900__beta-corp__876b39b0.md,
+st_db53bf7e,2608-07,08:30,beta-corp,agent-explorer-2608-03,Kafka consumer wired — analytics pipeline holding at 68% coverage.,3,0,0,4.0,standup_details/260807-0830__beta-corp__db53bf7e.md,
+st_b7da968b,2608-03,20:00,_all,,"Two-project split: alpha-labs shipping API, beta-corp migrating DB.",7,0,0,1.5,standup_details/260803-2000__all__b7da968b.md,
+st_7e03b704,2608-08,09:00,_all,,alpha-labs v1 shipped GREEN; beta-corp cutover rehearsal today.,4,3,1,2.0,standup_details/260808-0900__all__7e03b704.md,
+st_e165aaa2,2608-19,09:05,alpha-labs,agent-genesis-2608-01,Token signing settled on RS256; the rate limiter is the one thing still open.,2,1,1,4.5,standup_details/260819-0905__alpha-labs__agent-genesis-2608-01__st_e165aaa2.md,2608-18

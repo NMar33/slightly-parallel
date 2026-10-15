@@ -1,0 +1,6 @@
+id,created_date,created_time,project,agent_id,name,op,type,path,note,fields,task,decision,trigger_lens,trigger_id,md_ref
+ar_875bdef9,2608-18,18:20,alpha-labs,agent-genesis-2608-01,POST /v1/token,add,endpoint,"[""api/auth/routes.py""]",Exchanges an API key for a signed access token.,"{""method"": ""POST"", ""route"": ""/v1/token"", ""service"": ""alpha-api""}",,,scan,,
+ar_72af0bca,2608-18,18:20,alpha-labs,agent-genesis-2608-01,Tokens are RS256,add,rule,"[""api/auth/signing.py""]",The public key ships with the SDK; the private key never leaves staging.,"{""check"": ""no HS256 in the signing module or its tests""}",,,scan,,
+ar_7c3cd0d7,2608-18,18:20,alpha-labs,agent-genesis-2608-01,pyjwt,change,library,"[""requirements.txt""]",2.8 -> 2.9 for the RSA key loader.,,,,scan,,
+ar_f1232845,2608-18,18:20,alpha-labs,agent-genesis-2608-01,Rate limiter counts in memory,add,debt,"[""api/limits.py""]",Works on one process; wrong the moment staging scales out.,"{""risk"": ""two API processes each allow the full quota""}",,,scan,,
+ar_7447b422,2608-18,18:20,alpha-labs,agent-genesis-2608-01,"checked: does, owes, runs, stores, talks, built with, faces, holds",check,,,,"{""checked"": [""does"", ""owes"", ""runs"", ""stores"", ""talks"", ""built with"", ""faces"", ""holds""]}",,,scan,,

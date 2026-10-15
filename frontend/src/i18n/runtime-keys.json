@@ -1,0 +1,18 @@
+{
+  "about": "English keys the code builds at run time, so no literal t('…') shows them. Each says where it is built. The stale test (stale.test.ts) accepts these.",
+  "keys": {
+    "{n}w ago": "utils/dateUtils.ts relative time: t(`{n}${unit} ago`)",
+    "{n}y ago": "utils/dateUtils.ts relative time",
+    "in {n}m": "utils/dateUtils.ts relative time: t(`in {n}${unit}`)",
+    "in {n}h": "utils/dateUtils.ts relative time",
+    "in {n}d": "utils/dateUtils.ts relative time",
+    "in {n}w": "utils/dateUtils.ts relative time",
+    "in {n}mo": "utils/dateUtils.ts relative time",
+    "in {n}y": "utils/dateUtils.ts relative time",
+    "Narrative": "lib/entryText.ts: an entry field name made readable",
+    "Deviation": "lib/entryText.ts: an entry field name made readable",
+    "For date": "lib/entryText.ts: an entry field name made readable",
+    "main path": "features/architecture/map/MapPanel.tsx: a map note key made readable",
+    "{n} bug fixed": "features/agents/parts.tsx: a counted label built from its noun"
+  }
+}
