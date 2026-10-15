@@ -223,6 +223,27 @@ def test_the_supervisor_starts_the_run_into_the_log_without_a_window(launcher, m
         assert launcher.run_options(log)["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
+def test_a_production_start_needs_node_only_without_the_shipped_ui(launcher, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """A release ships frontend/dist: a production start with no Node serves
+    it; the hot-reload start, or a tree without the build, still asks for Node."""
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: None)
+    monkeypatch.setattr(launcher, "settings", lambda: {})
+    monkeypatch.setattr(launcher, "port_free", lambda host, port: True)
+    monkeypatch.setattr(launcher, "venv_python", lambda: Path("/nowhere/python"))
+    monkeypatch.setattr(launcher, "prebuilt_ui", lambda: True)
+    launcher.preflight(dev=False)                       # no fail: the shipped UI is served
+    assert launcher.builds_ui(dev=False) is False
+    assert launcher.builds_ui(dev=True) is True
+    with pytest.raises(SystemExit):
+        launcher.preflight(dev=True)
+    assert "Node 20+" in capsys.readouterr().err
+    monkeypatch.setattr(launcher, "prebuilt_ui", lambda: False)
+    with pytest.raises(SystemExit):
+        launcher.preflight(dev=False)
+    assert "Node 20+" in capsys.readouterr().err
+    assert launcher.builds_ui(dev=False) is True
+
+
 def test_a_port_someone_listens_on_is_busy(launcher) -> None:
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:

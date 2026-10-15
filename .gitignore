@@ -13,7 +13,6 @@ venv/
 
 # Node
 node_modules/
-dist/
 build/
 .vite/
 

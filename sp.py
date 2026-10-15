@@ -18,7 +18,9 @@ SP_DATA_ROOT (SCAN_DATA_ROOT and DATA_ROOT still read; else the shipped
 VITE_PORT (5173). State lives in .sp/ (git-ignored).
 
 Standard library only: it runs before the backend's own environment exists,
-and creates it. Requirements: Python 3.11+, Node 20+ with npm.
+and creates it. Requirements: Python 3.11+. A release ships the UI built
+(frontend/dist); Node 20+ with npm is needed only to rebuild it, and for
+the hot-reload start.
 """
 
 from __future__ import annotations
@@ -341,6 +343,33 @@ def port_free(host: str, port: int) -> bool:
     return True
 
 
+def prebuilt_ui() -> bool:
+    """The UI as a release ships it: built, under frontend/dist."""
+    return (ROOT / "frontend" / "dist" / "index.html").is_file()
+
+
+def node_major() -> tuple[str, int] | None:
+    """(the version string, its major) of the node on PATH; None without one."""
+    node = shutil.which("node")
+    if not node:
+        return None
+    try:
+        version = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
+        return version, int(version.lstrip("v").split(".")[0])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "", 99   # an odd build that answers differently is not stopped here
+
+
+def builds_ui(dev: bool) -> bool:
+    """Whether this start builds the UI: always for the hot-reload start,
+    and for a production start whenever Node 20+ and npm are on PATH; a
+    production start without them serves the build the release ships."""
+    if dev or not prebuilt_ui():
+        return True
+    got = node_major()
+    return bool(shutil.which("npm")) and got is not None and got[1] >= 20
+
+
 def preflight(dev: bool) -> None:
     """What a first start needs, checked before minutes are spent installing:
     each miss is one line that says what to do."""
@@ -356,17 +385,14 @@ def preflight(dev: bool) -> None:
         # `python -m venv` needs ensurepip to give the environment its pip.
         if not importlib.util.find_spec("ensurepip") or not importlib.util.find_spec("venv"):
             fail("Python's venv module is missing — on Debian or Ubuntu: sudo apt install python3-venv")
-    npm()
-    node = shutil.which("node")
-    if not node:
-        fail("node not found — install Node 20+ (https://nodejs.org) and open a new terminal")
-    try:
-        version = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
-        major = int(version.lstrip("v").split(".")[0])
-    except (OSError, ValueError, subprocess.SubprocessError):
-        version, major = "", 99   # an odd build that answers differently is not stopped here
-    if major < 20:
-        fail(f"Node 20+ is needed, this is {version} — install a newer Node (https://nodejs.org)")
+    if dev or not prebuilt_ui():
+        # Node builds the UI; with the release's build in place it is optional.
+        npm()
+        got = node_major()
+        if got is None:
+            fail("node not found — install Node 20+ (https://nodejs.org) and open a new terminal")
+        if got[1] < 20:
+            fail(f"Node 20+ is needed, this is {got[0]} — install a newer Node (https://nodejs.org)")
     e = settings()
     host = e.get("HOST") or "127.0.0.1"
     if host.lower() not in ("127.0.0.1", "localhost", "::1") and (e.get("SP_ALLOW_LAN") or "").lower() not in ("1", "true", "yes", "on"):
@@ -429,7 +455,7 @@ def install_backend() -> bool:
     return True
 
 
-def prepare() -> dict[str, str]:
+def prepare(ui: bool = True) -> dict[str, str]:
     """The backend's environment and the UI's packages, made once; the
     variables the backend reads, resolved."""
     install_backend()
@@ -441,7 +467,7 @@ def prepare() -> dict[str, str]:
     import hashlib
     want = hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else ""
     have = _mark_text(mark)
-    if not modules.is_dir() or (want and want != have):
+    if ui and (not modules.is_dir() or (want and want != have)):
         print("[run] installing frontend packages ...", flush=True)
         # `npm ci` installs exactly what the lockfile says and never rewrites it.
         verb = "ci" if lock.is_file() else "install"
@@ -470,11 +496,15 @@ def prepare() -> dict[str, str]:
 def cmd_run(args: list[str]) -> None:
     prod = bool(args) and args[0] in ("--prod", "prod")
     preflight(dev=not prod)
-    env = prepare()
+    build = builds_ui(dev=not prod)
+    env = prepare(ui=build)
     backend = [str(venv_python()), "-m", "backend.server"]
     if prod:
-        print("[run] building frontend ...", flush=True)
-        subprocess.run([npm(), "run", "build"], cwd=ROOT / "frontend", check=True, env=env)
+        if build:
+            print("[run] building frontend ...", flush=True)
+            subprocess.run([npm(), "run", "build"], cwd=ROOT / "frontend", check=True, env=env)
+        else:
+            print("[run] UI: the build shipped in frontend/dist (install Node 20+ to rebuild it)", flush=True)
         print(f"[run] launching Slightly Parallel on http://{env['HOST']}:{env['PORT']}", flush=True)
         procs = [spawn(backend, cwd=ROOT / "backend", env=env)]
     else:

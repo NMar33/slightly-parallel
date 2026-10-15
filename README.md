@@ -22,7 +22,7 @@ The next day, the first agent that works on a project writes yesterday's standup
 
 ## Install
 
-You need Python 3.11+, Node 20+ and git.
+You need Python 3.11+ and git. The UI comes built; Node 20+ is needed only to work on the UI's code.
 
 ```bash
 git clone https://github.com/nmar33/slightly-parallel.git
@@ -30,7 +30,7 @@ cd slightly-parallel
 ./run.sh --prod       # http://127.0.0.1:8123
 ```
 
-The first start builds the UI and takes a minute or two. It makes the data folder `~/.slightly-parallel` and fills it with an example project, a month of work on a small online store, so every page has something on it. Both films are shot on it. Hide it from the sidebar when you no longer need it.
+The first start installs the backend's packages and takes a minute. It makes the data folder `~/.slightly-parallel` and fills it with an example project, a month of work on a small online store, so every page has something on it. Both films are shot on it. Hide it from the sidebar when you no longer need it.
 
 Then, on the **Setup** page in the app:
 

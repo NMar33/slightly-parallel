@@ -69,7 +69,7 @@ def readme(space: Space, report: Report) -> None:
     report.add(s, f"every setting it names is read by the code ({len(variables)})", not unread, ", ".join(unread))
 
     report.add(s, "it says what you need before the first command", bool(re.search(r"Python 3\.11\+", text)) and bool(re.search(r"Node 20\+", text))
-               and text.index("Python 3.11+") < text.index("git clone"), "Python 3.11+ and Node 20+ are not named before `git clone`")
+               and text.index("Python 3.11+") < text.index("git clone"), "Python 3.11+ is not named before `git clone`, or Node 20+ nowhere")
     report.add(s, "the launcher asks for the same versions", "Python 3.11+" in launcher and "Node 20+" in launcher)
 
 
@@ -551,8 +551,17 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
     if running_port:
         report.add(s, "a start on a port in use says so, with the way out", *plain(*launcher({}, "--prod"), "already in use", "SP_PORT"))
     other = str(free_port())
-    report.add(s, "a start with no Node says to install it",
-               *plain(*launcher({"PATH": path_without(space, "node", "npm", "npx", "corepack"), "SP_PORT": other}, "--prod"), "not found", "Node"))
+    no_node = {"PATH": path_without(space, "node", "npm", "npx", "corepack"), "SP_PORT": other, "PORT": other}
+    if (space.clone / "frontend" / "dist" / "index.html").is_file():
+        # A release ships the UI built: a start with no Node serves it.
+        log = open(space.root / "server-no-node.log", "w", encoding="utf-8")
+        proc = subprocess.Popen(["./run.sh", "--prod"], cwd=space.clone, env={**env, **no_node}, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        up = wait_for(Space(space.root, int(other)), "/api/health", 60, alive=lambda: proc.poll() is None)
+        stop(proc)
+        out = (space.root / "server-no-node.log").read_text(encoding="utf-8", errors="replace")
+        report.add(s, "a start with no Node serves the UI the release ships", up and "frontend/dist" in out, out[-400:])
+    else:
+        report.add(s, "a start with no Node says to install it", *plain(*launcher(no_node, "--prod"), "not found", "Node"))
 
     # A second server of the same clone, on a machine with no tmux, with a
     # data folder and a project whose names have spaces and non-Latin letters.
