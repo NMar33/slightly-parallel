@@ -26,8 +26,11 @@ def test_writes_fire_and_reads_never_reach_the_handler(tmp_path, monkeypatch):
     seen: list[str] = []
     real = DebouncedHandler.on_any_event
 
+    t0 = time.monotonic()
+
     def counting(self, event):
-        seen.append(event.event_type)
+        # What arrived, on what, and when: a failure here names the event.
+        seen.append(f"{event.event_type} {'dir' if event.is_directory else 'file'} {os.path.basename(event.src_path)} +{time.monotonic() - t0:.2f}s")
         return real(self, event)
 
     monkeypatch.setattr(DebouncedHandler, "on_any_event", counting)

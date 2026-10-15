@@ -127,6 +127,8 @@ jobs:
       - name: The supervisor's log (on failure)
         if: failure()
         shell: python
+        env:
+          PYTHONIOENCODING: utf-8   # the Windows console is cp1252; the log is utf-8
         run: |
           from pathlib import Path
           log = Path(".sp/server.log")
@@ -181,6 +183,8 @@ jobs:
       - name: The failed checks, with their detail (on failure)
         if: failure()
         shell: python
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           import json
           from pathlib import Path
