@@ -440,6 +440,7 @@ def test_built_in_skills_go_into_all_projects_once(client: TestClient, tmp_path,
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Windows reads this one
     store = client.app.state.store
     skilllib.seed_builtin_skills(store)
     store.rebuild()

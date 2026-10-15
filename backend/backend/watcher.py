@@ -103,8 +103,31 @@ class DebouncedHandler(FileSystemEventHandler):
     # with the server at full CPU and nobody asking it anything.
     CHANGES = frozenset({"created", "modified", "deleted", "moved"})
 
+    # Windows reports a read as "modified" too (the last-access time
+    # changed), and a request reads the files this watches: the same loop
+    # as above, once per request. A modified event that left the size and
+    # the write time as they were is a read.
+    _stamps: dict[str, tuple[int, int]] | None = None
+
+    def _changed(self, path: str) -> bool:
+        if os.name != "nt":
+            return True
+        try:
+            st = os.stat(path)
+        except OSError:
+            return True
+        stamp = (st.st_mtime_ns, st.st_size)
+        if self._stamps is None or len(self._stamps) > 4096:
+            self._stamps = {}
+        if self._stamps.get(path) == stamp:
+            return False
+        self._stamps[path] = stamp
+        return True
+
     def on_any_event(self, event: FileSystemEvent) -> None:  # type: ignore[override]
         if event.event_type not in self.CHANGES:
+            return
+        if event.event_type == "modified" and not self._changed(event.src_path):
             return
         if event.is_directory:
             # Directory events are useful (new project folder) — pass them,

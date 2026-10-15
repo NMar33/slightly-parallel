@@ -18,6 +18,8 @@ _HOOK = Path(__file__).resolve().parents[2] / "scripts" / "hooks" / "claude-code
 
 
 def test_ancestors_without_proc_call_ps_once_and_walk_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.name == "nt":
+        pytest.skip("Windows reads the process table from the kernel, not from ps")
     calls: list[list[str]] = []
     me = os.getpid()
     table = f"  1     0\n {me}  500\n  500   400\n  400   300\n  300     1\n  999   500\n"

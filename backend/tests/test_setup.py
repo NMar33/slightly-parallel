@@ -46,7 +46,7 @@ def test_integrate_creates_agents_and_bridge(env) -> None:
     claude = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert BRIDGE_LINE in claude
 
-    actions = {r["file"].split("/")[-1]: r["action"] for r in out["results"]}
+    actions = {Path(r["file"]).name: r["action"] for r in out["results"]}
     assert actions == {
         "AGENTS.md": "created",
         "CLAUDE.md": "created",
@@ -171,12 +171,12 @@ def test_integrate_writes_opencode_plugin(env) -> None:
     text = plugin.read_text(encoding="utf-8")
     assert 'project: "my-app"' in text
     assert "capture-cli.py" in text
-    actions = {r["file"].split("/")[-1]: r["action"] for r in out["results"]}
+    actions = {Path(r["file"]).name: r["action"] for r in out["results"]}
     assert actions["slightly-parallel.js"] == "created"
 
     # Re-integrating is idempotent.
     out2 = _integrate(client, project_dir, write_opencode_plugin=True)
-    actions2 = {r["file"].split("/")[-1]: r["action"] for r in out2["results"]}
+    actions2 = {Path(r["file"]).name: r["action"] for r in out2["results"]}
     assert actions2["slightly-parallel.js"] == "unchanged"
 
 
@@ -368,10 +368,10 @@ def test_integrate_writes_codex_hooks(env) -> None:
     for event in ("UserPromptSubmit", "Stop"):
         cmds = [h["command"] for e in data["hooks"][event] for h in e["hooks"]]
         assert len(cmds) == 1 and "claude-code-capture.py" in cmds[0] and "--tool codex" in cmds[0]
-    actions = {r["file"].split("/")[-1]: r["action"] for r in out["results"]}
+    actions = {Path(r["file"]).name: r["action"] for r in out["results"]}
     assert actions["hooks.json"] == "created"
     out2 = _integrate(client, project_dir, write_codex_hooks=True)
-    actions2 = {r["file"].split("/")[-1]: r["action"] for r in out2["results"]}
+    actions2 = {Path(r["file"]).name: r["action"] for r in out2["results"]}
     assert actions2["hooks.json"] == "unchanged"
 
 
@@ -439,7 +439,8 @@ def test_setup_info_flags_a_hook_whose_script_no_longer_exists(env, tmp_path: Pa
     from backend.routers import setup
     old = str(setup._CAPTURE_SCRIPT)
     moved = str(tmp_path / "old-place" / "claude-code-capture.py")
-    settings.write_text(settings.read_text(encoding="utf-8").replace(old, moved), encoding="utf-8")
+    # The file is JSON: the path stands in it escaped (a Windows path doubles its backslashes).
+    settings.write_text(settings.read_text(encoding="utf-8").replace(json.dumps(old)[1:-1], json.dumps(moved)[1:-1]), encoding="utf-8")
     row = client.get("/api/setup/info").json()["integrations"][0]
     assert row["hooks"] is True
     assert row["hooks_missing_script"] == [moved]

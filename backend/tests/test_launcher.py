@@ -218,7 +218,7 @@ def test_the_supervisor_starts_the_run_into_the_log_without_a_window(launcher, m
     with open(tmp_path / "server.log", "ab") as log:
         kw = launcher.run_options(log)
         assert kw["stdout"] is log and kw["stderr"] is subprocess.STDOUT and kw["stdin"] is subprocess.DEVNULL
-        assert "creationflags" not in kw
+        assert ("creationflags" in kw) is launcher.WINDOWS   # Windows: no console window; elsewhere nothing
         monkeypatch.setattr(launcher, "WINDOWS", True)
         assert launcher.run_options(log)["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
@@ -300,7 +300,10 @@ def test_preflight_refuses_a_python_without_the_tar_safety_filter(launcher, monk
 
 
 def test_sp_sh_prefers_a_named_newer_python(tmp_path: Path) -> None:
+    import os
     import shutil
+    if os.name == "nt":
+        pytest.skip("sp.sh is the POSIX launcher; Windows has sp.py")
     import subprocess
     root = Path(__file__).resolve().parents[2]
     bin_ = tmp_path / "bin"

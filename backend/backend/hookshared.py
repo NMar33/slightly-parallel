@@ -227,15 +227,52 @@ def _ps_parents() -> dict[int, int]:
     return table
 
 
+def _win_parents() -> dict[int, int]:
+    """Every process's parent on Windows, from the kernel's own snapshot
+    (Toolhelp32): no ps there, and a shell command per prompt is slow."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_char * 260)]
+
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    except (OSError, AttributeError):
+        return {}
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32First.argtypes = k32.Process32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return {}
+    table: dict[int, int] = {}
+    try:
+        e = Entry()
+        e.dwSize = ctypes.sizeof(Entry)
+        ok = k32.Process32First(snap, ctypes.byref(e))
+        while ok:
+            table[int(e.th32ProcessID)] = int(e.th32ParentProcessID)
+            ok = k32.Process32Next(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    return table
+
+
 def ancestors(limit: int = 12) -> list[int]:
     """This process's parents, nearest first. The tool that runs a chat is a
     parent of both its capture hook and its MCP server, so the two can
-    recognise each other by it. Empty where it cannot be read (Windows).
-    Linux reads /proc; elsewhere one ``ps`` call lists every process and
-    the walk happens in memory (this runs on every prompt and MCP write)."""
+    recognise each other by it. Linux reads /proc; Windows the kernel's
+    process snapshot; elsewhere one ``ps`` call lists every process. The
+    walk happens in memory (this runs on every prompt and MCP write)."""
     if os.name == "nt":
-        return []
-    if os.path.isdir(f"/proc/{os.getpid()}"):
+        table = _win_parents()
+        parent_of = lambda pid: table.get(pid, 0)  # noqa: E731
+    elif os.path.isdir(f"/proc/{os.getpid()}"):
         parent_of = _proc_parent
     else:
         table = _ps_parents()

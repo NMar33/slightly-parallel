@@ -92,7 +92,7 @@ def test_request_builds_the_prompt_and_keeps_it(client: TestClient, root: Path):
     for piece in ("FOCUS\nthe rail", "WHAT TO DO", "1.1 What was built", "STYLE EXAMPLES\nWrite like Slack",
                   "MCP tool task_story", req["id"], "(image:1)"):
         assert piece in prompt, piece
-    assert (root / "task_story" / tid / f"{req['id']}.prompt.md").read_text() == prompt
+    assert (root / "task_story" / tid / f"{req['id']}.prompt.md").read_text(encoding="utf-8") == prompt
     assert client.get(f"/api/story/requests/{req['id']}/prompt").text == prompt
     listed = client.get(f"/api/tasks/{tid}/story-requests").json()
     assert listed["total"] == 1 and listed["requests"][0]["id"] == req["id"]

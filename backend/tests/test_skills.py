@@ -343,6 +343,7 @@ def test_all_projects_installs_into_the_home_folders(client, tmp_path, monkeypat
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Windows reads this one
     kid = _new(client)
     dests = [home / ".claude" / "skills" / "cut-a-release", home / ".agents" / "skills" / "cut-a-release"]
 
@@ -364,6 +365,7 @@ def test_skills_already_on_disk_are_found_and_taken_in(client, tmp_path, monkeyp
     folder = _project(root, tmp_path)
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Windows reads this one
     hand = """---
 name: hand-made
 description: A skill written by hand. Use when the operator asks for the old checklist.

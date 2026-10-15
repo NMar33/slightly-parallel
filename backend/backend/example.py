@@ -169,6 +169,25 @@ def replay(app: Any) -> str:
         st["building"] = False
 
 
+def _rmtree(path: Path | str) -> None:
+    """Remove a tree with a git repository in it. Git keeps its objects
+    read-only, and Windows refuses to delete a read-only file: make it
+    writable and try once more. Errors beyond that are let go."""
+    import stat
+
+    def writable_then(fn: Any, p: str, _exc: Any) -> None:
+        try:
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            fn(p)
+        except OSError:
+            pass
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=writable_then)
+    else:
+        shutil.rmtree(path, onerror=writable_then)
+
+
 def remove(app: Any) -> dict[str, Any]:
     """Everything the example owns goes: its rows and files (archived by
     the server's own delete, then the archive dropped — the example is
@@ -182,7 +201,7 @@ def remove(app: Any) -> dict[str, Any]:
     out: dict[str, Any] = {"removed": False}
     if any(p.get("code") == CODE for p in known_projects(store)) or present(root):
         moved = delete_project_data(store, CODE)
-        shutil.rmtree(moved["trash"], ignore_errors=True)
+        _rmtree(moved["trash"])
         try:
             Path(moved["trash"]).parent.rmdir()  # .trash, when nothing else is in it
         except OSError:
@@ -204,7 +223,7 @@ def remove(app: Any) -> dict[str, Any]:
             atomic_write(modes, json.dumps(got, indent=1, sort_keys=True))
     except (OSError, ValueError):
         pass
-    shutil.rmtree(root / REPO_DIR / CODE, ignore_errors=True)
+    _rmtree(root / REPO_DIR / CODE)
     try:
         (root / REPO_DIR).rmdir()
     except OSError:

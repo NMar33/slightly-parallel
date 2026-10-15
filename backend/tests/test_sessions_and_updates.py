@@ -88,7 +88,8 @@ def test_turn_parsing_and_gap_grouping() -> None:
 def parse_turns_from_text():
     import tempfile
 
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
+    # newline="\n": the hook writes "\n" and nothing else; Windows would write "\r\n" here.
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8", newline="\n") as fh:
         fh.write(CHAT)
         path = Path(fh.name)
     try:

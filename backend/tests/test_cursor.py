@@ -28,7 +28,8 @@ _AGENT = "cursor-7f3c2a1e"
 
 def _event(name: str, project_dir: Path, **changes) -> dict:
     text = (_FIXTURES / f"{name}.json").read_text(encoding="utf-8")
-    text = text.replace("__PROJECT__", str(project_dir)).replace("__HOME__", str(project_dir.parent))
+    # The paths go in as JSON text: a Windows path holds backslashes.
+    text = text.replace("__PROJECT__", json.dumps(str(project_dir))[1:-1]).replace("__HOME__", json.dumps(str(project_dir.parent))[1:-1])
     event = json.loads(text)
     event.update(changes)
     return event
@@ -206,7 +207,7 @@ def _integrate(client: TestClient, project_dir: Path, **overrides) -> dict:
 
 
 def _actions(out: dict) -> dict[str, str]:
-    return {r["file"].split("/")[-2] + "/" + r["file"].split("/")[-1]: r["action"] for r in out["results"]}
+    return {"/".join(Path(r["file"]).parts[-2:]): r["action"] for r in out["results"]}
 
 
 def test_integrate_writes_cursor_hooks_once(env) -> None:
@@ -327,7 +328,8 @@ def test_setup_info_reports_the_cursor_adapter_like_the_others(env, tmp_path: Pa
     assert client.get("/api/setup/info").json()["integrations"][0]["hooks_missing_script"] == []
     hooks = project_dir / ".cursor" / "hooks.json"
     moved = str(tmp_path / "old-place" / "cursor-capture.py")
-    hooks.write_text(hooks.read_text(encoding="utf-8").replace(str(setup_router._CURSOR_SCRIPT), moved), encoding="utf-8")
+    # The file is JSON: the path stands in it escaped (a Windows path doubles its backslashes).
+    hooks.write_text(hooks.read_text(encoding="utf-8").replace(json.dumps(str(setup_router._CURSOR_SCRIPT))[1:-1], json.dumps(moved)[1:-1]), encoding="utf-8")
     assert client.get("/api/setup/info").json()["integrations"][0]["hooks_missing_script"] == [moved]
 
 

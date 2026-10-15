@@ -100,7 +100,8 @@ def test_the_hook_and_the_server_mint_the_same_id(client: TestClient):
 def test_write_refuses_what_it_cannot_record(client: TestClient):
     aid = _kept(client)
     r = _write(client, aid)
-    assert r.status_code == 422 and "does not exist yet" in r.text and "ALPHA/artifacts/corrections" in r.text
+    assert r.status_code == 422 and "does not exist yet" in r.text
+    assert str(Path("ALPHA/artifacts/corrections")) in r.json()["detail"]   # the system's own separators
     _folder(client, "corrections", {"ARTIFACT.md": "just a manifest"})
     r = _write(client, aid)
     assert r.status_code == 422 and "holds nothing beside ARTIFACT.md" in r.text

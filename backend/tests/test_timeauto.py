@@ -36,6 +36,10 @@ class Clock:
 
 @pytest.fixture()
 def env(tmp_path: Path):
+    # T0 is now, per test: an entry started below takes the real clock, and
+    # a slow runner can take minutes from collecting the module to running it.
+    global T0
+    T0 = datetime.now().replace(microsecond=0).timestamp() - 1   # a second before any entry starts
     root = tmp_path / "data"
     (root / "projects" / "alpha").mkdir(parents=True)
     app = create_app(data_root=root, watch=False)

@@ -8,6 +8,7 @@ not known to be a backup.
 
 from __future__ import annotations
 
+import os
 import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -290,6 +291,8 @@ def test_a_file_rewritten_while_it_is_archived_leaves_a_whole_archive(roots, mon
     """An atomic write that lands between the header and the copy used to
     end the copy early, leave half a member in the stream and make every
     member after it unreadable."""
+    if os.name == "nt":
+        pytest.skip("Windows refuses to replace a file the archiver holds open; the writer waits instead (replace_file)")
     data, dest = roots
     (data / "zz_after.csv").write_text("id\nlast\n", encoding="utf-8")
     target = data / "tasks.csv"

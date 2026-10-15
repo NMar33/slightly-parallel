@@ -791,6 +791,7 @@ def test_a_new_install_keeps_its_data_outside_the_clone(tmp_path, monkeypatch) -
     from backend import db
     from backend.config import Settings
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows reads this one
     for name in ("SP_DATA_ROOT", "SCAN_DATA_ROOT", "DATA_ROOT"):
         monkeypatch.delenv(name, raising=False)
     root = Settings.from_env().data_root
@@ -804,5 +805,6 @@ def test_a_new_install_keeps_its_data_outside_the_clone(tmp_path, monkeypatch) -
     empty = tmp_path / "empty"
     empty.mkdir()
     monkeypatch.setenv("HOME", str(tmp_path / "other"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "other"))  # Windows reads this one
     monkeypatch.setenv("SP_DATA_ROOT", str(empty))
     assert Settings.from_env().data_root == empty and not any(empty.iterdir())

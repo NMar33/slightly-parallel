@@ -171,7 +171,7 @@ def test_the_pictures_show_a_readers_paths_not_this_computers() -> None:
     world = Path("/tmp/slightly-parallel-tour-world-8123/work")
     repo = home / "src" / "slightly-parallel"
     mask = capture_mask(world, repo, home)
-    assert {m["from"]: m["to"] for m in mask} == {
+    expected = {
         "/tmp/slightly-parallel-tour-world-8123/work/example/shopfront": "~/code/shopfront",
         "/tmp/slightly-parallel-tour-world-8123/clean/example/shopfront": "~/code/shopfront",
         "/tmp/slightly-parallel-tour-world-8123/work": "~/.slightly-parallel",
@@ -181,6 +181,8 @@ def test_the_pictures_show_a_readers_paths_not_this_computers() -> None:
         # The short form narrow cards print: "ran in example/shopfront".
         "example/shopfront": "code/shopfront",
     }
+    # The full paths are the system's own (backslashes on Windows); the short form is not a path.
+    assert {m["from"]: m["to"] for m in mask} == {(str(Path(k)) if k.startswith("/") else k): v for k, v in expected.items()}
     lengths = [len(m["from"]) for m in mask]
     assert lengths == sorted(lengths, reverse=True)
     # A home of "/" would rewrite every slash on the page.

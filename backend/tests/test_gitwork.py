@@ -123,7 +123,7 @@ def test_session_work_from_the_chats_own_cwd(tmp_path):
     _commit(repo, "2026-09-01T10:03:00", "first thing", {"a.py": "1\n2\n"})
     chat_dir = tmp_path / "chats" / "cc-1"
     chat_dir.mkdir(parents=True)
-    (chat_dir / "meta.json").write_text('{"cwd": "%s"}' % repo, encoding="utf-8")
+    (chat_dir / "meta.json").write_text(json.dumps({"cwd": str(repo)}), encoding="utf-8")
     chat = chat_dir / "chat.md"
     chat.write_text("# x\n", encoding="utf-8")
 
@@ -141,7 +141,7 @@ def test_no_repo_no_work(tmp_path):
     gitwork.forget()
     chat_dir = tmp_path / "chats" / "cc-2"
     chat_dir.mkdir(parents=True)
-    (chat_dir / "meta.json").write_text('{"cwd": "%s"}' % (tmp_path / "nowhere"), encoding="utf-8")
+    (chat_dir / "meta.json").write_text(json.dumps({"cwd": str(tmp_path / "nowhere")}), encoding="utf-8")
     chat = chat_dir / "chat.md"
     chat.write_text("# x\n", encoding="utf-8")
     work, total = gitwork.session_work(chat, "2609-01", "10:20", [{"n": 1, "at": "10:00"}])
@@ -194,7 +194,7 @@ def test_a_stamped_turn_is_exact_and_an_unstamped_one_falls_back_to_the_clock(tm
 
     chat_dir = tmp_path / "chats" / "cc-1"
     chat_dir.mkdir(parents=True)
-    (chat_dir / "meta.json").write_text('{"cwd": "%s"}' % repo, encoding="utf-8")
+    (chat_dir / "meta.json").write_text(json.dumps({"cwd": str(repo)}), encoding="utf-8")
     chat = chat_dir / "chat.md"
     chat.write_text("# x\n", encoding="utf-8")
     # Only turn 2 was stamped; it claims the second commit and carries an edit.
@@ -248,7 +248,7 @@ def test_a_commit_made_after_the_stamp_still_belongs_to_its_turn(tmp_path):
 
     chat_dir = tmp_path / "chats" / "cc-late"
     chat_dir.mkdir(parents=True)
-    (chat_dir / "meta.json").write_text('{"cwd": "%s"}' % repo, encoding="utf-8")
+    (chat_dir / "meta.json").write_text(json.dumps({"cwd": str(repo)}), encoding="utf-8")
     chat = chat_dir / "chat.md"
     chat.write_text("# x\n", encoding="utf-8")
     # The hook stamped turn 1 knowing only the commit that existed then.

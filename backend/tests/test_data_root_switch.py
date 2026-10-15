@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -143,7 +144,8 @@ def test_switch_accepts_a_windows_path_with_backslashes(roots: dict[str, Path], 
     the launcher reads it back unchanged."""
     import importlib.util
 
-    win = tmp_path / "C:\\Users\\n\\sp-data"     # one folder name on POSIX, a real path's shape
+    # One folder name with a real path's shape on POSIX; on Windows every path already holds backslashes.
+    win = tmp_path / ("sp-data" if os.name == "nt" else "C:\\Users\\n\\sp-data")
     win.mkdir()
     app = create_app(data_root=roots["old"], watch=False)
     with TestClient(app) as client:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import shlex
 import subprocess
+import os
 from pathlib import Path
 
 import pytest
@@ -268,7 +269,11 @@ def test_a_socket_from_another_sites_page_is_refused_before_any_route(client: Te
     with pytest.raises(WebSocketDisconnect) as e:
         with client.websocket_connect("/ws/terminal/t1?token=x", headers={"Origin": "http://127.0.0.1:5173"}) as ws:
             ws.receive_bytes()
-    assert e.value.code != 4403
+    if os.name == "nt":
+        # The route itself answers, with its own 4403: the terminal needs macOS or Linux.
+        assert e.value.reason == "the terminal needs macOS or Linux"
+    else:
+        assert e.value.code != 4403
 
 
 def test_the_page_is_never_drawn_in_another_sites_frame(tmp_path: Path, monkeypatch) -> None:
