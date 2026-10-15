@@ -6,7 +6,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { leadFor } from './Bookends'
+import { leadFor } from './BookendPicker'
 import { ASPECTS } from './scene'
 import { YARD_SECONDS, drawYard } from './yard'
 

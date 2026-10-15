@@ -6,7 +6,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 
-import { BookendPicker, endingAt, openingAt } from './Bookends'
+import { BookendPicker, endingAt, openingAt } from './BookendPicker'
 import { ENDINGS, OPENINGS, PRESETS, type Script } from './script'
 import type { Look } from './media'
 
