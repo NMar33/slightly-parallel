@@ -19,6 +19,14 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
+if os.name == "nt":
+    # Windows reports a read as a change too (the last-access time moved),
+    # and a request reads the files this watches: the loop described at
+    # DebouncedHandler.CHANGES, once per request. The observer is asked
+    # for everything but that.
+    from watchdog.observers import winapi
+    winapi.WATCHDOG_FILE_NOTIFY_FLAGS &= ~winapi.FILE_NOTIFY_CHANGE_LAST_ACCESS
+
 log = logging.getLogger("sp.watcher")
 
 
@@ -103,35 +111,8 @@ class DebouncedHandler(FileSystemEventHandler):
     # with the server at full CPU and nobody asking it anything.
     CHANGES = frozenset({"created", "modified", "deleted", "moved"})
 
-    # Windows reports a read as "modified" too (the last-access time
-    # changed), and a request reads the files this watches: the same loop
-    # as above, once per request. A modified event that left the size and
-    # the write time as they were is a read.
-    _stamps: dict[str, tuple[int, int]] | None = None
-
-    def _changed(self, path: str) -> bool:
-        if os.name != "nt":
-            return True
-        try:
-            st = os.stat(path)
-        except OSError:
-            return True
-        stamp = (st.st_mtime_ns, st.st_size)
-        if self._stamps is None or len(self._stamps) > 4096:
-            self._stamps = {}
-        known = self._stamps.get(path)
-        self._stamps[path] = stamp
-        if known is not None:
-            return known != stamp
-        # First sight of this path: a write leaves a fresh write time; a
-        # file last written seconds ago or longer was only read.
-        import time
-        return time.time() - st.st_mtime < 2.0
-
     def on_any_event(self, event: FileSystemEvent) -> None:  # type: ignore[override]
         if event.event_type not in self.CHANGES:
-            return
-        if event.event_type == "modified" and not self._changed(event.src_path):
             return
         if event.is_directory:
             # Directory events are useful (new project folder) — pass them,

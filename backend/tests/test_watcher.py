@@ -36,8 +36,7 @@ def test_writes_fire_and_reads_never_reach_the_handler(tmp_path, monkeypatch):
     w.start()
     try:
         # macOS delivers the file's creation above late, after the start: let it land, then count from here.
-        # Windows reports a read as modified; the watcher tells a read by the write time, which must be old.
-        time.sleep({"darwin": 1.0, "win32": 3.0}.get(sys.platform, 0.2))
+        time.sleep(1.0 if sys.platform == "darwin" else 0.2)
         seen.clear()
         for _ in range(20):                      # what a request does
             f.read_text(encoding="utf-8")
