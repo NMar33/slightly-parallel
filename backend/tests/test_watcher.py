@@ -35,8 +35,8 @@ def test_writes_fire_and_reads_never_reach_the_handler(tmp_path, monkeypatch):
     w = Watcher(tmp_path, on_change=fired.set, delay_ms=50)
     w.start()
     try:
-        # macOS delivers the file's creation above late, after the start: let it land, then count from here.
-        time.sleep(1.0 if sys.platform == "darwin" else 0.2)
+        # macOS and Windows deliver the file's creation above late, after the start: let it land, then count from here.
+        time.sleep(1.0 if sys.platform in ("darwin", "win32") else 0.2)
         seen.clear()
         for _ in range(20):                      # what a request does
             f.read_text(encoding="utf-8")
