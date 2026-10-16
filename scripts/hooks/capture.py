@@ -27,10 +27,10 @@ import os
 import subprocess
 import re
 import tempfile
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-
 from pathlib import Path
 
 try:
@@ -41,6 +41,15 @@ try:
     import msvcrt  # Windows: the same advisory lock, on the first byte
 except ImportError:  # pragma: no cover
     msvcrt = None  # type: ignore[assignment]
+
+# The tools send and read UTF-8 (JSON on stdin and stdout). Windows would
+# use its own code page here: a Cyrillic prompt was stored garbled and the
+# "·" in a notice broke the reader. Every hook imports this module first.
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
 
 
 def record_failure(data_root: str | Path, project: str, agent: str, tool: str, error: str) -> None:

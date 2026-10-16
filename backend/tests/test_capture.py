@@ -807,3 +807,22 @@ def test_the_codex_hook_hands_its_notices_as_json_context(tmp_path: Path) -> Non
     assert out.returncode == 0, out.stderr
     said = json.loads(out.stdout)["hookSpecificOutput"]
     assert said["hookEventName"] == "UserPromptSubmit" and "codex-87fdf7fa" in said["additionalContext"]
+
+
+
+def test_a_hook_reads_and_writes_utf8_whatever_the_system_code_page(tmp_path: Path) -> None:
+    """Windows gives a hook its code page on stdin and stdout: a Cyrillic
+    prompt was stored garbled and the notice's "·" broke the tool's reader."""
+    import os, subprocess, sys
+    root = tmp_path / "data"
+    (root / "projects" / "alpha").mkdir(parents=True)
+    hook = Path(__file__).resolve().parents[2] / "scripts" / "hooks" / "claude-code-capture.py"
+    event = {"hook_event_name": "UserPromptSubmit", "session_id": "5a5a5a5a-0000-4000-8000-000000000001",
+             "cwd": str(tmp_path), "prompt": "Проверка: прочитай заметки"}
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+    out = subprocess.run([sys.executable, str(hook), "--data-root", str(root), "--project", "alpha"],
+                         input=json.dumps(event, ensure_ascii=False).encode("utf-8"), capture_output=True, env=env, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert "·" in out.stdout.decode("utf-8")
+    chat = (root / "projects" / "alpha" / "chats" / "cc-5a5a5a5a" / "chat.md").read_text(encoding="utf-8")
+    assert "Проверка: прочитай заметки" in chat

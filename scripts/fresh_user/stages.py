@@ -45,7 +45,7 @@ def venv_python(clone: Path) -> Path:
 
 
 def sh(args: list[str], cwd: Path, env: dict[str, str] | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 # ------------------------------------------------------------------ the README
@@ -272,7 +272,7 @@ def fire_hook(space: Space, event: dict, days_ago: int = 0, folder: Path | None 
         env["PYTHONPATH"] = str(Path(__file__).resolve().parent / "shifted")
         env["FRESH_SHIFT_SECONDS"] = str(-86400 * days_ago)
     return subprocess.run(hook_command(space, folder), shell=True, cwd=folder or space.sample, env=env,
-                          input=json.dumps(event), capture_output=True, text=True, timeout=60)
+                          input=json.dumps(event), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
 
 YESTERDAY_SESSION = "0a1b2c3d-0000-4000-8000-000000000002"
@@ -301,7 +301,7 @@ def mcp_call(space: Space, messages: list[dict]) -> list[dict]:
     env = {**space.env(), **entry.get("env", {})}
     text = "".join(json.dumps(m) + "\n" for m in messages)
     p = subprocess.run([entry["command"], *entry["args"]], cwd=space.sample, env=env, input=text,
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     out = [json.loads(line) for line in p.stdout.splitlines() if line.strip().startswith("{")]
     if not out and p.stderr:
         raise RuntimeError(p.stderr.strip()[-400:])
@@ -680,7 +680,7 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
                         "lens": "decision", "fields": {"decision": "Заметки остаются в одном файле.", "why": "Проверка записи.", "weight": "minor"}}}},
                 ])
                 p = subprocess.run([entry["command"], *entry["args"]], cwd=odd_project, env={**env, **entry.get("env", {})}, input=text,
-                                   capture_output=True, text=True, timeout=60)
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
                 wrote = '"isError": false' in p.stdout or '"isError":false' in p.stdout
                 detail = (p.stdout + p.stderr)[-300:]
             except Exception as exc:
