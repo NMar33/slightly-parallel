@@ -56,7 +56,7 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
           PYTHONUTF8: "1"
-        run: python scripts/fresh_user/run.py --no-agent --stages install,pages,setup,wiring,failures,disconnect,restart,background
+        run: python scripts/fresh_user/run.py --no-agent --no-agent
       - name: The failed checks, with their detail (on failure)
         if: failure()
         shell: python
