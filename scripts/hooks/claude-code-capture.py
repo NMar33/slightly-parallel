@@ -47,7 +47,7 @@ _PREFIX = {"claude-code": "cc", "codex": "codex"}
 
 
 def agent_name(session_id: str, tool: str = "claude-code") -> str:
-    return f"{_PREFIX.get(tool, 'cc')}-{(session_id or 'unknown')[:8]}"
+    return f"{_PREFIX.get(tool, 'cc')}-{shared.session_key(tool, session_id)}"
 
 
 # Harness-generated payloads (background-task notifications, command echo, a

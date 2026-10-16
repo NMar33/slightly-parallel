@@ -296,3 +296,13 @@ def load_beside(name: str) -> Any:
     mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
+
+
+def session_key(tool: str, session: str) -> str:
+    """The 8 characters of a session id that name its agent. Codex's ids are
+    UUIDv7: their first characters are the time, about a minute a step, so
+    two sessions started in one minute shared them and became one agent;
+    for Codex the last 8, the random part. Claude Code's and Cursor's ids are
+    random throughout and keep their first 8, as before."""
+    s = session or "unknown"
+    return s.replace("-", "")[-8:] if tool == "codex" else s[:8]

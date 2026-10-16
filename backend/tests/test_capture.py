@@ -437,11 +437,11 @@ def test_codex_notify_reads_the_real_field_names_and_keys_the_agent_by_thread(ro
             "cwd": str(proj), "input-messages": [q], "last-assistant-message": a,
         })
     chats = sorted(p.name for p in (root / "projects/my-app/chats").iterdir())
-    assert chats == ["codex-thread-a"]  # one agent per thread, not per turn
-    chat = (root / "projects/my-app/chats/codex-thread-a/chat.md").read_text(encoding="utf-8")
+    assert chats == ["codex-abcdef12"]  # one agent per thread, named by the end of its id
+    chat = (root / "projects/my-app/chats/codex-abcdef12/chat.md").read_text(encoding="utf-8")
     assert "**User**: first?\n**Agent**: first." in chat
     assert "**User**: second?\n**Agent**: second." in chat
-    meta = json.loads((root / "projects/my-app/chats/codex-thread-a/meta.json").read_text(encoding="utf-8"))
+    meta = json.loads((root / "projects/my-app/chats/codex-abcdef12/meta.json").read_text(encoding="utf-8"))
     assert meta["tool"] == "codex" and meta["session_ref"] == "thread-abcdef12"
 
 
@@ -461,13 +461,13 @@ def test_hooks_adapter_serves_codex_with_its_own_prefix_and_no_stdout(root: Path
     assert out == ""  # Codex reads stdout as control JSON, so nothing is printed
     run({"hook_event_name": "Stop", "session_id": "0195c0de-1234", "transcript_path": None,
          "last_assistant_message": "Done."})
-    folder = root / "projects/alpha/chats/codex-0195c0de"
+    folder = root / "projects/alpha/chats/codex-c0de1234"
     chat = (folder / "chat.md").read_text(encoding="utf-8")
     assert "**User**: let's use postgres for this\n**Agent**: Done." in chat
     meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
     assert meta["tool"] == "codex"
     crumbs = list((root / ".sessions").glob("*.json"))
-    assert crumbs and json.loads(crumbs[0].read_text(encoding="utf-8"))["agent_id"] == "codex-0195c0de"
+    assert crumbs and json.loads(crumbs[0].read_text(encoding="utf-8"))["agent_id"] == "codex-c0de1234"
 
 
 def test_opencode_plugin_is_valid_and_uses_the_hook_and_the_fetch() -> None:

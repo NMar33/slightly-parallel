@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture import TurnCapture, record_failure  # noqa: E402
+from capture import TurnCapture, record_failure, shared  # noqa: E402
 
 
 def resolve_project(data_root: Path, cwd: str) -> str:
@@ -97,11 +97,11 @@ def main() -> int:
         or event.get("last_agent_message")
     )
     try:
-        cap = TurnCapture(data_root, project, f"codex-{session[:8]}")
+        cap = TurnCapture(data_root, project, f"codex-{shared.session_key('codex', session)}")
         cap.note_origin("codex", session, str(event.get("cwd") or ""))
         cap.full_turn(user_text, agent_text)
     except Exception as exc:  # noqa: BLE001 — capture must never break the host tool
-        record_failure(data_root, project, f"codex-{session[:8]}", "codex", f"{type(exc).__name__}: {exc}")
+        record_failure(data_root, project, f"codex-{shared.session_key('codex', session)}", "codex", f"{type(exc).__name__}: {exc}")
         return 0
     return 0
 

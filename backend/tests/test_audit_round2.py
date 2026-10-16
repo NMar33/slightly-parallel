@@ -660,7 +660,7 @@ def test_codex_turn_with_an_empty_reply_is_closed(tmp_path: Path) -> None:
             "type": "agent-turn-complete", "thread-id": "thread-abcdef12", "turn-id": f"turn-{turn}",
             "cwd": str(proj), "input-messages": [q], "last-assistant-message": a,
         }))
-    chat = root / "projects" / "app" / "chats" / "codex-thread-a"
+    chat = root / "projects" / "app" / "chats" / "codex-abcdef12"
     text = (chat / "chat.md").read_text(encoding="utf-8")
     assert text.count("## Turn ") == 2
     assert json.loads((chat / "meta.json").read_text(encoding="utf-8"))["message_count"] == 2

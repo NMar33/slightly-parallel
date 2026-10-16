@@ -37,7 +37,7 @@ from typing import Any
 
 from .csvio import read_rows
 from .db import ViewStore
-from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE
+from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE, session_key
 
 ERRORS = Path(".capture") / "errors.jsonl"
 IGNORED = Path(".capture") / "ignored.json"
@@ -231,7 +231,7 @@ def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> l
         for c in codex:
             if c["cwd"] != path and not c["cwd"].startswith(path + "/"):
                 continue
-            if (chats / f"codex-{c['session'][:8]}" / "meta.json").exists():
+            if (chats / f"codex-{session_key('codex', c['session'])}" / "meta.json").exists():
                 continue
             at = _codex_prompt(c["rollout"])
             if at is not None and at >= start:

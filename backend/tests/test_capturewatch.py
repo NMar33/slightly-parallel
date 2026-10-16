@@ -105,7 +105,7 @@ def test_a_session_never_recorded_in_the_last_week_stays_lost_until_said_not_nee
     _rollout(codex, "01a144bc-0000-7000-8000-000000000001", WORK, now - 3 * 86400)       # three days ago, lost
     _rollout(codex, "01a144dd-0000-7000-8000-000000000002", WORK + "/src", now - 7200)  # a subfolder, lost
     _rollout(codex, "01a144ee-0000-7000-8000-000000000003", "/elsewhere", now - 60)     # not ours
-    rec = st.data_root / "projects" / "alpha" / "chats" / "codex-01a144ff"
+    rec = st.data_root / "projects" / "alpha" / "chats" / "codex-00000004"   # Codex agents are named by the end of the id
     rec.mkdir(parents=True)
     (rec / "meta.json").write_text("{}")
     _rollout(codex, "01a144ff-0000-7000-8000-000000000004", WORK, now - 60)             # recorded
@@ -117,3 +117,14 @@ def test_a_session_never_recorded_in_the_last_week_stays_lost_until_said_not_nee
     assert out["lost"][0]["ignored"] is True and out["ok"] is True
     capturewatch.set_ignored(st.data_root, "alpha", "codex", False)
     assert capturewatch.ignored(st.data_root) == set()
+
+
+
+def test_two_codex_sessions_of_one_minute_are_two_agents() -> None:
+    """Codex's ids are UUIDv7, time first: the first 8 characters of two
+    sessions a few seconds apart are the same."""
+    from backend.hookshared import session_key
+    a, b = "01a144ed-026f-7092-b414-d8f787fdf7fa", "01a144ed-31c0-7aa1-9b0e-0c5d2f7a1e33"
+    assert a[:8] == b[:8]
+    assert session_key("codex", a) != session_key("codex", b)
+    assert session_key("claude-code", "56a11b0e-3352-480f-b7c9-d4d71b99fee6") == "56a11b0e"

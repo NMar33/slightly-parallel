@@ -19,7 +19,7 @@ The project on film, in a minute or in six: [Slightly Parallel in a minute](http
 - [Three principles](#three-principles)
 - [Limits](#limits)
 - [In detail](#in-detail): [Chats](#chats) · [The board](#the-board) · [Standups](#standups) · [The commands](#the-commands) · [Skills](#skills) · [Artifacts](#artifacts) · [Entry points](#entry-points)
-- [Problems](#problems)
+- [FAQ / Problems](#faq--problems)
 - [What it needs and where the data is](#what-it-needs-and-where-the-data-is)
 - [More](#more)
 
@@ -188,9 +188,17 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 
 ![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
 
-## Problems
+## FAQ / Problems
 
-**I integrated the project, but the chat is not recorded.** Check that the tool you work in records this project: on the Setup page each integrated project lists the tools it records (see [Install](#install)). A Codex, OpenCode or Cursor chat is not recorded without its own box. Press **Connect** beside the tool on the project's row, then start a new chat: a tool reads its hooks when a chat starts.
+- **I integrated the project, but the chat is not recorded.**
+	- Check that the tool you work in records this project: on the Setup page each integrated project lists the tools it records (see [Install](#install)). A Codex, OpenCode or Cursor chat is not recorded without its own box. Press **Connect** beside the tool on the project's row, then start a new chat: a tool reads its hooks when a chat starts.
+
+<details>
+<summary><b>Possible problems</b></summary>
+
+- On Ubuntu, Codex with its default sandbox cannot read the files.
+
+</details>
 
 ## What it needs and where the data is
 

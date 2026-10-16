@@ -53,6 +53,7 @@ frontend/tailwind.config.d.ts
 /.codex/
 /.cursor/
 /.opencode/
+/opencode.json
 # .merkhet was the state folder before the rename; the log still reads it
 /.merkhet/
 /.sp/
