@@ -321,3 +321,11 @@ def _never_touch_real_env(tmp_path, monkeypatch):
     # Fixture data roots start without the example entries; tests that want
     # them turn this back on.
     monkeypatch.setenv("SP_EXAMPLES", "0")
+
+
+@pytest.fixture(autouse=True)
+def _codex_config_in_tmp(tmp_path, monkeypatch):
+    """Setup writes Codex's MCP server into ~/.codex/config.toml: in tests,
+    never the real one."""
+    from backend.routers import setup as setup_router
+    monkeypatch.setattr(setup_router, "CODEX_CONFIG_PATH", tmp_path / "codex-home" / "config.toml")

@@ -10,7 +10,7 @@ import { CopyButton } from '../../components/CopyButton'
 import { Modal } from '../../components/Modal'
 import { Badge, Button, Input } from '../../components/primitives'
 import { LABEL } from '../promptlib/taskstyle'
-import type { IntegrateResult, Integration } from './data'
+import { TOOL_KEYS, TOOL_NAMES, type IntegrateResult, type Integration, type ToolKey } from './data'
 import { t } from '../../i18n/scope/system'
 
 /**
@@ -244,14 +244,77 @@ export function AdapterBadge({ verified }: { verified: boolean }) {
 }
 
 /** One integrated project: its folder, what is in place there, and its verbs. */
+/**
+ * Which tools record this project's chats, and which tools this computer
+ * has that do not: those lose their chats without a word, so each gets a
+ * line and a Connect button.
+ */
+function ToolsLine({ tools, installed, lost, ignored, onConnect, onIgnore }: {
+  tools: Record<ToolKey, boolean>
+  installed?: Record<ToolKey, boolean>
+  lost?: Partial<Record<ToolKey, number>>
+  ignored?: ToolKey[]
+  onConnect: (tool: ToolKey) => void
+  onIgnore: (tool: ToolKey) => void
+}) {
+  const wired = TOOL_KEYS.filter((k) => tools[k])
+  const off = new Set(ignored ?? [])
+  // A tool to speak of: it ran here and nothing was recorded, or it is on
+  // this computer and the project does not record it. Unless the operator
+  // said it is not needed.
+  const missing = TOOL_KEYS.filter((k) => !off.has(k) && ((lost?.[k] ?? 0) > 0 || (!tools[k] && installed?.[k])))
+  return (
+    <div className="basis-full flex flex-col gap-4">
+      <div className="flex items-center gap-6 flex-wrap text-11">
+        <span className="text-tertiary">{t('Records')}</span>
+        {wired.length
+          ? wired.map((k) => <Badge key={k} tone="done">{TOOL_NAMES[k]}</Badge>)
+          : <span className="text-status-amber">{t('no tool: no chat is recorded')}</span>}
+      </div>
+      {missing.map((k) => {
+        const n = lost?.[k] ?? 0
+        const tool = TOOL_NAMES[k]
+        const said = n > 0
+          ? tools[k]
+            ? (k === 'codex'
+              ? t('{tool} ran here {n} times in the last week and nothing was recorded. Codex runs the hooks of a project only once you trust them: start codex in this folder and accept.', { tool, n })
+              : t('{tool} ran here {n} times in the last week and nothing was recorded: its hooks did not run.', { tool, n }))
+            : t('{tool} ran here {n} times in the last week and nothing was recorded: it is not connected.', { tool, n })
+          : t('{tool} is on this computer, but its chats in this project are not recorded.', { tool })
+        return (
+          <div key={k} className="flex items-center gap-8 flex-wrap text-12 text-status-amber" role="status">
+            <CircleAlert size={12} aria-hidden />
+            <span className="min-w-0">{said}</span>
+            {!tools[k] && (
+              <Button variant="secondary" size="sm" onClick={() => onConnect(k)}>
+                {t('Connect {tool}', { tool })}
+              </Button>
+            )}
+            <Button variant="text" size="sm" onClick={() => onIgnore(k)}
+              title={t('Stop asking about {tool} in this project', { tool })}>
+              {t('Not needed')}
+            </Button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function IntegrationRow({
   it,
+  installed,
   onRefresh,
+  onConnect,
+  onIgnore,
   onDisconnect,
   onDelete,
 }: {
   it: Integration
+  installed?: Record<ToolKey, boolean>
   onRefresh: () => void
+  onConnect: (tool: ToolKey) => void
+  onIgnore: (tool: ToolKey) => void
   onDisconnect: () => void
   onDelete: () => void
 }) {
@@ -298,6 +361,9 @@ export function IntegrationRow({
         <Button variant="secondary" size="sm" onClick={onRefresh}>
           {t('Re-integrate')}
         </Button>
+      )}
+      {it.tools && installed && (
+        <ToolsLine tools={it.tools} installed={installed} lost={it.lost} ignored={it.ignored} onConnect={onConnect} onIgnore={onIgnore} />
       )}
       <span className="flex items-center gap-2 shrink-0">
         <button

@@ -80,3 +80,40 @@ def test_hook_errors_of_the_last_day(tmp_path: Path) -> None:
     mod.record_failure(st.data_root, "alpha", "cc-dddddddd", "claude-code", "Stop: OSError: disk full")
     out = capturewatch.check(st, claude_root=claude)
     assert not out["ok"] and out["errors_n"] == 1 and "disk full" in out["errors"][0]["error"]
+
+
+def _rollout(root: Path, session: str, cwd: str, prompt_at: float) -> None:
+    d = root / "2026" / "10" / "17"
+    d.mkdir(parents=True, exist_ok=True)
+    lines = [
+        {"timestamp": _utc(prompt_at - 5), "type": "session_meta", "payload": {"id": session, "cwd": cwd}},
+        {"timestamp": _utc(prompt_at - 4), "type": "response_item", "payload": {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "<environment_context>…</environment_context>"}]}},
+        {"timestamp": _utc(prompt_at), "type": "response_item", "payload": {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "fix the login timeout"}]}},
+    ]
+    (d / f"rollout-x-{session}.jsonl").write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+
+
+def test_a_session_never_recorded_in_the_last_week_stays_lost_until_said_not_needed(tmp_path: Path) -> None:
+    """A Codex session in a registered folder that nothing recorded: lost, for
+    a week, not an hour; recorded ones and other folders are not; the
+    operator can say the tool is not needed there."""
+    st, claude = _setup(tmp_path)
+    codex = tmp_path / "codex"
+    now = time.time()
+    _rollout(codex, "01a144bc-0000-7000-8000-000000000001", WORK, now - 3 * 86400)       # three days ago, lost
+    _rollout(codex, "01a144dd-0000-7000-8000-000000000002", WORK + "/src", now - 7200)  # a subfolder, lost
+    _rollout(codex, "01a144ee-0000-7000-8000-000000000003", "/elsewhere", now - 60)     # not ours
+    rec = st.data_root / "projects" / "alpha" / "chats" / "codex-01a144ff"
+    rec.mkdir(parents=True)
+    (rec / "meta.json").write_text("{}")
+    _rollout(codex, "01a144ff-0000-7000-8000-000000000004", WORK, now - 60)             # recorded
+    out = capturewatch.check(st, claude_root=claude, codex_root=codex, now=now)
+    assert [(g["project"], g["tool"], g["sessions"]) for g in out["lost"]] == [("alpha", "codex", 2)]
+    assert out["ok"] is False
+    capturewatch.set_ignored(st.data_root, "alpha", "codex", True)
+    out = capturewatch.check(st, claude_root=claude, codex_root=codex, now=now)
+    assert out["lost"][0]["ignored"] is True and out["ok"] is True
+    capturewatch.set_ignored(st.data_root, "alpha", "codex", False)
+    assert capturewatch.ignored(st.data_root) == set()

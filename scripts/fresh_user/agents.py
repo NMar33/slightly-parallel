@@ -53,15 +53,21 @@ class Tool:
     def read(self, out: str) -> Turn:
         return Turn(ok=True, text=out.strip())
 
+    def learn_session(self, output: str) -> None:
+        """A tool that picks its own session id says it here (Claude Code is told one)."""
+
     def say(self, message: str, model: str, space: Space, env: dict[str, str], seconds: int, folder: Path | None = None) -> Turn:
         import time
         start = time.time()
         try:
+            # stdin closed: `codex exec` reads more of the prompt from an open
+            # stdin and waits for it ("Reading additional input from stdin").
             p = subprocess.run(self.command(message, model, space), cwd=folder or space.sample, env=env,
-                               capture_output=True, text=True, timeout=seconds)
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=seconds)
         except subprocess.TimeoutExpired:
             return Turn(False, "", error=f"no answer in {seconds} s")
         self.turns += 1
+        self.learn_session(p.stdout + "\n" + p.stderr)
         if p.returncode != 0:
             return Turn(False, p.stdout[-2000:], error=(p.stderr or p.stdout)[-800:].strip(), seconds=time.time() - start)
         turn = self.read(p.stdout)
@@ -90,13 +96,24 @@ class ClaudeCode(Tool):
 
 
 class Codex(Tool):
+    def learn_session(self, output: str) -> None:
+        # `codex exec` prints its header with "session id: <uuid>"; the test
+        # cannot choose it, so it reads it off the first turn.
+        import re
+        m = re.search(r"session id:\s*([0-9a-f-]{36})", output)
+        if m and self.turns == 1:
+            self.session = m.group(1)
+
     def command(self, message: str, model: str, space: Space) -> list[str]:
         # Codex 0.163 dropped --full-auto: the same, said as settings. It
         # also runs a project's hooks only once the user has trusted them
         # (a hash per hook in ~/.codex/config.toml); a person does that once
         # in the TUI, the test says it per run. The trust step itself is
         # checked by hand (postprod/test-plan.md).
-        unattended = ["-c", 'sandbox_mode="workspace-write"', "-c", 'approval_policy="never"',
+        # Full access: the test's folder is a throwaway, and Codex's own Linux
+        # sandbox (bubblewrap) cannot start where user namespaces are closed,
+        # as on Ubuntu 24 and later ("bwrap: Operation not permitted").
+        unattended = ["-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"',
                       "--dangerously-bypass-hook-trust"]
         base = ["codex", "exec", "--skip-git-repo-check", *unattended]
         if model:

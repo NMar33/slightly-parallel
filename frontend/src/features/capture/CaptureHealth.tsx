@@ -8,9 +8,10 @@
  */
 
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { getJson } from '../../lib/getJson'
+import { postIgnore, SETUP_INFO_KEY, TOOL_NAMES, type ToolKey } from '../setup/data'
 import { t, tn, locale } from '../../i18n/scope/system'
 
 interface CaptureHealth {
@@ -19,7 +20,11 @@ interface CaptureHealth {
   errors: Array<{ at: string; project: string; agent_id: string; tool: string; error: string }>
   errors_n: number
   watched: number
+  /** Sessions of the last week that were never recorded, per project and tool. */
+  lost?: Array<{ project: string; tool: ToolKey; sessions: number; last_at: number; ignored: boolean }>
 }
+
+const lostNow = (d: CaptureHealth) => (d.lost ?? []).filter((g) => !g.ignored)
 
 function useCaptureHealth() {
   return useQuery({
@@ -35,8 +40,9 @@ const time = (ts: number) => new Date(ts * 1000).toLocaleTimeString(locale(), { 
 export function CaptureAlert() {
   const d = useCaptureHealth().data
   if (!d || d.ok) return null
-  const word = d.missed.length
-    ? tn(d.missed.length, '{n} chat not recorded', '{n} chats not recorded')
+  const chats = d.missed.length + lostNow(d).reduce((a, g) => a + g.sessions, 0)
+  const word = chats
+    ? tn(chats, '{n} chat not recorded', '{n} chats not recorded')
     : tn(d.errors_n, '{n} capture error', '{n} capture errors')
   return (
     <Link to="/monitor#capture" title={t('Some messages were not recorded. Open Monitor.')}
@@ -47,9 +53,17 @@ export function CaptureAlert() {
   )
 }
 
+const day = (ts: number) => new Date(ts * 1000).toLocaleString(locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
 export function CaptureSection() {
   const q = useCaptureHealth()
   const d = q.data
+  const queryClient = useQueryClient()
+  const ignore = (project: string, tool: ToolKey) => postIgnore(project, tool).then(() => {
+    void queryClient.invalidateQueries({ queryKey: ['capture', 'health'] })
+    void queryClient.invalidateQueries({ queryKey: SETUP_INFO_KEY })
+  })
+  const gone = d ? lostNow(d) : []
   return (
     <section id="capture" className="flex flex-col gap-8 min-w-0 scroll-mt-16">
       <div className="flex items-baseline gap-8">
@@ -71,6 +85,24 @@ export function CaptureSection() {
           <p className="text-12 text-tertiary">
             {t('Usually the hook is not installed in the folder that session runs in, or Python is missing there.')}{' '}
             {t('Open')} <Link to="/setup" className="text-brand hover:underline">{t('Setup')}</Link> {t('and install the hooks for that project again, then restart the session.')}
+          </p>
+        </div>
+      )}
+      {gone.length > 0 && (
+        <div className="rounded-card border border-status-amber/50 bg-surface p-12 flex flex-col gap-6">
+          <p className="text-13 text-primary">{t('Sessions of the last week that were never recorded.')}</p>
+          {gone.map((g) => (
+            <div key={`${g.project}:${g.tool}`} className="flex items-center gap-8 flex-wrap text-12">
+              <span className="font-mono text-secondary">
+                {g.project} · {TOOL_NAMES[g.tool]} · {tn(g.sessions, '{n} session', '{n} sessions')} · {t('the last {time}', { time: day(g.last_at) })}
+              </span>
+              <Link to="/setup" className="text-brand hover:underline">{t('Connect it in Setup')}</Link>
+              <button type="button" onClick={() => void ignore(g.project, g.tool)}
+                className="text-tertiary hover:text-primary">{t('Not needed')}</button>
+            </div>
+          ))}
+          <p className="text-12 text-tertiary">
+            {t('The tool worked in that project folder and nothing reached Slightly Parallel: the tool is not connected there, or its hooks did not run. Codex runs the hooks of a project only once you trust them.')}
           </p>
         </div>
       )}

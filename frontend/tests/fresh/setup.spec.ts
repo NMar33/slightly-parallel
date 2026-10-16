@@ -46,8 +46,9 @@ test('step 2: integrate the project', async ({ page }) => {
   await page.goto('/setup')
   await page.getByLabel('Project code').fill(CODE)
   await page.getByLabel('Project folder').fill(PROJECT)
-  if (TOOLS.includes('opencode')) await page.getByText('OpenCode plugin: records OpenCode chats', { exact: false }).click()
-  if (TOOLS.includes('codex')) await page.getByText('Codex hooks: record Codex chats', { exact: false }).click()
+  // Every tool's box is ticked by default; make sure of the ones this run drives.
+  if (TOOLS.includes('opencode')) await page.getByLabel('OpenCode plugin: records OpenCode chats', { exact: false }).check()
+  if (TOOLS.includes('codex')) await page.getByLabel('Codex hooks: record Codex chats', { exact: false }).check()
   await page.getByRole('button', { name: 'Preview' }).click()
   await expect(page.getByText('Preview, nothing written yet')).toBeVisible()
   await page.getByRole('button', { name: 'Integrate', exact: true }).click()

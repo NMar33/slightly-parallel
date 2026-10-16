@@ -49,7 +49,7 @@ Then connect a project. On the **Setup** page:
 
 ![The Setup page, step by step](docs/media/readme/setup.gif)
 
-**Tick the box of every tool you use.** A project records the chats of a tool only if that tool's box was ticked when the project was integrated: Claude Code hooks, Codex hooks, OpenCode plugin, Cursor hooks. Claude Code is ticked by default; the others are not. The chats of a tool without its box are not recorded. To add a tool later, tick its box in the form and press **Re-integrate** on the project's row.
+**Tick the box of every tool you use.** A project records the chats of a tool only if that tool's box was ticked when the project was integrated: Claude Code hooks, Codex hooks, OpenCode plugin, Cursor hooks. Every tool's box is ticked by default: a file a tool never reads costs nothing, a chat that was not recorded is gone. Untick a tool only if you are sure you do not use it. Each integrated project shows which tools it records; a tool you have that a project does not record gets a line and a **Connect** button.
 
 ![The tool boxes in the Setup form](docs/media/readme/setup-tools.png)
 
@@ -190,7 +190,7 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 
 ## Problems
 
-**I integrated the project, but the chat is not recorded.** Check that the box of the tool you work in was ticked when the project was integrated (see [Install](#install)). Only Claude Code is ticked by default: a Codex, OpenCode or Cursor chat is not recorded without its own box. Tick it, press **Re-integrate** on the project's row on the Setup page, and start a new chat: a tool reads its hooks when a chat starts.
+**I integrated the project, but the chat is not recorded.** Check that the tool you work in records this project: on the Setup page each integrated project lists the tools it records (see [Install](#install)). A Codex, OpenCode or Cursor chat is not recorded without its own box. Press **Connect** beside the tool on the project's row, then start a new chat: a tool reads its hooks when a chat starts.
 
 ## What it needs and where the data is
 

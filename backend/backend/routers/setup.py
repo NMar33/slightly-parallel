@@ -16,6 +16,7 @@ so the page can show status and refresh stale blocks after a contract move.
 from __future__ import annotations
 
 import json
+import shutil
 import os
 import re
 import string
@@ -499,6 +500,51 @@ def _hooks_installed(path_raw: str) -> bool:
     )
 
 
+def _hooks_file_has(path_raw: str, rel: str, script: str) -> bool:
+    """Does this folder's hooks file (``rel``) hold an entry that runs ``script``?"""
+    try:
+        data = json.loads((Path(path_raw) / rel).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    if not isinstance(hooks, dict):
+        return False
+    return any(script in c for entries in hooks.values() if isinstance(entries, list)
+               for e in entries for c in _hook_commands(e))
+
+
+#: The tools Setup can wire a project to, in the order the page lists them.
+TOOLS = ("claude", "codex", "opencode", "cursor")
+
+
+def _tools_wired(path_raw: str, codex_global: bool = False) -> dict[str, bool]:
+    """Which tools record their chats in this folder. Codex counts as wired
+    by the global notify hook too, which serves every integrated project."""
+    return {
+        "claude": _hooks_installed(path_raw),
+        "codex": codex_global or _hooks_file_has(path_raw, ".codex/hooks.json", "claude-code-capture.py"),
+        "opencode": (Path(path_raw) / ".opencode" / "plugin" / _OPENCODE_PLUGIN).is_file(),
+        "cursor": _hooks_file_has(path_raw, ".cursor/hooks.json", "cursor-capture.py"),
+    }
+
+
+def tools_installed(home: Path | None = None) -> dict[str, bool]:
+    """Which tools this computer has: the command on PATH, or the folder the
+    tool keeps its settings in (an app started from a menu leaves that too)."""
+    home = home or Path.home()
+    marks = {
+        "claude": (("claude",), (".claude",)),
+        # Not ~/.codex itself: Setup writes the MCP server there for everyone.
+        "codex": (("codex",), (".codex/sessions", ".codex/auth.json")),
+        "opencode": (("opencode",), (".config/opencode", ".local/share/opencode")),
+        "cursor": (("cursor", "cursor-agent"), (".cursor",)),
+    }
+    return {
+        tool: any(shutil.which(c) for c in commands) or any((home / d).exists() for d in dirs)
+        for tool, (commands, dirs) in marks.items()
+    }
+
+
 def _is_git_repo(path_raw: str) -> bool:
     """Optional: a repo lets file entries fill line counts automatically."""
     p = Path(path_raw)
@@ -532,6 +578,10 @@ def setup_info(
     store: ViewStore = Depends(get_store),
 ) -> dict:
     """Everything the Setup page needs: detected paths + known integrations."""
+    codex = codex_status()
+    from .. import capturewatch
+    skip = capturewatch.ignored(store.data_root)
+    gone = capturewatch.check(store).get("lost", [])
     integrations = [
         {
             "project": r.get("project", ""),
@@ -539,6 +589,12 @@ def setup_info(
             "created_date": r.get("created_date", ""),
             "status": _integration_status(r.get("path", "")),
             "hooks": _hooks_installed(r.get("path", "")),
+            # Which tools record their chats here; a tool this computer has
+            # and the project lacks loses its chats without a word.
+            "tools": _tools_wired(r.get("path", ""), codex_global=codex["state"] == "installed"),
+            # Sessions of the last week the tool ran here and nothing recorded.
+            "lost": {g["tool"]: g["sessions"] for g in gone if g["project"] == r.get("project") and not g["ignored"]},
+            "ignored": sorted(k.split(":", 1)[1] for k in skip if k.split(":", 1)[0] == r.get("project")),
             # A hook whose script path no longer exists records nothing:
             # Setup has to be run again from where the app now lives.
             "hooks_missing_script": _missing_hook_scripts(r.get("path", "")),
@@ -565,8 +621,9 @@ def setup_info(
         "example": example.describe(request.app),
         "api_url": _api_url(request),
         "integrations": integrations,
-        "codex": codex_status(),
+        "codex": codex,
         "adapters": adapters,
+        "tools_installed": tools_installed(),
     }
 
 
@@ -678,6 +735,19 @@ def integrate(
         results.append(
             {"file": str(codex_path), "action": action, "content": new_text}
         )
+        # Codex lists its MCP servers in ~/.codex/config.toml only, one block
+        # for every project. Without it a Codex agent reads the contract and
+        # can write nothing it asks for.
+        try:
+            config = CODEX_CONFIG_PATH.read_text(encoding="utf-8") if CODEX_CONFIG_PATH.exists() else ""
+        except OSError as exc:
+            raise HTTPException(status_code=422, detail=f"cannot read {CODEX_CONFIG_PATH}: {exc}")
+        block = codex_mcp_block(_api_url(request))
+        new_config, mcp_action = _upsert_codex_mcp(config, block)
+        if not dry_run and mcp_action != "unchanged":
+            CODEX_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            write_in_place(CODEX_CONFIG_PATH, new_config)
+        results.append({"file": str(CODEX_CONFIG_PATH), "action": mcp_action, "content": block})
 
     if write_cursor:
         # Cursor hooks: per project, three events in Cursor's own shape.

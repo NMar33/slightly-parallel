@@ -9,9 +9,12 @@ into every observed project. Its tools stamp your identity (project,
 agent id, date, time) and check the vocabulary before a request exists,
 so you never copy those values by hand. The server refuses a write that
 names an agent and did not come through the MCP tools, while the
-operator's setting `agents.mcp_only` is on (it is on by default). If the `slightly-parallel` MCP
-server is not connected in this chat, tell the user before writing
-anything; reading the dashboard over HTTP (`GET`) is always fine.
+operator's setting `agents.mcp_only` is on (it is on by default). Some
+tools load MCP tools only when they are searched for (Codex): if
+`write_entry` is not in your list, look for the `slightly-parallel` tools,
+or call its `doctor`. Only if that fails is the server not connected: then
+tell the user before writing anything; reading the dashboard over HTTP
+(`GET`) is always fine.
 
 The server lists its tools, each with what it takes. Section 4 names the
 tool for each kind of writing; `write_entry` writes one entry of any lens.

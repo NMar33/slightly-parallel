@@ -576,10 +576,13 @@ more, a normal one its alternatives, a major one also what would undo it.
   rebuilds, requests by path with p50 and max, errors) and the last lines;
   `GET /api/logs/text` is the same as plain text, for the health page's copy
   button and for `curl`.
-- `GET /api/capture/health` — is capture working (capturewatch.py): `missed`,
+- `GET /api/capture/health` — is capture working (capturewatch.py): `missed`, `lost` (sessions of the last week, Claude Code or Codex, never recorded),
   the active Claude Code sessions in folders registered in Setup whose latest
   messages Slightly Parallel did not record (or never saw); `errors`, hook failures of
   the last day (`<data root>/.capture/errors.jsonl`); `ok` when neither.
+- `POST /api/capture/ignore` `{project, tool, ignored}` — the operator says a tool (claude, codex,
+  opencode, cursor) needs no recording in a project, or takes it back: its `lost`
+  sessions stop warning and Setup drops its Connect line (`.capture/ignored.json`).
 - `GET /api/monitor/now` — the system monitor (sysmon.py): the latest reading
   (`sample`), the last few minutes (`spark`), the connection check (`ping`),
   events still going on (`open`), today's counts by severity, `unseen`, what

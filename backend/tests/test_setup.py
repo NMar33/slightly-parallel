@@ -444,3 +444,42 @@ def test_setup_info_flags_a_hook_whose_script_no_longer_exists(env, tmp_path: Pa
     row = client.get("/api/setup/info").json()["integrations"][0]
     assert row["hooks"] is True
     assert row["hooks_missing_script"] == [moved]
+
+
+def test_info_says_which_tools_record_each_project(env) -> None:
+    """A tool the project is not wired to loses its chats without a word:
+    the page needs to know, per project, which tools record there."""
+    client, _data_root, project_dir = env
+    _integrate(client, project_dir)
+    row = client.get("/api/setup/info").json()["integrations"][0]
+    assert row["tools"] == {"claude": True, "codex": False, "opencode": False, "cursor": False}
+    _integrate(client, project_dir, write_codex_hooks=True, write_opencode_plugin=True, write_cursor_hooks=True)
+    row = client.get("/api/setup/info").json()["integrations"][0]
+    assert row["tools"] == {"claude": True, "codex": True, "opencode": True, "cursor": True}
+
+
+def test_installed_tools_are_found_by_command_or_by_their_settings_folder(tmp_path: Path, monkeypatch) -> None:
+    from backend.routers import setup
+    home = tmp_path / "home"
+    (home / ".codex" / "sessions").mkdir(parents=True)         # the tool has been used
+    (home / ".cursor").mkdir()
+    monkeypatch.setattr(setup.shutil, "which", lambda c: "/usr/bin/opencode" if c == "opencode" else None)
+    assert setup.tools_installed(home) == {"claude": False, "codex": True, "opencode": True, "cursor": True}
+    # ~/.codex with only the MCP block Setup writes is not Codex being there.
+    other = tmp_path / "other"; (other / ".codex").mkdir(parents=True); (other / ".codex" / "config.toml").write_text("x")
+    monkeypatch.setattr(setup.shutil, "which", lambda c: None)
+    assert setup.tools_installed(other)["codex"] is False
+
+
+def test_the_codex_box_also_gives_codex_the_mcp_server(env) -> None:
+    """Codex reads MCP servers from ~/.codex/config.toml only: without the
+    block a Codex agent can record nothing it is asked to."""
+    from backend.routers import setup as setup_router
+    client, _data_root, project_dir = env
+    out = _integrate(client, project_dir, write_codex_hooks=True)
+    cfg = setup_router.CODEX_CONFIG_PATH
+    assert "[mcp_servers.slightly-parallel]" in cfg.read_text(encoding="utf-8")
+    assert {r["file"]: r["action"] for r in out["results"]}[str(cfg)] == "created"
+    again = _integrate(client, project_dir, write_codex_hooks=True)
+    assert {r["file"]: r["action"] for r in again["results"]}[str(cfg)] == "unchanged"
+    assert cfg.read_text(encoding="utf-8").count("[mcp_servers.slightly-parallel]") == 1

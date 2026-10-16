@@ -11,8 +11,10 @@ Slightly Parallel MCP tools when the contract says so.
 - Writing: the MCP server `slightly-parallel` (wired into this project by Setup).
   The server lists its tools; `write_entry` writes one entry. Identity
   is stamped for you. Writes from an agent that bypass the MCP tools are
-  refused by the server. If the `slightly-parallel` MCP server is not connected in this chat,
-  tell the user before writing anything.
+  refused by the server. Some tools load MCP tools only when they are
+  searched for (Codex): if `write_entry` is not in your list, look for the
+  `slightly-parallel` tools, or call its `doctor`. Only if that fails is the
+  server not connected: then tell the user before writing anything.
 - Server: $api_url (reading, and the operator's own pages)
 - Data root: `$data_root`
 - Capture check: in Claude Code, Slightly Parallel's hook prints

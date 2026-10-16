@@ -12,7 +12,7 @@ import os
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from .. import logbook
@@ -89,6 +89,19 @@ def logs_text(
 ) -> str:
     lvl = level.upper() if level.upper() in LEVELS else "INFO"
     return logbook.text(summary(store, request), logbook.RING.tail(limit, lvl))
+
+
+@router.post("/api/capture/ignore")
+def capture_ignore(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    """The operator says a tool needs no recording in a project (``ignored``
+    true), or takes that back: its lost sessions and its Connect line stop
+    asking for attention."""
+    from .. import capturewatch
+    project, tool = str(body.get("project") or "").strip(), str(body.get("tool") or "").strip()
+    if not project or tool not in ("claude", "codex", "opencode", "cursor"):
+        raise HTTPException(status_code=422, detail="project, and tool one of claude, codex, opencode, cursor")
+    pairs = capturewatch.set_ignored(store.data_root, project, tool, bool(body.get("ignored", True)))
+    return {"ignored": sorted(pairs)}
 
 
 @router.get("/api/capture/health")

@@ -11,7 +11,7 @@ import { toast } from 'sonner'
 import { Button, Input } from '../../components/primitives'
 import { postJson } from '../../lib/getJson'
 import { LABEL } from '../promptlib/taskstyle'
-import { postIntegrate, SETUP_INFO_KEY, type IntegrateResult, type Integration, type SetupInfo } from './data'
+import { postIgnore, postIntegrate, SETUP_INFO_KEY, type IntegrateResult, type Integration, type SetupInfo, type ToolKey } from './data'
 import { AdapterBadge, Checkbox, ConfirmDialog, Field, IntegrationRow, ResultPanel, StepCard } from './parts'
 import { t, tn } from '../../i18n/scope/system'
 
@@ -51,7 +51,8 @@ function useIntegrate() {
   const queryClient = useQueryClient()
   const [form, setForm] = useState<IntegrateForm>({
     code: '', dir: '', notes: '',
-    writeAgents: true, writeBridge: true, writeHooks: true, writeOpencode: false, writeCodex: false, writeCursor: false,
+    // Every tool ticked: a stray file is cheaper than a lost chat. Unticking is the user's call.
+    writeAgents: true, writeBridge: true, writeHooks: true, writeOpencode: true, writeCodex: true, writeCursor: true,
   })
   const set = <K extends keyof IntegrateForm>(k: K) => (v: IntegrateForm[K]) => setForm((f) => ({ ...f, [k]: v }))
   const [preview, setPreview] = useState<IntegrateResult | null>(null)
@@ -77,9 +78,17 @@ function useIntegrate() {
       void queryClient.invalidateQueries({ queryKey: ['snapshot'] })
     },
   })
-  /** Fill the form with a row's project and folder, and integrate it again. */
-  const reintegrate = (it: Integration) => {
-    const next = { ...form, code: it.project, dir: it.path }
+  /** Integrate a row again: what it already records stays, what the form
+   *  ticks and the tool asked for (Connect) are added. Nothing is taken away. */
+  const reintegrate = (it: Integration, add?: ToolKey) => {
+    const has = (k: ToolKey) => Boolean(it.tools?.[k]) || add === k
+    const next = {
+      ...form, code: it.project, dir: it.path,
+      writeHooks: form.writeHooks || has('claude'),
+      writeCodex: form.writeCodex || has('codex'),
+      writeOpencode: form.writeOpencode || has('opencode'),
+      writeCursor: form.writeCursor || has('cursor'),
+    }
     setForm(next)
     applyMut.mutate(next)
   }
@@ -127,6 +136,13 @@ function useRemovals() {
 export function IntegrateStep({ info }: { info: SetupInfo }) {
   const { form, set, codeValid, ready, preview, applied, previewMut, applyMut, reintegrate } = useIntegrate()
   const { disconnecting, setDisconnecting, deleting, setDeleting, disconnectMut, deleteMut } = useRemovals()
+  const queryClient = useQueryClient()
+  const ignore = (project: string, tool: ToolKey) => postIgnore(project, tool)
+    .then(() => {
+      void queryClient.invalidateQueries({ queryKey: SETUP_INFO_KEY })
+      void queryClient.invalidateQueries({ queryKey: ['capture', 'health'] })
+    })
+    .catch(() => toast.error(t('Could not save that')))
   const dataOnly = useMemo(() => {
     const registered = new Set(info.integrations.map((i) => i.project))
     return info.data_projects.filter((d) => !registered.has(d.code))
@@ -275,7 +291,11 @@ export function IntegrateStep({ info }: { info: SetupInfo }) {
               <IntegrationRow
                 key={`${it.project}:${it.path}`}
                 it={it}
+                // The example project is played, not worked in: no tool warnings on it.
+                installed={it.project === info.example?.project ? undefined : info.tools_installed}
                 onRefresh={() => reintegrate(it)}
+                onConnect={(tool) => reintegrate(it, tool)}
+                onIgnore={(tool) => void ignore(it.project, tool)}
                 onDisconnect={() => setDisconnecting(it)}
                 onDelete={() => setDeleting(it.project)}
               />

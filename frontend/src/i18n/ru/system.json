@@ -1328,5 +1328,24 @@
   "Some messages were not recorded. Open Monitor.": "Часть сообщений не записана. Откройте Monitor.",
   "No entry points yet. Add #entrypoint to a message about a topic to keep one.": "Точек входа пока нет. Добавьте #entrypoint в сообщение о теме, чтобы сохранить её.",
   "nothing written yet": "пока ничего не написано",
-  "Find in entry points": "Найти в точках входа"
+  "Find in entry points": "Найти в точках входа",
+  "Records": "Пишет",
+  "no tool: no chat is recorded": "ни одного инструмента: чаты не пишутся",
+  "{tool} is on this computer, but its chats in this project are not recorded.": "{tool} есть на этом компьютере, но его чаты в этом проекте не пишутся.",
+  "Connect {tool}": "Подключить {tool}",
+  "Sessions of the last week that were never recorded.": "Сессии за последнюю неделю, которые так и не записались.",
+  "the last {time}": "последняя {time}",
+  "Connect it in Setup": "Подключить в Setup",
+  "Not needed": "Не нужно",
+  "The tool worked in that project folder and nothing reached Slightly Parallel: the tool is not connected there, or its hooks did not run. Codex runs the hooks of a project only once you trust them.": "Инструмент работал в папке проекта, а до Slightly Parallel ничего не дошло: инструмент там не подключён или его хуки не запустились. Codex запускает хуки проекта, только когда вы им доверились.",
+  "{n} session": {
+    "one": "{n} сессия",
+    "few": "{n} сессии",
+    "many": "{n} сессий"
+  },
+  "Could not save that": "Не удалось сохранить",
+  "{tool} ran here {n} times in the last week and nothing was recorded. Codex runs the hooks of a project only once you trust them: start codex in this folder and accept.": "{tool} работал здесь за неделю (сессий: {n}), и ничего не записалось. Codex запускает хуки проекта, только когда вы им доверились: запустите codex в этой папке и подтвердите.",
+  "{tool} ran here {n} times in the last week and nothing was recorded: its hooks did not run.": "{tool} работал здесь за неделю (сессий: {n}), и ничего не записалось: его хуки не запустились.",
+  "{tool} ran here {n} times in the last week and nothing was recorded: it is not connected.": "{tool} работал здесь за неделю (сессий: {n}), и ничего не записалось: он не подключён.",
+  "Stop asking about {tool} in this project": "Больше не спрашивать про {tool} в этом проекте"
 }

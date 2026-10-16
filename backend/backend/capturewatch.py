@@ -16,6 +16,14 @@ Capture fails in two ways, and neither says much on its own:
 Only sessions active in the last hour are judged, and only the person's own
 messages count — a turn that runs for an hour is not a gap. Read-only: the
 home folder is read, never written; tests pass their own ``claude_root``.
+
+**Lost** (``lost``): a session of the last week, in a registered folder,
+after its integration, with a message from the person, that Slightly
+Parallel never recorded at all — Claude Code's log as above, Codex's in
+``~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`` (its first line names the
+session and the folder it ran in). A missed turn is gone from the top bar an
+hour later; a lost session stays until the operator connects the tool or
+says it is not needed (``.capture/ignored.json``, project:tool).
 """
 
 from __future__ import annotations
@@ -32,6 +40,8 @@ from .db import ViewStore
 from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE
 
 ERRORS = Path(".capture") / "errors.jsonl"
+IGNORED = Path(".capture") / "ignored.json"
+WEEK_SECONDS = 7 * 86400       # how far back a session never recorded is looked for
 ACTIVE_SECONDS = 3600          # a session untouched this long is not judged
 GRACE_SECONDS = 120            # a prompt this much newer than the capture is a missed turn
 # What the hook does not capture (a helper's report handed back into the
@@ -115,7 +125,126 @@ def errors_since(data_root: Path, since: float) -> list[dict[str, Any]]:
     return out
 
 
-def check(store: ViewStore, claude_root: Path | None = None, now: float | None = None) -> dict[str, Any]:
+def ignored(data_root: Path) -> set[str]:
+    """The project:tool pairs the operator said need no recording."""
+    try:
+        got = json.loads((Path(data_root) / IGNORED).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {str(x) for x in got} if isinstance(got, list) else set()
+
+
+def set_ignored(data_root: Path, project: str, tool: str, on: bool) -> set[str]:
+    from .file_safety import atomic_write
+    pairs = ignored(data_root)
+    key = f"{project}:{tool}"
+    (pairs.add if on else pairs.discard)(key)
+    path = Path(data_root) / IGNORED
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(sorted(pairs)))
+    _cache.clear()
+    return pairs
+
+
+def _since(created_date: str) -> float:
+    """The start of an integration's day, from its YYMM-DD; 0 when unreadable."""
+    m = re.fullmatch(r"(\d\d)(\d\d)-(\d\d)", created_date.strip())
+    if not m:
+        return 0.0
+    try:
+        return datetime(2000 + int(m[1]), int(m[2]), int(m[3])).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _codex_prompt(rollout: Path, tail_bytes: int = 400_000) -> float | None:
+    """When the person last wrote in a Codex session: its last user message
+    that is not the context Codex adds itself (those start with '<')."""
+    try:
+        with open(rollout, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - tail_bytes))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        if '"role":"user"' not in line.replace(" ", ""):
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        pl = rec.get("payload") if isinstance(rec, dict) else None
+        if not isinstance(pl, dict) or pl.get("type") != "message" or pl.get("role") != "user":
+            continue
+        text = " ".join(str(c.get("text") or "") for c in pl.get("content") or [] if isinstance(c, dict))
+        if not text.strip() or text.lstrip().startswith("<"):
+            continue
+        return _utc(str(rec.get("timestamp") or ""))
+    return None
+
+
+def codex_sessions(root: Path, since: float) -> list[dict[str, Any]]:
+    """Codex sessions touched since ``since``: id, folder, last prompt."""
+    out: list[dict[str, Any]] = []
+    for rollout in sorted(root.glob("*/*/*/rollout-*.jsonl")):
+        try:
+            if rollout.stat().st_mtime < since:
+                continue
+            with open(rollout, encoding="utf-8", errors="replace") as fh:
+                first = json.loads(fh.readline() or "{}")
+        except (OSError, ValueError):
+            continue
+        pl = first.get("payload") if isinstance(first, dict) else None
+        if not isinstance(pl, dict) or not pl.get("id") or not pl.get("cwd"):
+            continue
+        out.append({"session": str(pl["id"]), "cwd": str(pl["cwd"]), "rollout": rollout})
+    return out
+
+
+def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> list[dict[str, Any]]:
+    """Sessions of the last week that were never recorded, per project and tool."""
+    since = now - WEEK_SECONDS
+    skip = ignored(store.data_root)
+    codex = codex_sessions(codex_root, since) if codex_root.is_dir() else []
+    out: list[dict[str, Any]] = []
+    for row in read_rows(store.data_root / "integrations.csv"):
+        code, path = str(row.get("project") or ""), str(row.get("path") or "").rstrip("/")
+        if not code or not path:
+            continue
+        start = max(since, _since(str(row.get("created_date") or "")))
+        chats = store.data_root / "projects" / code / "chats"
+        found: dict[str, list[float]] = {"claude": [], "codex": []}
+        folder = claude_root / folder_slug(path)
+        for transcript in folder.glob("*.jsonl") if folder.is_dir() else []:
+            try:
+                if transcript.stat().st_mtime < start:
+                    continue
+            except OSError:
+                continue
+            if (chats / f"cc-{transcript.stem[:8]}" / "meta.json").exists():
+                continue
+            at = last_prompt(transcript)
+            if at is not None and at >= start:
+                found["claude"].append(at)
+        for c in codex:
+            if c["cwd"] != path and not c["cwd"].startswith(path + "/"):
+                continue
+            if (chats / f"codex-{c['session'][:8]}" / "meta.json").exists():
+                continue
+            at = _codex_prompt(c["rollout"])
+            if at is not None and at >= start:
+                found["codex"].append(at)
+        for tool, times in found.items():
+            if times:
+                out.append({"project": code, "tool": tool, "sessions": len(times), "last_at": max(times),
+                            "ignored": f"{code}:{tool}" in skip})
+    return out
+
+
+def check(store: ViewStore, claude_root: Path | None = None, now: float | None = None,
+          codex_root: Path | None = None) -> dict[str, Any]:
     """Every capture problem now: turns not recorded, hook errors of the last day."""
     now = now or time.time()
     key = f"{store.data_root}|{claude_root}"
@@ -159,7 +288,11 @@ def check(store: ViewStore, claude_root: Path | None = None, now: float | None =
                            else "its latest messages were not captured",
                 })
     errors = errors_since(store.data_root, now - 86400)
-    out = {"ok": not missed and not errors, "missed": missed, "errors": errors[-50:],
+    # A test passes its own Claude root and no Codex one: then there is none.
+    croot = codex_root or (Path.home() / ".codex" / "sessions" if claude_root is None else root / "__no_codex__")
+    gone = lost(store, root, croot, now)
+    out = {"ok": not missed and not errors and not any(not g["ignored"] for g in gone),
+           "missed": missed, "lost": gone, "errors": errors[-50:],
            "errors_n": len(errors), "watched": watched, "at": now}
     if claude_root is None:
         _cache[key] = (now, out)
