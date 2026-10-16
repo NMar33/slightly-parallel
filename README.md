@@ -2,7 +2,7 @@
 
 # Slightly Parallel
 
-[![CI](https://img.shields.io/github/actions/workflow/status/NMar33/slightly-parallel/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/NMar33/slightly-parallel/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/tag/NMar33/slightly-parallel?label=release&color=3E9B84)](https://github.com/NMar33/slightly-parallel/releases) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org) [![MIT](https://img.shields.io/badge/license-MIT-B5533C)](LICENSE) [![YouTube](https://img.shields.io/badge/YouTube-three%20films-FF0000?logo=youtube&logoColor=white)](https://youtu.be/NmtQgkg-D-E)
+[![CI](https://img.shields.io/github/actions/workflow/status/NMar33/slightly-parallel/ci.yml?branch=main&label=CI&labelColor=2E3634&logo=githubactions&logoColor=white)](https://github.com/NMar33/slightly-parallel/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/tag/NMar33/slightly-parallel?label=release&labelColor=2E3634&color=3E9B84)](https://github.com/NMar33/slightly-parallel/releases) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3E9B84?labelColor=2E3634&logo=python&logoColor=white)](https://www.python.org) [![MIT](https://img.shields.io/badge/license-MIT-3E9B84?labelColor=2E3634)](LICENSE) [![Films](https://img.shields.io/badge/films-three%20on%20YouTube-3E9B84?labelColor=2E3634&logo=youtube&logoColor=white)](https://youtu.be/NmtQgkg-D-E)
 
 **A local dashboard for running many projects with many coding agents at once, without losing the thread of what is happening.**
 
