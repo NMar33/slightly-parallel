@@ -21,6 +21,8 @@ test('the runner passed its folders', () => {
 })
 
 test('step 1: choose the data folder', async ({ page }) => {
+  // The example is played into the new folder within this step: the step's own time, not the default minute.
+  test.setTimeout((Number(process.env.FRESH_EXAMPLE_SECONDS || 240) + 60) * 1000)
   await page.goto('/setup')
   await expect(page.getByText('Choose where Slightly Parallel keeps its records')).toBeVisible()
   // A new install holds the example project, and Setup says so.
@@ -39,7 +41,7 @@ test('step 1: choose the data folder', async ({ page }) => {
   await expect.poll(async () => {
     const e = (await info()).example
     return `${e.present}/${e.building}/${e.error}`
-  }, { timeout: 240_000, intervals: [2000] }).toBe('true/false/')
+  }, { timeout: Number(process.env.FRESH_EXAMPLE_SECONDS || 240) * 1000, intervals: [2000] }).toBe('true/false/')
 })
 
 test('step 2: integrate the project', async ({ page }) => {

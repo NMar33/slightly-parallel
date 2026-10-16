@@ -29,6 +29,7 @@ says it is not needed (``.capture/ignored.json``, project:tool).
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -179,7 +180,8 @@ def _codex_prompt(rollout: Path, tail_bytes: int = 400_000) -> float | None:
         if not isinstance(pl, dict) or pl.get("type") != "message" or pl.get("role") != "user":
             continue
         text = " ".join(str(c.get("text") or "") for c in pl.get("content") or [] if isinstance(c, dict))
-        if not text.strip() or text.lstrip().startswith("<"):
+        # What Codex adds itself: context in tags, and the AGENTS.md it read.
+        if not text.strip() or text.lstrip().startswith(("<", "# AGENTS.md instructions")):
             continue
         return _utc(str(rec.get("timestamp") or ""))
     return None
@@ -199,8 +201,40 @@ def codex_sessions(root: Path, since: float) -> list[dict[str, Any]]:
         pl = first.get("payload") if isinstance(first, dict) else None
         if not isinstance(pl, dict) or not pl.get("id") or not pl.get("cwd"):
             continue
+        if pl.get("thread_source", "user") != "user":
+            continue  # a helper thread Codex started, not the person's chat
         out.append({"session": str(pl["id"]), "cwd": str(pl["cwd"]), "rollout": rollout})
     return out
+
+
+def _norm(path: str) -> str:
+    """A folder as one string to compare: resolved, case folded where the system folds it."""
+    try:
+        return os.path.normcase(str(Path(path).resolve()))
+    except (OSError, ValueError):
+        return os.path.normcase(path.rstrip("/\\"))
+
+
+def _owner(cwd: str, folders: dict[str, str]) -> str:
+    """The project whose folder holds cwd, the longest folder winning — as the hook decides."""
+    c = _norm(cwd)
+    best, size = "", -1
+    for code, folder in folders.items():
+        if (c == folder or c.startswith(folder.rstrip(os.sep) + os.sep)) and len(folder) > size:
+            best, size = code, len(folder)
+    return best
+
+
+#: The file each tool's capture lives in, in a project folder: once it is
+#: written, only sessions after it count as lost — older ones were before the fix.
+_WIRED = {"claude": Path(".claude") / "settings.local.json", "codex": Path(".codex") / "hooks.json"}
+
+
+def _wired_at(path: str, tool: str) -> float:
+    try:
+        return (Path(path) / _WIRED[tool]).stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> list[dict[str, Any]]:
@@ -208,33 +242,37 @@ def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> l
     since = now - WEEK_SECONDS
     skip = ignored(store.data_root)
     codex = codex_sessions(codex_root, since) if codex_root.is_dir() else []
+    rows_ = [r for r in read_rows(store.data_root / "integrations.csv") if r.get("project") and r.get("path")]
+    folders = {str(r["project"]): _norm(str(r["path"])) for r in rows_}
     out: list[dict[str, Any]] = []
-    for row in read_rows(store.data_root / "integrations.csv"):
-        code, path = str(row.get("project") or ""), str(row.get("path") or "").rstrip("/")
-        if not code or not path:
-            continue
-        start = max(since, _since(str(row.get("created_date") or "")))
+    for row in rows_:
+        code, path = str(row.get("project") or ""), str(row.get("path") or "").rstrip("/\\")
+        base = max(since, _since(str(row.get("created_date") or "")))
+        starts = {tool: max(base, _wired_at(path, tool)) for tool in _WIRED}
         chats = store.data_root / "projects" / code / "chats"
         found: dict[str, list[float]] = {"claude": [], "codex": []}
         folder = claude_root / folder_slug(path)
         for transcript in folder.glob("*.jsonl") if folder.is_dir() else []:
             try:
-                if transcript.stat().st_mtime < start:
+                if transcript.stat().st_mtime < starts["claude"]:
                     continue
             except OSError:
                 continue
             if (chats / f"cc-{transcript.stem[:8]}" / "meta.json").exists():
                 continue
             at = last_prompt(transcript)
-            if at is not None and at >= start:
+            if at is not None and at >= starts["claude"]:
                 found["claude"].append(at)
         for c in codex:
-            if c["cwd"] != path and not c["cwd"].startswith(path + "/"):
+            if _owner(c["cwd"], folders) != code:
                 continue
-            if (chats / f"codex-{session_key('codex', c['session'])}" / "meta.json").exists():
+            # Recorded under its name now, or under the first 8 characters of
+            # its id as it was before 17 October 2026.
+            names = (f"codex-{session_key('codex', c['session'])}", f"codex-{c['session'][:8]}")
+            if any((chats / n / "meta.json").exists() for n in names):
                 continue
             at = _codex_prompt(c["rollout"])
-            if at is not None and at >= start:
+            if at is not None and at >= starts["codex"]:
                 found["codex"].append(at)
         for tool, times in found.items():
             if times:
@@ -254,9 +292,10 @@ def check(store: ViewStore, claude_root: Path | None = None, now: float | None =
     root = claude_root or Path.home() / ".claude" / "projects"
     missed: list[dict[str, Any]] = []
     watched = 0
+    skip = ignored(store.data_root)
     for row in read_rows(store.data_root / "integrations.csv"):
-        code, path = str(row.get("project") or ""), str(row.get("path") or "")
-        if not code or not path:
+        code, path = str(row.get("project") or ""), str(row.get("path") or "").rstrip("/\\")
+        if not code or not path or f"{code}:claude" in skip:
             continue
         folder = root / folder_slug(path)
         if not folder.is_dir():

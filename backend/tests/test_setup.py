@@ -483,3 +483,22 @@ def test_the_codex_box_also_gives_codex_the_mcp_server(env) -> None:
     again = _integrate(client, project_dir, write_codex_hooks=True)
     assert {r["file"]: r["action"] for r in again["results"]}[str(cfg)] == "unchanged"
     assert cfg.read_text(encoding="utf-8").count("[mcp_servers.slightly-parallel]") == 1
+
+
+def test_the_codex_mcp_block_never_makes_a_second_table(env) -> None:
+    """A config that names our server another way, or that Codex cannot read,
+    is left alone; the block carries PYTHONUTF8 like the other tools' entries."""
+    from backend.routers import setup as setup_router
+    client, _data_root, project_dir = env
+    cfg = setup_router.CODEX_CONFIG_PATH
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    quoted = '[mcp_servers."slightly-parallel"]\ncommand = "x"\n'
+    cfg.write_text(quoted, encoding="utf-8")
+    _integrate(client, project_dir, write_codex_hooks=True)
+    assert cfg.read_text(encoding="utf-8") == quoted
+    cfg.write_text("this is = = not toml", encoding="utf-8")
+    _integrate(client, project_dir, write_codex_hooks=True)
+    assert cfg.read_text(encoding="utf-8") == "this is = = not toml"
+    cfg.unlink()
+    _integrate(client, project_dir, write_codex_hooks=True)
+    assert "PYTHONUTF8" in cfg.read_text(encoding="utf-8")

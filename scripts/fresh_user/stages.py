@@ -223,7 +223,13 @@ def setup(space: Space, report: Report, code: str, tool_names: list[str]) -> Non
     playwright(space, report, s, "the Setup page: data folder, then the project", ["--config", "playwright.fresh.config.ts", "setup.spec.ts"], {
         "FRESH_DATA": str(space.data), "FRESH_PROJECT": str(space.sample), "FRESH_CODE": code,
         "FRESH_TOOLS": ",".join(tool_names),
+        # Playing the example into a second folder is slower on Windows (many small files).
+        "FRESH_EXAMPLE_SECONDS": "900" if WINDOWS else "240",
     })
+    started = report.notes.get("example_seconds")
+    report.notes["example_in_new_folder"] = get(space, "/api/example")
+    if started is not None:
+        report.notes["example_seconds_first"] = started
     health = get(space, "/api/health")
     report.add(s, "the server reads the new data folder", health.get("data_root") == str(space.data), str(health.get("data_root")))
     envfile = space.clone / ".env"

@@ -10,6 +10,8 @@
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { toast } from 'sonner'
+
 import { getJson } from '../../lib/getJson'
 import { postIgnore, SETUP_INFO_KEY, TOOL_NAMES, type ToolKey } from '../setup/data'
 import { t, tn, locale } from '../../i18n/scope/system'
@@ -62,7 +64,7 @@ export function CaptureSection() {
   const ignore = (project: string, tool: ToolKey) => postIgnore(project, tool).then(() => {
     void queryClient.invalidateQueries({ queryKey: ['capture', 'health'] })
     void queryClient.invalidateQueries({ queryKey: SETUP_INFO_KEY })
-  })
+  }).catch(() => toast.error(t('Could not save that')))
   const gone = d ? lostNow(d) : []
   return (
     <section id="capture" className="flex flex-col gap-8 min-w-0 scroll-mt-16">

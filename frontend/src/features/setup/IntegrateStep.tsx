@@ -78,16 +78,18 @@ function useIntegrate() {
       void queryClient.invalidateQueries({ queryKey: ['snapshot'] })
     },
   })
-  /** Integrate a row again: what it already records stays, what the form
-   *  ticks and the tool asked for (Connect) are added. Nothing is taken away. */
+  /** Integrate a row again: the tools it already records stay, and the one
+   *  asked for (Connect) is added — nothing else, whatever the form ticks.
+   *  A row that records no tool yet takes the form's boxes. */
   const reintegrate = (it: Integration, add?: ToolKey) => {
-    const has = (k: ToolKey) => Boolean(it.tools?.[k]) || add === k
+    const any = it.tools && Object.values(it.tools).some(Boolean)
+    const has = (k: ToolKey, fromForm: boolean) => (it.tools && any ? Boolean(it.tools[k]) : fromForm) || add === k
     const next = {
       ...form, code: it.project, dir: it.path,
-      writeHooks: form.writeHooks || has('claude'),
-      writeCodex: form.writeCodex || has('codex'),
-      writeOpencode: form.writeOpencode || has('opencode'),
-      writeCursor: form.writeCursor || has('cursor'),
+      writeHooks: has('claude', form.writeHooks),
+      writeCodex: has('codex', form.writeCodex),
+      writeOpencode: has('opencode', form.writeOpencode),
+      writeCursor: has('cursor', form.writeCursor),
     }
     setForm(next)
     applyMut.mutate(next)

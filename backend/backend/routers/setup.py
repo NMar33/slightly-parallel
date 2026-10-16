@@ -744,7 +744,7 @@ def integrate(
             raise HTTPException(status_code=422, detail=f"cannot read {CODEX_CONFIG_PATH}: {exc}")
         block = codex_mcp_block(_api_url(request))
         new_config, mcp_action = _upsert_codex_mcp(config, block)
-        if not dry_run and mcp_action != "unchanged":
+        if not dry_run and mcp_action not in ("unchanged", "kept"):
             CODEX_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
             write_in_place(CODEX_CONFIG_PATH, new_config)
         results.append({"file": str(CODEX_CONFIG_PATH), "action": mcp_action, "content": block})
@@ -1121,16 +1121,31 @@ _CODEX_MCP_RE = re.compile(r"^\[mcp_servers\.slightly-parallel\]\n(?:(?!\[).*\n?
 def codex_mcp_block(api_url: str) -> str:
     e = mcp_server_entry(api_url)
     args = ", ".join(json.dumps(a) for a in e["args"])
+    # Every variable the other tools get (PYTHONUTF8 among them: without it a
+    # non-Latin title ends the server on Windows), with this server's address.
+    env = {**e["env"], "SP_API": api_url}
+    pairs = ", ".join(f"{k} = {json.dumps(v)}" for k, v in env.items())
     return (
         f"[mcp_servers.{MCP_SERVER}]\n"
         f"command = {json.dumps(e['command'])}\n"
         f"args = [{args}]\n"
-        f"env = {{ SP_API = {json.dumps(api_url)}, PYTHONPATH = {json.dumps(e['env']['PYTHONPATH'])} }}\n"
+        f"env = {{ {pairs} }}\n"
     )
 
 
 def _upsert_codex_mcp(text: str, block: str) -> tuple[str, str]:
+    """Our block into Codex's config, in place. A file Codex could not read,
+    or one that holds our server in a shape this does not edit (a quoted
+    name, a sub-table), is left as it is: "kept" — never a second table."""
+    import tomllib
+    try:
+        parsed = tomllib.loads(text) if text.strip() else {}
+    except tomllib.TOMLDecodeError:
+        return text, "kept"
     m = _CODEX_MCP_RE.search(text)
+    ours = isinstance(parsed.get("mcp_servers"), dict) and MCP_SERVER in parsed["mcp_servers"]
+    if ours and (not m or "[mcp_servers." + MCP_SERVER + "." in text):
+        return text, "kept"
     if m:
         if m.group(0).rstrip("\n") == block.rstrip("\n"):
             return text, "unchanged"

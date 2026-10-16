@@ -128,3 +128,37 @@ def test_two_codex_sessions_of_one_minute_are_two_agents() -> None:
     assert a[:8] == b[:8]
     assert session_key("codex", a) != session_key("codex", b)
     assert session_key("claude-code", "56a11b0e-3352-480f-b7c9-d4d71b99fee6") == "56a11b0e"
+
+
+def test_lost_codex_sessions_follow_the_hook_not_any_parent_folder(tmp_path: Path) -> None:
+    """A session in a nested project belongs to it alone; a session recorded
+    under the old first-8 name is not lost; one older than the wiring is
+    not lost; Codex's own AGENTS.md message is not the person writing."""
+    st, claude = _setup(tmp_path)
+    inner = tmp_path / "inner"
+    inner.mkdir()
+    append_row(st.data_root / "integrations.csv", ("project", "path"), {"project": "beta", "path": str(inner)})
+    codex = tmp_path / "codex"
+    now = time.time()
+    _rollout(codex, "01a14500-0000-7000-8000-00000000aaaa", str(inner), now - 600)                  # beta's, lost there only
+    old = st.data_root / "projects" / "alpha" / "chats" / "codex-01a14501"
+    old.mkdir(parents=True)
+    (old / "meta.json").write_text("{}")
+    _rollout(codex, "01a14501-0000-7000-8000-00000000bbbb", WORK, now - 600)                        # recorded, old name
+    got = {(g["project"], g["tool"]): g["sessions"] for g in capturewatch.lost(st, claude, codex, now)}
+    assert got == {("beta", "codex"): 1}
+    wired = inner / ".codex"
+    wired.mkdir()
+    (wired / "hooks.json").write_text("{}")                                                          # connected after it
+    assert capturewatch.lost(st, claude, codex, now) == []
+
+
+def test_codex_adds_its_own_agents_md_message_and_that_is_not_a_prompt(tmp_path: Path) -> None:
+    d = tmp_path / "2026" / "10" / "17"
+    d.mkdir(parents=True)
+    lines = [{"timestamp": _utc(time.time()), "type": "session_meta", "payload": {"id": "x", "cwd": WORK}},
+             {"timestamp": _utc(time.time()), "type": "response_item", "payload": {"type": "message", "role": "user",
+              "content": [{"type": "input_text", "text": "# AGENTS.md instructions for /work/my app\n…"}]}}]
+    f = d / "rollout-x.jsonl"
+    f.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    assert capturewatch._codex_prompt(f) is None
