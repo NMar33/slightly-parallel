@@ -636,11 +636,21 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
         http(second.url + "/api/settings", {"values": {"terminal.enabled": True}})
         state = get(second, "/api/terminal/state")
         report.add(s, "with no tmux the terminal says so", state.get("enabled") is True and not state.get("tmux"), json.dumps(state)[:200])
-        try:
-            shell = http(second.url + "/api/terminal/sessions", {"kind": "shell"}).get("session", {})
-        except Exception as exc:
-            shell = {"error": str(exc)}
-        report.add(s, "and still opens a shell", shell.get("backend") == "plain", json.dumps(shell)[:200])
+        if WINDOWS:
+            # The terminal runs on macOS and Linux only: on Windows it must say so, not fail.
+            try:
+                http(second.url + "/api/terminal/sessions", {"kind": "shell"})
+                said = (False, "accepted")
+            except urllib.error.HTTPError as exc:
+                text = exc.read().decode("utf-8", "replace")
+                said = (exc.code == 501 and "macOS and Linux" in text, f"{exc.code}: {text[:200]}")
+            report.add(s, "on Windows the terminal says it runs on macOS and Linux only", *said)
+        else:
+            try:
+                shell = http(second.url + "/api/terminal/sessions", {"kind": "shell"}).get("session", {})
+            except Exception as exc:
+                shell = {"error": str(exc)}
+            report.add(s, "and still opens a shell", shell.get("backend") == "plain", json.dumps(shell)[:200])
 
         # Setup, given wrong things.
         report.add(s, "Setup refuses a project folder that does not exist", *refused("/api/setup/integrate", {"project_code": "x", "project_dir": str(space.root / "nowhere")}))

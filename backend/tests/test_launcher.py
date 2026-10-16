@@ -343,8 +343,16 @@ def test_sp_sh_prefers_a_named_newer_python(tmp_path: Path) -> None:
 def test_sp_cmd_checks_that_python_runs_before_handing_over() -> None:
     """The Microsoft Store alias named `python` exists but runs nothing."""
     text = (Path(__file__).resolve().parents[2] / "sp.cmd").read_text(encoding="utf-8")
-    line = next(ln for ln in text.splitlines() if "python sp.py" in ln)
-    assert line.index('python -c "import sys"') < line.index("python sp.py")
+    line = next(ln for ln in text.splitlines() if "goto :python" in ln)
+    assert line.index('python -c "import sys"') < line.index("goto :python")
+
+
+def test_sp_cmd_ends_with_sp_py_s_own_exit_code() -> None:
+    """`cmd /c sp.cmd status` returned 0 with nothing running: a script
+    could not tell. Each handover ends the batch with sp.py's code."""
+    lines = (Path(__file__).resolve().parents[2] / "sp.cmd").read_text(encoding="utf-8").splitlines()
+    runs = [i for i, ln in enumerate(lines) if ln.strip().endswith("sp.py %*")]
+    assert len(runs) == 2 and all(lines[i + 1].strip() == "exit /b %errorlevel%" for i in runs)
 
 
 def test_the_hot_reload_start_sends_pages_to_the_vite_port(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

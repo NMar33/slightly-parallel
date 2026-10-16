@@ -33,7 +33,8 @@ test('the entry pages show the decision, the rule and the scan', async ({ page }
   await page.goto('/decisions')
   await expect(page.getByText(/pytest/i).first()).toBeVisible()
   await page.goto('/rules')
-  await expect(page.getByText(/single file/i).first()).toBeVisible()
+  // The agent words the rule its own way: one of the rule's own ideas shows.
+  await expect(page.getByText(/single file|one file|standard library/i).first()).toBeVisible()
   await page.goto('/scans')
   await expect(page.getByText(CODE).first()).toBeVisible()
   expect(thrown).toEqual([])
