@@ -24,7 +24,7 @@ describe('the guide', () => {
     const routes = productRoutes().filter((r) => r !== '*')
     // Redirects and second names are not pages: /chats is the Chats page,
     // and /sessions is the address it was published at, still answering.
-    const redirects = ['/activity', '/sessions']
+    const redirects = ['/activity', '/sessions', '/health']   // /health is the lower half of /monitor now
     const known = new Set(GUIDE_PAGES.map((p) => p.route))
     const missing = routes.filter((r) => {
       if (redirects.includes(r) || known.has(r)) return false

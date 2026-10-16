@@ -42,6 +42,7 @@ _WHEN = {
     "decision": "A choice was made between alternatives; `alternatives` holds what was rejected and why.",
     "vision": "A product idea worth keeping, not yet a commitment.",
     "problem": "You are blocked — log it before workarounds bury it.",
+    "entrypoint": "The operator wrote #entrypoint: the way into a topic — what, where, how, state, next — written through `interpret`, never as a new entry.",
     "file": "The per-path judgment behind a scan: what moved and which moves matter.",
     "architecture": "The form behind a scan: eight groups, each checked or with its changes.",
     "idea": "A thought worth keeping, filed by title.",

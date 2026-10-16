@@ -22,6 +22,7 @@ import {
   Rocket,
   Sunrise,
   Telescope,
+  DoorOpen,
 } from 'lucide-react'
 
 import { t } from '../i18n/scope/shell'
@@ -40,6 +41,7 @@ export const LENS_HEAD = {
   scans: { base: 'scans', title: t('Scans'), icon: Telescope, question: t('What each agent changed since its last scan.') },
   standups: { base: 'standups', title: t('Standups'), icon: Sunrise, question: t('What changed yesterday, what went wrong, and what needs your answer.') },
   decisions: { base: 'decisions', title: t('Decisions'), icon: Gavel, question: t('What was chosen, why, and what was rejected.') },
+  entrypoints: { base: 'entrypoints', title: t('Entry points'), icon: DoorOpen, question: t('The way into each topic: where it lives, how to run it, where the work stopped.') },
   sprints: { base: 'sprints', title: t('Sprints'), icon: Rocket, question: t('What a block of work covers, and how much of its budget is spent.') },
   sessions: { base: 'sessions', title: t('Chats'), icon: Clock, question: t('Every chat with an agent, when and for how long.') },
   visions: { base: 'visions', title: t('Visions'), icon: Lightbulb, question: t('Ideas about where the product should go.') },

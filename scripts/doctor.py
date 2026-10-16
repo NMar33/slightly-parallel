@@ -282,7 +282,7 @@ def check_yymm_dates(root: Path) -> Iterable[Finding]:
     # overlays that older data roots still carry.
     paths = [root / n for n in (
         "tasks.csv", "task_events.csv", "scans.csv", "standups.csv",
-        "decisions.csv", "problems.csv", "rules.csv", "visions.csv",
+        "decisions.csv", "problems.csv", "rules.csv", "visions.csv", "entrypoints.csv",
         "skills.csv", "artifacts.csv", "architecture.csv", "files.csv",
         "sprints.csv",
     )]

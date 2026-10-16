@@ -40,6 +40,12 @@ export type Entry = {
 
 export type FileRow = {
   path: string
+  /** What the cells and the matrix hang on: the path, or `project::path`
+      when the payload spans every project (the same path in two
+      repositories is two files). */
+  key?: string
+  /** The project the file is from; set when the payload spans every project. */
+  project?: string
   total: number
   created: number
   modified: number
@@ -126,7 +132,7 @@ export function buildRows(data: Payload, weight: number): Row[] {
     const wDays = new Map<string, number>()
     const w = { total: 0, breadth: 0, churn: 0, net: 0, days: 0 }
     entries.forEach((e, i) => {
-      const cell = data.cells[`${f.path}||${e.id}`]
+      const cell = data.cells[`${f.key ?? f.path}||${e.id}`]
       if (!cell) return
       story.push({ entry: e, cell })
       days.add(e.date)

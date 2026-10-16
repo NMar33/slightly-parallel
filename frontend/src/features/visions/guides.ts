@@ -87,6 +87,25 @@ export const PROBLEMS_GUIDE: Guide = {
   give: [[null, t('Copy, or add them to a set and write the set from Projects.')]],
 }
 
+export const ENTRYPOINTS_GUIDE: Guide = {
+  intro: [
+    t('This page shows entry points: one per topic, the way back into it.'),
+    t('To add one, type #entrypoint in the chat about a topic. The agent writes what it is, where its files are, how to run it, where the work stopped and what is next.'),
+  ],
+  parts: [
+    [t('Open topics'), t('the topics still in work, each with where it stopped.')],
+    [t('Close the topic'), t('mark the topic as done; it stays readable.')],
+  ],
+  steps: [
+    t('You type #entrypoint in the chat, naming the topic. Slightly Parallel keeps your message.'),
+    t('The agent writes the five sections from the chat: What, Where, How, State, Next.'),
+    t('Type #entrypoint again on the same topic when the work moved: State and Next are rewritten, Where and How grow.'),
+    t('Coming back to a topic, read its entry point first; an agent does the same.'),
+  ],
+  giveTitle: t('To give an entry point to an agent:'),
+  give: [[null, t('Copy it into the chat, or tell the agent the topic: it reads the entry point.')]],
+}
+
 export const SKILLS_GUIDE: Guide = {
   intro: [
     t('This page shows skills: instructions an agent follows for a task you repeat.'),
@@ -230,18 +249,18 @@ export const PROMPTS_GUIDE: Guide = {
 
 export const FILES_GUIDE: Guide = {
   intro: [
-    t('This page shows the file entries of every project, newest day first.'),
+    t('This page shows the file activity of every project, the way a project\'s Files tab shows its own: which files the agents change, how much, and what they wrote about each.'),
     t('A file entry is written by an agent after a scan. To ask for a scan, type #scan in the chat.'),
   ],
   parts: [
-    [t('Day'), t('what shipped on that day, and in which project.')],
-    [t('File entry'), t('one line per scan. Click it to list the files it changed, with lines added and deleted and how important each is.')],
-    [t('Path'), t('click a path to read the history of that file: every file entry that named it.')],
+    [t('Project'), t('every project at once, or one; a dot on each file says which project it is from.')],
+    [t('Views'), t('grid: files per scan, as a heatmap. ranking: one row per file. story: one card per file, with the agents\' notes. weight: size is lines changed.')],
+    [t('Order by'), t('recent work, most worked, most churn, importance and the rest; the slider sets how much recent work counts.')],
   ],
   steps: [
     t('You type #scan in the chat.'),
     t('The agent writes the scan, then the file entry: the files that matter, with a line on each.'),
-    t('The file entry appears here under its day.'),
+    t('The files appear here, and on the project\'s Files tab.'),
   ],
 }
 

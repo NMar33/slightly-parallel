@@ -65,7 +65,7 @@ TOOLS: dict[str, str] = {
     "scan_material": "After #scan: this chat's commits since your last scan and what is not committed, counted, and how to write it.",
     "standup_material": "The day's messages, whether a standup is owed, and how to write it.",
     "standup_postpone": "The operator put the standup off: do not ask again for some hours.",
-    "interpret": "Write the interpretation of a kept vision, rule or problem.",
+    "interpret": "Write the interpretation of a kept vision, rule, problem or entry point.",
     "skill_draft": "Write SKILL.md and its files for a kept #skill.",
     "artifact_write": "Make the record of an artifact folder you wrote.",
     "doc_version": "Post the finished text of a Storyboard document whose pack the operator gave you.",
@@ -535,14 +535,15 @@ class Translator:
              }},
             {"name": "interpret",
              "description": (
-                 "Write the interpretation of a kept #vision, #rule or #problem "
-                 "(the id the [slightly-parallel] notice named): the message read with "
-                 "the conversation around it, in plain words. Each write is a "
-                 "version; the current one is what the page shows."),
+                 "Write the interpretation of a kept #vision, #rule, #problem or "
+                 "#entrypoint (the id the [slightly-parallel] notice named): the "
+                 "message read with the conversation around it, in plain words. "
+                 "An entry point has five sections: What, Where, How, State, Next. "
+                 "Each write is a version; the current one is what the page shows."),
              "inputSchema": {
                  "type": "object",
                  "properties": {
-                     "lens": {"type": "string", "enum": ["vision", "rule", "problem"]},
+                     "lens": {"type": "string", "enum": ["vision", "rule", "problem", "entrypoint"]},
                      "id": {"type": "string"},
                      "text": {"type": "string", "description": "markdown"},
                      "note": {"type": "string", "description": "one line on what changed"},
@@ -621,9 +622,9 @@ class Translator:
         self.ensure()
         if name == "interpret":
             lens = str(args.get("lens") or "")
-            base = {"vision": "visions", "rule": "rules", "problem": "problems"}.get(lens)
+            base = {"vision": "visions", "rule": "rules", "problem": "problems", "entrypoint": "entrypoints"}.get(lens)
             if base is None:
-                raise ApiError("lens must be vision, rule or problem")
+                raise ApiError("lens must be vision, rule, problem or entrypoint")
             return self.api.post(
                 f"/api/{base}/{_id(args)}/interpretation",
                 {"agent_id": self.identity()["agent_id"],

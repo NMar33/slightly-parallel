@@ -346,6 +346,14 @@ async function main() {
         // proof the card opens, and the card itself is folded off screen.
         if (done.focus && (!beat.selector || action.focus)) rect = done.focus
       }
+      // A demonstration: each step in turn, its frames after the last.
+      for (const step of beat.steps || []) {
+        if (!step || !step.selector) continue
+        const done = await perform(page, step, shoot, view, beat.nav || [])
+        if (done.grab) grab = done.grab
+        done.hidden.forEach((h, i) => { if (h) nav[i] = null })
+        if (done.focus && (!beat.selector || step.focus)) rect = done.focus
+      }
     } catch (e) {
       error = String((e && e.message) || e).split('\n')[0].slice(0, 300)
     } finally {

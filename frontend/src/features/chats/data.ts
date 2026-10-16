@@ -56,6 +56,7 @@ function producedWord(kind: string, n: number): string {
     case 'standups': return tn(n, '{n} standup', '{n} standups')
     case 'files': return tn(n, '{n} file entry', '{n} file entries')
     case 'visions': return tn(n, '{n} vision', '{n} visions')
+    case 'entrypoints': return tn(n, '{n} entry point', '{n} entry points')
     case 'problems': return tn(n, '{n} problem', '{n} problems')
     case 'rules': return tn(n, '{n} rule', '{n} rules')
     case 'skills': return tn(n, '{n} skill', '{n} skills')

@@ -423,6 +423,36 @@ lens({
 })
 
 lens({
+  ...LENS_HEAD.entrypoints,
+  listKey: 'entrypoints',
+  tagline: t('The way into a topic, for whoever comes back to it.'),
+  command: '#entrypoint',
+  workflow:
+    t('Kept when you type #entrypoint about a topic: the film, the launch, a migration. The agent writes five sections from the chat: what the topic is, where its files and links are, how to run it, where the work stopped, what comes next. A second #entrypoint on the same topic is a new version. Close the topic when it is done.'),
+  holds: [
+    { name: 'what', line: 'what the topic is and what for' },
+    { name: 'where', line: 'the files, folders, artifacts and links, one per line' },
+    { name: 'how', line: 'how to run or repeat it: commands, pages, the skill' },
+    { name: 'state', line: 'where the work stopped' },
+    { name: 'next', line: 'what comes next' },
+  ],
+  l1: (r) => str(r.topic) || str(r.l1),
+  badges: (r) => [...statusBadge(r, 'status')],
+  facets: [
+    { param: 'status', field: 'status', label: t('Status') },
+  ],
+  example: {
+    what: 'The install film: the first how-to of the channel, 4:08, made with the tour generator.',
+    where: 'brand/channel/videos/install-voiced.mp4 · brand/channel/install-voice.md · launch.html, Upload 4',
+    how: 'Studio → Install, and connect a project → 1920px → render MP4; the skill make-a-how-to-film.',
+    state: 'Voiced MP4 done; not uploaded.',
+    next: 'Upload as Public; the link into the README.',
+    status: 'open',
+  },
+  emptyHint: t('Type #entrypoint about a topic you will come back to.'),
+})
+
+lens({
   ...LENS_HEAD.problems,
   listKey: 'problems',
   tagline: t('Blockers and risks, kept until resolved.'),

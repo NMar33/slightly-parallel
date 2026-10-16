@@ -132,7 +132,7 @@ export function areasOf(key: readonly unknown[]): string[] | null {
     // A task's rows carry what the chats said about it.
     if (second === 'tasks') return ['tasks', 'chats']
     // The kept pages and the day books: their ledgers land in "rest".
-    if (second === 'visions' || second === 'rules' || second === 'problems' || second === 'skills'
+    if (second === 'visions' || second === 'rules' || second === 'problems' || second === 'entrypoints' || second === 'skills'
       || second === 'artifacts' || second === 'decisions' || second === 'standups' || second === 'prompts') return ['rest']
   }
   // The board and everything task-shaped (sprints, milestones, time, evidence).
@@ -150,7 +150,7 @@ export function areasOf(key: readonly unknown[]): string[] | null {
   // re-read five thousand entries whenever a chat moves.
   if (head === 'sprints' || head === 'milestones' || head === 'boards' || head === 'evidence-prompts'
     || (typeof head === 'string' && head.startsWith('time-'))) return ['tasks']
-  if (head === 'visions' || head === 'rules' || head === 'problems' || head === 'skills'
+  if (head === 'visions' || head === 'rules' || head === 'problems' || head === 'entrypoints' || head === 'skills'
     || head === 'artifacts' || head === 'standups-page' || head === 'standups-calendar' || head === 'standups'
     || head === 'decisions-page' || head === 'prompt-library' || head === 'integrate' || head === 'reason'
     || head === 'tour') return ['rest']

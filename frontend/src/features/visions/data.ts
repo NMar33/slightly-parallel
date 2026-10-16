@@ -73,17 +73,20 @@ export interface VisionRow {
   resolved_date?: string | null
   /** Rule: the problem it was written from. */
   related_incident?: string | null
+  /** Entry point: the topic's title, set by the operator. */
+  topic?: string | null
   /** The interpretation, when the list was asked `with_l2`. */
   l2?: string | null
 }
 
 /** The three kinds of kept entry. Their pages share this data layer. */
-export type KeptKind = 'vision' | 'rule' | 'problem'
+export type KeptKind = 'vision' | 'rule' | 'problem' | 'entrypoint'
 
 const KIND_BASE: Record<KeptKind, { base: string; list: string }> = {
   vision: { base: '/api/visions', list: 'visions' },
   rule: { base: '/api/rules', list: 'rules' },
   problem: { base: '/api/problems', list: 'problems' },
+  entrypoint: { base: '/api/entrypoints', list: 'entrypoints' },
 }
 
 export interface Vision {
@@ -325,7 +328,7 @@ export function useRemoveExamples() {
   return useMutation({
     mutationFn: () => postJson('/api/examples/remove', {}) as Promise<{ removed: string[] }>,
     onSuccess: () => {
-      for (const key of ['visions', 'rules', 'problems', 'skills', 'integrate']) void qc.invalidateQueries({ queryKey: [key] })
+      for (const key of ['visions', 'rules', 'problems', 'entrypoints', 'skills', 'integrate']) void qc.invalidateQueries({ queryKey: [key] })
     },
   })
 }

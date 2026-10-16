@@ -155,9 +155,9 @@ _BOILERPLATE_RE = re.compile(
 # The other things an operator keeps by tagging a message. Same rules as
 # #prompt, plus one: ``#problem solved <id>`` asks the agent to close a
 # problem, so it is a command and not a new problem.
-KEEP_KINDS = ("vision", "rule", "problem", "skill", "artifact")
+KEEP_KINDS = ("vision", "rule", "problem", "entrypoint", "skill", "artifact")
 KEEP_TAG_RE = re.compile(
-    r"(?<![\w#])#(vision|rule|problem|skill|artifact)(?:\(([^)\n]{1,80})\))?(?![\w-])(?!\s+solved\b)",
+    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact)(?:\(([^)\n]{1,80})\))?(?![\w-])(?!\s+solved\b)",
     re.IGNORECASE,
 )
 

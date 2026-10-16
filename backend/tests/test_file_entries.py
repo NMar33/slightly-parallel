@@ -389,3 +389,23 @@ def test_git_status_names_the_reason_when_unfilled(client: TestClient, tmp_path:
     (client.app.state.store.data_root / "integrations.csv").unlink()
     d2 = client.get(f"/api/files/{_files(client, 'sn_p2', created_time='10:20')['metadata']['id']}").json()
     assert d2["git_status"] == "no-path"
+
+
+def test_heatmap_over_every_project_keeps_the_same_path_apart_per_project(client: TestClient) -> None:
+    """Without a project filter a README.md in alpha and one in beta are two
+    files: the cells and the matrix hang on project::path, and each file row
+    names its project. With a filter, the keys are the plain path as before."""
+    (client.app.state.store.data_root / "projects" / "beta").mkdir(parents=True, exist_ok=True)
+    a = _files(client, "sn_ha", project="alpha", created_time="10:01", paths=[{"path": "README.md", "action": "modified", "lines_add": 3, "lines_del": 1}])
+    b = _files(client, "sn_hb", project="beta", created_time="10:02", paths=[{"path": "README.md", "action": "modified", "lines_add": 7, "lines_del": 0}])
+    aid, bid = a["metadata"]["id"], b["metadata"]["id"]
+    heat = client.get("/api/files/heatmap").json()
+    readmes = [f for f in heat["files"] if f["path"] == "README.md"]
+    assert {(f["project"], f["key"]) for f in readmes} == {("alpha", "alpha::README.md"), ("beta", "beta::README.md")}
+    assert heat["cells"][f"alpha::README.md||{aid}"]["lines_add"] == 3
+    assert heat["cells"][f"beta::README.md||{bid}"]["lines_add"] == 7
+    assert heat["matrix"]["beta::README.md||2608-18"]["count"] == 1
+    scoped = client.get("/api/files/heatmap?project=beta").json()
+    assert [f["key"] for f in scoped["files"] if f["path"] == "README.md"] == ["README.md"]
+    assert f"README.md||{bid}" in scoped["cells"]
+

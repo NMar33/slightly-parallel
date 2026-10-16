@@ -20,7 +20,7 @@ import type { Row } from './data'
 
 import { t } from '../../i18n/scope/views'
 export type ChipId =
-  | 'commits' | 'task' | 'scan' | 'file' | 'vision' | 'problem' | 'decision'
+  | 'commits' | 'task' | 'scan' | 'file' | 'vision' | 'entrypoint' | 'problem' | 'decision'
   | 'standup' | 'skill' | 'artifact' | 'rule' | 'architecture'
   | 'prompt' | 'kept' | 'important'
   | 'turns10' | 'hour'
@@ -47,6 +47,7 @@ export const CHIPS: Chip[] = [
   { id: 'standup', band: 'out', label: t('a standup'), test: (s) => made(s, 'standups') },
   { id: 'decision', band: 'out', label: t('a decision'), test: (s) => made(s, 'decisions') },
   { id: 'vision', band: 'out', label: t('a vision'), test: (s) => made(s, 'visions') },
+  { id: 'entrypoint', band: 'out', label: t('an entry point'), test: (s) => made(s, 'entrypoints') },
   { id: 'problem', band: 'out', label: t('a problem'), test: (s) => made(s, 'problems') },
   { id: 'rule', band: 'out', label: t('a rule'), test: (s) => made(s, 'rules') },
   { id: 'skill', band: 'out', label: t('a skill'), test: (s) => made(s, 'skills') },

@@ -11,7 +11,7 @@ import { encodeGif, type Progress } from '../timelapse/export'
 import { THEMES } from '../timelapse/theme'
 
 import { stageSize, drawTour, type Shot, type Stage } from './scene'
-import { cueAt, duration, shotUrl, type Beat, type Script, type ShotInfo, type ShotRect } from './script'
+import { cueAt, duration, kindOf, shotUrl, type Beat, type Script, type ShotInfo, type ShotRect } from './script'
 
 export type Manifest = {
   files: string[]
@@ -145,6 +145,27 @@ export type Look = {
   bookends: boolean
   /** Ring the page's own nav item while the beat runs. */
   highlight: boolean
+  /** The pictures the cut's slides name. */
+  images?: Map<string, CanvasImageSource>
+}
+
+/** The addresses the cut's slides draw a picture from. */
+export const imageUrls = (script: Script): string[] =>
+  [...new Set(script.beats.filter((b) => b.on && kindOf(b) === 'slide' && b.image).map((b) => b.image as string))]
+
+/** Decode the slides' pictures; one that cannot be read is simply absent. */
+export async function loadImages(urls: string[]): Promise<Map<string, CanvasImageSource>> {
+  const out = new Map<string, CanvasImageSource>()
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { cache: 'no-cache' })
+      if (!res.ok) continue
+      out.set(url, await createImageBitmap(await res.blob()))
+    } catch {
+      // no picture: the slide draws its words alone
+    }
+  }
+  return out
 }
 
 export function stageFor(script: Script, shots: Map<string, Shot>, look: Look): Stage {
@@ -155,6 +176,7 @@ export function stageFor(script: Script, shots: Map<string, Shot>, look: Look): 
     theme: themeOf(script.theme),
     face: look.face,
     shots,
+    images: look.images,
     highlight: look.highlight,
     panel: script.panel ?? 'card',
     footer: look.footer,
@@ -200,5 +222,5 @@ export function missing(
   script: Script, manifest: Manifest, shots: Map<string, Shot>,
 ): Beat[] {
   const have = new Set(manifest.shots.filter((s) => s.files.length).map((s) => s.id))
-  return script.beats.filter((b) => b.on && !(have.has(b.id) && shots.has(b.id)))
+  return script.beats.filter((b) => b.on && kindOf(b) === 'page' && !(have.has(b.id) && shots.has(b.id)))
 }

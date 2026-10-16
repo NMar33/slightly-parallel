@@ -513,8 +513,11 @@ def cmd_run(args: list[str]) -> None:
         procs = [spawn(backend, cwd=ROOT / "backend", env=env)]
     else:
         print(f"[run] dev — backend on :{env['PORT']}, Vite on :{env.get('VITE_PORT') or 5173}", flush=True)
+        # The backend sends a page request on to the hot-reload UI: its own
+        # copy, frontend/dist, is whatever was built last, and two different
+        # UIs on two ports read as two servers.
         procs = [
-            spawn(backend, cwd=ROOT / "backend", env=env),
+            spawn(backend, cwd=ROOT / "backend", env={**env, "SP_UI_DEV": app_url()}),
             spawn([npm(), "run", "dev"], cwd=ROOT / "frontend", env=env),
         ]
         print(f"\n  Backend:  http://{env['HOST']}:{env['PORT']}      (docs: /docs, health: /api/health)")

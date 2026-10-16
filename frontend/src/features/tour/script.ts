@@ -14,6 +14,7 @@
 
 import { t } from '../../i18n/scope/shell'
 import { addDays, isoToday, startOfWeek } from '../calendar/model'
+import type { Ground } from './ground'
 
 /** How the camera treats the shot for this beat. */
 export type Zoom =
@@ -56,7 +57,7 @@ export const PANELS: Array<{ id: Panel; name: string; note: string }> = [
   { id: 'numbered', name: t('Numbered'), note: t('the step number, the title, a tick per step') },
 ]
 
-type Action = {
+export type Action = {
   kind: 'click' | 'hover' | 'type' | 'drag'
   selector: string
   /** Where a drag lets go. */
@@ -72,10 +73,28 @@ type Action = {
   after?: string
 }
 
+/**
+ * What a beat shows: a page of the app, photographed; a slide — the title
+ * and the lines on the stage's own ground, with room for one picture; or a
+ * terminal, in which the caption's commands are typed and answered. Only a
+ * page is captured and walked by the live tour.
+ */
+export type Kind = 'page' | 'slide' | 'terminal'
+
+export const KINDS: Array<{ id: Kind; name: string; note: string }> = [
+  { id: 'page', name: t('Page'), note: t('a page of the app, photographed') },
+  { id: 'slide', name: t('Slide'), note: t('the title and the lines on the ground; "> " sets a line large, "- " is a bullet, `backticks` a command') },
+  { id: 'terminal', name: t('Terminal'), note: t('the lines typed in a window: "$ " a command, "# " a comment, the rest its answer') },
+]
+
 export type Beat = {
   id: string
-  /** Route with hash, exactly as the address bar would hold it. */
+  /** A page by default. */
+  kind?: Kind
+  /** Route with hash, exactly as the address bar would hold it; empty on a slide or a terminal. */
   page: string
+  /** A slide's picture: the address of an image this app serves (/tour/qr-repo.png). */
+  image?: string
   /** Which part of the story this belongs to, for the lab's grouping. */
   chapter: string
   title: string
@@ -87,6 +106,12 @@ export type Beat = {
   /** Extra milliseconds after the network goes quiet. */
   settle?: number
   action?: Action
+  /**
+   * A demonstration: actions performed one after another once the page is
+   * shot, each with its own frames. The film plays every frame across the
+   * beat's hold, so a beat can click through the sidebar or fill a form.
+   */
+  steps?: Action[]
   /**
    * For the film only. A beat that drags a card or opens one is a gesture
    * the film mimes; the live tour never moves anything on the board, so it
@@ -167,6 +192,10 @@ export type Script = {
   /** The hand the opening and closing cards are drawn in; unset means the wordmark. */
   opening?: Opening
   ending?: Ending
+  /** What is drawn on the ground under every beat; unset means the theme's ground alone. */
+  ground?: Ground
+  /** The sheet's label at the right of the top rule (the series and part, a version); empty leaves it out. */
+  stamp?: string
   beats: Beat[]
   /** The voice last applied to the whole cut. Informational: each beat's own title and text are what plays. */
   voice?: Voice
@@ -215,6 +244,11 @@ export function applyVoice(script: Script, voice: Voice): Script {
 /** True when a beat's page is a page of the example project. */
 export const onProject = (b: Beat): boolean => b.page.includes('{project}')
 
+export const kindOf = (b: Beat): Kind => b.kind ?? 'page'
+
+/** The beats that are photographed: pages, not slides or terminals. */
+export const pages = (beats: Beat[]): Beat[] => beats.filter((b) => kindOf(b) === 'page')
+
 export { CHANNEL, LIBRARY, PRESETS, TOUR_PROJECT } from './library'
 
 /* ------------------------------ the clock ----------------------------- */
@@ -241,9 +275,9 @@ export function pageFor(beat: Beat, project: string, today = isoToday()): string
     })
 }
 
-/** What the live tour walks: no manipulations, nothing fixture-specific. */
+/** What the live tour walks: pages only, no manipulations, nothing fixture-specific. */
 export function walkable(script: Script): Beat[] {
-  return live(script).filter((b) => !b.filmOnly)
+  return pages(live(script)).filter((b) => !b.filmOnly)
 }
 
 /** Where every beat sits on the film's clock, in seconds. */
@@ -353,9 +387,9 @@ export function navFor(beat: Beat, project: string): string[] {
   return out
 }
 
-/** What capture needs to know about a beat — nothing about how it looks. */
+/** What capture needs to know about a beat — nothing about how it looks. A slide or a terminal is drawn, not photographed. */
 export function captureJob(beats: Beat[], project: string) {
-  return beats.map((b) => ({
+  return pages(beats).map((b) => ({
     id: b.id,
     page: pageFor(b, project),
     selector: b.selector ?? '',
@@ -363,6 +397,7 @@ export function captureJob(beats: Beat[], project: string) {
     wait_for: b.wait_for ?? '',
     settle: b.settle ?? 700,
     ...(b.action ? { action: b.action } : {}),
+    ...(b.steps?.length ? { steps: b.steps } : {}),
   }))
 }
 

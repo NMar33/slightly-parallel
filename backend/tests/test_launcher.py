@@ -345,3 +345,18 @@ def test_sp_cmd_checks_that_python_runs_before_handing_over() -> None:
     text = (Path(__file__).resolve().parents[2] / "sp.cmd").read_text(encoding="utf-8")
     line = next(ln for ln in text.splitlines() if "python sp.py" in ln)
     assert line.index('python -c "import sys"') < line.index("python sp.py")
+
+
+def test_the_hot_reload_start_sends_pages_to_the_vite_port(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """sp.py with no --prod names the Vite UI in SP_UI_DEV: a page asked of
+    the backend's port goes there with its path and query; the API stays."""
+    from fastapi.testclient import TestClient
+    from backend.server import create_app
+    monkeypatch.setenv("SP_UI_DEV", "http://127.0.0.1:5181/")
+    with TestClient(create_app(data_root=tmp_path / "data", watch=False)) as c:
+        r = c.get("/project/alpha?tab=sprints", follow_redirects=False)
+        assert r.status_code == 307 and r.headers["location"] == "http://127.0.0.1:5181/project/alpha?tab=sprints"
+        r = c.get("/", follow_redirects=False)
+        assert r.status_code == 307 and r.headers["location"] == "http://127.0.0.1:5181/"
+        assert c.get("/api/nothing-here").status_code == 404
+        assert c.get("/api/health").status_code == 200

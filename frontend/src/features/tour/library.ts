@@ -10,6 +10,7 @@
 import { t } from '../../i18n/scope/shell'
 
 import type { Beat, Caption, Ending, Opening, Panel, Script } from './script'
+import type { Ground } from './ground'
 
 /**
  * A beat, on by default. What it shows is also its first written caption,
@@ -30,6 +31,9 @@ const CH = {
   time: t('Plans and time'),
   find: t('Search and history'),
   setup: t('Setup and settings'),
+  install: t('Install'),
+  chats: t('Chats'),
+  faq: t('Good to know'),
 }
 
 export const LIBRARY: Beat[] = [
@@ -1292,7 +1296,8 @@ export const LIBRARY: Beat[] = [
   B({
     id: 'health',
     chapter: CH.setup,
-    page: '/health',
+    page: '/monitor',
+    selector: 'section[aria-label="Server"]',
     title: t('Health'),
     text: t('Server status, slow requests and the log on one page. Copy for AI puts the whole page on the clipboard for an agent to read.'),
     captions: [
@@ -1300,7 +1305,7 @@ export const LIBRARY: Beat[] = [
       { voice: 'story', title: 'Open Health', text: 'You open Health after a slow morning. The request table names the costliest path; you copy the page for an agent.' },
       { voice: 'tech', title: 'GET /api/health/status', text: 'The page reads the server log and the request timings kept in memory: p50 and max per path, errors and warnings counted.' },
     ],
-    zoom: 'full',
+    zoom: 'focus',
     hold: 5.5,
   }),
   B({
@@ -1392,6 +1397,318 @@ export const LIBRARY: Beat[] = [
     hold: 4.5,
   }),
 
+
+  // ---- The install film: slides and terminals between the pages ----
+  B({
+    id: 'install-repo',
+    kind: 'slide',
+    chapter: CH.install,
+    page: '',
+    image: '/tour/qr-repo.png',
+    title: t('Python 3.11+ and git, and that is all.'),
+    text: '> github.com/NMar33/slightly-parallel\n\n' + t('- Linux, macOS and Windows\n- The UI comes built: Node stays optional\n- Everything stays on your computer'),
+    zoom: 'full',
+    hold: 8,
+  }),
+  B({
+    id: 'install-run',
+    kind: 'terminal',
+    chapter: CH.install,
+    page: '',
+    title: t('Install on Linux and macOS'),
+    text: '$ git clone https://github.com/NMar33/slightly-parallel.git\n$ cd slightly-parallel\n$ ./run.sh --prod\n'
+      + '[run] creating backend/.venv ...\n[run] installing backend packages (a minute on the first start) ...\n'
+      + '[run] UI: the build in frontend/dist\n[run] launching Slightly Parallel on http://127.0.0.1:8123',
+    zoom: 'full',
+    hold: 12,
+  }),
+  B({
+    id: 'install-windows',
+    kind: 'terminal',
+    chapter: CH.install,
+    page: '',
+    title: t('Install on Windows'),
+    text: '# ' + t('Python from python.org, with Add to PATH ticked') + '\n'
+      + '$ git clone https://github.com/NMar33/slightly-parallel.git\n$ cd slightly-parallel\n$ sp run --prod\n'
+      + '[run] creating backend/.venv ...\n[run] installing backend packages (a minute on the first start) ...\n'
+      + '[run] UI: the build in frontend/dist\n[run] launching Slightly Parallel on http://127.0.0.1:8123',
+    zoom: 'full',
+    hold: 10,
+  }),
+  B({
+    id: 'install-demo',
+    kind: 'slide',
+    chapter: CH.install,
+    page: '',
+    title: t('To see how it works, there is a demo project'),
+    text: t('- A small online store and a month of its development: chats, a board, standups, decisions\n- Every page has something on it\n- Hide it from the sidebar when you are done with it'),
+    zoom: 'full',
+    hold: 8,
+  }),
+  B({
+    id: 'install-example',
+    chapter: CH.install,
+    page: '/',
+    title: t('The demo project'),
+    text: t('A month of work on a small online store: the chats, the board, the standups, the decisions. Open any page and try things here first.'),
+    nav: '',
+    steps: [
+      { kind: 'click', selector: 'nav a[href="/chats"], aside a[href="/chats"]', frames: 3, interval: 500 },
+      { kind: 'click', selector: 'nav a[href="/kanban"], aside a[href="/kanban"]', frames: 3, interval: 500 },
+      { kind: 'click', selector: 'nav a[href="/standups"], aside a[href="/standups"]', frames: 3, interval: 500 },
+      { kind: 'click', selector: 'nav a[href="/decisions"], aside a[href="/decisions"]', frames: 3, interval: 500 },
+    ],
+    captions: [
+      { voice: 'sell', title: "A working example, from the start", text: "A month of a small store's work is already on every page, so the first look shows the product in use, before anything is set up." },
+      { voice: 'story', title: "Open the home page", text: "You open Slightly Parallel for the first time. The example project is there: its chats, its board, its standups. You click around before connecting your own." },
+      { voice: 'tech', title: "Seeded on the first start", text: "The first start writes the example project into the data folder: a repository, chats and entries over one month. Example off in Settings removes it." },
+    ],
+    zoom: 'full',
+    hold: 14,
+  }),
+  B({
+    id: 'install-chapter-connect',
+    kind: 'slide',
+    chapter: CH.setup,
+    page: '',
+    title: t('Connecting your own project'),
+    text: t('Two steps on the Setup page: the folder for the records, then the project.'),
+    zoom: 'full',
+    hold: 5,
+  }),
+  B({
+    id: 'install-folder',
+    kind: 'slide',
+    chapter: CH.setup,
+    page: '',
+    title: t('Choose the folder for the records'),
+    text: t('- Slightly Parallel writes everything it records into this folder: the chats, the board and the entries of every project\n- The demo project is already in it\n- Any existing folder will do; the change applies at once, without a restart'),
+    zoom: 'full',
+    hold: 9,
+  }),
+  B({
+    id: 'setup-root',
+    chapter: CH.setup,
+    page: '/',
+    title: t('Choose the folder on Setup'),
+    text: t('Open Setup in the sidebar. The first card is the data folder: type a path, or keep the one it made.'),
+    captions: [
+      { voice: 'sell', title: 'Your records, in one folder', text: 'Everything Slightly Parallel records lives in one folder you choose. Copy the folder and you have a backup.' },
+      { voice: 'story', title: 'Open Setup, pick the folder', text: 'You click Setup in the sidebar. The first card asks where the records go; you type a path and press Enter.' },
+      { voice: 'tech', title: 'The data root', text: 'The path is saved as SP_DATA_ROOT in .env and applies at once. Under it: tasks.csv and the other ledgers, and projects/<code>/ for each project.' },
+    ],
+    nav: 'nav a[href="/setup"], aside a[href="/setup"]',
+    steps: [
+      { kind: 'click', selector: 'nav a[href="/setup"], aside a[href="/setup"]', frames: 2, interval: 500 },
+      { kind: 'type', selector: 'input[aria-label="Data root path"]', text: '/home/you/slightly-parallel-data', frames: 4, interval: 250,
+        focus: 'section:has-text("Choose where Slightly Parallel keeps its records")' },
+    ],
+    zoom: 'push',
+    hold: 11,
+  }),
+  B({
+    id: 'install-folder-made',
+    kind: 'terminal',
+    chapter: CH.setup,
+    page: '',
+    title: t('The folder, a minute later'),
+    text: '$ ls ~/slightly-parallel-data\nprojects/   tasks.csv   decisions.csv   standups.csv   scans.csv   integrations.csv\n'
+      + '$ ls ~/slightly-parallel-data/projects/shopfront\nchats/   task_details/   skills/   AGENTS.md',
+    zoom: 'full',
+    hold: 9,
+  }),
+  B({
+    id: 'install-folder-done',
+    kind: 'slide',
+    chapter: CH.setup,
+    page: '',
+    title: t('The folder is set. Now connect a project.'),
+    text: t('- Every project you connect writes into this folder\n- The folder can be moved later; the projects are connected again from Setup'),
+    zoom: 'full',
+    hold: 6,
+  }),
+  B({
+    id: 'install-chapter-integrate',
+    kind: 'slide',
+    chapter: CH.setup,
+    page: '',
+    title: t('How to connect your own project'),
+    text: t('1. Open Setup, in the sidebar on the left\n2. Type the name of the project and the folder where its code is\n3. Preview shows the files Setup will write; Integrate writes them\n4. Start an agent in that folder'),
+    zoom: 'full',
+    hold: 11,
+  }),
+  B({
+    id: 'setup-code',
+    chapter: CH.setup,
+    page: '/setup',
+    selector: 'section:has-text("Integrate your projects")',
+    title: t('The project name'),
+    text: t('Open Setup and type a short name for the project: lowercase letters, digits, - and _. It is the project\'s name on every page.'),
+    action: { kind: 'type', selector: 'input[aria-label="Project code"]', text: 'my-app', frames: 4, interval: 250 },
+    captions: [
+      { voice: 'sell', title: "One form connects a project", text: "Type a code and a folder; Setup writes the files. From then on the project's chats and tasks are on the dashboard." },
+      { voice: 'story', title: "Type the project code", text: "You open Setup and type a short code for the project. It becomes the project's name on every page." },
+      { voice: 'tech', title: "The code names the folder", text: "The code is the key in projects/<code>/ under the data folder and in the hook's arguments. Lowercase letters, digits, - and _." },
+    ],
+    zoom: 'focus',
+    hold: 7.5,
+  }),
+  B({
+    id: 'setup-folder',
+    chapter: CH.setup,
+    page: '/setup',
+    selector: 'section:has-text("Integrate your projects")',
+    title: t('The project folder'),
+    text: t('The folder where its code is, with its git repository. Preview shows every file Setup will write before it writes anything.'),
+    action: { kind: 'type', selector: 'input[aria-label="Project folder"]', text: '/home/you/code/my-app', frames: 4, interval: 250 },
+    captions: [
+      { voice: 'sell', title: "See what is written first", text: "Preview lists every file Setup will write into the folder, before it writes any of them." },
+      { voice: 'story', title: "Type the project folder", text: "You paste the folder's path and press Preview. The list shows AGENTS.md, the hooks and the MCP entry; Integrate writes them." },
+      { voice: 'tech', title: "Four files in the folder", text: "A block in AGENTS.md, a line in CLAUDE.md, hooks in .claude/settings.local.json and the server in .mcp.json; Codex, OpenCode and Cursor get their own." },
+    ],
+    zoom: 'focus',
+    hold: 7.5,
+  }),
+  B({
+    id: 'install-integrated',
+    kind: 'slide',
+    chapter: CH.setup,
+    page: '',
+    title: t('Integrated'),
+    text: t('- Setup wrote its files into the folder: a block in AGENTS.md, the hooks and the MCP server\n- Start any agent in that folder and work as you did before\n- Claude Code, Codex, OpenCode or Cursor'),
+    zoom: 'full',
+    hold: 8,
+  }),
+  B({
+    id: 'install-agent',
+    kind: 'terminal',
+    chapter: CH.setup,
+    page: '',
+    title: 'bash — my-app',
+    text: '$ cd ~/code/my-app\n$ claude\n# the first answer\n[slightly-parallel] project my-app · your agent_id is cc-3f9a12c4',
+    zoom: 'full',
+    hold: 8,
+  }),
+  B({
+    id: 'install-recorded',
+    kind: 'slide',
+    chapter: CH.setup,
+    page: '',
+    title: t('From here on, every chat is recorded'),
+    text: t('- A hook in the project writes each message and reply as it happens\n- While the server runs, and while it is stopped\n- Claude Code, Codex, OpenCode and Cursor'),
+    zoom: 'full',
+    hold: 8,
+  }),
+  B({
+    id: 'install-chapter-chats',
+    kind: 'slide',
+    chapter: CH.chats,
+    page: '',
+    title: t('Where the chats are'),
+    text: t('The chats page, and how to read it.'),
+    zoom: 'full',
+    hold: 3,
+  }),
+  B({
+    id: 'chats-scope',
+    chapter: CH.chats,
+    page: '/chats',
+    selector: '[aria-label="Chat scope"]',
+    title: t('One stream per project'),
+    text: t('Every tool writes into the same stream, split into chats by the pauses between turns. The scope switch shows the chats, or the whole stream at once.'),
+    captions: [
+      { voice: 'sell', title: "Every tool, one stream", text: "Claude Code, Codex, OpenCode and Cursor write into one stream per project. Read it as chats, or as one long record." },
+      { voice: 'story', title: "Switch the scope", text: "You open Chats and switch the scope: the chats of the project, split by the pauses, or the whole stream in one piece." },
+      { voice: 'tech', title: "Chats split by the gap", text: "Turns with a pause under the chat gap (Settings \u2192 Chats) form one chat. The whole-stream scope lists every turn of chat.md in order." },
+    ],
+    zoom: 'focus',
+    hold: 6.5,
+  }),
+  B({
+    id: 'chats-focus',
+    chapter: CH.chats,
+    page: '/chats',
+    title: t('Focus mode'),
+    text: t('One chat alone, full screen, for reading a long one. The reading width and the type size are in the page settings.'),
+    action: { kind: 'click', selector: '[aria-label="Focus mode"]', frames: 4, interval: 300 },
+    captions: [
+      { voice: 'sell', title: "Read a long chat in comfort", text: "Focus mode shows one chat alone, full screen, at the width and type size you choose." },
+      { voice: 'story', title: "Press F for focus", text: "You press the focus button, or F. The chat fills the screen; the page settings set the reading width and the type size." },
+      { voice: 'tech', title: "A reading view of chat.md", text: "Focus mode renders the same chat.md as a single column; width and type size are kept per browser in the page settings." },
+    ],
+    zoom: 'full',
+    hold: 6.5,
+  }),
+  B({
+    id: 'install-again',
+    kind: 'slide',
+    chapter: CH.faq,
+    page: '',
+    title: t('Starting it again'),
+    text: '`./sp.sh up`\n' + t('- Runs in the background; status, logs and down are the other commands\n- Windows: sp up\n- Chats are recorded even while it is stopped'),
+    zoom: 'full',
+    hold: 8,
+  }),
+  B({
+    id: 'install-data',
+    kind: 'slide',
+    chapter: CH.faq,
+    page: '',
+    title: t('Where the data is'),
+    text: '`~/.slightly-parallel`\n' + t('- One folder for every project; choose another on Setup\n- The chats: projects/<code>/chats/<agent>/chat.md\n- One CSV per kind of entry, one Markdown file per entry: plain files, readable by hand'),
+    zoom: 'full',
+    hold: 9,
+  }),
+  B({
+    id: 'install-commands',
+    kind: 'slide',
+    chapter: CH.faq,
+    page: '',
+    title: t('The commands, typed in the chat'),
+    text: t('- A command is a word with # anywhere in a message to the agent\n- The agent does the writing; the result is on the page named\n- Four groups: record the work, tasks, keep a message, mark'),
+    zoom: 'full',
+    hold: 8,
+  }),
+  B({
+    id: 'install-commands-record',
+    kind: 'slide',
+    chapter: CH.faq,
+    page: '',
+    title: t('Record the work'),
+    text: t('- #scan: a checkpoint of what changed since the last one, with the files and the architecture\n- #decision: the choice just made, why, and what was turned down\n- #standup: yesterday, from every chat of that day; the first agent of the day writes it by itself'),
+    zoom: 'full',
+    hold: 10,
+  }),
+  B({
+    id: 'install-commands-tasks',
+    kind: 'slide',
+    chapter: CH.faq,
+    page: '',
+    title: t('Tasks'),
+    text: t('- #task: a card on the board, for later, written from the context of the chat\n- #now: a card in Doing, for the work starting right now; the chat is tied to it\n- #done: the card moves to Done, with its stretch of the chat counted\n- A lane in braces: #now {ui} fix the login timeout'),
+    zoom: 'full',
+    hold: 11,
+  }),
+  B({
+    id: 'install-commands-keep',
+    kind: 'slide',
+    chapter: CH.faq,
+    page: '',
+    title: t('Keep a message'),
+    text: t('- #vision, #rule, #problem: the message is kept on that page; the agent writes what it means\n- #skill: what was done in this chat, as a procedure agents can use\n- #prompt: the message in your prompt library, to send again\n- #artifact: a dataset, a document or a page an agent made, kept as a folder'),
+    zoom: 'full',
+    hold: 11,
+  }),
+  B({
+    id: 'install-commands-mark',
+    kind: 'slide',
+    chapter: CH.faq,
+    page: '',
+    title: t('Mark, and ask'),
+    text: t('- #important: stars the message, the agent and the task it names\n- #help: the list of commands, in the chat\n- The whole list, with what each writes, is in the Guide'),
+    zoom: 'full',
+    hold: 8,
+  }),
 ]
 
 /* ------------------------------- presets ------------------------------ */
@@ -1475,8 +1792,15 @@ const LONG = [
   'health', 'internals', 'backups', 'monitor', 'settings', 'appearance', 'sidebar-settings',
 ]
 
+const INSTALL = ['install-repo', 'install-run', 'install-windows', 'install-demo', 'install-example',
+  'install-chapter-connect', 'install-folder', 'setup-root', 'install-folder-made', 'install-folder-done', 'install-chapter-integrate',
+  'setup-code', 'setup-folder', 'install-integrated', 'setup-agent', 'install-agent', 'install-recorded',
+  'install-chapter-chats', 'project-chats', 'chats-scope', 'chats-focus', 'chats-find',
+  'install-again', 'install-data', 'install-commands', 'install-commands-record', 'install-commands-tasks',
+  'install-commands-keep', 'install-commands-mark']
+
 /** The presets the channel renders; the rest stay in the studio. */
-export const CHANNEL = ['quick', 'full']
+export const CHANNEL = ['quick', 'full', 'install']
 
 const CUTS: Script[] = [
   // ---- What it is ----
@@ -1497,6 +1821,8 @@ const CUTS: Script[] = [
       'milestones', 'important', 'timelapse']),
 
   // ---- First run ----
+  story('install', SECTIONS.first, t('Install, and connect a project'), t('from the repository to the first recorded chat; how to, part 1'), INSTALL,
+    { title: t('Install Slightly Parallel'), subtitle: t('from the repository to the first recorded chat'), endline: t('github.com/NMar33/slightly-parallel · Python 3.11+ and git'), lead: 3.5, tail: 5, stamp: 'v0.1.0' }),
   story('first-run', SECTIONS.first, t('From Setup to the first page'), t('connect a project and see it fill'),
     ['setup', 'overview', 'project-overview', 'board']),
   story('first-chat', SECTIONS.first, t('The first recorded chat'), t('a chat is saved, read back and summed up'),
@@ -1658,7 +1984,7 @@ type Look = { panel: Panel; theme: string }
  * as one channel and a viewer learns the layout once. The other panels,
  * themes and hands stay one click away in the studio.
  */
-const LOOK: Look & { opening: Opening; ending: Ending } = { panel: 'headline', theme: 'slightly', opening: 'stems', ending: 'plate' }
+const LOOK: Look & { opening: Opening; ending: Ending; ground: Ground } = { panel: 'headline', theme: 'slightly', opening: 'stems', ending: 'plate', ground: 'rules' }
 
 const dress = (cuts: Script[]): Script[] => cuts.map((c) => ({ ...c, ...LOOK }))
 

@@ -590,7 +590,6 @@
   "agents whose chats worked on it": "агенты, чьи чаты работали над ней",
   "exact (closed with #done) or estimated from where it was named": "точный (закрыта через #done) или примерный — по месту упоминания",
   "exact": "точный",
-  "Closed": "Закрыта",
   "with #done in the chat, or on the board": "через #done в чате или на доске",
   "Commits": "Коммиты",
   "commits made in its stretch": "коммиты в её отрезке",
@@ -1073,5 +1072,6 @@
   "Could not save the video: {error}": "Не удалось сохранить видео: {error}",
   "H.264, every colour; plays in a chat, on a phone and on every video host.": "H.264, все цвета; играет в чате, на телефоне и на любом видеохостинге.",
   "VP9, every colour; a smaller file for the hosts that take it.": "VP9, все цвета; файл меньше, для хостингов, которые его принимают.",
-  "{band} needs a git repository and {project} has none, so the pulse is drawn instead. Open another project: #project=<code> in the address.": "{band}: нужен git-репозиторий, а у {project} его нет, поэтому нарисован пульс. Другой проект: #project=<код> в адресе."
+  "{band} needs a git repository and {project} has none, so the pulse is drawn instead. Open another project: #project=<code> in the address.": "{band}: нужен git-репозиторий, а у {project} его нет, поэтому нарисован пульс. Другой проект: #project=<код> в адресе.",
+  "an entry point": "точка входа"
 }

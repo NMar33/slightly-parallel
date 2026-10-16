@@ -38,6 +38,7 @@ rest; you see the result on the page named.
 | `#rule <text>` | Keeps the message as a rule for agents; the agent writes what it means. | Rules |
 | `#problem <text>` | Keeps the message as a problem; the agent writes what it means. | Problems |
 | `#problem solved <id or text>` | Marks that problem solved. | Problems |
+| `#entrypoint <topic>` | Keeps the message as the entry point of a topic; the agent writes what it is, where it lives, how to run it, where the work stopped and what is next. | Entry points |
 | `#prompt` | Keeps the message in your prompt library, to send again. | Prompts |
 | `#skill` | Turns what was done in this chat into a skill agents can use. | Skills |
 | `#artifact <what>` | Makes an artifact: a dataset, a document, a page or an app, kept as a folder. | Artifacts |

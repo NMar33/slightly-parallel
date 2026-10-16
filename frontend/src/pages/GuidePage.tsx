@@ -119,6 +119,7 @@ export default function GuidePage() {
               <CommandRow cmd="#standup" page={t('Standups')} what={t('The agent posts a standup now. One is also asked for when a new day starts.')} />
               <CommandRow cmd="#rule <text>" page={t('Rules')} what={t('The message is kept as a rule.')} />
               <CommandRow cmd="#vision <text>" page={t('Visions')} what={t('The message is kept as a vision.')} />
+              <CommandRow cmd="#entrypoint <topic>" page={t('Entry points')} what={t('The agent writes the way into the topic: what, where, how, where it stopped, what is next.')} />
               <CommandRow cmd="#skill" page={t('Skills')} what={t('The agent writes a skill from what was done in this chat.')} />
               <CommandRow cmd="#artifact <what>" page={t('Artifacts')} what={t('The agent makes the folder you ask for: a dataset, a document, a page or an app.')} />
               <CommandRow cmd="#prompt" page={t('Prompts')} what={t('The message is kept in your prompt library.')} />

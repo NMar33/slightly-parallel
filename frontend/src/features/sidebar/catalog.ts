@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   CalendarDays,
   BookOpenText, Clapperboard, Cog, DatabaseBackup, KanbanSquare,
-  LayoutDashboard, MessagesSquare, PlugZap, Search, SlidersHorizontal, Users, HeartPulse, Star, Activity, SquareTerminal, BarChart3, Timer,
+  LayoutDashboard, MessagesSquare, PlugZap, Search, SlidersHorizontal, Users, Star, Activity, SquareTerminal, BarChart3, Timer,
 } from 'lucide-react'
 
 import { LENS_HEAD_LIST } from '../../lenses/heads'
@@ -57,8 +57,7 @@ export const CATALOG: NavEntry[] = [
   { key: '/tour', label: t('Tour'), icon: Clapperboard, home: 'system', blurb: t('walkthroughs of the pages') },
   { key: '/internals', label: t('Internals'), icon: Cog, home: 'system', blurb: t('how chats are recorded') },
   { key: '/terminal', label: t('Terminal'), icon: SquareTerminal, home: 'system', blurb: t('shells and agents, on this computer') },
-  { key: '/monitor', label: t('Monitor'), icon: Activity, home: 'system', blurb: t('this computer\'s load and unusual events') },
-  { key: '/health', label: t('Health'), icon: HeartPulse, home: 'system', blurb: t('server state and log') },
+  { key: '/monitor', label: t('Monitor'), icon: Activity, home: 'system', blurb: t('this computer\'s load, the server\'s state and log') },
   { key: '/backups', label: t('Backups'), icon: DatabaseBackup, home: 'system', blurb: t('copies of the data folder') },
   { key: '/setup', label: t('Setup'), icon: PlugZap, home: 'system', blurb: t('connect projects') },
   { key: '/settings', label: t('Settings'), icon: SlidersHorizontal, home: 'system', blurb: t('all settings') },

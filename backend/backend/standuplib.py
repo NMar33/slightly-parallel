@@ -187,6 +187,7 @@ _TASK_RE = re.compile(r"\btk_[0-9a-f]{8}\b")
 
 # Entries the day may have created, shown under "Created": table, kind word.
 _CREATED = (("visions_mutual", "vision"), ("rules_mutual", "rule"), ("problems_mutual", "problem"),
+            ("entrypoints_mutual", "entry point"),
             ("skills_mutual", "skill"), ("artifacts_mutual", "artifact"), ("ideas_mutual", "idea"))
 
 

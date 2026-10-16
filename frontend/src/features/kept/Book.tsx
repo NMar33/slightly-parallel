@@ -41,7 +41,7 @@ import { t } from '../../i18n/scope/system'
 
 const NO_SETS: KeptSet[] = []
 
-const FIND: Record<string, string> = { vision: t('Find in visions'), rule: t('Find in rules'), problem: t('Find in problems') }
+const FIND: Record<string, string> = { vision: t('Find in visions'), rule: t('Find in rules'), problem: t('Find in problems'), entrypoint: t('Find in entry points') }
 /** The sections drawn with their records before the page shows at all. */
 const FIRST_SCREEN = 4
 const asIs = async (vs: Vision[]) => vs

@@ -23,6 +23,7 @@ VIEWS: tuple[tuple[str, str], ...] = (
     ("scans_mutual", "scans"), ("decisions_mutual", "decisions"),
     ("files_mutual", "files"), ("problems_mutual", "problems"),
     ("rules_mutual", "rules"), ("visions_mutual", "visions"),
+    ("entrypoints_mutual", "entrypoints"),
     ("architecture_mutual", "architecture"), ("task_evidence_mutual", "evidence"),
     ("standups_mutual", "standups"), ("skills_mutual", "skills"),
     ("artifacts_mutual", "artifacts"),

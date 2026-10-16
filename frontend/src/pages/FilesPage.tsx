@@ -1,75 +1,56 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { PageHeader } from '../components/PageHeader'
-import { EmptyState, LoadingSkeleton } from '../components/states'
 import { FILES_GUIDE } from '../features/visions/guides'
 import { PageGuide } from '../features/visions/parts'
 import { projectColor } from '../utils/projectColor'
-import { useControls } from '../features/files/parts'
-import { byProject, useFleet } from '../features/files/fleet'
-import { CalendarFiles } from '../features/files/calendarFiles'
+import { FilesTab } from '../features/project/FilesTab'
+import type { Payload } from '../features/files/rows'
+import { getJson } from '../lib/getJson'
 import { t, tn, locale } from '../i18n/scope/pages'
 
 /**
- * /files — the lens page: every project's checkpoints, newest day first.
- *
- * The project tab answers "what happened to this codebase". This answers
- * what no single project can: what shipped anywhere, on which day, in which
- * repo — and clicking any path opens that file's whole account of itself.
- * The page draws its own header, then its guide.
+ * /files — every project's file activity, drawn exactly as a project's
+ * Files tab draws its own: the grid, the ranking, the story and the
+ * weight, the same orderings, with a row of project chips to narrow it.
+ * The header counts the whole; the tab reads the same payload (one query
+ * key), so the two never disagree.
  */
 export default function FilesPage() {
-  return (
-    <div className="flex flex-col gap-12 min-w-0">
-      <FilesFleet />
-    </div>
-  )
-}
-
-function FilesFleet() {
-  const { data, err } = useFleet()
-  const { weight } = useControls()
-  const blurb = t('days · click a file to open its details')
-
-  useEffect(() => { document.title = `${t('Files')} · ${blurb.split(' · ')[0]} — Slightly Parallel` }, [blurb])
-
-  const projects = useMemo(() => (data ? byProject(data, weight) : []), [data, weight])
-  // A project's colour is its own everywhere (projectColor), drawn as a dot.
-  const toneOf = projectColor
-
-  if (err) return <p className="text-12 text-error">{t('The file activity could not be read: {error}', { error: err })}</p>
-  if (!data) return <LoadingSkeleton variant="row" count={5} />
-
-  const totalChurn = projects.reduce((a, p) => a + p.churn, 0)
+  const blurb = t('every project · the same views as a project\'s Files tab')
+  useEffect(() => { document.title = `${t('Files')} — Slightly Parallel` }, [])
+  const heat = useQuery({
+    queryKey: ['lens', 'files', 'heatmap', ''],
+    queryFn: ({ signal }) => getJson<Payload>('/api/files/heatmap?limit_files=500', signal),
+  })
+  const data = heat.data
+  const projects = data ? [...new Set(data.entries.map((e) => e.project ?? ''))].filter(Boolean).sort() : []
+  const churn = data ? data.files.reduce((a, f) => a + f.lines_add + f.lines_del, 0) : 0
 
   return (
-    <div className="flex flex-col gap-14">
+    <div className="flex flex-col gap-14 min-w-0">
       <PageHeader
         variant="tool"
         title={t('Files')}
         sub={blurb}
-        below={(
+        below={data ? (
           <div className="flex items-baseline gap-14 text-11 font-mono text-tertiary flex-wrap">
             <span>{tn(projects.length, '{n} project', '{n} projects')}</span>
             <span>{tn(data.files.length, '{n} file', '{n} files')}</span>
             <span>{tn(data.entries.length, '{n} scan', '{n} scans')}</span>
-            <span>{t('{n} lines changed', { n: totalChurn.toLocaleString(locale()) })}</span>
+            <span>{t('{n} lines changed', { n: churn.toLocaleString(locale()) })}</span>
             {projects.map((p) => (
-              <span key={p.project} className="inline-flex items-center gap-3">
-                <span className="h-6 w-6 rounded-pill" style={{ backgroundColor: toneOf(p.project) }} aria-hidden />
-                {p.project}
+              <span key={p} className="inline-flex items-center gap-3">
+                <span className="h-6 w-6 rounded-pill" style={{ backgroundColor: projectColor(p) }} aria-hidden />
+                {p}
               </span>
             ))}
           </div>
-        )}
+        ) : undefined}
       />
       <PageGuide id="files" guide={FILES_GUIDE} examples={0} />
-
-      {data.entries.length === 0 ? (
-        <EmptyState title={t('No file entries yet')} subtitle={t('An agent posts one with each scan.')} />
-      ) : (
-        <CalendarFiles data={data} toneOf={toneOf} />
-      )}
+      <FilesTab />
     </div>
   )
 }

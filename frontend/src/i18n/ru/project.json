@@ -934,5 +934,6 @@
   "Request {id} recorded": "Запрос {id} записан",
   "Move all {group}": "Перенести все: {group}",
   "Move all {group} to another block": "Перенести все ({group}) в другой блок",
-  "Request {id} recorded, but the browser blocked the clipboard. Use \"copy again\" on the request.": "Запрос {id} записан, но браузер не дал скопировать промпт. Нажмите «скопировать ещё раз» у запроса."
+  "Request {id} recorded, but the browser blocked the clipboard. Use \"copy again\" on the request.": "Запрос {id} записан, но браузер не дал скопировать промпт. Нажмите «скопировать ещё раз» у запроса.",
+  "Every project": "Все проекты"
 }

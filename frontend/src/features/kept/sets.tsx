@@ -18,6 +18,7 @@ const KIND_N: Record<string, (n: number) => string> = {
   vision: (n) => tn(n, '{n} vision', '{n} visions'),
   rule: (n) => tn(n, '{n} rule', '{n} rules'),
   problem: (n) => tn(n, '{n} problem', '{n} problems'),
+  entrypoint: (n) => tn(n, '{n} entry point', '{n} entry points'),
 }
 export const kindN = (n: number, kind: string) => KIND_N[kind]?.(n) ?? plural(n, kind)
 

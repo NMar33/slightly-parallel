@@ -133,7 +133,8 @@ noted writes.
 - `POST /api/sessions/{session_id}/open` — body: `path`; opens the file on
   this laptop with whatever opens it. Answers: `opened`, `path`.
 - `GET /api/files/heatmap?project=` — touches aggregated per date and per
-  file entry.
+  file entry. Without `project`, every project: a file is then keyed by
+  `project::path` (`key` on each file row, and in `matrix` and `cells`).
 
 ---
 
@@ -177,6 +178,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/tasks` · `/api/tasks/{id}` · `/api/tasks/{id}/update` | `status`, `assignee`, `priority`, `lane` | see **Tasks** | see **Tasks** |
 | `/api/time-entries` · `/api/time-entries/{id}` · `/api/time-entries/{id}/update` | `goal_id`, `sprint_id`, `running` | `duration_min`, `ended_at`, `goal_id`, `note`, `share_pct`, `sprint_id`, `started_at` | see **Operator-only admin** |
 | `/api/visions` · `/api/visions/{id}` · `/api/visions/{id}/update` | `tag`, `category`, `impact`, `search` | `category`, `effort`, `impact`, `tags` | see **Kept messages and skills** |
+| `/api/entrypoints` · `/api/entrypoints/{id}` · `/api/entrypoints/{id}/update` | `tag`, `status`, `search` | `topic`, `status` (`open`, `closed`), `tags` | see **Kept messages and skills** |
 
 Writes an agent may not make (422 with the reason): `sprints` (the operator
 plans them), `prompts` (harvested from the chat
@@ -348,7 +350,7 @@ An agent reports; the operator judges. The report is never the verdict.
 
 ## Kept messages and skills
 
-A message tagged `#vision`, `#rule`, `#problem`, `#skill` or `#artifact` is
+A message tagged `#vision`, `#rule`, `#problem`, `#entrypoint`, `#skill` or `#artifact` is
 adopted into its ledger on the way past the next list or detail read. The
 kept text stays verbatim; the *interpretation* is what an agent or the
 operator writes about it, as a new version under `kept_versions/`.
@@ -356,8 +358,9 @@ operator writes about it, as a new version under `kept_versions/`.
 - `POST /api/visions/{item_id}/interpretation`
 - `POST /api/rules/{item_id}/interpretation`
 - `POST /api/problems/{item_id}/interpretation`
+- `POST /api/entrypoints/{item_id}/interpretation` — the entry point's text: What, Where, How, State, Next
 - `POST /api/artifacts/{item_id}/interpretation`
-  — all four: body `text`, `note?`. Answers: `metadata`, `kept` (the
+  — all five: body `text`, `note?`. Answers: `metadata`, `kept` (the
   versions). 422 if the entry was posted rather than kept, since then its
   text belongs to `update_entry`.
 - `POST /api/problems/{item_id}/rule` — the operator writes a rule on the

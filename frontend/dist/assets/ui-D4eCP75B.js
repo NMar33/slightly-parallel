@@ -1,1 +1,0 @@
-const t="text-10 uppercase tracking-wide font-mono text-tertiary",e="text-10 uppercase tracking-wide font-mono text-tertiary [&_th]:font-normal",r="uppercase tracking-wide hover:text-primary";export{t as L,e as T,r as a};

@@ -38,6 +38,7 @@ const ROUTE: Record<string, (id: string) => string> = {
   problem: (id) => `/problems#${id}`,
   rule: (id) => `/rules#${id}`,
   vision: (id) => `/visions#${id}`,
+  entrypoint: (id) => `/entrypoints#${id}`,
   skill: (id) => `/skills#${id}`,
   artifact: (id) => `/artifacts#${id}`,
   sprint: (id) => `/sprints#${id}`,
@@ -63,7 +64,7 @@ export function hitHref(hit: SearchHit): string {
 
 const WORD: Record<string, string> = {
   task: t('Tasks'), decision: t('Decisions'), scan: t('Scans'), standup: t('Standups'),
-  problem: t('Problems'), rule: t('Rules'), vision: t('Visions'), skill: t('Skills'),
+  problem: t('Problems'), rule: t('Rules'), vision: t('Visions'), entrypoint: t('Entry points'), skill: t('Skills'),
   artifact: t('Artifacts'), sprint: t('Sprints'), file: t('Files'),
   architecture: t('Architecture'), prompt: t('Prompts'),
   agent: t('Agents'), chat: t('Chats'), turn: t('Chats'), part: t('Map parts'),

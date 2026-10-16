@@ -28,12 +28,13 @@ import { formatStamp } from '../../utils/dateUtils'
 import { tourHref } from './LiveTour'
 import { CaptionEditor } from './Captions'
 import { BookendPicker } from './BookendPicker'
-import { EMPTY, loadShots, missing, renderTourGif, stageFor, type Look, type Manifest } from './media'
+import { GROUNDS, groundOf } from './ground'
+import { EMPTY, imageUrls, loadImages, loadShots, missing, renderTourGif, stageFor, type Look, type Manifest } from './media'
 import { renderTourVideo, type Format } from './video'
 import { ASPECTS, drawTour, stageSize, type Shot } from './scene'
 import {
-  LIBRARY, PANELS, PLACES, PRESETS, TOUR_PROJECT, captureJob, cueAt, duration, live, navFor, slots,
-  type Beat, type Panel, type Place, type Script, type Zoom,
+  KINDS, LIBRARY, PANELS, PLACES, PRESETS, TOUR_PROJECT, captureJob, cueAt, duration, kindOf, live, navFor, slots,
+  type Beat, type Kind, type Panel, type Place, type Script, type Zoom,
 } from './script'
 // `t` is the film's clock in this file: the translator goes by another name.
 import { t as tr, tn as trn } from '../../i18n/scope/shell'
@@ -85,7 +86,8 @@ function BeatRow({
         >
           <span className="block truncate text-12 text-primary">{beat.title}</span>
           <span className="block truncate font-mono text-10 text-tertiary">
-            {beat.page} · {beat.hold}s{shot ? '' : ` · ${tr('no shot')}`}{beat.action ? ` · ${beat.action.kind}` : ''}
+            {kindOf(beat) === 'page' ? beat.page : KINDS.find((k) => k.id === kindOf(beat))?.name}
+            {' · '}{beat.hold}s{shot || kindOf(beat) !== 'page' ? '' : ` · ${tr('no shot')}`}{beat.action ? ` · ${beat.action.kind}` : ''}
           </span>
         </button>
         <span className="flex shrink-0 items-center gap-1">
@@ -118,6 +120,18 @@ function BeatRow({
               className="rounded-input border border-border-subtle bg-base px-8 py-4 text-12 leading-relaxed text-primary"
             />
           </label>
+          <div className="flex flex-wrap items-center gap-10">
+            <Seg
+              value={kindOf(beat) as Kind}
+              options={KINDS.map((k) => k.id)}
+              onChange={(v) => set('kind', v)}
+              title={(k) => KINDS.find((x) => x.id === k)?.note ?? ''}
+            />
+          </div>
+          {kindOf(beat) === 'slide' ? (
+            <Field label={tr('picture (an address this app serves, optional)')} value={beat.image ?? ''} onChange={(v) => set('image', v)} placeholder="/tour/qr-repo.png" />
+          ) : null}
+          {kindOf(beat) === 'page' ? (<>
           <Field label={tr('page')} value={beat.page} onChange={(v) => set('page', v)} />
           <Field
             label={tr('element (css selector, optional)')}
@@ -133,7 +147,9 @@ function BeatRow({
               title={(p) => tr('card: {where}', { where: PLACES.find((x) => x.id === p)?.note ?? '' })}
             />
           </div>
+          </>) : null}
           <div className="flex flex-wrap items-center gap-10">
+            {kindOf(beat) === 'page' ? (
             <Seg
               value={beat.zoom} options={ZOOMS}
               onChange={(v) => set('zoom', v)}
@@ -142,6 +158,7 @@ function BeatRow({
                 : z === 'push' ? tr('wide, then in')
                 : tr('in, then wide'))}
             />
+            ) : null}
             <label className="flex items-center gap-4 font-mono text-10 text-tertiary">
               {tr('seconds')}
               <input
@@ -151,12 +168,14 @@ function BeatRow({
               />
             </label>
           </div>
+          {kindOf(beat) === 'page' ? (
           <div className="font-mono text-10 text-tertiary">
             {tr('highlights')} <span className="text-primary">{navFor(beat, demo).join('  +  ') || tr('nothing')}</span>
             {shot && !shot.nav.length && navFor(beat, demo).length
               ? ` — ${tr('not found in the last capture')}` : ''}
           </div>
-          {beat.selector && !shot?.rect ? (
+          ) : null}
+          {kindOf(beat) === 'page' && beat.selector && !shot?.rect ? (
             <div className="font-mono text-10 text-status-amber">
               {tr('the element was not found in the last capture — the beat will play as a full page')}
             </div>
@@ -172,6 +191,7 @@ function BeatRow({
 export function TourStudio() {
   const [script, setScript] = useState<Script>(() => clone(PRESETS[0]))
   const [shots, setShots] = useState<Map<string, Shot>>(new Map())
+  const [images, setImages] = useState<Map<string, CanvasImageSource>>(new Map())
   const [look, setLook] = useState<Look>(LOOK)
   const [openBeat, setOpenBeat] = useState<string>('')
   const [playing, setPlaying] = useState(false)
@@ -197,7 +217,9 @@ export function TourStudio() {
   const saved = useMemo(() => scriptsQuery.data ?? [], [scriptsQuery.data])
   const canvas = useRef<HTMLCanvasElement>(null)
   const total = useMemo(() => duration(script), [script])
-  const stage = useMemo(() => stageFor(script, shots, look), [script, shots, look])
+  // The look with the slides' pictures: what the stage and every export draw with.
+  const lookNow = useMemo<Look>(() => ({ ...look, images }), [look, images])
+  const stage = useMemo(() => stageFor(script, shots, lookNow), [script, shots, lookNow])
   const gaps = useMemo(() => missing(script, manifest, shots), [script, manifest, shots])
 
   /* ---- the pictures ---- */
@@ -212,6 +234,15 @@ export function TourStudio() {
     () => live(script).map((b) => b.id).join(','),
     [script],
   )
+  // The slides' pictures, decoded when the set of addresses changes.
+  const pictures = useMemo(() => imageUrls(script).join('\n'), [script])
+  useEffect(() => {
+    let gone = false
+    const urls = pictures ? pictures.split('\n') : []
+    if (!urls.length) { setImages(new Map()); return }
+    void loadImages(urls).then((m) => { if (!gone) setImages(m) })
+    return () => { gone = true }
+  }, [pictures])
   useEffect(() => {
     let cancelled = false
     const want = new Set(wanted ? wanted.split(',') : [])
@@ -334,7 +365,7 @@ export function TourStudio() {
     setBusy(tr('rendering'))
     try {
       const blob = await renderTourGif(
-        script, shots, look,
+        script, shots, lookNow,
         { fps, out: width, supersample: true },
         (done, all, what) => setBusy(`${what} ${done}/${all}`),
       )
@@ -351,7 +382,7 @@ export function TourStudio() {
     setBusy(tr('encoding video'))
     try {
       const { blob } = await renderTourVideo(
-        script, shots, look,
+        script, shots, lookNow,
         { format, fps: 30, out: width },
         (done, all) => setBusy(tr('encoding video {done}/{all}', { done, all })),
       )
@@ -583,6 +614,17 @@ export function TourStudio() {
             <Field label={tr('title')} value={script.title} onChange={(v) => setScript((s) => ({ ...s, title: v }))} />
             <Field label={tr('subtitle')} value={script.subtitle} onChange={(v) => setScript((s) => ({ ...s, subtitle: v }))} />
             <Field label={tr('closing line')} value={script.endline} onChange={(v) => setScript((s) => ({ ...s, endline: v }))} />
+            <Field label={tr('sheet label (the series and part, a version; empty leaves it out)')} value={script.stamp ?? ''} onChange={(v) => setScript((s) => ({ ...s, stamp: v }))} placeholder="how to · part 1" />
+            <div className="flex flex-col gap-2">
+              <span className="font-mono text-10 uppercase tracking-wide text-tertiary">{tr('ground')}</span>
+              <Seg
+                value={groundOf(script)}
+                options={GROUNDS.map((x) => x.id)}
+                format={(id) => GROUNDS.find((x) => x.id === id)?.name ?? id}
+                onChange={(v) => setScript((s) => ({ ...s, ground: v }))}
+                title={(id) => GROUNDS.find((x) => x.id === id)?.note ?? ''}
+              />
+            </div>
             <Check on={look.bookends} onChange={(v) => setLook((l) => ({ ...l, bookends: v }))} hint={tr('title card and closing card')}>
               {tr('bookends')}
             </Check>

@@ -39,7 +39,7 @@ export function CaptureAlert() {
     ? tn(d.missed.length, '{n} chat not recorded', '{n} chats not recorded')
     : tn(d.errors_n, '{n} capture error', '{n} capture errors')
   return (
-    <Link to="/health#capture" title={t('Some messages were not recorded. Open Health.')}
+    <Link to="/monitor#capture" title={t('Some messages were not recorded. Open Monitor.')}
       className="inline-flex items-center gap-6 h-24 px-8 rounded-pill border border-status-amber text-11 font-mono text-status-amber hover:bg-hover whitespace-nowrap">
       <span className="w-6 h-6 rounded-pill bg-status-amber animate-pulse" aria-hidden />
       {word}

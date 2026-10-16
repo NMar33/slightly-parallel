@@ -126,6 +126,12 @@ FILTERS: dict[str, tuple[FilterSpec, ...]] = {
         _f("search", "(LOWER(l1) LIKE ? OR LOWER(category) LIKE ?)",
            like=True, lower=True, repeat=2),
     ),
+    "entrypoint": _COMMON + (
+        _TAG,
+        _f("status", "status = ?"),
+        _f("search", "(LOWER(l1) LIKE ? OR LOWER(topic) LIKE ?)",
+           like=True, lower=True, repeat=2),
+    ),
     "problem": _COMMON + (
         _TAG,
         _f("severity", "severity = ?"),
@@ -475,6 +481,8 @@ ENUM_FIELDS["task"]["resurface_to"] = ENUM_FIELDS["task"]["status"]
 ENUM_FIELDS["decision"] = {"weight": frozenset({"minor", "normal", "major"})}
 ENUM_FIELDS.update({
     "problem": {"status": frozenset({"open", "resolved"})},
+    # A closed entry point is a topic that is done; it stays readable.
+    "entrypoint": {"status": frozenset({"open", "closed"})},
     # An archived rule is kept but written nowhere; restore makes it active again.
     "rule": {"status": frozenset({"active", "archived"})},
     "skill": {"status": frozenset({"draft", "active", "archived"})},

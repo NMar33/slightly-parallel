@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest'
 
 import {
   LIBRARY, PRESETS, applyVoice, captureJob, chosenVoice, cueAt, duration, live, mostCentral, navFor, pageFor, slots, walkable,
-  type Script,
+  type Script, pages,
 } from './script'
 import { THEMES } from '../timelapse/theme'
 
@@ -104,7 +104,8 @@ describe('the presets', () => {
   })
 
   it('give every beat a sentence, not a label', () => {
-    for (const b of LIBRARY) {
+    // A slide or a terminal carries lines, not a caption: the page beats are checked.
+    for (const b of pages(LIBRARY)) {
       expect(b.text.length).toBeGreaterThan(20)
       expect(b.text.trim().endsWith('.')).toBe(true)
       expect(b.title.length).toBeGreaterThan(0)
@@ -262,6 +263,8 @@ describe('the library of stories', () => {
       if (p.id === 'full') { expect(n).toBeGreaterThan(60); continue }
       // The short film is one minute: seven beats.
       if (p.id === 'quick') { expect(n).toBe(7); continue }
+      // The install film is a how-to: slides and terminals between the pages, past twenty beats.
+      if (p.id === 'install') { expect(n).toBeGreaterThan(20); continue }
       // Short: three to five beats. Long: ten to twenty, inside what one capture takes.
       expect((n <= 5) || (n >= 10 && n <= 20), `${p.id}: ${n} beats`).toBe(true)
     }
@@ -287,7 +290,7 @@ describe('the library of stories', () => {
     const banned = /\b(not|no|never|nothing|simply|just|finally|real|powerful|seamless|effortless)\b/i
     const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length
     const bad: string[] = []
-    for (const b of LIBRARY) {
+    for (const b of pages(LIBRARY)) {
       const voices = (b.captions ?? []).map((c) => c.voice)
       if (voices.join() !== 'xp,sell,story,tech') bad.push(`${b.id}: voices ${voices.join()}`)
       for (const c of b.captions ?? []) {

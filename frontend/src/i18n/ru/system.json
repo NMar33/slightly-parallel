@@ -29,7 +29,6 @@
     "few": "{n} ошибки записи",
     "many": "{n} ошибок записи"
   },
-  "Some messages were not recorded. Open Health.": "Часть сообщений не записана. Откройте Health.",
   "Checking…": "Проверка…",
   "Every message in the active sessions was recorded, and no hook failed in the last day.": "Все сообщения активных сессий записаны, за последние сутки хуки не давали сбоев.",
   "Some Claude Code messages were not recorded.": "Часть сообщений Claude Code не записана.",
@@ -743,16 +742,6 @@
     "few": "за {n} скана",
     "many": "за {n} сканов"
   },
-  "#{n} of {of} by lines changed in {project}": "№{n} из {of} по изменённым строкам в {project}",
-  "changed together": "менялись вместе",
-  "how often these changed in the same scan": "как часто они менялись в одном скане",
-  "always changes with another file": "всегда меняется вместе с другим файлом",
-  "No notes for this file.": "Заметок к этому файлу нет.",
-  "the one you clicked": "этот вы выбрали",
-  "in “{what}”": "в «{what}»",
-  "touched by": "трогали",
-  "the project’s files →": "файлы проекта →",
-  "What the agents recorded at the time. No diff or file contents.": "Что агенты записали в тот момент. Без диффа и содержимого файлов.",
   "importance is the agent's rating, not a count": "важность — это оценка агента, а не счёт",
   "gone cold already measures age": "«остывшие» и так учитывают возраст",
   "recent work": "недавняя работа",
@@ -823,8 +812,6 @@
   "Fri": "Пт",
   "Sat": "Сб",
   "Sun": "Вс",
-  "Everything recorded about this file": "Всё, что записано об этом файле",
-  "About {path}": "О файле {path}",
   "The terminal needs macOS or Linux.": "Терминалу нужна macOS или Linux.",
   "It does not run on Windows yet. Every other page works.": "В Windows он пока не работает. Остальные страницы работают.",
   "The terminal is off.": "Терминал выключен.",
@@ -1337,5 +1324,9 @@
   "No change in the text.": "В тексте нет изменений.",
   "Removed from {name}": "Убрано из «{name}»",
   "The set could not be read: {error}": "Не удалось прочитать набор: {error}",
-  "The terminal could not start: {error}": "Терминал не запустился: {error}"
+  "The terminal could not start: {error}": "Терминал не запустился: {error}",
+  "Some messages were not recorded. Open Monitor.": "Часть сообщений не записана. Откройте Monitor.",
+  "No entry points yet. Add #entrypoint to a message about a topic to keep one.": "Точек входа пока нет. Добавьте #entrypoint в сообщение о теме, чтобы сохранить её.",
+  "nothing written yet": "пока ничего не написано",
+  "Find in entry points": "Найти в точках входа"
 }

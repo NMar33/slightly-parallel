@@ -32,8 +32,8 @@ it. The identity notice is the one exception: it opens with the project.
   entry for that scan (section 4).
 - **architecture notice** — a scan has no architecture answer behind it:
   write the eight-group form, or all groups `checked` (section 4).
-- **kept notice** — the user tagged the message `#vision`, `#rule` or
-  `#problem`: the server keeps it; write its interpretation with
+- **kept notice** — the user tagged the message `#vision`, `#rule`,
+  `#problem` or `#entrypoint`: the server keeps it; write its interpretation with
   `interpret` (section 4, Kept messages). For `#skill`, write the skill
   from this chat with `skill_draft` (section 4, Skill).
 - **command notice** — the user typed a command (section 2): it names the

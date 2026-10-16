@@ -10,6 +10,7 @@ import { type Cell, type Entry, type Payload, buildRows, sortRows } from '../fil
 import { Controls, CountSwitch, useControls } from '../files/parts'
 import { Ranking, Story, Weight } from '../files/views'
 import { getJson } from '../../lib/getJson'
+import { projectColor } from '../../utils/projectColor'
 import { persistPref, readPref } from '../../lib/uiPrefs'
 import { Modal } from '../../components/Modal'
 import { t, tn } from '../../i18n/scope/project'
@@ -52,8 +53,14 @@ function readGroupPref(): boolean {
   }
 }
 
-export function FilesTab({ projectCode }: { projectCode: string }) {
+/**
+ * The file activity of one project, or of every project at once (no
+ * `projectCode`: the Files page). Over every project the rows carry their
+ * project, and a row of project chips narrows them.
+ */
+export function FilesTab({ projectCode = '' }: { projectCode?: string }) {
   const [mode, setMode] = useState<HeatmapMode>('lines')
+  const [scope, setScope] = useState('')
   const [groupByDate, setGroupByDate] = useState<boolean>(readGroupPref)
   const [openDates, setOpenDates] = useState<Set<string>>(() => new Set())
   const [selected, setSelected] = useState<Entry | null>(null)
@@ -65,9 +72,20 @@ export function FilesTab({ projectCode }: { projectCode: string }) {
   const heat = useQuery({
     queryKey: ['lens', 'files', 'heatmap', projectCode],
     queryFn: ({ signal }) =>
-      getJson<Payload>(`/api/files/heatmap?project=${encodeURIComponent(projectCode)}&limit_files=500`, signal),
+      getJson<Payload>(`/api/files/heatmap?${projectCode ? `project=${encodeURIComponent(projectCode)}&` : ''}limit_files=500`, signal),
   })
-  const data = heat.data ?? null
+  // Every project's payload, narrowed to one project by its chip; the
+  // cells and the matrix stay whole (their keys carry the project).
+  const projects = useMemo(
+    () => (projectCode ? [] : [...new Set((heat.data?.entries ?? []).map((e) => e.project ?? ''))].filter(Boolean).sort()),
+    [heat.data, projectCode],
+  )
+  const data = useMemo<Payload | null>(() => {
+    const all = heat.data ?? null
+    if (!all || !scope || projectCode) return all
+    const entries = all.entries.filter((e) => e.project === scope)
+    return { ...all, entries, files: all.files.filter((f) => f.project === scope), dates: [...new Set(entries.map((e) => e.date))].sort() }
+  }, [heat.data, scope, projectCode])
   const loading = heat.isLoading
   const err = heat.isError ? String((heat.error as Error)?.message ?? heat.error) : null
 
@@ -155,7 +173,7 @@ export function FilesTab({ projectCode }: { projectCode: string }) {
   const nonZero: number[] = []
   for (const f of files) {
     for (const col of columns) {
-      const w = weightOf(cellFor(f.path, col))
+      const w = weightOf(cellFor(f.key ?? f.path, col))
       if (w > 0) nonZero.push(w)
     }
   }
@@ -209,6 +227,10 @@ export function FilesTab({ projectCode }: { projectCode: string }) {
       <div>
         <div className="mb-12 flex flex-col gap-8">
           <div className="flex items-center gap-10 flex-wrap">
+          {projects.length > 0 && (
+            <Segmented label={t('Project')} shape="pill" value={scope} onChange={setScope}
+              options={[['', t('all'), t('Every project')] as const, ...projects.map((p) => [p, p, p] as const)]} />
+          )}
           <Segmented label={t('File view')} shape="pill" value={view} onChange={pickView}
             options={VIEWS.map(([k, label, hint]) => [k, label, hint] as const)} />
           <span className="ml-auto"><CountSwitch count={count} onCount={setCount} /></span>
@@ -281,19 +303,20 @@ export function FilesTab({ projectCode }: { projectCode: string }) {
               ),
             )}
             {files.map((f) => (
-              <Fragment key={f.path}>
+              <Fragment key={f.key ?? f.path}>
                 <div
                   className="text-12 text-secondary font-mono truncate pr-8 text-right"
-                  title={`${f.path} · ${f.total} touches · +${f.lines_add}/−${f.lines_del}`}
+                  title={`${f.project ? `${f.project} · ` : ''}${f.path} · ${f.total} touches · +${f.lines_add}/−${f.lines_del}`}
                   style={{ direction: 'rtl', maxWidth: 280 }}
                 >
                   {/* rtl puts the ellipsis on the left, so a long path keeps
                       its file name; the path itself stays left to right, or a
                       leading dot (.github/…) jumps to the end. */}
+                  {f.project && <span className="inline-block h-6 w-6 rounded-pill mr-4 align-middle" style={{ backgroundColor: projectColor(f.project) }} title={f.project} aria-hidden />}
                   <bdi dir="ltr">{f.path}</bdi>
                 </div>
                 {columns.map((col) => {
-                  const cell = cellFor(f.path, col)
+                  const cell = cellFor(f.key ?? f.path, col)
                   const w = weightOf(cell)
                   const pct = bucketPct(w)
                   const key = col.kind === 'date' ? `d-${col.date}` : `e-${col.entry.id}`

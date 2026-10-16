@@ -273,7 +273,7 @@ MCP_NEEDS_AGENT = (
 # marked agent write reached every router that does not refuse agents itself
 # (settings, setup, backup, terminals, boards …).
 _MCP_WRITE_PATHS = (
-    r"/api/(visions|rules|problems)/[^/]+/interpretation",
+    r"/api/(visions|rules|problems|entrypoints)/[^/]+/interpretation",
     r"/api/artifacts/[^/]+/write",
     r"/api/docs/[^/]+/versions",
     r"/api/skills/[^/]+/draft",
@@ -887,6 +887,22 @@ PAGE_HEADERS = {"X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "fra
 def _mount_frontend(app: FastAPI) -> None:
     """Serve the production frontend build when present (SPA fallback)."""
     frontend_dist = _REPO_ROOT / "frontend" / "dist"
+    dev_ui = (os.environ.get("SP_UI_DEV") or "").strip().rstrip("/")
+    if dev_ui:
+        # The hot-reload start (sp.py with no --prod): the UI lives on the
+        # Vite port, and a page asked of this port goes there, with its
+        # path and query. frontend/dist here is whatever was built last.
+        from fastapi.responses import RedirectResponse
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def _to_dev_ui(full_path: str, request: Request):
+            if full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail=f"no API route {full_path}")
+            query = f"?{request.url.query}" if request.url.query else ""
+            return RedirectResponse(f"{dev_ui}/{full_path}{query}", status_code=307)
+
+        log.info("hot-reload UI at %s: page requests are sent there", dev_ui)
+        return
     if not frontend_dist.exists():
         @app.get("/", include_in_schema=False)
         def _root() -> dict[str, Any]:

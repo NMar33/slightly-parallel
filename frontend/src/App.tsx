@@ -25,7 +25,6 @@ const SearchPage = lazy(() => import('./pages/Search'))
 const GuidePage = lazy(() => import('./pages/GuidePage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
 const InternalsPage = lazy(() => import('./pages/InternalsPage'))
-const HealthPage = lazy(() => import('./pages/HealthPage'))
 const ImportantPage = lazy(() => import('./pages/ImportantPage'))
 const MonitorPage = lazy(() => import('./pages/MonitorPage'))
 const TerminalPageRoute = lazy(() => import('./pages/TerminalPage'))
@@ -50,6 +49,7 @@ const TimelapsePage = lazy(() => import('./pages/TimelapsePage'))
 const AgentPromptsPage = lazy(() => import('./pages/AgentPromptsPage'))
 const CalendarPage = lazy(() => import('./pages/CalendarPage'))
 const VisionsPage = lazy(() => import('./pages/VisionsPage'))
+const EntryPointsPage = lazy(() => import('./pages/EntryPointsPage'))
 const RulesPage = lazy(() => import('./pages/RulesPage'))
 const ProblemsPage = lazy(() => import('./pages/ProblemsPage'))
 const SkillsPage = lazy(() => import('./pages/SkillsPage'))
@@ -145,6 +145,7 @@ export function App() {
                 <Route path="/sessions" element={<SessionsPage />} />
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/visions" element={<VisionsPage />} />
+                <Route path="/entrypoints" element={<EntryPointsPage />} />
                 <Route path="/problems" element={<ProblemsPage />} />
                 <Route path="/rules" element={<RulesPage />} />
                 <Route path="/skills" element={<SkillsPage />} />
@@ -160,7 +161,8 @@ export function App() {
                 <Route path="/prompts" element={<PromptLibraryPage />} />
                 <Route path="/prompts/:id" element={<PromptPage />} />
                 <Route path="/internals" element={<InternalsPage />} />
-                <Route path="/health" element={<HealthPage />} />
+                {/* Health became the lower half of Monitor; the hash (#capture, #level=…) still points into it. */}
+                <Route path="/health" element={<ToMonitor />} />
                 <Route path="/important" element={<ImportantPage />} />
                 <Route path="/monitor" element={<MonitorPage />} />
                 <Route path="/terminal" element={<TerminalPageRoute />} />
@@ -187,4 +189,8 @@ export function App() {
       </div>
     </div>
   )
+}
+
+function ToMonitor() {
+  return <Navigate to={`/monitor${window.location.hash}`} replace />
 }

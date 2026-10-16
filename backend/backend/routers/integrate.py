@@ -51,7 +51,7 @@ LEDGER = "set_integrations.json"
 # The built-in set: every rule turned on for all agents, kept written into
 # every project set up in Setup. It is not in sets.json; it is derived.
 ALL_RULES = "all-rules"
-_LABEL = {"vision": "Visions", "rule": "Rules", "problem": "Problems"}
+_LABEL = {"vision": "Visions", "rule": "Rules", "problem": "Problems", "entrypoint": "Entry points"}
 # A message may open with a list number and a task id: "1. tk_1f96c6db · Name".
 _TITLE_RE = re.compile(r"^\s*(?:\d+\.\s*)?(?:tk_[a-z0-9_-]+(?:\.\d+)?\s*·\s*)?", re.IGNORECASE)
 

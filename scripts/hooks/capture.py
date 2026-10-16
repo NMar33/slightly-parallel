@@ -117,11 +117,11 @@ _DECISION_RE = re.compile(
 # hook names the id the moment the message arrives, so the agent can write
 # its interpretation in the same turn. ``#problem solved <id>`` is a command.
 _KEEP_TAG_RE = re.compile(
-    r"(?<![\w#])#(vision|rule|problem|skill|artifact)(?:\([^)\n]{1,80}\))?(?![\w-])(?!\s+solved\b)",
+    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact)(?:\([^)\n]{1,80}\))?(?![\w-])(?!\s+solved\b)",
     re.IGNORECASE,
 )
 _ANY_TAG_RE = re.compile(
-    r"(?<![\w#])#(?:prompt|vision|rule|problem|skill|artifact)(?:\([^)\n]{1,80}\))?(?![\w-])",
+    r"(?<![\w#])#(?:prompt|vision|rule|problem|entrypoint|skill|artifact)(?:\([^)\n]{1,80}\))?(?![\w-])",
     re.IGNORECASE,
 )
 # ``#evidence`` is a command, not a kept message: nothing is stored for it.
@@ -209,6 +209,7 @@ _KEEP_ROUTES = {
     "vision": ("vs_", "visions"),
     "rule": ("rl_", "rules"),
     "problem": ("pb_", "problems"),
+    "entrypoint": ("ep_", "entrypoints"),
     "skill": ("sk_", "skills"),
     "artifact": ("ar_", "artifacts"),
 }

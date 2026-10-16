@@ -203,6 +203,20 @@ ENTITIES: dict[str, Entity] = {
             mutable=("category", "impact", "effort", "tags"),
         ),
         _e(
+            # An entry point: the way into a topic — what it is, where its
+            # files and links are, how to run it, where the work stopped,
+            # what comes next. Kept from a #entrypoint message; the agent
+            # writes the text, in versions. Open until the topic is done.
+            "entrypoint", "entrypoints.csv", "entrypoint_details", "ep_",
+            (
+                "id", "created_date", "created_time", "project", "agent_id",
+                "l1", "topic", "status", "md_ref", "source", "session_id",
+                "source_turn", "versions_n", "tags",
+            ),
+            ints=("source_turn", "versions_n"),
+            mutable=("topic", "status", "tags"),
+        ),
+        _e(
             "problem", "problems.csv", "problem_details", "pb_",
             (
                 "id", "created_date", "created_time", "project", "agent_id",

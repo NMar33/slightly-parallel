@@ -31,7 +31,7 @@ export interface YearSession {
 export const STEP = 10
 const STEPS = 1440 / STEP
 /** Entries an agent writes, as the day's count (the architecture rows are bookkeeping). */
-const ENTRY_KINDS = ['decisions', 'scans', 'standups', 'visions', 'problems', 'rules', 'skills', 'artifacts', 'evidence']
+const ENTRY_KINDS = ['decisions', 'scans', 'standups', 'visions', 'entrypoints', 'problems', 'rules', 'skills', 'artifacts', 'evidence']
 
 function clock(hhmm: string): number {
   const [h, m] = String(hhmm || '').split(':').map(Number)

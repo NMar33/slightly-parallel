@@ -435,5 +435,10 @@
   "in a moment": "сейчас",
   "Text size": "Размер текста",
   "SLIGHTLY-PARALLEL.md — the agent contract": "SLIGHTLY-PARALLEL.md — контракт агента",
-  "AGENTS.md block — what Setup writes into a project": "Блок AGENTS.md — что Подключение пишет в проект"
+  "AGENTS.md block — what Setup writes into a project": "Блок AGENTS.md — что Подключение пишет в проект",
+  "Entry points": "Точки входа",
+  "{n} entry point": "{n} точка входа",
+  "Open topics": "Открытые темы",
+  "Close the topic": "Закрыть тему",
+  "Closed": "Закрыто"
 }

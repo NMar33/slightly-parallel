@@ -82,6 +82,13 @@ export const GUIDE_PAGES: GuidePage[] = [
       t("Ideas about where the project should go, kept from the chat. Type #vision in a message and it is kept as written. The agent's interpretation is at the top, your words below it, and the messages around it under Context. Chapters are listed on the left. Drag a vision onto a tag or a set. Drag a set onto a project under Projects to write it into that project's AGENTS.md."),
   },
   {
+    route: '/entrypoints',
+    title: t('Entry points'),
+    command: '#entrypoint',
+    text:
+      t('The way into each topic, kept from the chat with #entrypoint. The agent writes what the topic is, where its files and links are, how to run it, where the work stopped and what is next. Open topics are at the top with their State line. Close a topic when it is done.'),
+  },
+  {
     route: '/problems',
     title: t('Problems'),
     command: '#problem',
@@ -148,7 +155,7 @@ export const GUIDE_PAGES: GuidePage[] = [
     route: '/files',
     title: t('Files'),
     text:
-      t("Every project's file entries, newest day first: which files changed, on which day, in which repository. Click a path to read the history of that file."),
+      t("Every project's file activity, drawn as a project's Files tab draws its own: the grid of files per scan, the ranking, the story cards with the agents' notes, and the weight map; the same orderings. A row of project chips narrows it to one project, and a dot on each file says which project it is from."),
   },
   {
     route: '/guide',
@@ -201,13 +208,7 @@ export const GUIDE_PAGES: GuidePage[] = [
     route: '/monitor',
     title: t('Monitor'),
     text:
-      t('This computer\'s CPU, memory, disk, network, connection and temperature, read every few seconds. Unusual readings are saved as events with the processes running at that moment: a limit reached for too long, a value far from usual, no connection, a process whose memory keeps growing, a disk filling up. Readings are thinned out as they age; events are kept longer. The switch turns monitoring off. Settings set what is read, how often, what counts as unusual and how long it is kept. A small version is in the top bar.'),
-  },
-  {
-    route: '/health',
-    title: t('Health'),
-    text:
-      t('The server\'s state: uptime, memory, whether all data files were read, how often the data was reloaded and how long it took, and the request time per path. Below, the log, filtered by level. One button copies the page as plain text, to paste to an AI when something is slow or wrong.'),
+      t('This computer\'s CPU, memory, disk, network, connection and temperature, read every few seconds. Unusual readings are saved as events with the processes running at that moment; readings are thinned out as they age, events are kept longer. The switch turns monitoring off; Settings set what is read, how often, and what counts as unusual. Under the charts, the server itself: uptime, memory, whether every data file was read, reloads, capture and backups, the request time per path and the log by level. One button copies that section as text for an AI.'),
   },
   {
     route: '/backups',

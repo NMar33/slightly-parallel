@@ -39,7 +39,6 @@
   "Agents write through MCP only": "Агенты пишут только через MCP",
   "Agents write through the Slightly Parallel MCP server, which Setup wires into the project. Every new chat reads the contract, in any tool and with any model, and follows it.": "Агенты пишут через MCP-сервер Slightly Parallel, который «Подключение» прописывает в проект. Каждый новый чат читает контракт — в любом инструменте и с любой моделью — и следует ему.",
   "All tours": "Все туры",
-  "An agent posts one with each scan.": "Агент пишет такую запись с каждым сканом.",
   "An error inside capture is caught and logged, and the coding session goes on. Capture writes the files itself, without the server, so turns are recorded while the dashboard is down.": "Ошибка внутри записи перехватывается и записывается в лог, а сессия продолжается. Запись пишет файлы сама, без сервера, поэтому ходы сохраняются, даже когда панель не запущен.",
   "Architecture entry reminders": "Напоминания о форме архитектуры",
   "Archived.": "В архиве.",
@@ -409,7 +408,6 @@
   "The data is plain text files, which can be edited by hand, restored from backups or written by other tools. The check reads every file the dashboard reads and lists each damaged row. It does not change anything.": "Данные — простые текстовые файлы: их можно править руками, восстанавливать из копий или записывать другими инструментами. Проверка читает каждый файл, который читает панель, и перечисляет каждую повреждённую строку. Сама она ничего не меняет.",
   "The deepest restore point. Rotation keeps one backup in each of six periods, from a day up to three months, and drops automatic backups older than this.": "Самая старая точка восстановления. Ротация оставляет по одной копии в шести периодах, от дня до трёх месяцев, и удаляет автоматические копии старше этого срока.",
   "The example entries were removed. The page tours need them.": "Примеры записей удалены. Они нужны турам по страницам.",
-  "The file activity could not be read: {error}": "Не удалось прочитать активность файлов: {error}",
   "The first agent of the day tells you yesterday has no standup and asks: write it now, or postpone. Off writes it straight away.": "Первый агент дня сообщает, что за вчера нет стендапа, и спрашивает: написать сейчас или отложить. Если выключить, он пишет сразу.",
   "The five triggers": "Пять сигналов",
   "The full contract:": "Полный контракт:",
@@ -525,7 +523,6 @@
   "day {n}": "день {n}",
   "day {n} of {total}": "день {n} из {total}",
   "days to done": "дней до готовности",
-  "days · click a file to open its details": "дни · нажмите на файл, чтобы открыть подробности",
   "decision hint · observed live 14 Aug 2026": "подсказка о решении · замечена вживую 14 авг 2026",
   "default: {value}": "по умолчанию: {value}",
   "diff": "сравнить",
@@ -952,5 +949,9 @@
   },
   "The year shows the latest {n} chats.": "За год показаны последние {n} чатов.",
   "Reached: {title}": "Достигнуто: {title}",
-  "The work for an agent, in one line": "Работа для агента, одной строкой"
+  "The work for an agent, in one line": "Работа для агента, одной строкой",
+  "Lane for #now": "Дорожка для #now",
+  "The board lane a task started from a chat with #now lands in, when the message names none (#now {ui} … names one).": "Дорожка доски, куда попадает задача, начатая из чата через #now, если сообщение её не называет (#now {ui} … называет).",
+  "every project · the same views as a project's Files tab": "все проекты · те же виды, что на вкладке Files проекта",
+  "The agent writes the way into the topic: what, where, how, where it stopped, what is next.": "Агент пишет вход в тему: что, где, как, где остановились, что дальше."
 }

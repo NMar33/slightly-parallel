@@ -35,7 +35,7 @@ changes}` — every name but the first — and write a new entry only when the
 first line itself is wrong. The same entry written twice is one entry.
 
 **Born from a discussion** (decisions, and any entry you write because of
-an exchange; tagged visions, rules and problems are kept by the server
+an exchange; tagged visions, rules, problems and entry points are kept by the server
 instead, section 4): the long part holds the chat excerpt as it was said.
 The list holds the exchange, one item per point ("user: …", "agent: …").
 The text holds the takeaway. The reader goes from the one line to what

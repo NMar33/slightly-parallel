@@ -28,7 +28,7 @@ from ..date_utils import now_iso
 
 router = APIRouter()
 SETS_FILE = "sets.json"
-KINDS = ("vision", "rule", "problem")
+KINDS = ("vision", "rule", "problem", "entrypoint")
 MAX_NAME = limits.MAX_SET_NAME
 MAX_ITEMS = 500
 

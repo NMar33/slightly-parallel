@@ -21,10 +21,12 @@ import type { Theme } from '../timelapse/theme'
 import { t as tr } from '../../i18n/scope/shell'
 
 import {
-  clamp, ease, cueAt,
+  clamp, ease, cueAt, kindOf,
   type Beat, type Panel, type Place, type Pointer, type Script, type ShotRect,
 } from './script'
 import { drawEnding, drawOpening } from './bookends'
+import { drawGround } from './ground'
+import { drawSlide, drawTerminal } from './slides'
 import { fitSize, lines, wrap } from './words'
 
 export type Shot = {
@@ -46,6 +48,8 @@ export type Stage = {
   theme: Theme
   face: string
   shots: Map<string, Shot>
+  /** The pictures slides name, by their address. */
+  images?: Map<string, CanvasImageSource>
   /** Draw the chapter and progress footer. */
   footer: boolean
   /** Title and end cards. */
@@ -147,7 +151,9 @@ export function viewFor(beat: Beat, shot: Shot, aspect: number, u: number): Rect
   const near = focusView(shot, aspect)
   if (beat.zoom === 'focus') return near
   // A move that starts and ends still, and is over before the sentence is.
-  const travel = ease(clamp(u / 0.55))
+  // A demonstration pushes in late, once its last step is on screen: the
+  // page it started on is shown whole first.
+  const travel = beat.steps?.length ? ease(clamp((u - 0.5) / 0.25)) : ease(clamp(u / 0.55))
   return beat.zoom === 'push' ? lerpRect(full, near, travel) : lerpRect(near, full, travel)
 }
 
@@ -1438,11 +1444,24 @@ export function drawTour(
     return
   }
 
+  drawGround(g, stage, script)
   const { slot, u, of } = cue
   const beat = slot.beat
   const shot = stage.shots.get(beat.id)
   const footerH = stage.footer ? stage.h * 0.075 : stage.h * 0.02
   const pad = stage.w * 0.035
+  const step = `${slot.index + 1} / ${of}`
+  const q = Math.round(u * PROGRESS_STEPS) / PROGRESS_STEPS
+
+  if (kindOf(beat) !== 'page') {
+    // Drawn, not photographed: the same fade and footer as a page.
+    const fade = clamp(u / 0.1) * (1 - clamp((u - 0.93) / 0.07))
+    if (kindOf(beat) === 'slide') drawSlide(g, stage, beat, u, fade, footerH)
+    else drawTerminal(g, stage, beat, u, fade, footerH)
+    if (stage.footer) drawFooter(g, stage, beat.chapter, step, (slot.index + q) / of)
+    g.restore()
+    return
+  }
 
   if (!shot || !shot.frames.length) {
     g.fillStyle = stage.theme.dim
@@ -1454,14 +1473,12 @@ export function drawTour(
     return
   }
 
-  const step = `${slot.index + 1} / ${of}`
   // Progress in steps, not in a smooth slide. A bar that advances by one
   // pixel per frame makes every frame of a still beat different, and the
   // encoder can no longer hold one picture for five seconds — which on a
   // seventeen-beat tour is the difference between a post-sized GIF and a
   // fifteen-megabyte one. Nothing else on a still beat moves; this must not
   // either.
-  const q = Math.round(u * PROGRESS_STEPS) / PROGRESS_STEPS
   const card: Callout = {
     title: beat.title, text: beat.text, step, progress: q,
     chapter: beat.chapter, index: slot.index, of,
@@ -1489,9 +1506,12 @@ export function drawTour(
   // opened panel, the card in its new column — for as long as it takes to
   // read the sentence. Running the burst late leaves the reader looking at
   // the state before the click for most of the beat.
+  // A demonstration (steps) spreads its frames over the whole beat instead,
+  // with a moment on the first and the last.
   const burst = shot.frames.length
   const frame = burst <= 1 ? 0
-    : Math.round(clamp((u - 0.15) / 0.35) * (burst - 1))
+    : beat.steps?.length ? Math.round(clamp((u - 0.1) / 0.8) * (burst - 1))
+      : Math.round(clamp((u - 0.15) / 0.35) * (burst - 1))
 
   drawScreen(g, stage, shot, box, view, frame)
 
@@ -1505,7 +1525,7 @@ export function drawTour(
 
   const wantsLight = shot.rect && beat.zoom !== 'full'
   if (wantsLight && shot.rect) {
-    const settle = beat.zoom === 'push' ? clamp((u - 0.4) / 0.2) : 1
+    const settle = beat.zoom === 'push' ? (beat.steps?.length ? clamp((u - 0.55) / 0.2) : clamp((u - 0.4) / 0.2)) : 1
     spotlight(g, stage, box, focusOnStage(box, view, shot.rect), settle)
   }
 

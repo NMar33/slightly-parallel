@@ -47,8 +47,8 @@ it. The identity notice is the one exception: it opens with the project.
   entry for that scan (section 4).
 - **architecture notice** — a scan has no architecture answer behind it:
   write the eight-group form, or all groups `checked` (section 4).
-- **kept notice** — the user tagged the message `#vision`, `#rule` or
-  `#problem`: the server keeps it; write its interpretation with
+- **kept notice** — the user tagged the message `#vision`, `#rule`,
+  `#problem` or `#entrypoint`: the server keeps it; write its interpretation with
   `interpret` (section 4, Kept messages). For `#skill`, write the skill
   from this chat with `skill_draft` (section 4, Skill).
 - **command notice** — the user typed a command (section 2): it names the
@@ -100,6 +100,7 @@ When the user types one of these, act as described. Commands start with
 | `#artifact <what>` | Write the folder under the project's artifacts/, then make its record with artifact_write (Artifact, section 4) |
 | `#help` | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it) |
 | `#done` | MCP tool task_done: the server has moved the task; say what moved, then your task_report line (the skill finish-a-task) |
+| `#entrypoint` | Nothing to write — the server keeps the message as an entry point; write its text (Kept messages, section 4): What, Where, How, State, Next |
 
 **Resolving `<id or text>`**: if it looks like an id (`sp_…`, `pb_…`), use it.
 Otherwise read the lens (`search`, or `GET /api/<lens>?project=…`), match
@@ -153,7 +154,7 @@ changes}` — every name but the first — and write a new entry only when the
 first line itself is wrong. The same entry written twice is one entry.
 
 **Born from a discussion** (decisions, and any entry you write because of
-an exchange; tagged visions, rules and problems are kept by the server
+an exchange; tagged visions, rules, problems and entry points are kept by the server
 instead, section 4): the long part holds the chat excerpt as it was said.
 The list holds the exchange, one item per point ("user: …", "agent: …").
 The text holds the takeaway. The reader goes from the one line to what
@@ -285,20 +286,21 @@ operator's choice.
 **Vision — `#vision`.** A directional idea, kept by the server in the
 user's own words.
 
-**Kept messages — `#vision`, `#rule`, `#problem`.** The tagged message is
+**Kept messages — `#vision`, `#rule`, `#problem`, `#entrypoint`.** The tagged message is
 the entry: the server takes it from the chat log verbatim. Do not write an
 entry for it. A message that is only the tag keeps nothing: no id is
 minted and no notice appears — ask the user what to keep. The hook names the id —
 `[slightly-parallel] #vision — the server keeps this message as vs_…` — and your part
 is the interpretation, written in the same turn:
-`interpret {lens: "vision" | "rule" | "problem", id, text}` (`text` is
+`interpret {lens: "vision" | "rule" | "problem" | "entrypoint", id, text}` (`text` is
 markdown; `note` is one optional line on what changed).
 
 The interpretation is the message read with the conversation around it:
 what the user means, in plain words, with what the context settles —
 constraints, rejected options, what it replaces. A vision: the direction
 and what it would change. A rule: the rule, imperative, and the incident
-behind it. A problem: what is blocked and what was tried. Keep the user's
+behind it. A problem: what is blocked and what was tried. An entry point:
+the five sections of its own part (Entry point, below). Keep the user's
 words where they are exact; add nothing that was not said. Each write is a
 version; the operator edits from there. On the page, the message is "Your
 words" and the interpretation sits beside it.
@@ -336,6 +338,33 @@ install skills.
 **Help** (`#help`). Answer the operator with the list of commands, what each does for them and where they see the result. The skill `sp-help` holds the list; give it as it is, in the operator's language, and add nothing that is not in it.
 
 **Done** (`#done`). The operator closes a task from the chat: the server moves it to done and gives it its stretch of the chat. Call `task_done`, say what moved, then your one-line `task_report`. The skill `finish-a-task` holds the steps.
+
+**Entry point — `#entrypoint`.** The way into a topic, for whoever comes
+back to it after a while — the operator in a month, or an agent in a new
+chat. One entry point per topic ("the install film", "the launch"), kept by
+the server from the operator's message; you write its text through
+`interpret {lens: "entrypoint", id, text, note}`.
+
+The text has five sections, as Markdown headings, 400 words at most
+(Where is the long one: every path and link the topic needs):
+
+- **What** — what the topic is and what for, one or two sentences.
+- **Where** — the files, folders, artifacts and links the topic lives in,
+  one per line, exact paths.
+- **How** — how to run or repeat it: the commands, the pages, the skill to
+  use.
+- **State** — where the work stopped, as of this version.
+- **Next** — what comes next, by items.
+
+Write it from this chat: the paths and commands that were used, the state
+as the last messages leave it. Nothing that was not done or decided. A
+second `#entrypoint` on the same topic is a new version of the same
+record: replace State and Next, add to Where and How, keep the rest.
+`topic` is the title, four words or so.
+
+When the operator opens a topic that has an entry point, read it first
+(the Entry points page, or `GET /api/entrypoints?project=…`): it says
+where things are and where the work stopped.
 
 ## 5. Reading
 

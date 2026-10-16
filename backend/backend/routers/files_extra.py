@@ -82,6 +82,11 @@ def files_heatmap(
     file_totals: dict[str, dict[str, Any]] = {}
     dates_seen: set[str] = set()
 
+    # One project asked for: a file is its path. Every project: the same
+    # path in two repositories (README.md, AGENTS.md) is two files, so the
+    # key the cells and the matrix hang on carries the project, and each
+    # file row says which project it is from.
+    scoped = bool(project)
     for row in _heatmap_rows(store, project, from_, to):
         fm = frontmatter_cached(store.data_root, row.get("md_ref") or "")
         if fm is None:
@@ -100,11 +105,12 @@ def files_heatmap(
             if path_prefix and not path.startswith(path_prefix):
                 continue
             dates_seen.add(entry["date"])
-            _add_touch(matrix, cells, file_totals, entry, path, pth)
+            key = path if scoped else f"{entry['project']}::{path}"
+            _add_touch(matrix, cells, file_totals, entry, path, pth, key)
             entry["paths_n"] += 1
 
     files_sorted = _top_files(file_totals, limit_files)
-    top_paths = {f["path"] for f in files_sorted}
+    top_paths = {f["key"] for f in files_sorted}
     matrix_filtered = {
         k: v for k, v in matrix.items() if k.split("||", 1)[0] in top_paths
     }
@@ -181,9 +187,13 @@ def _add_tags(target: dict[str, Any], tags: list) -> None:
 def _add_touch(
     matrix: dict[str, dict[str, Any]], cells: dict[str, dict[str, Any]],
     file_totals: dict[str, dict[str, Any]], entry: dict[str, Any], path: str, pth: dict,
+    key: str | None = None,
 ) -> None:
     """Count one path of one entry into its day cell, its checkpoint cell
-    and the file's totals."""
+    and the file's totals. ``key`` names the file in the cells, the matrix
+    and the totals: the path itself, or ``project::path`` when the answer
+    spans every project."""
+    key = key or path
     date, entry_id, entry_project = entry["date"], entry["id"], entry["project"]
     action = str(pth.get("action") or "modified")
     la = _as_int0(pth.get("lines_add"))
@@ -191,7 +201,7 @@ def _add_touch(
     sem_score = _semantic_score(pth)
     tags = pth.get("tags") if isinstance(pth.get("tags"), list) else []
 
-    cell = matrix.setdefault(f"{path}||{date}", {
+    cell = matrix.setdefault(f"{key}||{date}", {
         "count": 0, "lines_add": 0, "lines_del": 0, "entry_ids": [],
         "semantic_score": 0, "tags": [],
     })
@@ -203,7 +213,7 @@ def _add_touch(
     if entry_id and entry_id not in cell["entry_ids"]:
         cell["entry_ids"].append(entry_id)
 
-    one = cells.setdefault(f"{path}||{entry_id}", {
+    one = cells.setdefault(f"{key}||{entry_id}", {
         "count": 0, "lines_add": 0, "lines_del": 0, "action": action,
         "semantic_score": 0, "tags": [], "why": "",
     })
@@ -215,8 +225,8 @@ def _add_touch(
         one["why"] = str(pth.get("why") or "")
     _add_tags(one, tags)
 
-    totals = file_totals.setdefault(path, {
-        "path": path, "total": 0, "created": 0, "modified": 0,
+    totals = file_totals.setdefault(key, {
+        "path": path, "key": key, "total": 0, "created": 0, "modified": 0,
         "deleted": 0, "lines_add": 0, "lines_del": 0, "projects": {},
         "semantic_score": 0, "tags": [],
     })
