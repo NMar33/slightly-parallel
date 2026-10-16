@@ -65,7 +65,8 @@ def main(argv: list[str] | None = None) -> int:
         wanted = [x for x in wanted if x not in PAID]
     on = lambda stage: stage in wanted  # noqa: E731
 
-    space = Space(Path(tempfile.mkdtemp(prefix="sp-fresh-")), free_port())
+    # Resolved: on macOS the temp folder is /var/…, a link to /private/var/…, and the server names folders resolved.
+    space = Space(Path(tempfile.mkdtemp(prefix="sp-fresh-")).resolve(), free_port())
     report = Report()
     code, second = "calc", "notes"
     shots = space.root / "screens"

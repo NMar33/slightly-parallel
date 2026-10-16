@@ -41,6 +41,7 @@ def test_writes_fire_and_reads_never_reach_the_handler(tmp_path, monkeypatch):
         # macOS and Windows deliver the file's creation above late, after the start: let it land, then count from here.
         time.sleep(1.0 if sys.platform in ("darwin", "win32") else 0.2)
         seen.clear()
+        fired.clear()
         for _ in range(20):                      # what a request does
             f.read_text(encoding="utf-8")
             list(os.scandir(tmp_path / "chats"))
