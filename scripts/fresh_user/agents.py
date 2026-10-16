@@ -91,11 +91,18 @@ class ClaudeCode(Tool):
 
 class Codex(Tool):
     def command(self, message: str, model: str, space: Space) -> list[str]:
-        base = ["codex", "exec", "--skip-git-repo-check", "--full-auto"]
+        # Codex 0.163 dropped --full-auto: the same, said as settings. It
+        # also runs a project's hooks only once the user has trusted them
+        # (a hash per hook in ~/.codex/config.toml); a person does that once
+        # in the TUI, the test says it per run. The trust step itself is
+        # checked by hand (postprod/test-plan.md).
+        unattended = ["-c", 'sandbox_mode="workspace-write"', "-c", 'approval_policy="never"',
+                      "--dangerously-bypass-hook-trust"]
+        base = ["codex", "exec", "--skip-git-repo-check", *unattended]
         if model:
             base += ["--model", model]
         # `resume --last` continues the newest chat of this folder.
-        return [*base, message] if self.turns == 0 else ["codex", "exec", "resume", "--last", "--full-auto", message]
+        return [*base, message] if self.turns == 0 else ["codex", "exec", "resume", "--last", *unattended, message]
 
 
 class OpenCode(Tool):

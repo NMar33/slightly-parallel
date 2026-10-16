@@ -49,6 +49,10 @@ frontend/tailwind.config.d.ts
 /AGENTS.md
 /CLAUDE.md
 /.claude/
+# What Setup writes for the other tools when this repository is integrated: this machine's paths.
+/.codex/
+/.cursor/
+/.opencode/
 # .merkhet was the state folder before the rename; the log still reads it
 /.merkhet/
 /.sp/

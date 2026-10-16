@@ -167,7 +167,10 @@ def main(argv: list[str] | None = None) -> int:
                 # The newest release tag that is not HEAD itself, else five commits back.
                 head = stages.sh(["git", "rev-parse", "HEAD"], Path(args.source)).stdout.strip()
                 tags = stages.sh(["git", "tag", "--list", "v*", "--sort=-creatordate"], Path(args.source)).stdout.split()
-                behind = [t for t in tags if stages.sh(["git", "rev-parse", t + "^{commit}"], Path(args.source)).stdout.strip() != head]
+                # A tag in this history, before HEAD: in the working repository the
+                # release tags sit on the orphan release branch, outside it.
+                behind = [t for t in tags if stages.sh(["git", "rev-parse", t + "^{commit}"], Path(args.source)).stdout.strip() != head
+                          and stages.sh(["git", "merge-base", "--is-ancestor", t, "HEAD"], Path(args.source)).returncode == 0]
                 # Release tags all at HEAD: the first release, with nothing before it to upgrade from.
                 base = behind[0] if behind else ("" if tags else "HEAD~5")
             if base and stages.sh(["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"], Path(args.source)).returncode == 0:

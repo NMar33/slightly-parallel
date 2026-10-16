@@ -19,6 +19,7 @@ The project on film, in a minute or in six: [Slightly Parallel in a minute](http
 - [Three principles](#three-principles)
 - [Limits](#limits)
 - [In detail](#in-detail): [Chats](#chats) · [The board](#the-board) · [Standups](#standups) · [The commands](#the-commands) · [Skills](#skills) · [Artifacts](#artifacts) · [Entry points](#entry-points)
+- [Problems](#problems)
 - [What it needs and where the data is](#what-it-needs-and-where-the-data-is)
 - [More](#more)
 
@@ -47,6 +48,10 @@ Then connect a project. On the **Setup** page:
 3. **Start an agent in that folder** — Claude Code, Codex, OpenCode or Cursor, as you always do. The first answer begins with `[slightly-parallel] project … · your agent_id is …`. From then on the chat is recorded.
 
 ![The Setup page, step by step](docs/media/readme/setup.gif)
+
+**Tick the box of every tool you use.** A project records the chats of a tool only if that tool's box was ticked when the project was integrated: Claude Code hooks, Codex hooks, OpenCode plugin, Cursor hooks. Claude Code is ticked by default; the others are not. The chats of a tool without its box are not recorded. To add a tool later, tick its box in the form and press **Re-integrate** on the project's row.
+
+![The tool boxes in the Setup form](docs/media/readme/setup-tools.png)
 
 Good to know:
 
@@ -182,6 +187,10 @@ The Timer page keeps your own time, per project and per block of work (a sprint,
 The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so.
 
 ![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
+
+## Problems
+
+**I integrated the project, but the chat is not recorded.** Check that the box of the tool you work in was ticked when the project was integrated (see [Install](#install)). Only Claude Code is ticked by default: a Codex, OpenCode or Cursor chat is not recorded without its own box. Tick it, press **Re-integrate** on the project's row on the Setup page, and start a new chat: a tool reads its hooks when a chat starts.
 
 ## What it needs and where the data is
 
