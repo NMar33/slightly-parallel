@@ -11,7 +11,8 @@ import { Modal } from '../../components/Modal'
 import { Badge, Button, Input } from '../../components/primitives'
 import { LABEL } from '../promptlib/taskstyle'
 import { TOOL_KEYS, TOOL_NAMES, type IntegrateResult, type Integration, type ToolKey } from './data'
-import { t } from '../../i18n/scope/system'
+import { IMPORTABLE, ImportSessions } from '../capture/ImportSessions'
+import { t, tn } from '../../i18n/scope/system'
 
 /**
  * StepCard — one numbered step of the Setup journey. `done` renders a green
@@ -249,10 +250,12 @@ export function AdapterBadge({ verified }: { verified: boolean }) {
  * has that do not: those lose their chats without a word, so each gets a
  * line and a Connect button.
  */
-function ToolsLine({ tools, installed, lost, ignored, onConnect, onIgnore }: {
+function ToolsLine({ project, tools, installed, lost, importable, ignored, onConnect, onIgnore }: {
+  project: string
   tools: Record<ToolKey, boolean>
   installed?: Record<ToolKey, boolean>
   lost?: Partial<Record<ToolKey, number>>
+  importable?: Partial<Record<ToolKey, number>>
   ignored?: ToolKey[]
   onConnect: (tool: ToolKey) => void
   onIgnore: (tool: ToolKey) => void
@@ -263,6 +266,8 @@ function ToolsLine({ tools, installed, lost, ignored, onConnect, onIgnore }: {
   // this computer and the project does not record it. Unless the operator
   // said it is not needed.
   const missing = TOOL_KEYS.filter((k) => !off.has(k) && ((lost?.[k] ?? 0) > 0 || (!tools[k] && installed?.[k])))
+  // Sessions from before the tool was connected: no longer a warning, still not recorded.
+  const earlier = IMPORTABLE.filter((k) => !missing.includes(k) && (importable?.[k] ?? 0) > 0)
   return (
     <div className="basis-full flex flex-col gap-4">
       <div className="flex items-center gap-6 flex-wrap text-11">
@@ -290,6 +295,7 @@ function ToolsLine({ tools, installed, lost, ignored, onConnect, onIgnore }: {
                 {t('Connect {tool}', { tool })}
               </Button>
             )}
+            <ImportSessions project={project} tool={k} n={importable?.[k] ?? 0} />
             <Button variant="text" size="sm" onClick={() => onIgnore(k)}
               title={t('Stop asking about {tool} in this project', { tool })}>
               {t('Not needed')}
@@ -297,6 +303,12 @@ function ToolsLine({ tools, installed, lost, ignored, onConnect, onIgnore }: {
           </div>
         )
       })}
+      {earlier.map((k) => (
+        <div key={k} className="flex items-center gap-8 flex-wrap text-12 text-secondary">
+          <span className="min-w-0">{tn(importable?.[k] ?? 0, '{n} {tool} session from before it was connected was not recorded.', '{n} {tool} sessions from before it was connected were not recorded.', { tool: TOOL_NAMES[k] })}</span>
+          <ImportSessions project={project} tool={k} n={importable?.[k] ?? 0} />
+        </div>
+      ))}
     </div>
   )
 }
@@ -363,7 +375,8 @@ export function IntegrationRow({
         </Button>
       )}
       {it.tools && installed && (
-        <ToolsLine tools={it.tools} installed={installed} lost={it.lost} ignored={it.ignored} onConnect={onConnect} onIgnore={onIgnore} />
+        <ToolsLine project={it.project} tools={it.tools} installed={installed} lost={it.lost} importable={it.importable}
+          ignored={it.ignored} onConnect={onConnect} onIgnore={onIgnore} />
       )}
       <span className="flex items-center gap-2 shrink-0">
         <button

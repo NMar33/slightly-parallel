@@ -1347,5 +1347,27 @@
   "{tool} ran here {n} times in the last week and nothing was recorded. Codex runs the hooks of a project only once you trust them: start codex in this folder and accept.": "{tool} работал здесь за неделю (сессий: {n}), и ничего не записалось. Codex запускает хуки проекта, только когда вы им доверились: запустите codex в этой папке и подтвердите.",
   "{tool} ran here {n} times in the last week and nothing was recorded: its hooks did not run.": "{tool} работал здесь за неделю (сессий: {n}), и ничего не записалось: его хуки не запустились.",
   "{tool} ran here {n} times in the last week and nothing was recorded: it is not connected.": "{tool} работал здесь за неделю (сессий: {n}), и ничего не записалось: он не подключён.",
-  "Stop asking about {tool} in this project": "Больше не спрашивать про {tool} в этом проекте"
+  "Stop asking about {tool} in this project": "Больше не спрашивать про {tool} в этом проекте",
+  "Could not import them": "Не удалось импортировать",
+  "Import {tool} sessions into {project}": "Импорт сессий {tool} в {project}",
+  "These sessions ran in the project folder and nothing recorded them. They are read from the tool's own log and written as chats, with the times the messages were written. A command in them (#task, #done …) is not carried out.": "Эти сессии шли в папке проекта, и ничего их не записало. Они читаются из журнала самого инструмента и записываются как чаты, со временем, когда были написаны сообщения. Команды в них (#task, #done …) не выполняются.",
+  "Reading the log…": "Читаю журнал…",
+  "Could not read the log.": "Не удалось прочитать журнал.",
+  "Nothing to import: each session is recorded already, or still going on.": "Импортировать нечего: каждая сессия уже записана или ещё идёт.",
+  "The logs are the tools' own formats and change between versions: check a chat after the import.": "Журналы — внутренний формат инструментов и меняются от версии к версии: проверьте чат после импорта.",
+  "Import {n} session": {
+    "one": "Импортировать {n} сессию",
+    "few": "Импортировать {n} сессии",
+    "many": "Импортировать {n} сессий"
+  },
+  "Imported {n} session": {
+    "one": "Импортирована {n} сессия",
+    "few": "Импортированы {n} сессии",
+    "many": "Импортировано {n} сессий"
+  },
+  "{n} {tool} session from before it was connected was not recorded.": {
+    "one": "{n} сессия {tool} до подключения не записана.",
+    "few": "{n} сессии {tool} до подключения не записаны.",
+    "many": "{n} сессий {tool} до подключения не записано."
+  }
 }

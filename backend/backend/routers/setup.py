@@ -601,7 +601,9 @@ def setup_info(
             # and the project lacks loses its chats without a word.
             "tools": _tools_wired(r.get("path", ""), codex_global=codex["state"] == "installed"),
             # Sessions of the last week the tool ran here and nothing recorded.
-            "lost": {g["tool"]: g["sessions"] for g in gone if g["project"] == r.get("project") and not g["ignored"]},
+            "lost": {g["tool"]: g["sessions"] for g in gone if g["project"] == r.get("project") and g["sessions"] and not g["ignored"]},
+            # Sessions nothing recorded that can still be imported from the tool's own log.
+            "importable": {g["tool"]: g["sessions"] + g["earlier"] for g in gone if g["project"] == r.get("project")},
             "ignored": sorted(k.split(":", 1)[1] for k in skip if k.split(":", 1)[0] == r.get("project")),
             # A hook whose script path no longer exists records nothing:
             # Setup has to be run again from where the app now lives.

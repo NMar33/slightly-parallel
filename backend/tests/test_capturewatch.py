@@ -150,7 +150,8 @@ def test_lost_codex_sessions_follow_the_hook_not_any_parent_folder(tmp_path: Pat
     wired = inner / ".codex"
     wired.mkdir()
     (wired / "hooks.json").write_text("{}")                                                          # connected after it
-    assert capturewatch.lost(st, claude, codex, now) == []
+    after = capturewatch.lost(st, claude, codex, now)
+    assert [(g["project"], g["sessions"], g["earlier"]) for g in after] == [("beta", 0, 1)]          # importable, no warning
 
 
 def test_codex_adds_its_own_agents_md_message_and_that_is_not_a_prompt(tmp_path: Path) -> None:

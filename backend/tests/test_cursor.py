@@ -327,9 +327,10 @@ def test_setup_info_reports_the_cursor_adapter_like_the_others(env, tmp_path: Pa
     _integrate(client, project_dir, write_cursor_hooks=True)
     assert client.get("/api/setup/info").json()["integrations"][0]["hooks_missing_script"] == []
     hooks = project_dir / ".cursor" / "hooks.json"
-    moved = str(tmp_path / "old-place" / "cursor-capture.py")
-    # The file is JSON: the path stands in it escaped (a Windows path doubles its backslashes).
-    hooks.write_text(hooks.read_text(encoding="utf-8").replace(json.dumps(str(setup_router._CURSOR_SCRIPT))[1:-1], json.dumps(moved)[1:-1]), encoding="utf-8")
+    # Paths as the hook line writes them (forward slashes on Windows).
+    moved = setup_router._arg(tmp_path / "old-place" / "cursor-capture.py")
+    # The file is JSON: the path stands in it escaped.
+    hooks.write_text(hooks.read_text(encoding="utf-8").replace(json.dumps(setup_router._arg(setup_router._CURSOR_SCRIPT))[1:-1], json.dumps(moved)[1:-1]), encoding="utf-8")
     assert client.get("/api/setup/info").json()["integrations"][0]["hooks_missing_script"] == [moved]
 
 

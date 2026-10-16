@@ -422,7 +422,7 @@ def test_hook_command_never_exits_2_when_its_script_is_gone(env, tmp_path: Path)
 
     command = setup._hook_command("my-app", tmp_path)
     assert command.endswith(" || exit 0")
-    gone = command.replace(str(setup._CAPTURE_SCRIPT), str(tmp_path / "moved" / "claude-code-capture.py"))
+    gone = command.replace(setup._arg(setup._CAPTURE_SCRIPT), setup._arg(tmp_path / "moved" / "claude-code-capture.py"))
     bare = gone[: -len(" || exit 0")]
     assert subprocess.run(bare, shell=True, input="{}", capture_output=True, text=True).returncode == 2
     assert subprocess.run(gone, shell=True, input="{}", capture_output=True, text=True).returncode == 0
@@ -437,9 +437,10 @@ def test_setup_info_flags_a_hook_whose_script_no_longer_exists(env, tmp_path: Pa
     # The repository moves: the hook still names the old path.
     settings = project_dir / ".claude" / "settings.local.json"
     from backend.routers import setup
-    old = str(setup._CAPTURE_SCRIPT)
-    moved = str(tmp_path / "old-place" / "claude-code-capture.py")
-    # The file is JSON: the path stands in it escaped (a Windows path doubles its backslashes).
+    # Paths as the hook line writes them (forward slashes on Windows).
+    old = setup._arg(setup._CAPTURE_SCRIPT)
+    moved = setup._arg(tmp_path / "old-place" / "claude-code-capture.py")
+    # The file is JSON: the path stands in it escaped.
     settings.write_text(settings.read_text(encoding="utf-8").replace(json.dumps(old)[1:-1], json.dumps(moved)[1:-1]), encoding="utf-8")
     row = client.get("/api/setup/info").json()["integrations"][0]
     assert row["hooks"] is True
@@ -512,4 +513,4 @@ def test_a_windows_hook_line_never_ends_a_path_with_a_backslash(monkeypatch) -> 
     line = setup_router._hook_command("app", Path("D:\\"))
     assert '\\"' not in line and '--data-root "D:/"' in line
     unc = setup_router._cursor_hook_command("app", Path("\\\\nas\\sp"))
-    assert '--data-root "//nas/sp"' in unc
+    assert '--data-root "//nas/sp' in unc and '\\"' not in unc

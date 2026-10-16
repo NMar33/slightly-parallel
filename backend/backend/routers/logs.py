@@ -104,6 +104,31 @@ def capture_ignore(body: dict = Body(...), store: ViewStore = Depends(get_store)
     return {"ignored": sorted(pairs)}
 
 
+@router.get("/api/capture/import")
+def capture_import_preview(project: str = Query(...), tool: str = Query(...),
+                           store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    """The sessions of a project and tool that nothing recorded and that can
+    be read from the tool's own log (sessionimport.py): what an import would
+    write. Nothing is written."""
+    from .. import sessionimport
+    if tool not in ("claude", "codex"):
+        raise HTTPException(status_code=422, detail="tool must be claude or codex")
+    return {"project": project, "tool": tool, "sessions": sessionimport.preview(store, project, tool)}
+
+
+@router.post("/api/capture/import")
+def capture_import(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    """Import them as chats: the operator's click. Only the chat is written —
+    no command in an old message is carried out. ``sessions`` narrows it to
+    the ids given; a session recorded meanwhile is skipped."""
+    from .. import sessionimport
+    project, tool = str(body.get("project") or "").strip(), str(body.get("tool") or "").strip()
+    if not project or tool not in ("claude", "codex"):
+        raise HTTPException(status_code=422, detail="project, and tool one of claude, codex")
+    ids = body.get("sessions")
+    return sessionimport.run(store, project, tool, [str(x) for x in ids] if isinstance(ids, list) else None)
+
+
 @router.get("/api/capture/health")
 def capture_health(store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     """Is capture working: turns of active Claude Code sessions in registered

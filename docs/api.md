@@ -580,6 +580,12 @@ more, a normal one its alternatives, a major one also what would undo it.
   the active Claude Code sessions in folders registered in Setup whose latest
   messages Slightly Parallel did not record (or never saw); `errors`, hook failures of
   the last day (`<data root>/.capture/errors.jsonl`); `ok` when neither.
+- `GET /api/capture/import?project=&tool=` — the sessions of that project and tool (claude, codex) that
+  nothing recorded and that can be read from the tool's own log (sessionimport.py): one row each,
+  with its turns, first and last time and first message. Writes nothing.
+- `POST /api/capture/import` `{project, tool, sessions?}` — import them as chats, marked
+  `capture: import`: the chat only; a tag in an old message is never carried out. A session
+  recorded meanwhile, or active in the last hour, is skipped.
 - `POST /api/capture/ignore` `{project, tool, ignored}` — the operator says a tool (claude, codex,
   opencode, cursor) needs no recording in a project, or takes it back: its `lost`
   sessions stop warning and Setup drops its Connect line (`.capture/ignored.json`).

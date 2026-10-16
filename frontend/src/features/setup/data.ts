@@ -44,6 +44,8 @@ export interface Integration {
   tools?: Record<ToolKey, boolean>
   /** Sessions of the last week a tool ran here and nothing recorded. */
   lost?: Partial<Record<ToolKey, number>>
+  /** Sessions nothing recorded that can be imported from the tool's own log. */
+  importable?: Partial<Record<ToolKey, number>>
   /** Tools the operator said need no recording here. */
   ignored?: ToolKey[]
   git: boolean

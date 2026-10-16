@@ -237,10 +237,13 @@ def _wired_at(path: str, tool: str) -> float:
         return 0.0
 
 
-def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> list[dict[str, Any]]:
-    """Sessions of the last week that were never recorded, per project and tool."""
+def unrecorded(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> list[dict[str, Any]]:
+    """Every session of the last week, in an integrated folder, after its
+    integration, with a message from the person, that nothing recorded: one
+    row each — project, tool, session id, its log file, the folder it ran
+    in, its last message, and whether it ran after the tool was wired there
+    (``after_wiring``; before it, the session was lost for want of a hook)."""
     since = now - WEEK_SECONDS
-    skip = ignored(store.data_root)
     codex = codex_sessions(codex_root, since) if codex_root.is_dir() else []
     rows_ = [r for r in read_rows(store.data_root / "integrations.csv") if r.get("project") and r.get("path")]
     folders = {str(r["project"]): _norm(str(r["path"])) for r in rows_}
@@ -248,21 +251,21 @@ def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> l
     for row in rows_:
         code, path = str(row.get("project") or ""), str(row.get("path") or "").rstrip("/\\")
         base = max(since, _since(str(row.get("created_date") or "")))
-        starts = {tool: max(base, _wired_at(path, tool)) for tool in _WIRED}
+        wired = {tool: _wired_at(path, tool) for tool in _WIRED}
         chats = store.data_root / "projects" / code / "chats"
-        found: dict[str, list[float]] = {"claude": [], "codex": []}
         folder = claude_root / folder_slug(path)
         for transcript in folder.glob("*.jsonl") if folder.is_dir() else []:
             try:
-                if transcript.stat().st_mtime < starts["claude"]:
+                if transcript.stat().st_mtime < base:
                     continue
             except OSError:
                 continue
             if (chats / f"cc-{transcript.stem[:8]}" / "meta.json").exists():
                 continue
             at = last_prompt(transcript)
-            if at is not None and at >= starts["claude"]:
-                found["claude"].append(at)
+            if at is not None and at >= base:
+                out.append({"project": code, "tool": "claude", "session": transcript.stem, "file": transcript,
+                            "cwd": path, "last_at": at, "wired": wired["claude"] > 0, "after_wiring": at >= wired["claude"] > 0})
         for c in codex:
             if _owner(c["cwd"], folders) != code:
                 continue
@@ -272,13 +275,26 @@ def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> l
             if any((chats / n / "meta.json").exists() for n in names):
                 continue
             at = _codex_prompt(c["rollout"])
-            if at is not None and at >= starts["codex"]:
-                found["codex"].append(at)
-        for tool, times in found.items():
-            if times:
-                out.append({"project": code, "tool": tool, "sessions": len(times), "last_at": max(times),
-                            "ignored": f"{code}:{tool}" in skip})
+            if at is not None and at >= base:
+                out.append({"project": code, "tool": "codex", "session": c["session"], "file": c["rollout"],
+                            "cwd": c["cwd"], "last_at": at, "wired": wired["codex"] > 0, "after_wiring": at >= wired["codex"] > 0})
     return out
+
+
+def lost(store: ViewStore, claude_root: Path, codex_root: Path, now: float) -> list[dict[str, Any]]:
+    """Per project and tool: the sessions nothing recorded. ``sessions``
+    counts what warns (all of them while the tool is not wired there; once
+    it is, only those after); ``earlier`` the ones before the wiring, which
+    no longer warn but can still be imported."""
+    skip = ignored(store.data_root)
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in unrecorded(store, claude_root, codex_root, now):
+        g = groups.setdefault((r["project"], r["tool"]), {"project": r["project"], "tool": r["tool"], "sessions": 0,
+                                                          "earlier": 0, "last_at": 0.0,
+                                                          "ignored": f"{r['project']}:{r['tool']}" in skip})
+        g["sessions" if r["after_wiring"] or not r["wired"] else "earlier"] += 1
+        g["last_at"] = max(g["last_at"], r["last_at"])
+    return list(groups.values())
 
 
 def check(store: ViewStore, claude_root: Path | None = None, now: float | None = None,
@@ -330,7 +346,7 @@ def check(store: ViewStore, claude_root: Path | None = None, now: float | None =
     # A test passes its own Claude root and no Codex one: then there is none.
     croot = codex_root or (Path.home() / ".codex" / "sessions" if claude_root is None else root / "__no_codex__")
     gone = lost(store, root, croot, now)
-    out = {"ok": not missed and not errors and not any(not g["ignored"] for g in gone),
+    out = {"ok": not missed and not errors and not any(g["sessions"] and not g["ignored"] for g in gone),
            "missed": missed, "lost": gone, "errors": errors[-50:],
            "errors_n": len(errors), "watched": watched, "at": now}
     if claude_root is None:

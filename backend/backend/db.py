@@ -849,6 +849,10 @@ class ViewStore:
         from .skilllib import read_uses
 
         gap = int(app_settings.load(self.data_root).get("sessions.gap_minutes", 30))
+        # A chat imported from a tool's own log afterwards (sessionimport.py)
+        # is read, never acted on: a #done or #vision in an old message must
+        # not close a task or keep a vision weeks later.
+        imported = {str(a.get("agent_id") or "") for a in agents if a.get("capture") == "import"}
         chats = []
         for a in agents:
             chat_path = Path(a.get("_chat_path") or "")
@@ -900,22 +904,22 @@ class ViewStore:
             "prompt_marks": [
                 (m["project"], m["agent_id"], m["session_id"], m["turn"], m["at"],
                  m["title"], m["body"], m["print"])
-                for r in rows for m in r.prompt_marks
+                for r in rows if r.agent_id not in imported for m in r.prompt_marks
             ],
             "keep_marks": [
                 (k["kind"], k["project"], k["agent_id"], k["session_id"], k["turn"],
                  k["at"], k["title"], k["body"])
-                for r in rows for k in r.keep_marks
+                for r in rows if r.agent_id not in imported for k in r.keep_marks
             ],
             "important_tags": [
                 (k["kind"], k["project"], k["agent_id"], k["session_id"], k["turn"],
                  k["at"], k["excerpt"], k["tasks"])
-                for r in rows for k in r.important_tags
+                for r in rows if r.agent_id not in imported for k in r.important_tags
             ],
             "done_tags": [
                 (k["project"], k["agent_id"], k["session_id"], k["turn"], k["at"],
                  k["excerpt"], k["tasks"])
-                for r in rows for k in r.done_tags
+                for r in rows if r.agent_id not in imported for k in r.done_tags
             ],
             "skill_uses": [tuple(u) for u in read_uses(chats, rows)],
             "turn_prints": [

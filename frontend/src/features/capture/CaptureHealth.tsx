@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 
 import { getJson } from '../../lib/getJson'
 import { postIgnore, SETUP_INFO_KEY, TOOL_NAMES, type ToolKey } from '../setup/data'
+import { ImportSessions } from './ImportSessions'
 import { t, tn, locale } from '../../i18n/scope/system'
 
 interface CaptureHealth {
@@ -23,10 +24,10 @@ interface CaptureHealth {
   errors_n: number
   watched: number
   /** Sessions of the last week that were never recorded, per project and tool. */
-  lost?: Array<{ project: string; tool: ToolKey; sessions: number; last_at: number; ignored: boolean }>
+  lost?: Array<{ project: string; tool: ToolKey; sessions: number; earlier?: number; last_at: number; ignored: boolean }>
 }
 
-const lostNow = (d: CaptureHealth) => (d.lost ?? []).filter((g) => !g.ignored)
+const lostNow = (d: CaptureHealth) => (d.lost ?? []).filter((g) => !g.ignored && g.sessions > 0)
 
 function useCaptureHealth() {
   return useQuery({
@@ -98,6 +99,7 @@ export function CaptureSection() {
               <span className="font-mono text-secondary">
                 {g.project} · {TOOL_NAMES[g.tool]} · {tn(g.sessions, '{n} session', '{n} sessions')} · {t('the last {time}', { time: day(g.last_at) })}
               </span>
+              <ImportSessions project={g.project} tool={g.tool} n={g.sessions + (g.earlier ?? 0)} />
               <Link to="/setup" className="text-brand hover:underline">{t('Connect it in Setup')}</Link>
               <button type="button" onClick={() => void ignore(g.project, g.tool)}
                 className="text-tertiary hover:text-primary">{t('Not needed')}</button>
