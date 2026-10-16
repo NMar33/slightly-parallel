@@ -183,6 +183,7 @@ def test_the_hook_and_the_server_use_one_shared_module() -> None:
 def test_the_copied_patterns_are_equal() -> None:
     capture = _hook()
     assert capture._BOILERPLATE_RE.pattern == sessions._BOILERPLATE_RE.pattern
+    assert capture._TASK_CMD_RE.pattern == sessions.TASK_CMD_RE.pattern
     assert capture._BOILERPLATE_RE.flags == sessions._BOILERPLATE_RE.flags
     # The server's pattern also captures the name in the brackets; the same otherwise.
     assert capture._KEEP_TAG_RE.pattern == sessions.KEEP_TAG_RE.pattern.replace("(?:\\(([^)\\n]{1,80})\\))", "(?:\\([^)\\n]{1,80}\\))")

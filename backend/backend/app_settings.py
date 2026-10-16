@@ -140,6 +140,15 @@ SPECS: tuple[SettingSpec, ...] = (
         options=("match", "fixed", "all"),
     ),
     SettingSpec(
+        key="tasks.now_lane",
+        label="Lane for #now",
+        description=(
+            "The board lane a task started from a chat with #now lands in, "
+            "when the message names none (#now {ui} … names one)."
+        ),
+        type="text", default="Now", group="Tasks",
+    ),
+    SettingSpec(
         key="tasks.done_visible_count",
         label="Done tasks, fixed count",
         description=(

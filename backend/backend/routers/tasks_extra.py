@@ -8,10 +8,11 @@ import bisect
 import hashlib
 import logging
 import time
+from datetime import date
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
-from .. import limits
+from .. import app_settings, limits
 from ..csvio import append_if_absent, append_rows_raw, read_rows, rewrite_rows
 from ..db import ViewStore
 from ..docs_md import build_detail, read_detail, resolve_under
@@ -1666,26 +1667,93 @@ AGENT_TAGS_MAX = 3
 AGENT_TITLE_MAX = limits.MAX_AGENT_TASK_TITLE
 _AGENT_CREATE_FIELDS = frozenset({
     "created_date", "created_time", "project", "projects", "agent_id",
-    "title", "description", "tags", "lane", "assignee", "status",
+    "title", "description", "tags", "lane", "assignee", "status", "today_on",
 })
 
 
-def _gate_agent_create(body: dict) -> list[str]:
+def _operator_command(store: ViewStore, agent: str) -> tuple[str, str]:
+    """(command, lane) of the operator's latest message in the agent's chat:
+    ``#now {ui} …`` → ("now", "ui"); no chat, or no command → ("", "")."""
+    from ..sessions import _operator_text, chat_path, parse_turns, task_command
+    path = chat_path(store, agent)
+    if path is None:
+        return "", ""
+    try:
+        turns = parse_turns(path)
+    except OSError:
+        return "", ""
+    for t in reversed(turns):
+        text = _operator_text(t)
+        if text:
+            return task_command(text)
+    return "", ""
+
+
+def _board_lanes(store: ViewStore, project: str) -> list[str]:
+    """The lanes the project's board shows: every assignee (lane) a live card has."""
+    rows = store.query(
+        "SELECT lane, assignee, archived_at FROM tasks_mutual WHERE project = ?", (project,))
+    seen: dict[str, str] = {}
+    for r in rows:
+        if str(r.get("archived_at") or "").strip():
+            continue
+        name = str(r.get("lane") or r.get("assignee") or "").strip()
+        if name:
+            seen.setdefault(name.lower(), name)
+    return sorted(seen.values(), key=str.lower)
+
+
+def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
+    """The lane an agent's card lands in. Named in the message: one the board
+    has, matched without case; else #now's own lane from Settings, and
+    #task's none (the card shows under "unassigned")."""
+    lanes = _board_lanes(store, project)
+    if named:
+        for lane in lanes:
+            if lane.lower() == named.lower():
+                return lane
+        refuse_agent(
+            f"the lane {named!r} is not on the board",
+            ("the board's lanes: " + ", ".join(lanes) if lanes else "the board has no lanes yet")
+            + " — ask the operator which, in one line; a new lane is made on the board",
+        )
+    if command == "now":
+        return str(app_settings.load(store.data_root).get("tasks.now_lane") or "Now").strip() or "Now"
+    return ""
+
+
+def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     """Apply the /task contract to an agent's create; return the fields dropped.
 
-    A house actor (the board) passes untouched.
+    A house actor (the board) passes untouched. The operator's message
+    decides the column and the lane: ``#task`` → the `agent` column,
+    ``#now`` → `doing`, with the lane named in braces or #now's own.
     """
     agent = identity_of(body)
     if agent in _HOUSE_ACTORS:
         return []
-    status = str(body.get("status") or "").strip() or "agent"
-    if status != "agent":
+    command, named = _operator_command(store, agent)
+    status = str(body.get("status") or "").strip() or ("doing" if command == "now" else "agent")
+    if command == "now" and status != "doing":
+        refuse_agent(
+            "the operator wrote #now: this task starts in `doing`",
+            f"send status \"doing\" (or none), not {status!r}",
+        )
+    if command != "now" and status != "agent":
         refuse_agent(
             "an agent creates tasks only in the `agent` column",
             f"send status \"agent\" (or none), not {status!r}; the operator "
-            "classifies the card from there",
+            "classifies the card from there"
+            + ("" if command else " (#now in the operator's message starts a task in `doing`)"),
         )
-    body["status"] = "agent"
+    body["status"] = status
+    # The lane comes from the operator's message, never from the agent.
+    lane = _lane_for(store, str(body.get("project") or ""), command, named)
+    dropped = {k for k in ("lane", "assignee") if str(body.pop(k, None) or "").strip()}
+    if lane:
+        body["lane"] = body["assignee"] = lane
+    if command == "now":
+        body["today_on"] = date.today().isoformat()
     title = str(body.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=422, detail="an agent task needs a title")
@@ -1710,12 +1778,10 @@ def _gate_agent_create(body: dict) -> list[str]:
             detail=f"an agent task carries at most {AGENT_TAGS_MAX} tags ({len(tags)} sent)",
         )
     body["tags"] = ",".join(tags)
-    if str(body.get("assignee") or "").strip() and not str(body.get("lane") or "").strip():
-        body["lane"] = str(body["assignee"]).strip()
     ignored = sorted(k for k in list(body) if k not in _AGENT_CREATE_FIELDS)
     for k in ignored:
         body.pop(k, None)
-    return ignored
+    return sorted(set(ignored) | dropped)
 
 
 @detail_router.post("/api/tasks", status_code=201)
@@ -1735,7 +1801,8 @@ def tasks_create(
             status_code=422,
             detail="a task holds title and description — send its text as description",
         )
-    ignored = _gate_agent_create(body)
+    started_now = identity_of(body) not in _HOUSE_ACTORS and _operator_command(store, identity_of(body))[0] == "now"
+    ignored = _gate_agent_create(body, store)
     if len(str(body.get("title") or "")) > TITLE_MAX:
         raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
     description = str(body.pop("description", "") or "").strip()
@@ -1751,6 +1818,11 @@ def tasks_create(
     if description and not turns and md_ref:
         turns = [Turn(1, "", "", description)]
         _write_task_doc(store, md_ref, fm, turns)
+        store.rebuild()
+    if started_now and not out.get("existing"):
+        # The card's history says where it came from: the operator's #now
+        # in the chat, and the agent that wrote it down.
+        _append_events(store, task_id, _DEFAULT_ACTOR, [("started", "", f"in the chat, with #now (written by {identity_of(body)})")])
         store.rebuild()
     result = {
         "metadata": meta,

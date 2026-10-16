@@ -14,7 +14,7 @@ Slightly Parallel records every one of those chats into one record and shows all
 
 You start an agent in a project folder, as you do now. A hook records the chat as it goes, and the chat appears on the Chats page with the agent's name and the files it touched.
 
-Inside the chat you type commands. `#task fix the login timeout` puts a task on the board. `#decision` logs the choice you just made, with the reasons and what was turned down. `#scan` writes a checkpoint: what this chat changed since the last one, with the files and the architecture form. `#rule`, `#vision`, `#problem` and `#skill` keep the message on the page of that name; the agent writes what it means. The agent does the writing; you read the pages.
+Inside the chat you type commands. `#task fix the login timeout` puts a task on the board for later; `#now fix the login timeout` puts it on the board and the agent starts on it. `#decision` logs the choice you just made, with the reasons and what was turned down. `#scan` writes a checkpoint: what this chat changed since the last one, with the files and the architecture form. `#rule`, `#vision`, `#problem` and `#skill` keep the message on the page of that name; the agent writes what it means. The agent does the writing; you read the pages.
 
 A task on the board can be given to an agent: the task opens in a terminal inside the app, the agent works, and its report comes back to the card with the evidence. You move the task to done; the agent cannot.
 

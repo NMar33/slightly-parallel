@@ -50,7 +50,7 @@ scans list the commits and count the lines.
 
 Every new chat in that folder, in any tool, reads the contract
 from the section. The contract covers the commands (`#scan`, `#architecture`,
-`#map`, `#task`, `#decision`, `#standup`, `#evidence`, `#done`, `#help` and the kept tags),
+`#map`, `#task`, `#now`, `#decision`, `#standup`, `#evidence`, `#done`, `#help` and the kept tags),
 when to write which entry, and what each entry holds. Procedures live in
 built-in skills: `make-a-scan`, `keep-the-architecture-page`,
 `map-the-program`, `update-the-architecture`, `daily-standup`,

@@ -652,7 +652,7 @@ more, a normal one its alternatives, a major one also what would undo it.
 Every command of the contract gets a `[slightly-parallel] #<command> — …` notice from
 the capture hook, naming the skill and the first tool: the kept tags,
 `#evidence` with its task, and `_COMMANDS` for the rest (`#scan`, `#page`,
-`#map`, `#architecture`, `#task`, `#decision`, `#standup`, `#prompt`,
+`#map`, `#architecture`, `#task`, `#now`, `#decision`, `#standup`, `#prompt`,
 `#problem solved`). The hook also keeps small copies of server facts — the
 task id pattern, the standup claim time, setting defaults, kept-tag routes,
 whether a standup is owed. `tests/test_hook_parity.py` holds each copy equal

@@ -141,6 +141,9 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "map": ("map-the-program", "asking the operator, then MCP tool map_material"),
     "architecture": ("update-the-architecture", "MCP tool architecture_status"),
     "task": ("write-a-task", "MCP tool write_entry, lens task, status agent"),
+    # The task the chat starts on: the server puts it in doing, in the lane
+    # the message names or #now's own (backend/routers/tasks_extra.py).
+    "now": ("write-a-task", "MCP tool write_entry, lens task, status doing"),
     "decision": ("log-a-decision", "MCP tool write_entry, lens decision, with a weight"),
     "standup": ("daily-standup", "MCP tool standup_material"),
     "prompt": ("", "nothing to write: the server keeps the message in the prompt library"),
@@ -165,6 +168,28 @@ _COMMAND_RE = re.compile(
 # The server's pattern for a task id (backend/backend/sessions.py), tasks only;
 # tests/test_hook_parity.py holds the two equal.
 _TASK_ID_RE = re.compile(r"\b(tk_[a-z0-9][a-z0-9_-]{2,40})(?:\.\d{1,3})?\b")
+# ``#task {ui} …`` and ``#now {ui} …`` name the board lane in braces. The
+# server's pattern (backend/backend/sessions.py TASK_CMD_RE); the parity
+# test holds the two equal.
+_TASK_CMD_RE = re.compile(r"(?<![\w#])#(task|now)(?![\w-])(?:[ \t]*\{([^}\n]{1,80})\})?", re.IGNORECASE)
+
+
+def _task_lane(data_root: Path, project: str, user_text: str) -> dict | None:
+    """The lane the operator's #task / #now names in braces, and whether the
+    board has it: ``{"named": "ui", "lane": "UI" or None, "lanes": [...]}``;
+    None when the message names no lane (the server picks the default)."""
+    hits = list(_TASK_CMD_RE.finditer(user_text or ""))
+    named = " ".join((hits[-1].group(2) or "").split()) if hits else ""
+    if not named:
+        return None
+    lanes: dict[str, str] = {}
+    for r in _read_csv(data_root / "tasks.csv"):
+        if r.get("project") != project or (r.get("archived_at") or "").strip():
+            continue
+        name = (r.get("lane") or r.get("assignee") or "").strip()
+        if name:
+            lanes.setdefault(name.lower(), name)
+    return {"named": named, "lane": lanes.get(named.lower()), "lanes": sorted(lanes.values(), key=str.lower)}
 
 
 def _task_title(data_root: Path, task_id: str) -> str:
@@ -472,6 +497,9 @@ class TurnCapture:
             # #map costs a helper run: its notice asks the operator, naming
             # the model Settings give, the way the standup's does.
             "map_model": _map_model(self.data_root) if "map" in commands else None,
+            # #task {lane} / #now {lane}: the server refuses a lane the board
+            # does not have; the notice says so first, so the agent asks.
+            "task_lane": _task_lane(self.data_root, self.project, user_text) if {"task", "now"} & set(commands) else None,
             "kept": [
                 # An artifact is a folder the agent writes itself; the notice
                 # names where, so the agent never guesses the data root.
@@ -1070,6 +1098,16 @@ def format_signals(signals: dict) -> str:
             f"[slightly-parallel] #{name} — " + (f"the skill {skill} holds the steps. Start with {start}."
                                       if skill else f"{start}.")
         )
+        lane = signals.get("task_lane")
+        if name in ("task", "now") and lane:
+            if lane.get("lane"):
+                notes[-1] += f" The lane: {lane['lane']} (the server sets it from the message)."
+            else:
+                notes[-1] += (
+                    f" The lane {lane['named']!r} is not on the board"
+                    + (f" (its lanes: {', '.join(lane['lanes'])})" if lane.get("lanes") else " (it has no lanes yet)")
+                    + ": ask the operator which, in one line, before writing."
+                )
     ev = signals.get("evidence_for")
     if ev is not None:
         if ev.get("id"):

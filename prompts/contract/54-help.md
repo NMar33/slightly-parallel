@@ -25,7 +25,8 @@ rest; you see the result on the page named.
 
 | Command | What it does | Where you see it |
 |---|---|---|
-| `#task <hint>` | Writes the task you are pointing at onto the board, in the agent column. | Kanban |
+| `#task <hint>` | Writes the task you are pointing at onto the board, in the agent column, for later. `#task {ui} …` names the lane. | Kanban |
+| `#now <text>` | Writes the task this chat starts on: into doing, in the lane for #now (Settings › Tasks) or the one in braces, `#now {ui} …`; then the agent works on it. `#done` closes it. | Kanban |
 | `#evidence` | Attaches the proof for the task: what it touched and what it did, the way you asked for it. | The task's window |
 | `#done` | Moves the task to done: the one named, else the last task named since the previous `#done`. Its messages up to here count as its work. | Kanban · the task's window |
 

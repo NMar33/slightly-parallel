@@ -53,7 +53,7 @@ once:
   architecture form: the agent is reminded once.
 - **kept messages and commands** — a tag (`#vision`, `#rule`, `#problem`,
   `#skill`, `#artifact`) arrives with the kept entry's id to interpret;
-  a command (`#scan`, `#task`, `#evidence`, `#done`, …) with the skill and
+  a command (`#scan`, `#task`, `#now`, `#evidence`, `#done`, …) with the skill and
   the first tool.
 
 Thresholds live in Settings (the Agent signals and Chats groups) and persist

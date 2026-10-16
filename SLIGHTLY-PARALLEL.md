@@ -84,7 +84,8 @@ When the user types one of these, act as described. Commands start with
 | `#scan` | Checkpoint: write a scan, then the file entry and the architecture form it triggers (section 4). The only way a scan is written — the user asks for it |
 | `#architecture` | Bring the architecture up to date: the form for the last scan, the page and the map, each only when out of date (the skill update-the-architecture) |
 | `#evidence` | Get the operator's instructions with task_evidence_ask, then attach the evidence (Finishing a task, section 4) |
-| `#task <hint>` | Write the task the user is pointing at, from the conversation, into the `agent` column (section 4) |
+| `#task <hint>` | Write the task the user is pointing at, from the conversation, into the `agent` column, for later; `#task {lane} …` names the board lane (section 4) |
+| `#now <text>` | Write the task this chat starts on into `doing`, in the lane for #now or the one in braces, then do the work; `#done` closes it (section 4) |
 | `#page` | Write the next version of the project's architecture page: architecture_material, then architecture_page (the skill keep-the-architecture-page) |
 | `#decision` | Log the decision just made (also offered on `decision_hint`) |
 | `#map` | Map the program: ask the operator first, then a helper agent calls map_material, then map_write (the skill map-the-program) |
@@ -254,7 +255,7 @@ final in the pack's shape, then post the whole text with
 this version changed. Each post is the next version; the operator reads
 and compares them on the Storyboard. An unknown id is refused.
 
-**Agent task** (`#task <hint>`). Only when the user writes `#task`: write the task the user is pointing at, from the conversation, with `write_entry {lens: "task"}` and `status: "agent"`. The skill `write-a-task` holds the steps.
+**Agent task** (`#task <hint>`, `#now <text>`). Only when the user writes one of them: write the task the user is pointing at, from the conversation, with `write_entry {lens: "task"}`. `#task` lands in the `agent` column for later; `#now` is the task this chat starts on and lands in `doing`. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
 
 **Architecture page** (part of `#architecture`, and at the end of a `#scan`; `#page` still asks for it alone). One page per project: what it is, what it does now, what it is made of and what is owed, as claims with their evidence, for a team lead who was not in the chat. Call `architecture_material`: it returns the computed facts, the current page and the instructions. Write the next version with `architecture_page {text, note}`. The skill `keep-the-architecture-page` holds the steps.
 

@@ -170,6 +170,21 @@ IMPORTANT_TAG_RE = re.compile(
 # ``#done`` closes a task: the one it names, else the last task named since
 # the previous #done in the chat (donelib.py).
 DONE_TAG_RE = re.compile(r"(?<![\w#])#done(?![\w-])", re.IGNORECASE)
+# ``#task`` writes a card for later, ``#now`` one the chat starts on; either
+# may name the board lane in braces: ``#now {ui} fix the login timeout``.
+# The hook (scripts/hooks/capture.py) holds the same pattern; the parity
+# test keeps the two equal.
+TASK_CMD_RE = re.compile(r"(?<![\w#])#(task|now)(?![\w-])(?:[ \t]*\{([^}\n]{1,80})\})?", re.IGNORECASE)
+
+
+def task_command(text: str) -> tuple[str, str]:
+    """(command, lane) of the last #task or #now in an operator's message:
+    ("task", "ui"), ("now", "") … or ("", "") with neither."""
+    hits = list(TASK_CMD_RE.finditer(text or ""))
+    if not hits:
+        return "", ""
+    m = hits[-1]
+    return m.group(1).lower(), " ".join((m.group(2) or "").split())
 
 
 def normalise(text: str) -> str:

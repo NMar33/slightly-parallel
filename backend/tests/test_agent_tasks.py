@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -84,11 +85,90 @@ def test_operator_metadata_is_dropped_and_named(client: TestClient) -> None:
     assert str(meta.get("auto_manage") or "") == ""
 
 
-def test_lane_follows_a_named_assignee(client: TestClient) -> None:
-    out = _post(client, assignee="Bugs")
-    assert out["metadata"]["lane"] == "Bugs" and out["metadata"]["assignee"] == "Bugs"
-    bare = _post(client, created_time="21:20")
-    assert str(bare["metadata"].get("lane") or "") == ""
+# ---------------------------------------------------------- the operator's message
+# The column and the lane come from what the operator typed in the chat:
+# ``#task`` → the agent column, ``#now`` → doing; ``{lane}`` names a lane the
+# board has. The agent's own lane or assignee is dropped and named back.
+
+
+def _chat(root: Path, agent: str, user_text: str) -> None:
+    d = root / "projects" / "alpha" / "chats" / agent
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "meta.json").write_text(json.dumps({
+        "agent_id": agent, "agent_name": "lead", "project": "alpha",
+        "created_date": "2609-01", "last_active": "2026-09-01T11:00:00",
+    }), encoding="utf-8")
+    (d / "chat.md").write_text(
+        f"# Chat log — {agent}\n\n## Turn 1 · 2026-09-01T10:01:00\n**User**: hello\n**Agent**: hi\n"
+        f"\n## Turn 2 · 2026-09-01T10:02:00\n**User**: {user_text}\n", encoding="utf-8")
+
+
+def _board(root: Path, user_text: str, lanes: tuple[str, ...] = ("Bugs", "Kanban Board")) -> TestClient:
+    _chat(root, "cc-a", user_text)
+    c = TestClient(create_app(data_root=root, watch=False))
+    c.__enter__()
+    for i, lane in enumerate(lanes):
+        c.post("/api/tasks", json={"created_date": "2609-01", "created_time": f"08:0{i}", "project": "alpha",
+                                   "agent_id": "operator", "title": f"a {lane} card", "status": "todo", "assignee": lane})
+    return c
+
+
+def test_task_takes_the_lane_the_operator_named_in_braces(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    c = _board(root, "#task {bugs} the form accepts an empty trigger_id")
+    out = _post(c, assignee="Infra")
+    meta = out["metadata"]
+    assert meta["status"] == "agent"
+    assert meta["lane"] == "Bugs" and meta["assignee"] == "Bugs"     # the board's spelling
+    assert "assignee" in out["ignored"]                               # the agent's own naming is dropped
+    c.__exit__(None, None, None)
+
+
+def test_a_lane_the_board_does_not_have_is_refused_with_the_list(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    c = _board(root, "#task {ux} the form accepts an empty trigger_id")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "x", "tags": "ag_bug"})
+    assert r.status_code == 422, r.text
+    assert "'ux'" in r.text and "Bugs" in r.text and "Kanban Board" in r.text and "ask the operator" in r.text
+    c.__exit__(None, None, None)
+
+
+def test_now_starts_the_task_in_doing_in_its_own_lane_today(tmp_path: Path) -> None:
+    from datetime import date
+    root = tmp_path / "data"
+    c = _board(root, "#now fix the login timeout")
+    wrong = _post(c, expect=422, status="agent")
+    assert "doing" in wrong["detail"]
+    out = _post(c, created_time="21:11")
+    meta = out["metadata"]
+    assert meta["status"] == "doing" and meta["lane"] == "Now" and meta["assignee"] == "Now"
+    assert meta["today_on"] == date.today().isoformat()
+    events = c.get(f"/api/tasks/{meta['id']}/events").json()
+    started = [e for e in (events.get("events") if isinstance(events, dict) else events) if e.get("field") == "started"]
+    assert started and "#now" in started[0]["new_value"] and "cc-a" in started[0]["new_value"]
+    c.__exit__(None, None, None)
+
+
+def test_now_with_a_lane_and_the_lane_from_settings(tmp_path: Path) -> None:
+    from backend import app_settings
+    root = tmp_path / "data"
+    c = _board(root, "#now {kanban board} the cards do not sort")
+    assert _post(c)["metadata"]["lane"] == "Kanban Board"
+    c.__exit__(None, None, None)
+    app_settings.save(root, {"tasks.now_lane": "Chat"})
+    c = _board(root, "#now fix the login timeout", lanes=())
+    assert _post(c, created_time="21:12")["metadata"]["lane"] == "Chat"
+    c.__exit__(None, None, None)
+
+
+def test_without_a_command_the_card_is_an_agent_card_with_no_lane(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    c = _board(root, "a plain message, no command")
+    out = _post(c, assignee="Bugs")
+    assert out["metadata"]["status"] == "agent" and str(out["metadata"].get("lane") or "") == ""
+    assert "assignee" in out["ignored"]
+    c.__exit__(None, None, None)
 
 
 def test_the_board_passes_untouched(client: TestClient) -> None:
