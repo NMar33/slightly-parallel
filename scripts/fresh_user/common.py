@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
+WINDOWS = os.name == "nt"
 
 
 @dataclass
@@ -70,7 +71,15 @@ class Space:
     def env(self) -> dict[str, str]:
         """A new user's environment: their own home, nothing of Slightly Parallel set."""
         keep = ("PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "NVM_DIR", "NVM_BIN")
-        env = {k: v for k, v in os.environ.items() if k in keep}
+        if WINDOWS:
+            # What Windows itself needs to run a program (sockets fail without SYSTEMROOT).
+            keep += ("SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+                     "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE")
+        env = {k: v for k, v in os.environ.items() if k.upper() in keep}
+        if WINDOWS:
+            # Windows finds the home in USERPROFILE, and the per-user folders under it.
+            env.update(USERPROFILE=str(self.home), APPDATA=str(self.home / "AppData" / "Roaming"),
+                       LOCALAPPDATA=str(self.home / "AppData" / "Local"))
         env.update(HOME=str(self.home), SP_PORT=str(self.port), SHELL="/bin/sh",
                    # git in the sample project and in the clone needs an author
                    GIT_AUTHOR_NAME="Fresh User", GIT_AUTHOR_EMAIL="fresh@example.com",

@@ -21,9 +21,27 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from common import REPO, Report, Space, eventually, get, http, rows, wait_for
+from common import REPO, WINDOWS, Report, Space, eventually, get, http, rows, wait_for
 
 FRONTEND = REPO / "frontend"
+#: npx is npx.cmd on Windows, which a program list does not find by its bare name.
+NPX = shutil.which("npx") or "npx"
+#: The server and everything it starts in a group of its own, for stop().
+SPAWN: dict = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
+
+
+def run_sh(*args: str) -> list[str]:
+    """The README's start: ./run.sh on Linux and macOS, `sp run` on Windows."""
+    return ["cmd", "/c", "sp.cmd", "run", *args] if WINDOWS else ["./run.sh", *args]
+
+
+def sp_sh(*args: str) -> list[str]:
+    """The launcher: ./sp.sh on Linux and macOS, sp.cmd on Windows."""
+    return ["cmd", "/c", "sp.cmd", *args] if WINDOWS else ["./sp.sh", *args]
+
+
+def venv_python(clone: Path) -> Path:
+    return clone / "backend" / ".venv" / ("Scripts/python.exe" if WINDOWS else "bin/python")
 
 
 def sh(args: list[str], cwd: Path, env: dict[str, str] | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
@@ -97,8 +115,8 @@ def install(space: Space, report: Report, source: Path, boot_seconds: int) -> su
 
     log = open(space.root / "server.log", "w", encoding="utf-8")
     start = time.time()
-    proc = subprocess.Popen(["./run.sh", "--prod"], cwd=space.clone, env=space.env(), stdout=log,
-                            stderr=subprocess.STDOUT, start_new_session=True)
+    proc = subprocess.Popen(run_sh("--prod"), cwd=space.clone, env=space.env(), stdout=log,
+                            stderr=subprocess.STDOUT, **SPAWN)
     up = wait_for(space, "/api/health", boot_seconds, alive=lambda: proc.poll() is None)
     took = round(time.time() - start)
     report.notes["boot_seconds"] = took
@@ -111,7 +129,7 @@ def install(space: Space, report: Report, source: Path, boot_seconds: int) -> su
     report.add(s, "the server is healthy", health.get("ok") is True and not health.get("load_errors"), json.dumps(health)[:300])
     # A new install keeps its data outside the clone, and plays the example
     # project into it in the background.
-    report.add(s, "it starts in a new data folder, outside the clone", str(health.get("data_root", "")).endswith("/.slightly-parallel"), str(health.get("data_root")))
+    report.add(s, "it starts in a new data folder, outside the clone", Path(str(health.get("data_root", ""))).name == ".slightly-parallel", str(health.get("data_root")))
     page = http(space.url + "/")
     report.add(s, "the built app is served at /", isinstance(page, str) and 'id="root"' in page and "/assets/" in page, str(page)[:200])
     t0 = time.time()
@@ -138,11 +156,19 @@ def install(space: Space, report: Report, source: Path, boot_seconds: int) -> su
 def start(space: Space, args: list[str], log_name: str, extra: dict[str, str] | None = None) -> subprocess.Popen:
     log = open(space.root / log_name, "w", encoding="utf-8")
     return subprocess.Popen(args, cwd=space.clone, env={**space.env(), **(extra or {})}, stdout=log,
-                            stderr=subprocess.STDOUT, start_new_session=True)
+                            stderr=subprocess.STDOUT, **SPAWN)
 
 
 def stop(proc: subprocess.Popen | None) -> None:
     if proc is None or proc.poll() is not None:
+        return
+    if WINDOWS:
+        # No process groups to signal: end the tree under the started process.
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
         return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -162,7 +188,7 @@ def playwright(space: Space, report: Report, stage: str, name: str, args: list[s
     if not (FRONTEND / "node_modules" / "@playwright").is_dir():
         return report.add(stage, name, False, "Playwright is not installed here: cd frontend && npm install && npx playwright install chromium")
     env = {**os.environ, "SP_E2E_URL": space.url, **(extra or {})}
-    p = sh(["npx", "playwright", "test", *args, "--reporter=line"], FRONTEND, env, timeout=1200)
+    p = sh([NPX, "playwright", "test", *args, "--reporter=line"], FRONTEND, env, timeout=1200)
     out = (p.stdout + p.stderr).strip()
     spec = next((a for a in reversed(args) if a.endswith(".ts")), "run").split("/")[-1].removesuffix(".spec.ts")
     (space.root / f"playwright-{stage.replace(':', '-')}-{spec}.log").write_text(out, encoding="utf-8")
@@ -285,7 +311,8 @@ def wiring(space: Space, report: Report, code: str) -> None:
     except (OSError, KeyError, ValueError) as exc:
         report.add(s, "the hook is in .claude/settings.local.json", False, str(exc))
         return
-    script = next((part for part in shlex.split(command) if part.endswith("claude-code-capture.py")), "")
+    parts = [p.strip('"') for p in shlex.split(command, posix=not WINDOWS)]
+    script = next((part for part in parts if part.endswith("claude-code-capture.py")), "")
     report.add(s, "the hook script is inside the clone", script.startswith(str(space.clone)) and Path(script).is_file(), script)
 
     def fire(event: dict) -> subprocess.CompletedProcess:
@@ -443,7 +470,7 @@ def restart(space: Space, report: Report, proc: subprocess.Popen | None, codes: 
     stop(proc)
     time.sleep(1)
     start_at = time.time()
-    proc = start(space, ["./run.sh", "--prod"], "server-2.log")
+    proc = start(space, run_sh("--prod"), "server-2.log")
     up = wait_for(space, "/api/health", 600, alive=lambda: proc.poll() is None)
     took = round(time.time() - start_at)
     report.notes["second_boot_seconds"] = took
@@ -466,17 +493,17 @@ def background(space: Space, report: Report, proc: subprocess.Popen | None) -> N
     stop(proc)
     time.sleep(1)
     env = space.env()
-    up = sh(["./sp.sh", "up"], space.clone, env, timeout=900)
+    up = sh(sp_sh("up"), space.clone, env, timeout=900)
     report.add(s, "sp up starts it and says healthy", up.returncode == 0 and "healthy" in up.stdout, (up.stdout + up.stderr)[-400:])
-    status = sh(["./sp.sh", "status"], space.clone, env)
+    status = sh(sp_sh("status"), space.clone, env)
     report.add(s, "sp status says running and healthy", status.returncode == 0 and "running" in status.stdout and "healthy" in status.stdout, status.stdout[-300:])
     report.add(s, "the app answers", wait_for(space, "/api/health", 5))
-    again = sh(["./sp.sh", "up"], space.clone, env)
+    again = sh(sp_sh("up"), space.clone, env)
     report.add(s, "a second sp up refuses, and says why", again.returncode != 0 and "already running" in (again.stdout + again.stderr), (again.stdout + again.stderr)[-300:])
-    down = sh(["./sp.sh", "down"], space.clone, env)
+    down = sh(sp_sh("down"), space.clone, env)
     report.add(s, "sp down stops it", down.returncode == 0 and "stopped" in down.stdout, (down.stdout + down.stderr)[-300:])
     report.add(s, "nothing answers on the port afterwards", not wait_for(space, "/api/health", 3))
-    status = sh(["./sp.sh", "status"], space.clone, env)
+    status = sh(sp_sh("status"), space.clone, env)
     report.add(s, "sp status fails when nothing runs", status.returncode != 0, status.stdout[-200:])
 
 
@@ -485,7 +512,7 @@ def dev(space: Space, report: Report, code: str) -> None:
     from common import free_port
     s = "dev"
     vite = free_port()
-    proc = start(space, ["./run.sh"], "server-dev.log", {"VITE_PORT": str(vite)})
+    proc = start(space, run_sh(), "server-dev.log", {"VITE_PORT": str(vite)})
     try:
         up = wait_for(space, "/api/health", 600, alive=lambda: proc.poll() is None)
         if not report.add(s, "./run.sh starts the backend", up, (space.root / "server-dev.log").read_text(encoding="utf-8", errors="replace")[-500:]):
@@ -509,6 +536,11 @@ def dev(space: Space, report: Report, code: str) -> None:
 
 def path_without(space: Space, *missing: str) -> str:
     """A PATH that has everything this machine has, except the named programs."""
+    if WINDOWS:
+        # Links need rights a user may not have: leave out every folder that holds one of them.
+        exts = [e.lower() for e in os.environ.get("PATHEXT", ".EXE;.CMD;.BAT").split(";") if e] + [""]
+        return os.pathsep.join(f for f in os.environ.get("PATH", "").split(os.pathsep)
+                               if f and not any((Path(f) / (m + e)).is_file() for m in missing for e in exts))
     shim = space.root / ("path-without-" + "-".join(missing))
     if not shim.is_dir():
         shim.mkdir()
@@ -539,7 +571,7 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
     def launcher(extra: dict[str, str], *args: str) -> tuple[int, str, float]:
         start_at = time.time()
         try:
-            p = sh(["./run.sh", *args], space.clone, {**env, **extra}, timeout=90)
+            p = sh(run_sh(*args), space.clone, {**env, **extra}, timeout=90)
             return p.returncode, (p.stdout + p.stderr).strip(), time.time() - start_at
         except subprocess.TimeoutExpired as exc:
             return -1, f"still running after 90 s: {str(exc.stdout or '')[-200:]}", 90.0
@@ -555,11 +587,11 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
     if (space.clone / "frontend" / "dist" / "index.html").is_file():
         # A release ships the UI built: a start with no Node serves it.
         log = open(space.root / "server-no-node.log", "w", encoding="utf-8")
-        proc = subprocess.Popen(["./run.sh", "--prod"], cwd=space.clone, env={**env, **no_node}, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        proc = subprocess.Popen(run_sh("--prod"), cwd=space.clone, env={**env, **no_node}, stdout=log, stderr=subprocess.STDOUT, **SPAWN)
         up = wait_for(Space(space.root, int(other)), "/api/health", 60, alive=lambda: proc.poll() is None)
         stop(proc)
         out = (space.root / "server-no-node.log").read_text(encoding="utf-8", errors="replace")
-        report.add(s, "a start with no Node serves the UI the release ships", up and "frontend/dist" in out, out[-400:])
+        report.add(s, "a start with no Node serves the UI the release ships", up and "frontend/dist" in out.replace("\\", "/"), out[-400:])
     else:
         report.add(s, "a start with no Node says to install it", *plain(*launcher(no_node, "--prod"), "not found", "Node"))
 
@@ -573,10 +605,10 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
     port = free_port()
     second = Space(space.root, port)
     saved_env = (space.clone / ".env").read_text(encoding="utf-8") if (space.clone / ".env").is_file() else None
-    py = space.clone / "backend" / ".venv" / "bin" / "python"
+    py = venv_python(space.clone)
     log = open(space.root / "server-odd.log", "w", encoding="utf-8")
     proc = subprocess.Popen([str(py), "-m", "backend.server"], cwd=space.clone / "backend", stdout=log, stderr=subprocess.STDOUT,
-                            start_new_session=True,
+                            **SPAWN,
                             env={**env, "PATH": path_without(space, "tmux"), "SP_PORT": str(port), "PORT": str(port),
                                  "HOST": "127.0.0.1", "SP_DATA_ROOT": str(odd_data)})
     try:
@@ -610,11 +642,15 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
         report.add(s, "Setup refuses a file given as the folder", *refused("/api/setup/integrate", {"project_code": "x", "project_dir": str(odd_project / "заметки.md")}))
         report.add(s, "Setup refuses a project code with spaces or capitals", *refused("/api/setup/integrate", {"project_code": "My App", "project_dir": str(odd_project)}))
         report.add(s, "Setup refuses a data folder that does not exist", *refused("/api/setup/data-root", {"path": str(space.root / "no-such-data")}))
-        locked = space.root / "locked"
-        locked.mkdir(exist_ok=True)
-        locked.chmod(0o555)
-        report.add(s, "Setup refuses a data folder it cannot write to", *refused("/api/setup/data-root", {"path": str(locked)}))
-        locked.chmod(0o755)
+        if WINDOWS:
+            # A folder's mode does not stop a write on Windows; this one is checked on Linux and macOS.
+            report.notes["unwritable_data_folder"] = "not checked on Windows"
+        else:
+            locked = space.root / "locked"
+            locked.mkdir(exist_ok=True)
+            locked.chmod(0o555)
+            report.add(s, "Setup refuses a data folder it cannot write to", *refused("/api/setup/data-root", {"path": str(locked)}))
+            locked.chmod(0o755)
 
         # The odd names, all the way through: integrate, the hook, the MCP server.
         try:
@@ -662,7 +698,7 @@ def volume(space: Space, report: Report, tasks_n: int = 400, turns_n: int = 1500
     from common import free_port
     s = "volume"
     env = space.env()
-    py = space.clone / "backend" / ".venv" / "bin" / "python"
+    py = venv_python(space.clone)
     target = space.root / "month"
     # The demo builder is a developer's tool: it needs the development packages.
     dev = sh([str(py), "-m", "pip", "install", "-q", "-r", str(space.clone / "backend" / "requirements-dev.txt")], space.clone, env, timeout=900)
@@ -696,7 +732,7 @@ def volume(space: Space, report: Report, tasks_n: int = 400, turns_n: int = 1500
     log = open(space.root / "server-volume.log", "w", encoding="utf-8")
     start_at = time.time()
     proc = subprocess.Popen([str(py), "-m", "backend.server"], cwd=space.clone / "backend", stdout=log, stderr=subprocess.STDOUT,
-                            start_new_session=True,
+                            **SPAWN,
                             env={**env, "SP_PORT": str(port), "PORT": str(port), "HOST": "127.0.0.1",
                                  "SP_DATA_ROOT": str(data), "SP_SANDBOX": "1"})
     try:
@@ -777,7 +813,7 @@ def upgrade(space: Space, report: Report, source: Path, base: str, boot_seconds:
 
     def boot(log_name: str) -> subprocess.Popen | None:
         log = open(old.root / log_name, "w", encoding="utf-8")
-        proc = subprocess.Popen(["./run.sh", "--prod"], cwd=old.clone, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        proc = subprocess.Popen(run_sh("--prod"), cwd=old.clone, env=env, stdout=log, stderr=subprocess.STDOUT, **SPAWN)
         if wait_for(old, "/api/health", boot_seconds, alive=lambda: proc.poll() is None):
             return proc
         stop(proc)

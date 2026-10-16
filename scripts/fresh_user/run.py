@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
                 report.add("upgrade", f"no earlier commit to upgrade from: {base or 'the only release tag is HEAD'}", False, soft=True)
     finally:
         stages.stop(proc)
-        stages.sh(["./sp.sh", "down"], space.clone, space.env()) if (space.clone / "sp.sh").is_file() else None
+        stages.sh(stages.sp_sh("down"), space.clone, space.env()) if (space.clone / "sp.py").is_file() else None
     return finish(space, report, args, started, shots)
 
 
