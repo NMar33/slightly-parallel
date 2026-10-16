@@ -502,3 +502,14 @@ def test_the_codex_mcp_block_never_makes_a_second_table(env) -> None:
     cfg.unlink()
     _integrate(client, project_dir, write_codex_hooks=True)
     assert "PYTHONUTF8" in cfg.read_text(encoding="utf-8")
+
+
+def test_a_windows_hook_line_never_ends_a_path_with_a_backslash(monkeypatch) -> None:
+    """A data folder at a drive's root wrote --data-root "D:\\" : the backslash
+    escaped the quote in the tool's shell, and every prompt was refused."""
+    from backend.routers import setup as setup_router
+    monkeypatch.setattr(setup_router, "_windows", lambda: True)
+    line = setup_router._hook_command("app", Path("D:\\"))
+    assert '\\"' not in line and '--data-root "D:/"' in line
+    unc = setup_router._cursor_hook_command("app", Path("\\\\nas\\sp"))
+    assert '--data-root "//nas/sp"' in unc

@@ -174,6 +174,15 @@ def write_in_place(path: PathLike, text: str) -> None:
         mode = target.stat().st_mode & 0o7777
     except OSError:
         mode = 0o644
+    # The file's own line ends: text read in Python came in with \n, and a
+    # CRLF file written back as LF showed every line changed in git.
+    try:
+        with open(target, "rb") as fh:
+            crlf = b"\r\n" in fh.read(65536)
+    except OSError:
+        crlf = False
+    if crlf:
+        text = text.replace("\r\n", "\n").replace("\n", "\r\n")
     atomic_write(target, text, mode=mode)
 
 

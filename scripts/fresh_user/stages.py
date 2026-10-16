@@ -319,7 +319,7 @@ def wiring(space: Space, report: Report, code: str) -> None:
         return
     parts = [p.strip('"') for p in shlex.split(command, posix=not WINDOWS)]
     script = next((part for part in parts if part.endswith("claude-code-capture.py")), "")
-    report.add(s, "the hook script is inside the clone", script.startswith(str(space.clone)) and Path(script).is_file(), script)
+    report.add(s, "the hook script is inside the clone", Path(script).is_file() and space.clone.resolve() in Path(script).resolve().parents, script)
 
     def fire(event: dict) -> subprocess.CompletedProcess:
         return fire_hook(space, event)

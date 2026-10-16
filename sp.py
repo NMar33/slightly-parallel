@@ -35,6 +35,17 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+
+# UTF-8 out, here and in every process this starts. Under `sp up` the output
+# goes to server.log, and Windows would write it in the locale's code page:
+# cp932 or cp949 cannot encode the "—" of the launcher's lines, and the start
+# died before any server ran. A home path in another alphabet did the same.
+os.environ["PYTHONUTF8"] = "1"
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError, OSError):
+        pass
 def _home_data_root() -> Path:
     """Mirrors backend.db.home_data_root: ~/.slightly-parallel."""
     return Path.home() / ".slightly-parallel"

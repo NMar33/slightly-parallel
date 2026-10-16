@@ -145,7 +145,15 @@ def _hook_python() -> str:
     if not _windows():
         return "python3"
     venv = _venv_python()
-    return f'"{venv}"' if venv.exists() else "py -3"
+    return f'"{_arg(venv)}"' if venv.exists() else "py -3"
+
+
+def _arg(path: Path) -> str:
+    """A path inside the quotes of a hook line, with forward slashes. Python
+    takes them on Windows too, and a backslash before the closing quote
+    (a data folder at a drive's root, D:\\) escaped it in the shell the
+    tool runs, which then refused every prompt; a UNC path lost a slash."""
+    return str(path).replace("\\", "/") if _windows() else str(path)
 
 
 def _hook_command(project_code: str, data_root: Path, tool: str = "claude-code") -> str:
@@ -156,8 +164,8 @@ def _hook_command(project_code: str, data_root: Path, tool: str = "claude-code")
     A hook must never do either."""
     suffix = "" if tool == "claude-code" else f" --tool {tool}"
     return (
-        f'{_hook_python()} "{_CAPTURE_SCRIPT}" '
-        f'--project {project_code} --data-root "{data_root}"{suffix} || exit 0'
+        f'{_hook_python()} "{_arg(_CAPTURE_SCRIPT)}" '
+        f'--project {project_code} --data-root "{_arg(data_root)}"{suffix} || exit 0'
     )
 
 
@@ -173,8 +181,8 @@ def _cursor_hook_command(project_code: str, data_root: Path) -> str:
     reads on stdout. The same ``|| exit 0`` tail as the other hooks: Cursor
     reads exit 2 as "block", and a moved repository must never block a prompt."""
     return (
-        f'{_hook_python()} "{_CURSOR_SCRIPT}" '
-        f'--data-root "{data_root}" --project {project_code} || exit 0'
+        f'{_hook_python()} "{_arg(_CURSOR_SCRIPT)}" '
+        f'--data-root "{_arg(data_root)}" --project {project_code} || exit 0'
     )
 
 

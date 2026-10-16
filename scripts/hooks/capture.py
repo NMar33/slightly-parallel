@@ -791,7 +791,7 @@ def _turntimes():
 def _git(cwd: str, *args: str) -> str | None:
     try:
         proc = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True,
+            ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=_GIT_TIMEOUT, check=False,
         )
     except (OSError, subprocess.SubprocessError):

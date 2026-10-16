@@ -270,3 +270,16 @@ class TestConcurrentAtomicWrite:
         final = safe_read_json(p)
         assert isinstance(final, dict)
         assert "agent" in final
+
+
+def test_write_in_place_keeps_a_crlf_file_crlf(tmp_path) -> None:
+    """Setup rewrote a CRLF AGENTS.md as LF: git showed every line changed."""
+    from backend.file_safety import write_in_place
+    f = tmp_path / "AGENTS.md"
+    f.write_bytes(b"# app\r\n\r\nnotes\r\n")
+    write_in_place(f, "# app\n\nnotes\n\n## Slightly Parallel\n")
+    assert f.read_bytes() == b"# app\r\n\r\nnotes\r\n\r\n## Slightly Parallel\r\n"
+    g = tmp_path / "CLAUDE.md"
+    g.write_bytes(b"x\n")
+    write_in_place(g, "x\ny\n")
+    assert g.read_bytes() == b"x\ny\n"
