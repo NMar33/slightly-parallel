@@ -190,6 +190,12 @@ def finish(space: Space, report: Report, args: argparse.Namespace, started: floa
     if shots.is_dir():
         shutil.rmtree(OUT / "screens", ignore_errors=True)
         shutil.copytree(shots, OUT / "screens")
+    # The browser runs' and the servers' own logs, beside the report: a CI run keeps only this folder.
+    logs = OUT / "logs"
+    shutil.rmtree(logs, ignore_errors=True)
+    logs.mkdir(parents=True, exist_ok=True)
+    for log in space.root.glob("*.log"):
+        shutil.copy2(log, logs / log.name)
     report.notes["seconds"] = round(time.time() - started)
     report.notes["folder"] = str(space.root) if args.keep else "removed"
     report.write(OUT / "report.json")

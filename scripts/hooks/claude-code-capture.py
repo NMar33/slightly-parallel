@@ -325,10 +325,19 @@ def main() -> int:
     # Where a notice is seen: on UserPromptSubmit stdout joins the agent's
     # context; on Stop Claude Code ignores stdout and shows stderr.
     say = sys.stderr if event == "Stop" else sys.stdout
+
+    def tell(text: str) -> None:
+        """A notice for the agent on a prompt. Claude Code reads plain stdout;
+        Codex reads only JSON, as the prompt's additional context, and drops
+        plain text without a word (checked with Codex 0.163)."""
+        if args.tool == "codex" and event == "UserPromptSubmit":
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}}))
+        else:
+            print(text, file=say)
     if not Path(args.data_root).is_dir():
         # Never build a data root from here: an unmounted drive or a moved
         # folder would get a stray tree. Say so, where it is read.
-        print(f"[slightly-parallel] capture failed: the data root {args.data_root} does not exist — tell the user.", file=say)
+        tell(f"[slightly-parallel] capture failed: the data root {args.data_root} does not exist — tell the user.")
         return 0
 
     try:
@@ -342,8 +351,8 @@ def main() -> int:
             write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
             signals = cap.open_turn(prompt)
             notice = format_signals(signals)
-            if notice and args.tool == "claude-code":
-                print(notice)
+            if notice:
+                tell(notice)
         elif event == "Stop":
             # The payload carries the reply itself; the transcript is not
             # guaranteed to hold the final message at Stop time (the docs say
@@ -377,7 +386,7 @@ def main() -> int:
         # Exit 0 keeps the session alive; the notice goes where it is shown
         # (stdout on a prompt, stderr on Stop), so the loss is named instead
         # of silent — and it is kept for the dashboard's warning.
-        print(f"[slightly-parallel] capture failed: {type(exc).__name__}: {exc} — this turn was not recorded; tell the user.", file=say)
+        tell(f"[slightly-parallel] capture failed: {type(exc).__name__}: {exc} — this turn was not recorded; tell the user.")
         record_failure(args.data_root, args.project, agent, args.tool, f"{event}: {type(exc).__name__}: {exc}")
         return 0
     return 0

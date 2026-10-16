@@ -458,7 +458,8 @@ def test_hooks_adapter_serves_codex_with_its_own_prefix_and_no_stdout(root: Path
 
     out = run({"hook_event_name": "UserPromptSubmit", "session_id": "0195c0de-1234", "cwd": str(tmp_path),
                "prompt": "let's use postgres for this"})
-    assert out == ""  # Codex reads stdout as control JSON, so nothing is printed
+    # Codex reads stdout as control JSON: what is printed is that JSON, the notice as context.
+    assert json.loads(out)["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
     run({"hook_event_name": "Stop", "session_id": "0195c0de-1234", "transcript_path": None,
          "last_assistant_message": "Done."})
     folder = root / "projects/alpha/chats/codex-c0de1234"
@@ -789,3 +790,20 @@ def test_map_asks_the_operator_and_names_the_model_before_anything_runs(root: Pa
     line = next(x for x in text.splitlines() if x.startswith("[slightly-parallel] #map"))
     assert "ask the user now" in line and "helper agent on sonnet, or later?" in line
     assert "Do not call map_material" in line
+
+
+
+def test_the_codex_hook_hands_its_notices_as_json_context(tmp_path: Path) -> None:
+    """Codex drops a hook's plain stdout and reads only JSON additional
+    context: the project and agent line must reach a Codex agent that way."""
+    import subprocess, sys
+    root = tmp_path / "data"
+    (root / "projects" / "alpha").mkdir(parents=True)
+    hook = Path(__file__).resolve().parents[2] / "scripts" / "hooks" / "claude-code-capture.py"
+    event = {"hook_event_name": "UserPromptSubmit", "session_id": "01a144ed-026f-7092-b414-d8f787fdf7fa",
+             "cwd": str(tmp_path), "prompt": "hello"}
+    out = subprocess.run([sys.executable, str(hook), "--data-root", str(root), "--project", "alpha", "--tool", "codex"],
+                         input=json.dumps(event), capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    said = json.loads(out.stdout)["hookSpecificOutput"]
+    assert said["hookEventName"] == "UserPromptSubmit" and "codex-87fdf7fa" in said["additionalContext"]
