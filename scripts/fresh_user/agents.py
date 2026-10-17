@@ -94,13 +94,22 @@ class ClaudeCode(Tool):
         pick = ["--session-id", self.session] if self.turns == 0 else ["--resume", self.session]
         return ["claude", "-p", message, "--model", model, *pick,
                 # The project's own .mcp.json, which a user approves once in the terminal.
-                "--mcp-config", ".mcp.json", "--allowedTools", *self.ALLOWED, "--output-format", "json"]
+                # The stream: every tool call and its answer, kept in the turn's log;
+                # the last line is the same result the plain JSON gave.
+                "--mcp-config", ".mcp.json", "--allowedTools", *self.ALLOWED, "--output-format", "stream-json", "--verbose"]
 
     def read(self, out: str) -> Turn:
-        try:
-            d = json.loads(out)
-        except ValueError:
-            return Turn(False, out[-2000:], error="the answer was not JSON")
+        d = None
+        for line in reversed(out.splitlines()):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("type") == "result":
+                d = rec
+                break
+        if d is None:
+            return Turn(False, out[-2000:], error="no result in the answer")
         return Turn(ok=not d.get("is_error"), text=str(d.get("result") or ""),
                     cost_usd=float(d.get("total_cost_usd") or 0), error=str(d.get("subtype") or "") if d.get("is_error") else "")
 
