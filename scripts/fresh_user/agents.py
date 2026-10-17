@@ -62,8 +62,12 @@ class Tool:
         try:
             # stdin closed: `codex exec` reads more of the prompt from an open
             # stdin and waits for it ("Reading additional input from stdin").
-            p = subprocess.run(self.command(message, model, space), cwd=folder or space.sample, env=env,
-                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=seconds)
+            args = self.command(message, model, space)
+            # On Windows the tools are claude.cmd and codex.cmd: a program list
+            # finds them only by their full path.
+            args = [shutil.which(args[0]) or args[0], *args[1:]]
+            p = subprocess.run(args, cwd=folder or space.sample, env=env, stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=seconds)
         except subprocess.TimeoutExpired:
             return Turn(False, "", error=f"no answer in {seconds} s")
         self.turns += 1
