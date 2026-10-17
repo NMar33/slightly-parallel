@@ -24,7 +24,11 @@ def _utc(ts: float) -> str:
 
 @pytest.fixture()
 def tokyo(monkeypatch):
-    """A fixed zone far from UTC: the logs are in UTC, a chat is in local time."""
+    """A fixed zone far from UTC: the logs are in UTC, a chat is in local time.
+    Windows has no tzset: there the machine's own zone is used."""
+    if not hasattr(time, "tzset"):
+        yield
+        return
     monkeypatch.setenv("TZ", "Asia/Tokyo")
     time.tzset()
     yield
