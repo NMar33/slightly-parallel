@@ -214,6 +214,7 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 - [docs/running.md](docs/running.md) — the launcher: `sp.sh up`, `status`, `logs`, `restart`, `down`; Windows.
 - [docs/development.md](docs/development.md) — the hot-reload start, tests, the lock file, the fresh-user test.
 - [docs/api.md](docs/api.md), [docs/logging.md](docs/logging.md) — the HTTP API and MCP tools; how chats are recorded.
+- [docs/help.md](docs/help.md) — how to: import lost chats.
 - [AGENT-README.md](AGENT-README.md) — for an agent working on Slightly Parallel's own code.
 
 ## License
