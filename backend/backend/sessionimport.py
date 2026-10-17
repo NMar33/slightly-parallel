@@ -28,7 +28,7 @@ from typing import Any
 from . import capturewatch
 from .db import ViewStore
 from .file_safety import atomic_write, atomic_write_json
-from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE, is_human_prompt, local_iso, session_key, yymm_dd
+from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, is_human_prompt, local_iso, session_key, yymm_dd
 
 #: A session with a message in the last hour may still be going on: the hook
 #: may yet record it, and an import now would race it.
@@ -124,7 +124,7 @@ def candidates(store: ViewStore, project: str, tool: str, claude_root: Path | No
     recorded, not active in the last hour, with something the person wrote."""
     now = now or time.time()
     croot = claude_root or Path.home() / ".claude" / "projects"
-    xroot = codex_root or Path.home() / ".codex" / "sessions"
+    xroot = codex_root or codex_home() / "sessions"
     out = []
     for r in capturewatch.unrecorded(store, croot, xroot, now):
         if r["project"] != project or r["tool"] != tool or now - r["last_at"] < ACTIVE_SECONDS:

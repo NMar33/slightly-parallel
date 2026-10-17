@@ -80,6 +80,9 @@ class Space:
             # Windows finds the home in USERPROFILE, and the per-user folders under it.
             env.update(USERPROFILE=str(self.home), APPDATA=str(self.home / "AppData" / "Roaming"),
                        LOCALAPPDATA=str(self.home / "AppData" / "Local"))
+        # Codex finds its home through the system on Windows, not USERPROFILE:
+        # CODEX_HOME is what both the server under test and Codex read.
+        env["CODEX_HOME"] = str(self.home / ".codex")
         env.update(HOME=str(self.home), SP_PORT=str(self.port), SHELL="/bin/sh",
                    # git in the sample project and in the clone needs an author
                    GIT_AUTHOR_NAME="Fresh User", GIT_AUTHOR_EMAIL="fresh@example.com",

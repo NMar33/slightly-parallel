@@ -306,3 +306,11 @@ def session_key(tool: str, session: str) -> str:
     random throughout and keep their first 8, as before."""
     s = session or "unknown"
     return s.replace("-", "")[-8:] if tool == "codex" else s[:8]
+
+
+def codex_home() -> Path:
+    """Where Codex keeps its config and sessions: $CODEX_HOME, else ~/.codex.
+    (On Windows Codex finds the home folder through the system, not
+    USERPROFILE: CODEX_HOME is the one setting both sides read.)"""
+    import os
+    return Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else Path.home() / ".codex"

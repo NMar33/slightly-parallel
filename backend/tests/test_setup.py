@@ -514,3 +514,21 @@ def test_a_windows_hook_line_never_ends_a_path_with_a_backslash(monkeypatch) -> 
     assert '\\"' not in line and '--data-root "D:/"' in line
     unc = setup_router._cursor_hook_command("app", Path("\\\\nas\\sp"))
     assert '--data-root "//nas/sp' in unc and '\\"' not in unc
+
+
+def test_the_codex_hook_line_on_windows_is_powershell(monkeypatch) -> None:
+    """Codex runs a hook in PowerShell on Windows: the line calls the program
+    with & and ends in ; exit 0 (no ||, which Windows PowerShell 5.1 lacks)."""
+    from backend.routers import setup as setup_router
+    monkeypatch.setattr(setup_router, "_windows", lambda: True)
+    line = setup_router._hook_command("app", Path("D:\\data"), tool="codex")
+    assert line.startswith("& ") and line.endswith("; exit 0") and "||" not in line and "--tool codex" in line
+    assert setup_router._hook_command("app", Path("D:\\data")).endswith(" || exit 0")      # Claude Code keeps its shape
+
+
+def test_codex_home_follows_codex_home(monkeypatch, tmp_path) -> None:
+    from backend.hookshared import codex_home
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ch"))
+    assert codex_home() == tmp_path / "ch"
+    monkeypatch.delenv("CODEX_HOME")
+    assert codex_home() == Path.home() / ".codex"

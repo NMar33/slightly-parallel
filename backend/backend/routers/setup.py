@@ -35,6 +35,7 @@ from ..project_admin import (
 from ..date_utils import today_yymm_dd
 from ..db import ViewStore
 from ..file_safety import write_in_place
+from ..hookshared import codex_home
 from .deps import get_store
 
 router = APIRouter()
@@ -163,6 +164,14 @@ def _hook_command(project_code: str, data_root: Path, tool: str = "claude-code")
     UserPromptSubmit as "block this prompt" and on Stop as "keep going".
     A hook must never do either."""
     suffix = "" if tool == "claude-code" else f" --tool {tool}"
+    if tool == "codex" and _windows():
+        # Codex runs a hook in PowerShell on Windows: a quoted path there is a
+        # string, not a command, without the call operator, and Windows
+        # PowerShell 5.1 has no ||. The hook failed on every prompt.
+        return (
+            f'& {_hook_python()} "{_arg(_CAPTURE_SCRIPT)}" '
+            f'--project {project_code} --data-root "{_arg(data_root)}"{suffix}; exit 0'
+        )
     return (
         f'{_hook_python()} "{_arg(_CAPTURE_SCRIPT)}" '
         f'--project {project_code} --data-root "{_arg(data_root)}"{suffix} || exit 0'
@@ -1072,7 +1081,7 @@ def setup_data_root(
 # ---------------------------------------------------------------------------
 
 _CODEX_SCRIPT = _REPO_ROOT / "scripts" / "hooks" / "codex-capture.py"
-CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+CODEX_CONFIG_PATH = codex_home() / "config.toml"
 
 # ---------------------------------------------------------------------------
 # The MCP server — how agents write

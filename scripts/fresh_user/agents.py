@@ -141,7 +141,8 @@ class Codex(Tool):
         if model:
             base += ["--model", model]
         # `resume --last` continues the newest chat of this folder.
-        return [*base, message] if self.turns == 0 else ["codex", "exec", "resume", "--last", *unattended, message]
+        again = ["codex", "exec", "resume", "--last", *unattended, *(["--model", model] if model else []), message]
+        return [*base, message] if self.turns == 0 else again
 
 
 class OpenCode(Tool):

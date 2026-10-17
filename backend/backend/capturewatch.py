@@ -38,7 +38,7 @@ from typing import Any
 
 from .csvio import read_rows
 from .db import ViewStore
-from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE, session_key
+from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, session_key
 
 ERRORS = Path(".capture") / "errors.jsonl"
 IGNORED = Path(".capture") / "ignored.json"
@@ -344,7 +344,7 @@ def check(store: ViewStore, claude_root: Path | None = None, now: float | None =
                 })
     errors = errors_since(store.data_root, now - 86400)
     # A test passes its own Claude root and no Codex one: then there is none.
-    croot = codex_root or (Path.home() / ".codex" / "sessions" if claude_root is None else root / "__no_codex__")
+    croot = codex_root or (codex_home() / "sessions" if claude_root is None else root / "__no_codex__")
     gone = lost(store, root, croot, now)
     out = {"ok": not missed and not errors and not any(g["sessions"] and not g["ignored"] for g in gone),
            "missed": missed, "lost": gone, "errors": errors[-50:],
