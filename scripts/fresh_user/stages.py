@@ -891,8 +891,23 @@ def screens(space: Space, report: Report, moment: str, routes: list[str], out: P
                {"FRESH_SHOTS": str(out), "FRESH_MOMENT": moment, "FRESH_ROUTES": "\n".join(routes)})
 
 
+def stray(space: Space) -> list[int]:
+    """Processes started from the test's folder that outlived it: a tool's
+    background server (Codex's app-server daemon) among them."""
+    if WINDOWS:
+        return []
+    got = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True).stdout
+    return [int(line.split(None, 1)[0]) for line in got.splitlines()
+            if str(space.root) in line and int(line.split(None, 1)[0]) != os.getpid()]
+
+
 def cleanup(space: Space, keep: bool) -> None:
     """Logins first, always; the rest unless the run asked to keep it."""
+    for pid in stray(space):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
     for rel in (".claude/.credentials.json", ".codex/auth.json", ".local/share/opencode/auth.json"):
         try:
             (space.home / rel).unlink()

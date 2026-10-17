@@ -68,6 +68,8 @@ jobs:
           npm install -g @openai/codex
           # The login lands in ~/.codex/auth.json, which the test copies into its own home.
           printenv OPENAI_API_KEY | codex login --with-api-key
+          # The test answers Codex's trust screen through a pseudo-terminal: Windows needs pywinpty for it.
+          if [ "$RUNNER_OS" = "Windows" ]; then python -m pip install pywinpty; fi
       - name: An agent from clone to its work on the pages
         if: steps.key.outputs.ok
         shell: bash

@@ -100,6 +100,8 @@ class ClaudeCode(Tool):
 
 
 class Codex(Tool):
+    hooks_trusted: bool = False
+
     def learn_session(self, output: str) -> None:
         # `codex exec` prints its header with "session id: <uuid>"; the test
         # cannot choose it, so it reads it off the first turn.
@@ -111,14 +113,15 @@ class Codex(Tool):
     def command(self, message: str, model: str, space: Space) -> list[str]:
         # Codex 0.163 dropped --full-auto: the same, said as settings. It
         # also runs a project's hooks only once the user has trusted them
-        # (a hash per hook in ~/.codex/config.toml); a person does that once
-        # in the TUI, the test says it per run. The trust step itself is
-        # checked by hand (postprod/test-plan.md).
+        # (a hash per hook in ~/.codex/config.toml).
         # Full access: the test's folder is a throwaway, and Codex's own Linux
         # sandbox (bubblewrap) cannot start where user namespaces are closed,
         # as on Ubuntu 24 and later ("bwrap: Operation not permitted").
-        unattended = ["-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"',
-                      "--dangerously-bypass-hook-trust"]
+        unattended = ["-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"']
+        # Once the test has trusted the hooks on Codex's own screen (screen.py),
+        # they run as for a person; only if that step failed is the trust bypassed.
+        if not self.hooks_trusted:
+            unattended.append("--dangerously-bypass-hook-trust")
         base = ["codex", "exec", "--skip-git-repo-check", *unattended]
         if model:
             base += ["--model", model]

@@ -265,6 +265,14 @@ def run(space: Space, report: Report, code: str, folder: Path, tool: Tool, model
     if not report.add(s, f"a login for {tool.name} ({login or 'none found'})", bool(login),
                       f"log in to {tool.binary} first, or set one of {', '.join(tool.login_env)}"):
         return None
+    if tool.name == "codex":
+        # As a person does once: trust the folder and its hooks on Codex's own screen.
+        from screen import trust_codex
+        try:
+            done, shown = trust_codex(folder, env, space.home)
+        except Exception as exc:  # noqa: BLE001 — no pseudo-terminal here: the run goes on with the bypass
+            done, shown = False, f"{type(exc).__name__}: {exc}"
+        tool.hooks_trusted = report.add(s, "the folder and its hooks are trusted on Codex's own screen", done, shown)
     st = State(code, folder, tool)
     cost = chat(space, report, s, st, SCENARIOS[scenario], model, env, turn_seconds)
     report.notes[f"{s} cost_usd"] = round(cost, 2)
