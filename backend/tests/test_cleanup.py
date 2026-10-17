@@ -317,10 +317,28 @@ def test_setup_writes_the_mcp_server_into_the_project(tmp_path: Path):
         assert server["args"] == ["-m", "backend.mcp"] and server["env"]["SP_API"].startswith("http")
         oc = json.loads((project_dir / "opencode.json").read_text(encoding="utf-8"))
         assert oc["mcp"]["slightly-parallel"]["type"] == "local" and oc["mcp"]["slightly-parallel"]["command"][1:] == ["-m", "backend.mcp"]
+        assert list(oc["permission"]["external_directory"].values()) == ["allow"]
         agents = (project_dir / "AGENTS.md").read_text(encoding="utf-8")
         assert "MCP" in agents and "L1-L4" not in agents
         again = c.post("/api/setup/integrate", json={"project_code": "my-app", "project_dir": str(project_dir)}).json()
         assert {Path(x["file"]).name: x["action"] for x in again["results"]}[".mcp.json"] == "unchanged"
+
+
+def test_opencode_may_read_the_contract_and_the_users_own_rule_stays() -> None:
+    """The contract lives in Slightly Parallel's folder, outside the project:
+    OpenCode asks before reading there, and `opencode run` refused it."""
+    from backend.routers.setup import _allow_opencode_folder, _drop_opencode_folder, _opencode_folder_pattern
+
+    pattern = _opencode_folder_pattern()
+    text, action = _allow_opencode_folder(json.dumps({"permission": {"external_directory": "deny", "bash": "ask"}}))
+    rule = json.loads(text)["permission"]
+    assert action == "updated" and rule["bash"] == "ask"
+    assert list(rule["external_directory"].items()) == [("*", "deny"), (pattern, "allow")], "ours last: the last match wins"
+    assert _allow_opencode_folder(text) == (text, "unchanged")
+    back, action = _drop_opencode_folder(text)
+    assert action == "updated" and json.loads(back)["permission"] == {"external_directory": {"*": "deny"}, "bash": "ask"}
+    fresh, _ = _allow_opencode_folder("")
+    assert _drop_opencode_folder(fresh)[0].strip() == "{}"
 
 
 def test_an_agent_cannot_pass_as_the_operator_by_naming_both(client, monkeypatch) -> None:

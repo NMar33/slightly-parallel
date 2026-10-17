@@ -827,7 +827,8 @@ def integrate(
         if write_opencode:
             oc_entry = {"type": "local", "command": [entry["command"], *entry["args"]],
                         "environment": entry["env"], "enabled": True}
-            results.append(_write_mcp_file(project_dir / "opencode.json", "mcp", oc_entry, dry_run=dry_run))
+            results.append(_write_mcp_file(project_dir / "opencode.json", "mcp", oc_entry, dry_run=dry_run,
+                                           also=_allow_opencode_folder))
 
     if not dry_run:
         # Make the project visible in the sidebar immediately.
@@ -929,6 +930,9 @@ def forget(
         try:
             if mcp_path.exists():
                 new_text, action = _drop_json_key(mcp_path.read_text(encoding="utf-8"), top, MCP_SERVER)
+                if top == "mcp":
+                    new_text, more = _drop_opencode_folder(new_text)
+                    action = "updated" if "updated" in (action, more) else action
                 if action == "updated":
                     mcp_action = action
                     _write_or_remove(mcp_path, new_text)
@@ -1122,16 +1126,76 @@ def _upsert_json_key(existing_text: str, top: str, name: str, entry: dict) -> tu
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n", action
 
 
-def _write_mcp_file(path: Path, top: str, entry: dict, *, dry_run: bool) -> dict:
+def _write_mcp_file(path: Path, top: str, entry: dict, *, dry_run: bool, also=None) -> dict:
     try:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
     except OSError as exc:
         raise HTTPException(status_code=422, detail=f"cannot read {path}: {exc}")
     new_text, action = _upsert_json_key(existing, top, MCP_SERVER, entry)
+    if also:
+        new_text, more = also(new_text)
+        if more != "unchanged" and action == "unchanged":
+            action = "updated"
     if not dry_run and action != "unchanged":
         path.parent.mkdir(parents=True, exist_ok=True)
         write_in_place(path, new_text)
     return {"file": str(path), "action": action, "content": new_text}
+
+
+def _opencode_folder_pattern() -> str:
+    """Slightly Parallel's folder as an OpenCode permission pattern. The
+    contract (SLIGHTLY-PARALLEL.md) lives there, outside the project: OpenCode
+    asks before reading outside the project, and `opencode run` says no
+    without asking, so the agent never read the contract."""
+    return _arg(_REPO_ROOT) + "/*"
+
+
+def _allow_opencode_folder(text: str) -> tuple[str, str]:
+    """``permission.external_directory`` in opencode.json allows our folder,
+    keeping the user's own setting for every other folder (a word such as
+    "ask" becomes the ``*`` rule; OpenCode applies the last matching rule)."""
+    try:
+        data = json.loads(text) if text.strip() else {}
+    except json.JSONDecodeError:
+        return text, "unchanged"
+    if not isinstance(data, dict):
+        return text, "unchanged"
+    perm = data.get("permission")
+    if isinstance(perm, str):
+        perm = {"*": perm}
+    elif not isinstance(perm, dict):
+        perm = {}
+    rule = perm.get("external_directory")
+    if isinstance(rule, str):
+        rule = {"*": rule}
+    elif not isinstance(rule, dict):
+        rule = {}
+    pattern = _opencode_folder_pattern()
+    if rule.get(pattern) == "allow" and list(rule)[-1] == pattern:
+        return text, "unchanged"
+    rule.pop(pattern, None)
+    rule[pattern] = "allow"
+    perm["external_directory"] = rule
+    data["permission"] = perm
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n", "updated"
+
+
+def _drop_opencode_folder(text: str) -> tuple[str, str]:
+    """Take our folder's rule out of opencode.json again; the user's stay."""
+    try:
+        data = json.loads(text) if text.strip() else {}
+    except json.JSONDecodeError:
+        return text, "unchanged"
+    perm = data.get("permission") if isinstance(data, dict) else None
+    rule = perm.get("external_directory") if isinstance(perm, dict) else None
+    if not isinstance(rule, dict) or _opencode_folder_pattern() not in rule:
+        return text, "unchanged"
+    del rule[_opencode_folder_pattern()]
+    if not rule:
+        del perm["external_directory"]
+    if not perm:
+        del data["permission"]
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n", "updated"
 
 
 _CODEX_MCP_RE = re.compile(r"^\[mcp_servers\.slightly-parallel\]\n(?:(?!\[).*\n?)*", re.MULTILINE)

@@ -302,9 +302,12 @@ def session_key(tool: str, session: str) -> str:
     """The 8 characters of a session id that name its agent. Codex's ids are
     UUIDv7: their first characters are the time, about a minute a step, so
     two sessions started in one minute shared them and became one agent;
-    for Codex the last 8, the random part. Claude Code's and Cursor's ids are
-    random throughout and keep their first 8, as before."""
+    for Codex the last 8, the random part. OpenCode's (ses_<time><random>)
+    the same; its plugin names the agent the same way. Claude Code's and
+    Cursor's ids are random throughout and keep their first 8, as before."""
     s = session or "unknown"
+    if tool == "opencode":
+        return s[-8:].lower()  # letters of both cases; a folder name ignores case on macOS and Windows
     return s.replace("-", "")[-8:] if tool == "codex" else s[:8]
 
 

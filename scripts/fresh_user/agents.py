@@ -1,10 +1,8 @@
 """The agent tools, each driven headless: one message in, the turn runs to
 its end, the next message continues the same chat.
 
-Claude Code is run and checked here. Codex and OpenCode are written from
-their documented commands and have not been run by the author of this
-file: a tool that is not installed is skipped, and the first run on a
-machine that has one is the test of its adapter too.
+Claude Code, Codex and OpenCode are each run here and in CI (the Agents
+workflow). A tool that is not installed is skipped.
 """
 
 from __future__ import annotations
@@ -56,6 +54,10 @@ class Tool:
     def learn_session(self, output: str) -> None:
         """A tool that picks its own session id says it here (Claude Code is told one)."""
 
+    def stdin(self, message: str) -> str | None:
+        """The message on stdin instead of in the command, for a tool that reads it there."""
+        return None
+
     def say(self, message: str, model: str, space: Space, env: dict[str, str], seconds: int, folder: Path | None = None) -> Turn:
         import time
         start = time.time()
@@ -66,7 +68,9 @@ class Tool:
             # On Windows the tools are claude.cmd and codex.cmd: a program list
             # finds them only by their full path.
             args = [shutil.which(args[0]) or args[0], *args[1:]]
-            p = subprocess.run(args, cwd=folder or space.sample, env=env, stdin=subprocess.DEVNULL,
+            fed = self.stdin(message)
+            p = subprocess.run(args, cwd=folder or space.sample, env=env,
+                               **({"input": fed} if fed is not None else {"stdin": subprocess.DEVNULL}),
                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=seconds)
         except subprocess.TimeoutExpired:
             return Turn(False, "", error=f"no answer in {seconds} s")
@@ -146,11 +150,51 @@ class Codex(Tool):
 
 
 class OpenCode(Tool):
+    """`opencode run`, its events as JSON lines. The message goes on stdin:
+    given as an argument, `opencode run` puts quotes around a message with
+    spaces, and the chat would record the quotes as typed. No --auto: the
+    permissions are the project's own, as Setup writes them."""
+
+    def stdin(self, message: str) -> str | None:
+        return message
+
+    def learn_session(self, output: str) -> None:
+        # Every event names its session; the test cannot choose the id.
+        if self.turns == 1:
+            for line in output.splitlines():
+                try:
+                    sid = json.loads(line).get("sessionID")
+                except (ValueError, AttributeError):
+                    continue
+                if sid:
+                    self.session = str(sid)
+                    return
+
     def command(self, message: str, model: str, space: Space) -> list[str]:
-        base = ["opencode", "run"]
+        base = ["opencode", "run", "--format", "json"]
         if model:
             base += ["--model", model]
-        return [*base, message] if self.turns == 0 else [*base, "--continue", message]
+        return base if self.turns == 0 else [*base, "--session", self.session]
+
+    def read(self, out: str) -> Turn:
+        texts, errors, cost = [], [], 0.0
+        for line in out.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
+            if ev.get("type") == "text" and part.get("text"):
+                texts.append(str(part["text"]))
+            elif ev.get("type") == "step_finish":
+                cost += float(part.get("cost") or 0)
+            elif ev.get("type") == "error":
+                errors.append(json.dumps(ev.get("error") or ev)[:400])
+        if errors:
+            return Turn(False, "\n".join(texts), cost_usd=cost, error="; ".join(errors))
+        return Turn(ok=True, text=texts[-1] if texts else "", cost_usd=cost)
 
 
 def tools() -> dict[str, Tool]:

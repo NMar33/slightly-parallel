@@ -1,9 +1,10 @@
 # A real agent at work, on every system: the fresh-user test with Claude
-# Code and Codex on cheap models (scripts/fresh_user, the "core" scenario,
+# Code, Codex and OpenCode on cheap models (scripts/fresh_user, the "core" scenario,
 # seven messages). It costs money, so it runs by hand and once a week, never
 # on a push. It needs the repository secrets ANTHROPIC_API_KEY and
-# OPENAI_API_KEY; a tool whose key is missing is skipped. The Codex model is
-# the repository variable CODEX_MODEL (empty: Codex's own default).
+# OPENAI_API_KEY (Codex and OpenCode); a tool whose key is missing is
+# skipped. The OpenAI model is the repository variable CODEX_MODEL (empty:
+# Codex's own default; OpenCode then runs gpt-6-luna).
 name: Agents
 
 on:
@@ -14,7 +15,7 @@ on:
         default: core
       tools:
         description: "JSON list of tools"
-        default: '["claude-code", "codex"]'
+        default: '["claude-code", "codex", "opencode"]'
       systems:
         description: "JSON list of systems"
         default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
@@ -31,7 +32,7 @@ jobs:
       matrix:
         # The schedule has no inputs: then every system and tool.
         os: ${{ fromJSON(inputs.systems || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
-        tool: ${{ fromJSON(inputs.tools || '["claude-code", "codex"]') }}
+        tool: ${{ fromJSON(inputs.tools || '["claude-code", "codex", "opencode"]') }}
     env:
       PYTHONIOENCODING: utf-8
     steps:
@@ -77,15 +78,20 @@ jobs:
           printenv OPENAI_API_KEY | codex login --with-api-key
           # The test answers Codex's trust screen through a pseudo-terminal: Windows needs pywinpty for it.
           if [ "$RUNNER_OS" = "Windows" ]; then python -m pip install pywinpty; fi
+      - name: OpenCode
+        if: steps.key.outputs.ok && matrix.tool == 'opencode'
+        run: npm install -g opencode-ai
       - name: An agent from clone to its work on the pages
         if: steps.key.outputs.ok
         shell: bash
         env:
-          # Claude Code takes its key from the environment; Codex has its login file.
+          # Claude Code and OpenCode take their key from the environment; Codex has its login file.
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
         run: |
           model=haiku
           if [ "${{ matrix.tool }}" = "codex" ]; then model="${{ vars.CODEX_MODEL }}"; fi
+          if [ "${{ matrix.tool }}" = "opencode" ]; then model="openai/${{ vars.CODEX_MODEL || 'gpt-6-luna' }}"; fi
           python scripts/fresh_user/run.py --tools ${{ matrix.tool }} --scenario "${{ inputs.scenario || 'core' }}" \
             --stages install,setup,wiring,agent ${model:+--model "$model"}
       - name: The failed checks, with their detail (on failure)

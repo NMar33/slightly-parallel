@@ -16,6 +16,10 @@
  * messages and in its child sessions (the helpers a task tool starts), so
  * Slightly Parallel can tell the agent's working time from its wait on you.
  *
+ * What the capture core answers when a message opens (a command's notice,
+ * the id a tagged message was kept under) is added to the message as a
+ * synthetic part: the agent reads it, the person's own text stays as typed.
+ *
  * A turn whose reply cannot be found closes as a visible gap rather than
  * staying open to swallow the next one. The model never logs anything.
  *
@@ -45,13 +49,19 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
       .join('\n')
       .trim()
 
+  // The agent's name: the session id's last 8 characters. Its first ones
+  // are the time (ses_eb5cc9…, ses_eb5cc1…): sessions minutes apart shared
+  // them and became one agent. Lower case: the rest are letters of both
+  // cases, and on macOS and Windows a folder name ignores case.
   const run = async (phase, sessionID, text, extra = []) => {
     try {
       const sid = String(sessionID || 'unknown')
-      await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(0, 8)} --text ${text} --tool opencode --session ${sid} --cwd ${cwd} ${extra}`.quiet()
+      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --text ${text} --tool opencode --session ${sid} --cwd ${cwd} ${extra}`.quiet()
+      return out.text().trim()
     } catch {
       /* capture must never break the session */
     }
+    return ''
   }
 
   // Every time in a session's messages: when each message and each tool
@@ -137,7 +147,13 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         if (key !== 'user:' && seen.has(key)) return
         seen.add(key)
         const text = textOf(output && output.parts)
-        if (text) await run('open', sessionID, text)
+        const notice = text ? await run('open', sessionID, text) : ''
+        const parts = output && output.parts
+        const first = Array.isArray(parts) && parts.find((p) => p && p.type === 'text')
+        if (notice && first) {
+          // After the person's part: an id that sorts after its own.
+          parts.push({ ...first, id: String(first.id || '') + 'sp', text: notice, synthetic: true })
+        }
       } catch {
         /* never throw into the host */
       }
