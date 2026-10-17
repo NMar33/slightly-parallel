@@ -71,6 +71,12 @@ class Tool:
         except subprocess.TimeoutExpired:
             return Turn(False, "", error=f"no answer in {seconds} s")
         self.turns += 1
+        # The tool's own answer, kept beside the report (a CI run keeps only that):
+        # what it said, which tools it called, which were denied.
+        try:
+            (space.root / f"{self.name}-turn-{self.turns:02d}.log").write_text(p.stdout + "\n--- stderr ---\n" + p.stderr, encoding="utf-8")
+        except OSError:
+            pass
         self.learn_session(p.stdout + "\n" + p.stderr)
         if p.returncode != 0:
             return Turn(False, p.stdout[-2000:], error=(p.stderr or p.stdout)[-800:].strip(), seconds=time.time() - start)

@@ -130,7 +130,8 @@ def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 
     try:
         if screen.wait_for("Trust this folder", seconds):
             screen.send(ENTER)
-        if not screen.wait_for("Hooks need review", seconds):
+        # The choice's own words: a heading's letter can be lost in the drawing ("Hooks eed review", macOS).
+        if not screen.wait_for("Trust all and continue", seconds):
             return False, screen.text[-600:]
         screen.send(DOWN)            # "Trust all and continue", the second choice
         screen.send(ENTER)
