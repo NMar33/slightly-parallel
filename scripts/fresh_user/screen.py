@@ -34,9 +34,25 @@ class Screen:
         self.text = ""
         if WINDOWS:
             from winpty import PtyProcess  # type: ignore[import-not-found]
+            import threading
             self.proc = PtyProcess.spawn([shutil.which(args[0]) or args[0], *args[1:]], cwd=str(cwd), env=env,
                                          dimensions=(ROWS, COLS))
             self.fd = None
+            # pywinpty's read blocks until there is output: a thread reads, so
+            # every wait keeps its time limit when the program shows nothing.
+            self._buf: list[str] = []
+            self._lock = threading.Lock()
+
+            def pump() -> None:
+                while True:
+                    try:
+                        got = self.proc.read(4096)
+                    except Exception:  # noqa: BLE001 — closed: the program ended
+                        return
+                    if got:
+                        with self._lock:
+                            self._buf.append(got)
+            threading.Thread(target=pump, daemon=True).start()
         else:
             import pty
             import fcntl
@@ -52,15 +68,11 @@ class Screen:
 
     def read(self) -> None:
         if WINDOWS:
-            try:
-                while self.proc.isalive():
-                    got = self.proc.read(4096)
-                    if not got:
-                        break
-                    self._answer(got)
-                    self.text += _ANSI.sub("", got)
-            except EOFError:
-                pass
+            with self._lock:
+                got, self._buf = "".join(self._buf), []
+            if got:
+                self._answer(got)
+                self.text += _ANSI.sub("", got)
             return
         import select
         while select.select([self.fd], [], [], 0.2)[0]:

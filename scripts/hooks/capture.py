@@ -1203,4 +1203,14 @@ def format_signals(signals: dict) -> str:
             f"(SLIGHTLY-PARALLEL.md §4, Kept messages): MCP tool interpret "
             f"{{lens: \"{k['kind']}\", id: \"{k['id']}\", text}}."
         )
+    if any("MCP tool " in n for n in notes):
+        # Claude Code loads MCP tools only when searched for: a small model
+        # searched ten times, or gave up and said it had written. One exact
+        # query finds the tool at once.
+        m = re.search(r"MCP tool (\w+)", "\n".join(notes))
+        notes.append(
+            "[slightly-parallel] tools — the MCP tools may need loading first: in Claude Code, ToolSearch "
+            f"\"select:mcp__slightly-parallel__{m.group(1) if m else 'write_entry'}\". A write that did not "
+            "answer with an id did not happen: never say it did."
+        )
     return "\n".join(notes)

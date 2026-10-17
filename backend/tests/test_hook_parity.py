@@ -118,7 +118,8 @@ def test_every_notice_names_itself_first() -> None:
     })
     named = [line.split(" — ")[0] for line in note.splitlines()]
     assert named == ["[slightly-parallel] #standup", "[slightly-parallel] #decision", "[slightly-parallel] refresh",
-                     "[slightly-parallel] #scan", "[slightly-parallel] #architecture", "[slightly-parallel] #artifact"]
+                     "[slightly-parallel] #scan", "[slightly-parallel] #architecture", "[slightly-parallel] #artifact",
+                     "[slightly-parallel] tools"]
     # And it reads on in lower case after the dash, so the sentence is one.
     for line in note.splitlines():
         after = line.split(" — ", 1)
