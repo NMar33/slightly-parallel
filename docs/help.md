@@ -1,6 +1,8 @@
 # Slightly Parallel Help
 
 - [Import lost chats](#import-lost-chats)
+- [Known limitations](#known-limitations)
+  - [Import from OpenCode](#import-from-opencode)
 
 ## Import lost chats
 
@@ -28,3 +30,9 @@ A chat is lost when:
 - Commands in imported messages, such as `#task` or `#done`, are not run.
 - A session that was active in the last hour is not imported.
 - The tools change their log format between versions. After an import, check the chat.
+
+## Known limitations
+
+### Import from OpenCode
+
+You cannot [import lost chats](#import-lost-chats) from OpenCode. OpenCode keeps its chats in a database, which Slightly Parallel does not read yet.

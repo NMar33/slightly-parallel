@@ -53,6 +53,9 @@ Then connect a project. On the **Setup** page:
 
 ![The tool boxes in the Setup form](docs/media/readme/setup-tools.png)
 
+> [!WARNING]
+> The first time OpenCode starts in a project, it downloads a package for its plugins. This can take several minutes, and OpenCode shows nothing while it runs. Wait until it finishes.
+
 Good to know:
 
 - **The chats are recorded even when the server is not running.** The hooks write them; the server reads them when it is up.
@@ -89,6 +92,10 @@ I work on Linux and mostly with Claude Code, so that is where everything is test
 One person, one computer. The server has no login and listens on `127.0.0.1` only.
 
 ## In detail
+
+I know the look matters to many people, so it can be changed: five skins, the default one in four accent colours, and four interface sizes. All of it is in **Settings › Appearance**, and so is the language. Light or dark theme is there too, or on the sun, moon or monitor button at the top right of any page.
+
+![Settings, then Appearance, then the five skins and the theme button](docs/media/readme/appearance.gif)
 
 ### Chats
 
