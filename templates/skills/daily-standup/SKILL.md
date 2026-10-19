@@ -8,7 +8,10 @@ written the next time anyone works on the project. You do not write it
 from memory: a helper agent reads the day's messages.
 
 1. The `[slightly-parallel] No standup for <date> …` notice gives the date, how many
-   messages there were, and the models Settings name. If the notice says
+   messages there were, and how your tool starts each helper: on which
+   model, and what else the operator may pick. `#standup` typed by hand
+   gives a shorter notice with the same offer: ask it in one line and
+   wait. If the notice says
    to ask, say before other work what you want to start, and give the
    choices as numbers, so the operator answers with one:
 
@@ -18,7 +21,7 @@ from memory: a helper agent reads the day's messages.
    > 1 · write and map — standup on <standup model>, map on <map model>
    > 2 · write only, on <standup model>
    > 3 · postpone
-   > Another model for either: haiku, sonnet or opus.
+   > Or: <the other choice the notice gives, if any>.
    > The helper reads every message whole (about <N>k characters); say
    > "clipped" for the start and end of each (about <M>k).
 
@@ -29,8 +32,10 @@ from memory: a helper agent reads the day's messages.
      skill `map-the-program` says from its step 2, on the map model.
    - 3, or later: call `standup_postpone {date, hours}` (4 hours when the
      operator names no time). Nobody is asked again until then.
-2. Start the standup helper on its model (in Claude Code: the Agent tool
-   with `model`). Give it this whole prompt and nothing else:
+2. Start the standup helper on the model the operator chose, the way the
+   notice says for your tool (Claude Code: the Agent tool with `model`;
+   Codex: `spawn_agent` with `model`; OpenCode: the task tool with the
+   subagent it names). Give it this whole prompt and nothing else:
 
    > Write the Slightly Parallel standup for <date>. Call the MCP tool
    > `standup_material {date: "<date>", claim: true}` (add `clip: true`

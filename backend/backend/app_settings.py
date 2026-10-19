@@ -189,23 +189,62 @@ SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         key="standup.model",
-        label="Model that writes the standup",
+        label="Model that writes the standup, in Claude Code",
         description=(
             "The helper agent that reads yesterday's messages runs on this "
-            "model. Pick haiku, sonnet or opus, or type a model name. Opus writes the best story of the day; a smaller model costs less."
+            "model. Pick haiku, sonnet or opus, or type a model name. Opus writes the best story of the day; a smaller model costs less. "
+            "The agent asks you first and names it; you can answer with another."
         ),
         type="choice", default="opus", group="Agents",
         options=("haiku", "sonnet", "opus"), free=True,
     ),
     SettingSpec(
+        key="standup.model_codex",
+        label="Model that writes the standup, in Codex",
+        description=(
+            "The same helper in Codex. chat: the model of the chat that starts it. "
+            "Or a Codex model name, such as gpt-6-luna."
+        ),
+        type="choice", default="chat", group="Agents",
+        options=("chat", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"), free=True,
+    ),
+    SettingSpec(
+        key="standup.model_opencode",
+        label="Model that writes the standup, in OpenCode",
+        description=(
+            "The same helper in OpenCode. chat: the model of the chat that starts it. "
+            "Or an OpenCode model, provider first, such as openai/gpt-6-luna (opencode models lists them). "
+            "OpenCode reads it when it starts."
+        ),
+        type="choice", default="chat", group="Agents",
+        options=("chat",), free=True,
+    ),
+    SettingSpec(
         key="map.model",
-        label="Model that maps the program",
+        label="Model that maps the program, in Claude Code",
         description=(
             "The helper agent that reads the repository for #map runs on this "
             "model. Pick haiku, sonnet or opus, or type a model name. The map was tested on opus; a smaller model costs less."
         ),
         type="choice", default="opus", group="Agents",
         options=("haiku", "sonnet", "opus"), free=True,
+    ),
+    SettingSpec(
+        key="map.model_codex",
+        label="Model that maps the program, in Codex",
+        description="The same helper in Codex. chat: the model of the chat that starts it. Or a Codex model name.",
+        type="choice", default="chat", group="Agents",
+        options=("chat", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"), free=True,
+    ),
+    SettingSpec(
+        key="map.model_opencode",
+        label="Model that maps the program, in OpenCode",
+        description=(
+            "The same helper in OpenCode. chat: the model of the chat that starts it. "
+            "Or an OpenCode model, provider first. OpenCode reads it when it starts."
+        ),
+        type="choice", default="chat", group="Agents",
+        options=("chat",), free=True,
     ),
     # -------------------------------------------------------------- chats ---
     SettingSpec(
@@ -246,8 +285,8 @@ SPECS: tuple[SettingSpec, ...] = (
         label="How far back backups reach",
         description=(
             "The deepest restore point. Rotation keeps one backup in each of "
-            "six periods, from a day up to three months, and drops "
-            "automatic backups older than this."
+            "six periods, from a day up to three months, one more up to this "
+            "when it reaches further, and drops automatic backups older than this."
         ),
         type="int", default=90, group="Backups",
         unit="days", minimum=7, maximum=730,
@@ -498,7 +537,7 @@ def _flatten(nested: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-_FREE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+_FREE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$")
 
 
 def coerce(key: str, value: Any) -> Any:
@@ -516,7 +555,7 @@ def coerce(key: str, value: Any) -> Any:
         if spec.free and isinstance(value, str) and _FREE_NAME.match(value.strip()):
             return value.strip()
         if spec.free:
-            raise ValueError(f"{key}: one of {', '.join(spec.options)}, or a model name of letters, digits, . _ : -")
+            raise ValueError(f"{key}: one of {', '.join(spec.options)}, or a model name of letters, digits, . _ : / -")
         raise ValueError(f"{key} must be one of: {', '.join(spec.options)}")
     if spec.type == "text":
         if isinstance(value, str) and len(value.strip()) <= 200 and "\n" not in value:

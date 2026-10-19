@@ -84,6 +84,16 @@ def test_a_named_task_and_one_applied_once(env) -> None:
     assert c.get(f"/api/tasks/{t3}/done").json()["reopened"] is True
 
 
+def test_a_mistyped_id_asks_and_closes_nothing(env) -> None:
+    """#done with an id that is no task (a typo) closed the last task named
+    before it instead."""
+    c, root, (t1, _t2, _t3) = env
+    _chat(root, [f"{t1} go", "#done tk_nosuch12"])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert got["unnamed"] is True
+    assert _status(c, t1) == "doing"
+
+
 def test_no_task_named_asks(env) -> None:
     c, root, (t1, _t2, _t3) = env
     _chat(root, [f"{t1} go", "#done", "#done"])
@@ -145,3 +155,36 @@ def test_done_in_the_chat_re_arms_a_repeating_task(env) -> None:
     c.get(f"/api/done-tags?agent_id={AGENT}")
     meta = c.get(f"/api/tasks/{t1}").json()["metadata"]
     assert meta["status"] == "done" and meta["resurface_on"]
+
+
+def _chat_at(root: Path, turns: list[tuple[str, str]]) -> None:
+    d = root / "projects" / "alpha" / "chats" / AGENT
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "meta.json").write_text(json.dumps({
+        "agent_id": AGENT, "agent_name": "lead", "project": "alpha",
+        "created_date": "2609-01", "last_active": "2026-09-01T11:00:00",
+    }), encoding="utf-8")
+    body = [f"# Chat log — {AGENT}\n"]
+    for i, (at, user) in enumerate(turns, start=1):
+        body.append(f"\n## Turn {i} · {at}\n**User**: {user}\n**Agent**: ok\n")
+    (d / "chat.md").write_text("".join(body), encoding="utf-8")
+
+
+def test_done_closes_the_task_the_operator_started_with_now(env) -> None:
+    # #now names no id; the card the agent wrote in that turn is the one named.
+    from datetime import datetime, timedelta
+    c, root, (t1, _t2, _t3) = env
+    past = lambda m: (datetime.now() - timedelta(minutes=m)).isoformat(timespec="seconds")
+    later = lambda m: (datetime.now() + timedelta(minutes=m)).isoformat(timespec="seconds")
+    head = [(past(30), f"{t1} first look"), (past(20), "#now build the export")]
+    _chat_at(root, head)
+    c.app.state.store.rebuild()  # the store learns the new chat, as the watcher would
+    tid = c.post("/api/tasks", json={
+        "created_date": "2609-01", "created_time": "10:00", "project": "alpha",
+        "agent_id": AGENT, "title": "Build the export", "tags": "ag_idea",
+    }).json()["metadata"]["id"]
+    _chat_at(root, head + [(later(10), "work"), (later(20), "#done")])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [(t["id"], t["result"]) for t in got["tasks"]] == [(tid, "moved")]
+    assert (got["tasks"][0]["stretch"]["start"], got["tasks"][0]["stretch"]["end"]) == (2, 4)
+    assert _status(c, tid) == "done" and _status(c, t1) == "doing"

@@ -176,6 +176,10 @@ def test_the_hook_and_the_server_use_one_shared_module() -> None:
     assert mcp.ancestors is hookshared.ancestors
     assert skilllib.uses_in_record is hookshared.skill_uses and skilllib.local_iso is hookshared.local_iso
     assert sessions._NOT_OPERATOR is hookshared.NOT_OPERATOR
+    # One escape for chat.md: the hook writes a message as an import does.
+    from backend import sessionimport
+    assert capture.escape_content is capture.shared.escape_content
+    assert sessionimport.escape_content is hookshared.escape_content
     # One list of who is not the operator: the watchdog skips what the hook skips.
     assert set(hookshared.NOT_OPERATOR) <= set(capturewatch._SYSTEM)
     assert shared.NOT_OPERATOR == hookshared.NOT_OPERATOR

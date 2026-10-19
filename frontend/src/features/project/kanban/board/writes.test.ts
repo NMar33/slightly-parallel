@@ -26,3 +26,15 @@ describe('boardWrites.setArchived', () => {
     expect(bump).toHaveBeenCalled()
   })
 })
+
+describe('boardWrites.patchMany', () => {
+  it('answers how many did not save, so a caller says "done" only when all did', async () => {
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => (n++ === 1
+      ? new Response('{"detail":"no"}', { status: 422 })
+      : new Response('{}', { status: 200 }))))
+    let tasks = [{ id: 'tk_1' }, { id: 'tk_2' }, { id: 'tk_3' }] as TaskRow[]
+    const { patchMany } = boardWrites({ setTasks: (u) => { tasks = typeof u === 'function' ? u(tasks) : u }, bump: () => {} })
+    expect(await patchMany(tasks.map((t) => ({ id: t.id, patch: { today_on: '2026-10-19' } })))).toBe(1)
+  })
+})

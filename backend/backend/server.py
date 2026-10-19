@@ -11,7 +11,11 @@ in-memory cache (see ``db.py``). Endpoints live in ``routers/``:
     files_extra.py    file heatmap + checkpoint diff
     architecture.py   the architecture ledger folded into what stands
     prompts.py        the agent prompt files: edit, version, restore
-    tasks_extra.py    task updates + event history
+    tasks_extra.py    task updates + event history, archive, create, detail
+    task_links.py     links between tasks
+    task_mentions.py  chat mentions of tasks + the task timeline
+    sprints.py        sprint board, series, timeline, dossier
+    sprint_deck.py    the cross-project sprint deck
     snippets_extra.py snippet update / delete
     terminal.py       opt-in pty shell over WebSocket
 
@@ -32,7 +36,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from uuid import uuid4
 
@@ -64,6 +68,7 @@ from .routers import (
     logs,
     marks,
     done,
+    undo,
     stats,
     analytics,
     monitor,
@@ -76,6 +81,10 @@ from .routers import (
     snippets_extra,
     story,
     standups,
+    sprint_deck,
+    sprints,
+    task_links,
+    task_mentions,
     tasks_extra,
     timelapse,
     tour,
@@ -251,7 +260,7 @@ from .mcp import TOOLS as _MCP_TOOLS  # noqa: E402 — the one tool list
 
 _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "task_evidence",
                 "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
-                "architecture_page", "standup_postpone")
+                "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
 MCP_REFUSAL = (
     f"agents write through the Slightly Parallel MCP tools ({', '.join(_WRITE_TOOLS)}), not by HTTP. "
@@ -281,6 +290,7 @@ _MCP_WRITE_PATHS = (
     r"/api/standups/(claim|postpone)",
     r"/api/architecture/page",
     r"/api/map",
+    r"/api/undo/(propose|apply|restore)",
 )
 MCP_PATH_REFUSAL = (
     "the Slightly Parallel MCP tools do not write here, so an agent cannot either. "
@@ -380,7 +390,9 @@ def has_operator_cookie(headers: dict, app: Any) -> bool:
         return False
     got = jar.get(operator_cookie_name(app))
     tok = getattr(app.state, "operator_token", "")
-    return bool(got and tok) and hmac.compare_digest(got.value, tok)
+    # As bytes: compare_digest raises on a str that is not ASCII, and a
+    # cookie value may be any Latin-1 text.
+    return bool(got and tok) and hmac.compare_digest(got.value.encode("utf-8"), tok.encode("utf-8"))
 
 
 class OperatorCookie:
@@ -605,7 +617,7 @@ def create_app(
         example.on_start(app)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         install_builtin_skills()
         offer_example()
         if watch:
@@ -839,6 +851,7 @@ def create_app(
     app.include_router(logs.router)
     app.include_router(marks.router)
     app.include_router(done.router)
+    app.include_router(undo.router)
     app.include_router(stats.router)
     app.include_router(analytics.router)
     app.include_router(monitor.router)
@@ -852,6 +865,10 @@ def create_app(
     app.include_router(prompts.router)
     app.include_router(promptlib.router)
     app.include_router(tasks_extra.router)
+    app.include_router(task_mentions.router)
+    app.include_router(task_links.router)
+    app.include_router(sprints.router)
+    app.include_router(sprint_deck.router)
     app.include_router(evidence.router)
     app.include_router(agents_extra.router)
     app.include_router(boards.router)

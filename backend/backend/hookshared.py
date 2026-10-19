@@ -317,3 +317,59 @@ def codex_home() -> Path:
     USERPROFILE: CODEX_HOME is the one setting both sides read.)"""
     import os
     return Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else Path.home() / ".codex"
+
+
+# ---------------------------------------------------------------------------
+# chat.md's own format: what a message may not start a line with
+# ---------------------------------------------------------------------------
+
+# Lines in captured content that would collide with chat.md's own structure
+# (a user pasting a session page quotes real turn headers) are escaped with
+# a leading backslash; the sessions parser strips it when reading.
+_STRUCTURAL_RE = re.compile(r"^(## Turn \d+ · |\*\*User\*\*: ?|\*\*Agent\*\*: ?)")
+
+
+_LINE_BREAK_RE = re.compile(r"\r\n|\r|\x0c| | ")
+
+
+def escape_content(text: str) -> str:
+    """A message as chat.md holds it, written by the hook and by an import
+    (sessionimport.py) alike; the reader (sessions.py) strips the escape."""
+    # Every line separator becomes "\n" first: the reader splits on all of
+    # them, so a header hidden behind a "\r" would otherwise read as a turn.
+    text = _LINE_BREAK_RE.sub("\n", text or "")
+    return "\n".join(
+        ("\\" + line) if _STRUCTURAL_RE.match(line) else line
+        for line in text.split("\n")
+    )
+
+
+# ---------------------------------------------------------------------------
+# git's file names, as the files are named
+# ---------------------------------------------------------------------------
+
+#: Paths as they are: by default git prints a name outside ASCII as an
+#: octal-escaped quoted string ("\320\267…" for заметки.md), which matched
+#: no file and no stamp.
+GIT_PLAIN_PATHS = ("-c", "core.quotePath=false")
+
+_RENAME_BRACES = re.compile(r"\{([^{}]*) => ([^{}]*)\}")
+
+
+def numstat_path(raw: str) -> str:
+    """The file a ``--numstat`` line is about. A rename is written
+    ``old => new`` or ``dir/{old => new}/rest``: the file is the new name.
+    A name git still quotes (one holding a quote, a backslash or a control
+    character) is unquoted."""
+    path = raw
+    if " => " in path:
+        if _RENAME_BRACES.search(path):
+            path = _RENAME_BRACES.sub(lambda m: m.group(2), path).replace("//", "/")
+        else:
+            path = path.split(" => ", 1)[1]
+    if len(path) >= 2 and path[0] == path[-1] == '"':
+        try:
+            path = path[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode("latin-1").decode("utf-8")
+        except (UnicodeError, ValueError):
+            path = path[1:-1]
+    return path

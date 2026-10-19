@@ -55,9 +55,9 @@ def _blank() -> dict[str, Any]:
 def month(store: ViewStore, project: str, month_text: str) -> dict[str, dict[str, Any]]:
     """{YYMM-DD: numbers} for every day of the month, empty days included."""
     days = {d: _blank() for d in _month_days(month_text)}
-    first, last = days and min(days), days and max(days)
     if not days:
         return {}
+    first, last = min(days), max(days)
 
     # Chats and agents: the session table, one row per work session.
     agents_by_day: dict[str, set[str]] = defaultdict(set)

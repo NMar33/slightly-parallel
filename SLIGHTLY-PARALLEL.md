@@ -104,6 +104,8 @@ When the user types one of these, act as described. Commands start with
 | `#help` | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it) |
 | `#done` | MCP tool task_done: the server has moved the task; say what moved, then your task_report line (the skill finish-a-task) |
 | `#entrypoint` | Nothing to write — the server keeps the message as an entry point; write its text (Kept messages, section 4): What, Where, How, State, Next |
+| `#undo <what was the mistake>` | MCP tool undo_find, list the candidates by number, then undo_propose with the operator's numbers and show its confirm text (the skill undo-a-mistake) |
+| `#undo-yes` | The operator confirmed: MCP tool undo_apply. The server archives only on this reply right after your proposal |
 
 **Resolving `<id or text>`**: if it looks like an id (`sp_…`, `pb_…`), use it.
 Otherwise read the lens (`search`, or `GET /api/<lens>?project=…`), match
@@ -368,6 +370,8 @@ record: replace State and Next, add to Where and How, keep the rest.
 When the operator opens a topic that has an entry point, read it first
 (the Entry points page, or `GET /api/entrypoints?project=…`): it says
 where things are and where the work stopped.
+
+**Undo** (`#undo`). The operator archives entries made by mistake. List the candidates from `undo_find` by number; send their numbers' ids to `undo_propose` and show its confirm text; on `#undo-yes`, call `undo_apply`. Never archive without both. The skill `undo-a-mistake` holds the steps.
 
 ## 5. Reading
 

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 from agents import MODELS, Tool, give_login, tools
-from common import Report, Space, eventually, get, rows
+from common import Report, Space, eventually, get, http, rows
 from stages import YESTERDAY_SESSION, playwright, sh
 
 WIRING_AGENTS = ("cc-f0e1d2c3", f"cc-{YESTERDAY_SESSION[:8]}")
@@ -35,6 +35,8 @@ class State:
         self.task = ""
         self.problem = ""
         self.said: list[str] = []      # the agent's replies, in order
+        self.helper = ""               # how the standup and map helpers must run (helper_settings)
+        self.standup_owed = True       # no standup for yesterday when the chat began
 
 
 Checker = Callable[[Space, Report, str, State], None]
@@ -73,9 +75,37 @@ def after_hello(space: Space, report: Report, s: str, st: State) -> None:
     report.add(s, "the agent asks about yesterday's standup before other work", "standup" in st.said[-1].lower(), st.said[-1][:300], soft=True)
 
 
-def after_standup(space: Space, report: Report, s: str, st: State) -> None:
+def helper_settings(tool: Tool, model: str) -> tuple[dict, str]:
+    """The helper model Settings give this tool, and how its helper must then
+    run, as Tool.helpers says it. Claude Code keeps the default (opus, not
+    the chat's model); Codex and OpenCode are given one, to see it used."""
+    if tool.name == "codex":
+        name = model or "gpt-6-luna"
+        return {"standup.model_codex": name, "map.model_codex": name}, name
+    if tool.name == "opencode":
+        name = model if "/" in model else "openai/gpt-6-luna"
+        return {"standup.model_opencode": name, "map.model_opencode": name}, f"sp-{{job}}:{name}"
+    return {}, "opus"
+
+
+def yesterdays_standup(space: Space, st: State) -> list[dict]:
     day = time.strftime("%y%m-%d", time.localtime(time.time() - 86400))
-    got = eventually(lambda: [r for r in listed(space, "/api/standups", "standups", st, mine=False) if str(r.get("for_date") or "") == day], 30)
+    return [r for r in listed(space, "/api/standups", "standups", st, mine=False) if str(r.get("for_date") or "") == day]
+
+
+def helper_ran(space: Space, report: Report, s: str, st: State, job: str) -> None:
+    if job == "standup" and not st.standup_owed:
+        # An earlier tool's chat in the same run wrote it: nothing was asked.
+        report.notes[f"{s} standup helper"] = "not checked: yesterday's standup was written before this chat"
+        return
+    want = st.helper.replace("{job}", job)
+    got = st.tool.helpers(space)
+    report.add(s, f"the {job} helper runs as Settings say ({want})", bool(got) and got[-1] == want, f"helpers started: {got}")
+
+
+def after_standup(space: Space, report: Report, s: str, st: State) -> None:
+    helper_ran(space, report, s, st, "standup")
+    got = eventually(lambda: yesterdays_standup(space, st), 30)
     if report.add(s, "yesterday's standup is written", bool(got), json.dumps(listed(space, "/api/standups", "standups", st, mine=False))[:300]):
         report.add(s, "it has a summary line", bool(str(got[0].get("l1") or got[0].get("summary") or "").strip()), json.dumps(got[0])[:300], soft=True)
         text = (get(space, f"/api/standups/{got[0]['id']}") or {}).get("text") or {}
@@ -156,6 +186,7 @@ def after_map_asked(space: Space, report: Report, s: str, st: State) -> None:
 
 
 def after_map(space: Space, report: Report, s: str, st: State) -> None:
+    helper_ran(space, report, s, st, "map")
     def read() -> list[dict]:
         # The answer holds the version, and the version holds the map.
         version = get(space, f"/api/map?project={st.code}").get("map") or {}
@@ -274,6 +305,10 @@ def run(space: Space, report: Report, code: str, folder: Path, tool: Tool, model
             done, shown = False, f"{type(exc).__name__}: {exc}"
         tool.hooks_trusted = report.add(s, "the folder and its hooks are trusted on Codex's own screen", done, shown)
     st = State(code, folder, tool)
+    values, st.helper = helper_settings(tool, MODELS[tool.name].get(model, model))
+    if values:
+        http(space.url + "/api/settings", {"values": values})
+    st.standup_owed = not yesterdays_standup(space, st)
     cost = chat(space, report, s, st, SCENARIOS[scenario], model, env, turn_seconds)
     report.notes[f"{s} cost_usd"] = round(cost, 2)
     if st.agent and not stage:

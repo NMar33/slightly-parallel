@@ -124,20 +124,14 @@ def _match(paths: list[dict[str, Any]], git_path: str) -> dict[str, Any] | None:
     return tail[0] if len(tail) == 1 else None
 
 
-# Paths as they are named: by default git prints a name with a character
-# outside ASCII as a quoted octal string, which never matches the path the
-# agent wrote.
-_RAW_PATHS = ("-c", "core.quotepath=off")
-
-
 def git_fill(
     repo: Path, paths: list[dict[str, Any]], commit_from: str, commit_to: str | None,
 ) -> dict[str, Any]:
     """Fill missing ``lines_add``/``lines_del``/``action`` from git; return
     ``{filled: n, l4: str}`` (l4 = ``git diff --stat`` over the range)."""
     rng = [commit_from, commit_to] if commit_to else [commit_from]
-    numstat = git(repo, *_RAW_PATHS, "diff", "--numstat", *rng)
-    status = git(repo, *_RAW_PATHS, "diff", "--name-status", *rng)
+    numstat = git(repo, "diff", "--numstat", *rng)
+    status = git(repo, "diff", "--name-status", *rng)
     # A repo with no commits has no diff base at all (even the empty tree is
     # "bad object" there): every listed file that exists is new. A diff that
     # failed in a repo that has commits is not that: every file was called
@@ -173,7 +167,7 @@ def git_fill(
     # Files the agent created but has not `git add`ed yet (or any listed file
     # when the repo has no commits): count their lines as new.
     if not commit_to:
-        untracked = git(repo, *_RAW_PATHS, "ls-files", "--others", "--exclude-standard") or ""
+        untracked = git(repo, "ls-files", "--others", "--exclude-standard") or ""
         fresh = {g.strip() for g in untracked.splitlines() if g.strip()}
         for rec in paths:
             if rec.get("lines_add") not in (None, ""):
@@ -190,7 +184,7 @@ def git_fill(
             filled += 1
 
     only = [r["path"] for r in paths]
-    stat = git(repo, *_RAW_PATHS, "diff", "--stat", *rng, "--", *only) if only and not no_base else ""
+    stat = git(repo, "diff", "--stat", *rng, "--", *only) if only and not no_base else ""
     l4 = "\n".join((stat or "").rstrip().splitlines()[:_L4_MAX_LINES])
     return {"filled": filled, "l4": l4}
 

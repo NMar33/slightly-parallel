@@ -40,4 +40,27 @@ restarted:
 On Windows the same commands are `sp up`, `sp status`, … in the
 repository folder (Command Prompt or PowerShell).
 
+## At login, and a shortcut
+
+```bash
+./sp.sh autostart on  # start the server (sp up) when you log in
+./sp.sh autostart off # remove exactly what "on" wrote
+./sp.sh shortcut      # a shortcut that runs sp open; "shortcut off" removes it
+./sp.sh open          # start the server if it is not running, then open the page
+```
+
+The same two switches are in Setup (Integrate your project, off by
+default) and in Settings › On this computer. Without administrator rights,
+each system its own way:
+
+| | at login | shortcut |
+|---|---|---|
+| Linux | `~/.config/autostart/slightly-parallel.desktop` | the applications menu, and the desktop folder |
+| macOS | `~/Library/LaunchAgents/dev.slightly-parallel.server.plist` | `Slightly Parallel.app` on the desktop |
+| Windows | `Slightly Parallel.cmd` in the Startup folder | `Slightly Parallel.lnk` on the desktop and in the Start menu |
+
+At login the server starts in production mode with the built UI, so Node
+is not needed. What was written is listed in `.sp/autostart.json`. Memory
+and load: [performance.md](performance.md).
+
 Configuration, the ports and the network: [configuration.md](configuration.md).

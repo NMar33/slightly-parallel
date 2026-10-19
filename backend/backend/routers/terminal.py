@@ -431,8 +431,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         mode = str(body.get("mode") or "screen")
         if mode == "range":
             try:
-                a, b = int(body.get("from")), int(body.get("to"))
-            except (TypeError, ValueError):
+                a, b = int(body["from"]), int(body["to"])
+            except (KeyError, TypeError, ValueError):
                 raise HTTPException(status_code=422, detail="mode range needs from and to, the absolute line ids the page computed from /pos") from None
             return {**termlib.capture(root, sid, a, b), "mode": mode}
         if mode == "last":
@@ -626,6 +626,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 elif msg.get("text"):
                     try:
                         payload = json.loads(msg["text"])
+                        if not isinstance(payload, dict):
+                            raise ValueError  # "5", "null", "[]": typed text, not a message
                     except ValueError:
                         if in_tmux and "\r" in msg["text"]:
                             await run_in_threadpool(_stamp_enter, root, session_id)

@@ -95,7 +95,15 @@ export function MonthFeed({ project, earliest, anchor, active, keep, renderDay, 
 
   const onMonth = useCallback((key: string, empty: boolean) => {
     setLoaded((s) => (s.has(key) ? s : new Set(s).add(key)))
-    if (empty) setQuiet((s) => (s.has(key) ? s : new Set(s).add(key)))
+    // Both ways: a month that was empty and has work now must not stay
+    // where the feed stops, or it hid every month before it.
+    setQuiet((s) => {
+      if (empty === s.has(key)) return s
+      const next = new Set(s)
+      if (empty) next.add(key)
+      else next.delete(key)
+      return next
+    })
   }, [])
 
   return (

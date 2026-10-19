@@ -113,7 +113,7 @@ def test_the_hook_says_when_yesterday_is_owed(tmp_path: Path) -> None:
     assert quiet["model"] == "haiku" and quiet["map_model"] == "sonnet" and quiet["ask"] is False
     assert "Write it now with a helper agent on haiku" in capture.format_signals({"standup_due": quiet})
     asked = capture.format_signals({"standup_due": {**quiet, "ask": True}})
-    assert "1 write it with a helper on haiku and map the program with a helper on sonnet · 2 write only · 3 postpone" in asked
+    assert "1 write it with a helper agent on haiku (the Agent tool with model) and map the program with a helper agent on sonnet (the Agent tool with model) · 2 write only · 3 postpone; or another model: haiku, sonnet or opus" in asked
 
 
 def test_the_built_in_skills_carry_the_contracts_writing_rules(client: TestClient) -> None:
@@ -279,3 +279,15 @@ def test_a_standup_can_be_rewritten_and_a_part_changed_alone(client: TestClient)
     assert got["text"]["detail"] == "**Next:** x"
     lens = next(l for l in client.get("/api/schema").json()["lenses"] if l["name"] == "standup")
     assert lens["headline_mutable"] is True and "story" in lens["text_fields"]
+
+
+
+def test_standup_by_hand_asks_which_model_first(tmp_path: Path) -> None:
+    hook = _hook()
+    (tmp_path / "settings.json").write_text(json.dumps({"standup": {"model": "haiku", "model_opencode": "bad name!"}}), encoding="utf-8")
+    models = hook._helper_models(tmp_path)
+    assert models["standup"] == {"claude": "haiku", "codex": "chat", "opencode": "chat"}
+    assert models["map"]["claude"] == "opus"
+    note = hook.format_signals({"commands": ["standup"], "helper_models": models})
+    assert "#standup — ask the user now" in note and "helper agent on haiku" in note
+    assert "Do not call standup_material" in note

@@ -106,15 +106,25 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         if str(m["task_id"]) in tasks:
             mentions.setdefault(str(m["agent_id"]), []).append(
                 (int(m["turn"]), str(m["task_id"]), str(m["role"] or "")))
+    # A task the operator started with #now is named by that message, though
+    # the message carries no id: the agent wrote the card in that turn.
+    for agent, turn, tid in _started_with_now(store, {str(t["agent_id"] or "") for t in tags}):
+        if tid in tasks:
+            mentions.setdefault(agent, []).append((turn, tid, "user"))
+    for ms in mentions.values():
+        ms.sort(key=lambda m: m[0])
 
     added: list[dict[str, str]] = []
     moves: list[tuple[str, str, int]] = []
     for tag in tags:
         agent, turn = str(tag["agent_id"] or ""), int(tag["turn"] or 0)
         prev = max((b for b in bounds.get(agent, []) if b < turn), default=0)
-        named = [x for x in str(tag["tasks"] or "").split(",") if x in tasks]
+        given = [x for x in str(tag["tasks"] or "").split(",") if x]
+        named = [x for x in given if x in tasks]
         window = [m for m in mentions.get(agent, []) if prev < m[0] <= turn]
-        if not named:
+        # An id the operator typed that is no task (a typo) is no task named:
+        # it closed the last task named before it instead.
+        if not named and not given:
             # The last task the operator named — not one an agent's answer
             # mentioned in passing ("done; tk_B depends on this").
             before = [m for m in window if m[0] < turn and m[2] == "user"]
@@ -157,6 +167,38 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     return added
 
 
+def _started_with_now(store: ViewStore, agents: set[str]) -> list[tuple[str, int, str]]:
+    """(agent, turn, task) for each card an agent wrote on the operator's #now:
+    the turn is the one the card was written in, read from its `started` event."""
+    from datetime import datetime
+
+    from .sessions import chat_path, parse_turns
+
+    rows = store.query(
+        "SELECT e.task_id, e.timestamp, t.agent_id FROM task_events_mutual e "
+        "JOIN tasks_mutual t ON t.id = e.task_id WHERE e.field = 'started'")
+    out: list[tuple[str, int, str]] = []
+    turns_of: dict[str, list] = {}
+    for r in rows:
+        agent = str(r["agent_id"] or "")
+        if agent not in agents:
+            continue
+        if agent not in turns_of:
+            path = chat_path(store, agent)
+            try:
+                turns_of[agent] = parse_turns(path) if path else []
+            except OSError:
+                turns_of[agent] = []
+        try:
+            at = datetime.fromisoformat(str(r["timestamp"]))
+        except ValueError:
+            continue
+        before = [t.number for t in turns_of[agent] if t.at.replace(tzinfo=None) <= at]
+        if before:
+            out.append((agent, before[-1], str(r["task_id"])))
+    return out
+
+
 def _iso_minute(day: str, hm: str) -> str:
     """YYMM-DD and HH:MM as 2026-09-27T14:02 (other shapes as they came)."""
     if len(day) == 7 and day[4] == "-":
@@ -176,7 +218,8 @@ def _row(rid: str, tid: str, tag: dict, turn: int, result: str, status: str, sta
 
 def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str, dict[str, str]]) -> None:
     """Every task to done, each change in its history as the operator's."""
-    from .routers.tasks_extra import _append_events, after_status_change
+    from .routers.tasks_extra import after_status_change
+    from .taskevents import append_events as _append_events
 
     ent = ENTITIES["task"]
     ids = {tid for tid, _, _ in moves}

@@ -448,7 +448,7 @@ function AgentTerminal({ agentId, label }: { agentId: string; label: string }) {
         {!st ? null : !st.enabled ? (
           <div className="h-full bg-base overflow-auto"><TurnOn /></div>
         ) : live ? (
-          <Screen sid={live.id} token={st.token} fontSize={st.font_size} scrollback={st.scrollback} editor={st.editor} project={live.project} backend={live.backend} visible autoFocus={false} />
+          <Screen key={live.id} sid={live.id} token={st.token} fontSize={st.font_size} scrollback={st.scrollback} editor={st.editor} project={live.project} backend={live.backend} visible autoFocus={false} />
         ) : (
           <div className="h-full flex flex-col items-start justify-center gap-10 p-24 text-[var(--term-soft)]">
             <span className="text-14">{t('This agent has no terminal open.')}</span>

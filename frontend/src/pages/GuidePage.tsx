@@ -124,6 +124,7 @@ export default function GuidePage() {
               <CommandRow cmd="#artifact <what>" page={t('Artifacts')} what={t('The agent makes the folder you ask for: a dataset, a document, a page or an app.')} />
               <CommandRow cmd="#prompt" page={t('Prompts')} what={t('The message is kept in your prompt library.')} />
               <CommandRow cmd="#important" page={t('Important')} what={t('The message, its agent and the task it names are starred.')} />
+              <CommandRow cmd="#undo <what was the mistake>" page="" what={t('Archives entries a tag made by mistake. The agent lists them by number; you answer with the numbers, then confirm with #undo-yes. Nothing is archived without it.')} />
               <CommandRow cmd="#help" page="" what={t('The agent lists these commands.')} />
             </tbody>
           </table>

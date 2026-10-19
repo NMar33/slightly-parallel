@@ -23,7 +23,7 @@ from ..csvio import rewrite_rows
 from ..db import ViewStore
 from ..entities import ENTITIES
 from .deps import adopt_when_changed, agents_by_id, get_store, operator_only
-from .tasks_extra import _append_events
+from ..taskevents import append_events as _append_events
 
 
 def _set_remember(store: ViewStore, ids: set[str], value: str, actor: str = "operator") -> None:

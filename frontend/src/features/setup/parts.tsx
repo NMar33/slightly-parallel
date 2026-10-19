@@ -92,16 +92,19 @@ export function Checkbox({
   checked,
   onChange,
   label,
+  disabled = false,
 }: {
   checked: boolean
   onChange: (v: boolean) => void
   label: React.ReactNode
+  disabled?: boolean
 }) {
   return (
-    <label className="flex items-start gap-8 text-13 text-secondary cursor-pointer">
+    <label className={`flex items-start gap-8 text-13 text-secondary ${disabled ? 'cursor-default' : 'cursor-pointer'}`}>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.currentTarget.checked)}
         className="mt-2 accent-[var(--brand)]"
       />
@@ -369,11 +372,11 @@ export function IntegrationRow({
         </span>
         {status}
       </span>
-      {it.status !== 'fresh' && (
-        <Button variant="secondary" size="sm" onClick={onRefresh}>
-          {t('Re-integrate')}
-        </Button>
-      )}
+      {/* Always there: a fresh block can still sit beside an older plugin or hooks. */}
+      <Button variant={it.status !== 'fresh' ? 'secondary' : 'ghost'} size="sm" onClick={onRefresh}
+        title={t("Write Setup's files into this folder again, for the tools it records. Your own settings stay.")}>
+        {t('Re-integrate')}
+      </Button>
       {it.tools && installed && (
         <ToolsLine project={it.project} tools={it.tools} installed={installed} lost={it.lost} importable={it.importable}
           ignored={it.ignored} onConnect={onConnect} onIgnore={onIgnore} />

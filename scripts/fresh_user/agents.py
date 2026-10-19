@@ -58,6 +58,17 @@ class Tool:
         """The message on stdin instead of in the command, for a tool that reads it there."""
         return None
 
+    def last_log(self, space: Space) -> str:
+        try:
+            return (space.root / f"{self.name}-turn-{self.turns:02d}.log").read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    def helpers(self, space: Space) -> list[str]:
+        """The helper agents the last turn started, each as how it was told
+        to run: the model asked for, "chat" for none."""
+        return []
+
     def say(self, message: str, model: str, space: Space, env: dict[str, str], seconds: int, folder: Path | None = None) -> Turn:
         import time
         start = time.time()
@@ -118,8 +129,41 @@ class ClaudeCode(Tool):
                     cost_usd=float(d.get("total_cost_usd") or 0), error=str(d.get("subtype") or "") if d.get("is_error") else "")
 
 
+    def helpers(self, space: Space) -> list[str]:
+        out = []
+        for line in self.last_log(space).splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            content = ((rec.get("message") or {}).get("content") if isinstance(rec, dict) and rec.get("type") == "assistant" else None) or []
+            for c in content if isinstance(content, list) else []:
+                if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name") in ("Agent", "Task"):
+                    out.append(str((c.get("input") or {}).get("model") or "chat"))
+        return out
+
+
 class Codex(Tool):
     hooks_trusted: bool = False
+
+    def helpers(self, space: Space) -> list[str]:
+        # `codex exec` prints no tool calls: the session logs have them (a
+        # helper gets a log of its own), in the order they were made.
+        calls = []
+        for log in (space.home / ".codex" / "sessions").rglob("rollout-*.jsonl"):
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                pl = rec.get("payload") if isinstance(rec, dict) else None
+                if isinstance(pl, dict) and pl.get("type") == "function_call" and str(pl.get("name") or "").endswith("spawn_agent"):
+                    try:
+                        args = json.loads(pl.get("arguments") or "{}")
+                    except ValueError:
+                        args = {}
+                    calls.append((str(rec.get("timestamp") or ""), str(args.get("model") or "chat")))
+        return [model for _, model in sorted(calls)]
 
     def learn_session(self, output: str) -> None:
         # `codex exec` prints its header with "session id: <uuid>"; the test
@@ -175,6 +219,20 @@ class OpenCode(Tool):
         if model:
             base += ["--model", model]
         return base if self.turns == 0 else [*base, "--session", self.session]
+
+    def helpers(self, space: Space) -> list[str]:
+        """As subagent:model — OpenCode's task tool names a subagent, not a model."""
+        out = []
+        for line in self.last_log(space).splitlines():
+            try:
+                part = json.loads(line).get("part") or {}
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(part, dict) and part.get("tool") == "task":
+                state = part.get("state") or {}
+                model = (state.get("metadata") or {}).get("model") or {}
+                out.append(f"{(state.get('input') or {}).get('subagent_type')}:{model.get('providerID')}/{model.get('modelID')}")
+        return out
 
     def read(self, out: str) -> Turn:
         texts, errors, cost = [], [], 0.0

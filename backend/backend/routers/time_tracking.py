@@ -20,8 +20,9 @@ current entry and opens a fresh one, so every entry keeps one honest rate.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
@@ -54,7 +55,7 @@ def _parse(ts: str) -> datetime | None:
 def _int(value: Any) -> int:
     try:
         return int(float(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):   # "inf" is a float too
         return 0
 
 
@@ -99,7 +100,8 @@ def _load(store: ViewStore, entry_id: str) -> dict:
     return row
 
 
-def _patch(store: ViewStore, entry_id: str, updates: Any) -> dict:
+def _patch(store: ViewStore, entry_id: str,
+           updates: "dict[str, Any] | Callable[[dict[str, str]], dict[str, Any]]") -> dict:
     """Write columns straight to the CSV row, then rebuild the views.
 
     ``updates`` is the columns, or a function of the row as it stands under
@@ -151,7 +153,10 @@ def time_start(
         )
 
     now = _now()
-    share = _int(body.get("share_pct")) or 100
+    # Absent is the whole of it; a value given must be one: 0 or "abc"
+    # used to start the timer at 100 % without a word.
+    given = body.get("share_pct")
+    share = 100 if given in (None, "") else _int(given)
     if not 1 <= share <= 100:
         raise HTTPException(status_code=422, detail="share_pct must be 1-100")
 
@@ -253,12 +258,19 @@ def time_stop(
     return _patch(store, entry_id, stop)
 
 
+def _minute() -> int:
+    """Part of the ETag of an answer that holds elapsed time: a running
+    timer moves it with no write, and a stamp kept by the files alone
+    answered the minute poll with 304 and the old total."""
+    return int(time.time() // 60)
+
+
 @router.get("/api/time/running")
 def time_running(
     request: Request, store: ViewStore = Depends(get_store)
 ) -> Response:
     """Every open timer, across all projects — the global "still ticking" view."""
-    etag = etag_for("time:running", store)
+    etag = etag_for(f"time:running:{_minute()}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
     rows = store.query(
@@ -280,7 +292,7 @@ def time_summary(
 ) -> Response:
     """Attributed minutes for today, the last 7 days, and per goal — of a
     project, of one task (``task_id``), or of everything."""
-    etag = etag_for(f"time:summary:{project}:{task_id}", store)
+    etag = etag_for(f"time:summary:{project}:{task_id}:{_minute()}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
 
@@ -292,7 +304,7 @@ def time_summary(
         where.append("CAST(task_id AS VARCHAR) = ?")
         params.append(task_id)
     clause = ("WHERE " + " AND ".join(where)) if where else ""
-    rows = store.query(f"SELECT * FROM {ENT.view} {clause}", params)
+    rows = store.query(f"SELECT * FROM {ENT.view} {clause}", tuple(params))
 
     now = _now()
     today = today_yymm_dd()

@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '../../../../components/primitives'
-import { laneOf } from '../model'
+import { laneOf, laneUpdate as laneWrite } from '../model'
 import type { TaskRow } from '../model'
 import { ARCHIVE } from './model'
 import type { Patch } from './writes'
@@ -16,7 +16,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
   tasks: TaskRow[]
   today: string
   columnKeyOf: (t: TaskRow) => string
-  patchMany: (rows: Patch[]) => Promise<void>
+  patchMany: (rows: Patch[]) => Promise<number>
   setArchived: (ids: string[], on: boolean) => Promise<void>
 }) {
   const [selection, setSelection] = useState<string[]>([])
@@ -60,7 +60,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     const n = selectedTasks.length
     const headline = String(first.title ?? '').slice(0, 32)
     setSelection([])
-    await patchMany(writes)
+    if (await patchMany(writes)) return
     toast.success(t('Grouped {n} into a queue behind “{headline}”', { n, headline }), {
       action: { label: t('Undo'), onClick: () => void patchMany(before) },
     })
@@ -90,9 +90,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     const lower = idx > 0 ? pos(inTarget[idx - 1]!) : idx === 0 ? pos(inTarget[0]!) - moving.length - 1 : (inTarget.length ? pos(inTarget[inTarget.length - 1]!) : 0)
     const upper = idx >= 0 ? pos(inTarget[idx]!) : lower + moving.length + 1
     const step = (upper - lower) / (moving.length + 1)
-    const laneUpdate = targetLane && targetLane !== 'unassigned'
-      ? { assignee: targetLane, lane: targetLane }
-      : {}
+    const laneUpdate = laneWrite(targetLane)
     const before = moving.map((t) => ({ id: t.id, patch: {
       status: String(t.status || ''), position: String(pos(t)),
       assignee: String(t.assignee || ''), lane: String(t.lane || ''),
@@ -102,7 +100,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     } as Record<string, string> }))
     const n = moving.length
     setSelection([])
-    await patchMany(writes)
+    if (await patchMany(writes)) return
     toast.success(t('{n} moved', { n }), {
       action: { label: t('Undo'), onClick: () => void patchMany(before) },
     })
@@ -113,7 +111,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     const before = selectedTasks.map((t) => ({ id: t.id, patch: { today_on: t.today_on || '' } }))
     const rows = selectedTasks.map((t) => ({ id: t.id, patch: { today_on: today } }))
     setSelection([])
-    await patchMany(rows)
+    if (await patchMany(rows)) return
     toast.success(tn(rows.length, '{n} task planned for today', '{n} tasks planned for today'), {
       action: { label: t('Undo'), onClick: () => void patchMany(before) },
     })

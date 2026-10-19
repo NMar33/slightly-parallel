@@ -304,7 +304,10 @@ export default function ProjectPage({
         className="focus:outline-none"
       >
         <PanelBoundary name={t('The {tab} tab', { tab })} resetKey={`${data.code}:${tab}`}>
-        <Suspense fallback={<LoadingSkeleton variant="card" count={3} />}>
+        {/* Keyed by the project: /project/A → /project/B keeps this page,
+            and a tab kept A's state — a selection, a task armed for a link —
+            to act on B's board. */}
+        <Suspense key={data.code} fallback={<LoadingSkeleton variant="card" count={3} />}>
         {tab === 'overview'  && <OverviewTab   payload={data} />}
         {tab === 'agents'    && <AgentsTab     agents={data.agents} projectCode={data.code} />}
         {tab === 'decisions' && (

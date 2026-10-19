@@ -168,3 +168,18 @@ def test_the_tags_in_an_imported_chat_are_read_never_acted_on(tmp_path: Path) ->
     for table in ("keep_marks", "important_tags", "done_tags", "prompt_marks"):
         assert st.query(f"SELECT count(*) AS n FROM {table}")[0]["n"] == 0, table
     assert st.query("SELECT count(*) AS n FROM sessions WHERE agent_id = 'cc-bbbb2222'")[0]["n"] == 1
+
+
+def test_a_codex_message_with_an_image_or_a_leading_bracket_is_kept(tmp_path: Path) -> None:
+    """Codex frames an attached image with <image …> parts before the text,
+    and the whole message was dropped as Codex's own; so was one the person
+    began with "<". A line that is JSON and no record ("null") is skipped."""
+    def user(*parts):
+        return {"timestamp": _utc(time.time()), "type": "response_item", "payload": {
+            "type": "message", "role": "user", "content": [{"type": "input_text", "text": p} for p in parts]}}
+    f = tmp_path / "rollout.jsonl"
+    recs = [user("<environment_context>\n<cwd>/x</cwd>\n</environment_context>"),
+            user('<image name="shot.png">', "</image>", "Same thing here?"),
+            user("<div> renders twice, why?")]
+    f.write_text("null\n[]\n" + "\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
+    assert [t["user"] for t in sessionimport.codex_turns(f)] == ["Same thing here?", "<div> renders twice, why?"]

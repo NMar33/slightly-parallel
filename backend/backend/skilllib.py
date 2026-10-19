@@ -225,20 +225,7 @@ def _validate(store: ViewStore, kid: str, skill_md: str, files: Any) -> tuple[st
 
 
 def _set_fields(store: ViewStore, kid: str, fields: dict[str, Any], rebuild: bool = True) -> None:
-    ent = ENTITIES["skill"]
-    values = {k: str(v) for k, v in fields.items()}
-
-    def mutate(rows: list[dict[str, str]]) -> bool:
-        touched = False
-        for r in rows:
-            if r.get("id") == kid and any(r.get(k) != v for k, v in values.items()):
-                r.update(values)
-                touched = True
-        return touched
-
-    rewrite_rows(store.data_root / ent.csv, ent.columns, mutate)
-    if rebuild:
-        store.rebuild()
+    keeplib._set_fields(store, "skill", kid, fields, rebuild)
 
 
 def write_version(

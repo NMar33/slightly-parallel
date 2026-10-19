@@ -33,7 +33,7 @@ from .deps import (
     create_answer, etag_for, get_store, json_response, maybe_304, mint_id,
     rewrite_one, task_brief,
 )
-from .tasks_extra import _append_events
+from ..taskevents import append_events as _append_events
 from ..date_utils import now_iso
 from .. import limits
 

@@ -136,7 +136,7 @@ def _upgrade_header(csv_path: Path, columns: Sequence[str]) -> list[str]:
 def rewrite_rows(
     csv_path: Path,
     columns: Sequence[str],
-    mutate: "callable[[list[dict[str, str]]], bool]",
+    mutate: Callable[[list[dict[str, str]]], bool],
 ) -> bool:
     """Read-modify-write the whole file under the sidecar lock.
 

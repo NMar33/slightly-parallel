@@ -329,3 +329,6 @@ def _codex_config_in_tmp(tmp_path, monkeypatch):
     never the real one."""
     from backend.routers import setup as setup_router
     monkeypatch.setattr(setup_router, "CODEX_CONFIG_PATH", tmp_path / "codex-home" / "config.toml")
+    # Start at login and the shortcut: never the real login or desktop.
+    monkeypatch.setattr(setup_router, "AUTOSTART_HOME", tmp_path / "home")
+    monkeypatch.setattr(setup_router, "AUTOSTART_ROOT", tmp_path / "app")

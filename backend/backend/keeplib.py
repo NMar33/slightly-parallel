@@ -226,7 +226,9 @@ def interpret(
     return versions
 
 
-def _set_fields(store: ViewStore, kind: str, kid: str, fields: dict[str, Any]) -> None:
+def _set_fields(store: ViewStore, kind: str, kid: str, fields: dict[str, Any], rebuild: bool = True) -> None:
+    """Set columns of one kept row (a rule, problem, vision, artifact or
+    skill) by id. ``rebuild=False`` for a caller that writes more first."""
     ent = ENTITIES[kind]
     values = {k: str(v) for k, v in fields.items()}
 
@@ -239,7 +241,8 @@ def _set_fields(store: ViewStore, kind: str, kid: str, fields: dict[str, Any]) -
         return touched
 
     rewrite_rows(store.data_root / ent.csv, ent.columns, mutate)
-    store.rebuild()
+    if rebuild:
+        store.rebuild()
 
 
 # ---------------------------------------------------------------------------

@@ -788,8 +788,25 @@ def test_map_asks_the_operator_and_names_the_model_before_anything_runs(root: Pa
     cap = capture.TurnCapture(root, "alpha", "cc-map")
     text = capture.format_signals(cap.open_turn("please #map the program"))
     line = next(x for x in text.splitlines() if x.startswith("[slightly-parallel] #map"))
-    assert "ask the user now" in line and "helper agent on sonnet, or later?" in line
+    assert "ask the user now" in line and "helper agent on sonnet (the Agent tool with model)" in line
+    assert "another model: haiku, sonnet or opus, or later?" in line
     assert "Do not call map_material" in line
+
+
+def test_each_tool_is_offered_the_helper_the_way_it_starts_one(root: Path) -> None:
+    """Claude Code names a model per helper, Codex too (spawn_agent), and
+    OpenCode runs the subagent its plugin defined from Settings; "chat" is
+    the chat's own model."""
+    (root / "settings.json").write_text(json.dumps({"map": {"model_codex": "gpt-6-luna", "model_opencode": "openai/gpt-6-luna"}}),
+                                        encoding="utf-8")
+    cap = capture.TurnCapture(root, "alpha", "cc-map2")
+    signals = cap.open_turn("#map and #standup")
+    line = lambda tool, tag: next(x for x in capture.format_signals(signals, tool).splitlines() if x.startswith(f"[slightly-parallel] #{tag}"))
+    assert 'on gpt-6-luna (spawn_agent with model "gpt-6-luna")' in line("codex", "map")
+    assert "on this chat's model (spawn_agent without model)" in line("codex", "standup")
+    assert "on openai/gpt-6-luna (the task tool, subagent_type sp-map), or this chat's model (subagent_type general)" in line("opencode", "map")
+    assert "on this chat's model (the task tool, subagent_type general), or later?" in line("opencode", "standup")
+    assert "on opus (the Agent tool with model)" in line("claude-code", "standup")
 
 
 
@@ -826,3 +843,46 @@ def test_a_hook_reads_and_writes_utf8_whatever_the_system_code_page(tmp_path: Pa
     assert "·" in out.stdout.decode("utf-8")
     chat = (root / "projects" / "alpha" / "chats" / "cc-5a5a5a5a" / "chat.md").read_text(encoding="utf-8")
     assert "Проверка: прочитай заметки" in chat
+
+
+def test_a_part_of_the_turn_not_kept_lands_in_the_hook_errors(root: Path) -> None:
+    """turns.jsonl and work.jsonl failed to write without a trace; the turn
+    still completes, and the dashboard's hook errors name what was lost."""
+    cap = capture.TurnCapture(root, "alpha", "cc-lost0001")
+    cap.open_turn("question")
+    cap.note_origin("claude-code", "s1", str(root))
+    (cap.folder / "turns.jsonl").mkdir()  # a folder where the file goes: open() fails
+    (cap.folder / "work.jsonl").mkdir()
+    cap.complete_turn("answer", touched=[str(root / "a.txt")])
+    assert "**Agent**: answer" in cap.chat_path.read_text(encoding="utf-8")
+    lines = [json.loads(l) for l in (root / ".capture" / "errors.jsonl").read_text(encoding="utf-8").splitlines()]
+    lost = {l["error"].split(":")[0] for l in lines if l["agent_id"] == "cc-lost0001"}
+    assert {"turn times not kept", "work stamp not kept"} <= lost
+
+
+@pytest.mark.parametrize("payload", [
+    "not json",
+    json.dumps({"type": "approval-requested", "cwd": "/x"}),
+    json.dumps({"type": "agent-turn-complete", "cwd": ""}),
+    json.dumps({"type": "agent-turn-complete", "cwd": "/not/registered"}),
+])
+def test_codex_notify_ignores_what_is_not_a_turn_here(root: Path, monkeypatch, payload: str) -> None:
+    """Codex's notify is global: every event of every folder arrives. Only a
+    finished turn in a registered folder is written; the rest exit 0, silent."""
+    codex = _load("sp_codex", "codex-capture.py")
+    (root / "integrations.csv").write_text("project,path,created_date\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["codex-capture.py", "--data-root", str(root), payload])
+    assert codex.main() == 0
+    assert not (root / "projects").exists() and not (root / ".capture").exists()
+
+
+def test_codex_notify_that_cannot_write_records_why(root: Path, tmp_path: Path, monkeypatch) -> None:
+    codex = _load("sp_codex", "codex-capture.py")
+    (root / "integrations.csv").write_text(f"project,path,created_date\nalpha,{tmp_path},2608-14\n", encoding="utf-8")
+    (root / "projects").write_text("a file where the folder goes", encoding="utf-8")
+    payload = json.dumps({"type": "agent-turn-complete", "cwd": str(tmp_path), "thread-id": "t1",
+                          "input-messages": ["q"], "last-assistant-message": "a"})
+    monkeypatch.setattr(sys, "argv", ["codex-capture.py", "--data-root", str(root), payload])
+    assert codex.main() == 0     # never breaks Codex
+    err = json.loads((root / ".capture" / "errors.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert err["tool"] == "codex" and err["project"] == "alpha"

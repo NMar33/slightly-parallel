@@ -72,14 +72,14 @@ def test_deck_bands_count_a_task_from_its_join(client: TestClient) -> None:
 
 
 def test_link_update_of_a_link_deleted_meanwhile_is_404(client: TestClient, root: Path, monkeypatch) -> None:
-    from backend.routers import tasks_extra
+    from backend.routers import task_links
 
     a, b = make_task(client, "a"), make_task(client, "b")
     lid = client.post(f"/api/tasks/{a}/link", json={"to": b, "kind": "blocks"}).json()["link"]["id"]
     stale = _rows(root / "task_links.csv")
     assert client.post(f"/api/tasks/links/{lid}/delete", json={}).status_code == 200
     # The handler's own read is a moment old: the link is still in it.
-    monkeypatch.setattr(tasks_extra, "read_rows", lambda path, *a, **k: [dict(r) for r in stale])
+    monkeypatch.setattr(task_links, "read_rows", lambda path, *a, **k: [dict(r) for r in stale])
     r = client.post(f"/api/tasks/links/{lid}/update", json={"kind": "relates"})
     assert r.status_code == 404, r.text
     assert _rows(root / "task_links.csv") == []
@@ -580,14 +580,14 @@ def test_all_rules_sync_keeps_a_set_recorded_meanwhile(client: TestClient, tmp_p
 def test_hook_settings_of_another_shape(text: str) -> None:
     from fastapi import HTTPException
 
-    from backend.routers import setup
+    from backend import integration_text
 
     try:
-        new, action = setup._upsert_hooks(text, "python3 claude-code-capture.py")
+        new, action = integration_text._upsert_hooks(text, "python3 claude-code-capture.py")
         assert "claude-code-capture.py" in new
     except HTTPException as exc:
         assert exc.status_code == 422
-    assert setup._remove_hooks(text)[1] in ("unchanged", "updated")
+    assert integration_text._remove_hooks(text)[1] in ("unchanged", "updated")
 
 
 # 21 — what is typed into a terminal is written off the event loop ------------

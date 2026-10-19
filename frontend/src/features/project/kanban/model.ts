@@ -352,6 +352,17 @@ export function normalizeStatus(s: unknown): string {
 export const laneOf = (t: TaskRow): string => t.assignee || 'unassigned'
 
 /**
+ * What a card dropped into a lane writes. The unassigned lane clears the
+ * assignee — the lane is read from it — as renaming a lane already did; a
+ * drop there used to write nothing, and the card went back to its old lane.
+ * No lane (the board without swim lanes) writes nothing.
+ */
+export function laneUpdate(targetLane: string | undefined): { assignee: string; lane: string } | Record<string, never> {
+  if (!targetLane) return {}
+  return targetLane === 'unassigned' ? { assignee: '', lane: '' } : { assignee: targetLane, lane: targetLane }
+}
+
+/**
  * Today — a lens, not a place. Ctrl/⌘-click a card and it joins the Today
  * lane while staying exactly where it lives; the two are one task drawn
  * twice, so moving either moves both. The mark is a date, so tomorrow the

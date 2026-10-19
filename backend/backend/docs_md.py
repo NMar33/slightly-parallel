@@ -79,7 +79,7 @@ def read_detail(data_root: Path, md_ref: str) -> tuple[str, list[str], str]:
         return "", [], ""
     try:
         return parse_sections(path.read_text(encoding="utf-8"))
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return "", [], ""
 
 

@@ -23,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from ..db import ViewStore
-from ..gitwork import SAFE_GIT
+from ..gitwork import SAFE_GIT, git
 from .deps import PROJECT_CODE_RE, etag_for, get_store, json_response, maybe_304, not_found
 
 router = APIRouter()
@@ -112,6 +112,30 @@ def _git_log(cwd: str, since: str, until: str) -> list[str] | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.splitlines() if out.returncode == 0 else None
+
+
+# (folder, since, until, HEAD) → (detail, stats). The log of the whole span
+# was read and folded on every open of the page: 2.6 s on this repository.
+# The same HEAD over the same span is the same answer.
+_git_cache: dict[tuple[str, str, str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
+_GIT_CACHE_MAX = 16
+
+
+def _git_part(cwd: str, since: str, until: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    head = (git(Path(cwd), "rev-parse", "HEAD") or "").strip() if cwd and (Path(cwd) / ".git").exists() else ""
+    key = (cwd, since, until, head)
+    if head and key in _git_cache:
+        return _git_cache[key]
+    lines = _git_log(cwd, since, until)
+    if not lines:
+        return None
+    detail = _git_detail(lines)
+    out = (detail, _git_stats(detail, lines))
+    if head:
+        if len(_git_cache) >= _GIT_CACHE_MAX:
+            _git_cache.pop(next(iter(_git_cache)))
+        _git_cache[key] = out
+    return out
 
 
 def _git_detail(lines: list[str]) -> dict[str, Any]:
@@ -361,10 +385,10 @@ def timelapse_source(
     stats: dict[str, Any] = {"turns": turns}
     detail: dict[str, Any] = {}
     if span["start"]:
-        lines = _git_log(_project_cwd(store.data_root, project), span["start"], span["end"])
-        if lines:
-            detail = _git_detail(lines)
-            stats |= _git_stats(detail, lines)
+        got = _git_part(_project_cwd(store.data_root, project), span["start"], span["end"])
+        if got:
+            detail, more = got
+            stats |= more
 
     return json_response({
         "project": project,

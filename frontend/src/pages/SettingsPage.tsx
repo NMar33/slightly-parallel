@@ -8,6 +8,7 @@ import { WithContents } from '../components/WithContents'
 import { AppearanceCard } from '../features/settings/AppearanceCard'
 import { SidebarCard } from '../features/settings/SidebarCard'
 import { PromptsCard } from '../features/settings/PromptsCard'
+import { ComputerCard } from '../features/setup/Computer'
 import { Button, Input } from '../components/primitives'
 import { ErrorBanner, LoadingSkeleton } from '../components/states'
 import {
@@ -82,6 +83,7 @@ export default function SettingsPage() {
           label={t('On this page')}
           items={[
             { id: 'language', text: t('Language') },
+            { id: 'computer', text: t('On this computer') },
             ...query.data.groups.map((g) => ({
               id: groupAnchor(g.name),
               text: t(g.name),
@@ -101,6 +103,7 @@ export default function SettingsPage() {
             </div>
             <LanguagePicker />
           </section>
+          <div id="computer" className="scroll-mt-16"><ComputerCard /></div>
           {query.data.groups.map((group) => (
             <section
               key={group.name}

@@ -10,6 +10,10 @@
     python3 sp.py logs              follow the server log
     python3 sp.py terminal on|off   the embedded terminal: a setting of
                                          the running server, no restart
+    python3 sp.py open              open the app in the browser, starting the
+                                         server first when it is not running
+    python3 sp.py autostart on|off  start the server when you log in
+    python3 sp.py shortcut [off]    a desktop and menu shortcut that runs open
 
 `./sp.sh …` and `./run.sh …` (Linux, macOS) and `sp …` (Windows,
 sp.cmd) run this file. Configuration comes from .env (see .env.example):
@@ -503,6 +507,10 @@ def prepare(ui: bool = True) -> dict[str, str]:
         print("[run]       A data root holds the ledgers (tasks.csv, decisions.csv, …) and one folder", flush=True)
         print("[run]       per observed project under projects/<code>/. An empty folder is fine: Setup fills it.", flush=True)
     env["DATA_ROOT"] = data
+    # Two malloc arenas, not one per thread: the server's freed memory stayed
+    # with each of its ~40 threads. 357 → 294 MB under load, no slower
+    # (docs/performance.md). glibc only; macOS and Windows ignore it.
+    env.setdefault("MALLOC_ARENA_MAX", "2")
     env["HOST"] = env.get("HOST") or "127.0.0.1"
     env["PORT"] = env.get("PORT") or env.get("SP_PORT") or env.get("SCAN_PORT") or "8123"
     return env
@@ -791,14 +799,66 @@ def cmd_terminal(args: list[str]) -> None:
         cmd_status()
 
 
+def autostart_module():
+    """backend/backend/autostart.py, by path: standard library only, and the
+    backend's own environment may not exist yet."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sp_autostart", ROOT / "backend" / "backend" / "autostart.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def cmd_open(_: list[str] | None = None) -> None:
+    """The shortcut's command: start it when it is not up, then open it."""
+    import webbrowser
+    if not health():
+        cmd_up([])
+    dev = running() and MODE_FILE.exists() and MODE_FILE.read_text().strip() == "dev"
+    url = app_url() if dev else base_url()
+    say(f"opening {url}")
+    webbrowser.open(url)
+
+
+def _switch(kind: str, args: list[str], what_on: str) -> None:
+    auto = autostart_module()
+    word = args[0] if args else ("on" if kind == "shortcut" else "status")
+    if word == "on":
+        for path in auto.enable(ROOT, kind, python=sys.executable):
+            say(f"{kind}: {path}")
+        say(what_on)
+    elif word == "off":
+        gone = auto.disable(ROOT, kind)
+        say(f"{kind} off" + (f" — removed {', '.join(gone)}" if gone else " — nothing was there"))
+    else:
+        st = auto.status(ROOT)[kind]
+        say(f"{kind}: {'on — ' + ', '.join(st['paths']) if st['on'] else 'off'}")
+
+
+def cmd_autostart(args: list[str]) -> None:
+    _switch("autostart", args, "the server starts when you log in (sp autostart off to stop)")
+
+
+def cmd_shortcut(args: list[str]) -> None:
+    _switch("shortcut", args, "the shortcut opens the app, and starts the server first when it is not running")
+
+
 COMMANDS = {
     "run": cmd_run, "up": cmd_up, "down": cmd_down, "restart": cmd_restart, "status": cmd_status,
-    "logs": cmd_logs, "terminal": cmd_terminal, "__supervise": cmd_supervise,
+    "logs": cmd_logs, "terminal": cmd_terminal, "open": cmd_open, "autostart": cmd_autostart,
+    "shortcut": cmd_shortcut, "__supervise": cmd_supervise,
 }
 
 
 def main(argv: list[str]) -> None:
     STATE.mkdir(exist_ok=True)
+    # The interpreter this ran with: the server's Setup switches write it
+    # into the autostart entry and the shortcut (backend/autostart.py).
+    try:
+        (STATE / "python").write_text(sys.executable, encoding="utf-8")
+    except OSError:
+        pass
     if not argv or argv[0] not in COMMANDS:
         print(__doc__.split("\n\n")[1])
         sys.exit(1)

@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import errno
 import json
+import logging
 import os
 import tempfile
 import time
@@ -61,7 +62,7 @@ def _try_lock(fh: Any) -> bool:
     # Windows: lock the first byte; a lock may lie past the end of an empty file.
     fh.seek(0)  # pragma: no cover
     try:  # pragma: no cover
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
         return True
     except OSError:  # pragma: no cover
         return False
@@ -73,7 +74,7 @@ def _unlock(fh: Any) -> None:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         else:  # pragma: no cover
             fh.seek(0)
-            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
     except OSError:
         pass
 
@@ -275,24 +276,51 @@ def edit_json(path: PathLike, change: Any, *, default: Any = None) -> Any:
     mutate ``data`` in place and return ``None``, or return the document to
     write instead. Returns what was written.
 
-    A file that is missing, empty, unreadable or of the wrong shape reads as
-    ``default`` (``{}`` unless given) — the same tolerance every one of
-    these readers already had, in one place.
+    A file that is missing or empty reads as ``default`` (``{}`` unless
+    given). One that holds something else — JSON that does not parse, or
+    of the wrong shape — reads as ``default`` too, and is first set aside
+    beside itself (``_set_aside``): before, the write replaced it, so a
+    hand edit with one typo in settings.json lost every setting in it. A
+    file that exists and cannot be read is an error, not an empty one.
     """
     p = Path(path)
     base = {} if default is None else default
     with acquire_flock(lock_path(p)):
         try:
             data = safe_read_json(p)
-        except (OSError, ValueError):
+        except FileNotFoundError:
             data = None
-        if data is None or not isinstance(data, type(base)):
+        except ValueError:          # JSON that does not parse (or not UTF-8)
+            _set_aside(p)
+            data = None
+        if data is not None and not isinstance(data, type(base)):
+            _set_aside(p)
+            data = None
+        if data is None:
             data = copy.deepcopy(base)
         out = change(data)
         if out is None:
             out = data
         atomic_write_json(p, out)
     return out
+
+
+def _set_aside(p: Path) -> None:
+    """Keep a JSON state file that does not read as its kind, as
+    ``<name>.unreadable-<stamp>`` beside it, before a write replaces it.
+    An empty file holds nothing to keep."""
+    try:
+        if p.stat().st_size == 0:
+            return
+    except FileNotFoundError:
+        return
+    stem = f"{p.name}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}"
+    kept, n = p.with_name(stem), 1
+    while kept.exists():            # two in one second: never one over the other
+        n += 1
+        kept = p.with_name(f"{stem}-{n}")
+    os.replace(p, kept)
+    logging.getLogger("sp.files").warning("%s did not read as JSON of its kind: kept as %s", p.name, kept.name)
 
 
 @contextmanager
@@ -321,7 +349,7 @@ def acquire_flock(
             f.write("--- turn ---\\n")
 
     Note: ``flock`` is advisory — code that ignores it can still corrupt.
-    All Slightly Parallel writers (the capture hooks, migrate.py) must cooperate.
+    All Slightly Parallel writers (the capture hooks) must cooperate.
     """
     if fcntl is None and msvcrt is None:  # pragma: no cover
         raise FileSafetyError("no file locking on this platform")

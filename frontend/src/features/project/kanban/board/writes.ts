@@ -26,8 +26,10 @@ export function boardWrites({ setTasks, bump }: {
   bump: () => void
 }) {
   /** Write a field across many tasks at once — used by the day's actions,
-   *  which are undoable rather than confirmed: the board's own philosophy. */
-  const patchMany = async (rows: Patch[]) => {
+   *  which are undoable rather than confirmed: the board's own philosophy.
+   *  Answers how many did not save: a caller says "done" only at 0 (it
+   *  said "3 moved" under "2 of 3 didn't save"). */
+  const patchMany = async (rows: Patch[]): Promise<number> => {
     setTasks((cur) => cur.map((t) => {
       const hit = rows.find((r) => r.id === t.id)
       return hit ? { ...t, ...hit.patch } : t
@@ -40,6 +42,7 @@ export function boardWrites({ setTasks, bump }: {
     }
     if (failed) toast.error(t('{failed} of {total} didn\'t save', { failed, total: rows.length }))
     bump()
+    return failed
   }
 
   const setArchived = async (ids: string[], on: boolean) => {

@@ -8,7 +8,7 @@ import { type Dispatch, type SetStateAction } from 'react'
 import { toast } from '../../../../components/primitives'
 import { postJson } from '../../../../lib/getJson'
 import { OPERATOR_ACTOR } from '../../types'
-import { SELECTION, isToday, laneOf, normalizeStatus, parseBulk } from '../model'
+import { SELECTION, isToday, laneOf, laneUpdate as laneWrite, normalizeStatus, parseBulk } from '../model'
 import type { SortMode, TaskRow } from '../model'
 import { ARCHIVE } from './model'
 import { putBack } from '../boardData'
@@ -71,10 +71,7 @@ export function boardDrops({
     if (moving.length === 0) return
 
     const ids = new Set(moving.map((t) => t.id))
-    const laneUpdate =
-      targetLane && targetLane !== 'unassigned'
-        ? { assignee: targetLane, lane: targetLane }
-        : {}
+    const laneUpdate = laneWrite(targetLane)
     const prevTasks = tasks
     setTasks((prev) =>
       prev.map((t) =>
@@ -185,10 +182,7 @@ export function boardDrops({
 
     const updates: Partial<TaskRow> = { position: String(newPos) }
     if (normalizeStatus(task.status) !== targetStatus) updates.status = targetStatus
-    if (targetLane && targetLane !== 'unassigned' && String(task.assignee || '') !== targetLane) {
-      updates.assignee = targetLane
-      updates.lane = targetLane
-    }
+    if (targetLane && laneOf(task) !== targetLane) Object.assign(updates, laneWrite(targetLane))
 
     // Optimistic local update
     setTasks((prev) => prev.map((t) => (t.id === draggedId ? { ...t, ...updates } : t)))

@@ -109,7 +109,7 @@ def rule_from_problem(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     rule = store.query_one(f"SELECT * FROM {ENTITIES['rule'].view} WHERE id = ?", (rid,))
-    return create_answer({"metadata": rule, "kept": keeplib.record(store, "rule", rule)})
+    return create_answer({"metadata": rule, "kept": keeplib.record(store, "rule", rule) if rule else None})
 
 
 @router.post("/api/examples/remove")

@@ -311,16 +311,16 @@ def test_creates_look_under_the_lock(client: TestClient, root: Path) -> None:
     moment ago) by writing the row behind its back first: one row stays."""
     a, b = make_task(client, "one"), make_task(client, "two", created_time="10:01")
     # A task link written by the other request between this one's read and its append.
-    from backend.routers import tasks_extra
-    real = tasks_extra._link_refusal
+    from backend.routers import task_links
+    real = task_links._link_refusal
 
     def other_request_wins(rows, x, y, kind, store):
-        csvio.append_row(root / "task_links.csv", tasks_extra.TASK_LINK_COLUMNS,
+        csvio.append_row(root / "task_links.csv", task_links.TASK_LINK_COLUMNS,
                          {"id": "lk_other", "from_id": x, "to_id": y, "kind": kind, "created_at": "t", "actor": "operator"})
         return real(rows, x, y, kind, store)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(tasks_extra, "_link_refusal", other_request_wins)
+        mp.setattr(task_links, "_link_refusal", other_request_wins)
         r = client.post(f"/api/tasks/{a}/link", json={"to": b, "kind": "blocks"})
     assert r.status_code == 200 and r.json()["existing"] is True and r.json()["link"]["id"] == "lk_other"
     assert len(_rows(root / "task_links.csv")) == 1

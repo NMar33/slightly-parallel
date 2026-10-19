@@ -103,6 +103,16 @@ def test_nothing_survives_past_the_horizon():
     assert max(ages) < 14 and len(keep) == 4
 
 
+def test_a_horizon_past_three_months_keeps_a_point_that_far_back():
+    """The setting goes to two years; every automatic backup older than three
+    months was dropped however far it reached."""
+    now = datetime(2026, 9, 7, 12, 0)
+    archives = [_archive(now - timedelta(days=d)) for d in range(400)]
+    keep, _ = backup.plan_prune(archives, now, {"horizon_days": 365})
+    ages = sorted(int((now - a.at).total_seconds() // 86400) for a in keep)
+    assert len(ages) == 7 and 300 <= ages[-1] < 365
+
+
 def test_every_survivor_says_why_it_is_being_kept():
     now = datetime(2026, 9, 7, 12, 0)
     keep, _ = backup.plan_prune(
@@ -532,3 +542,24 @@ def test_a_name_that_is_not_an_archive_is_a_404(client, name):
     for verb in ("verify", "pin", "delete"):
         assert client.post(f"/api/backup/{name}/{verb}").status_code == 404
     assert client.get(f"/api/backup/{name}/download").status_code == 404
+
+
+@pytest.mark.skipif(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                    reason="needs a file its owner cannot read")
+def test_a_restore_waits_until_every_file_can_be_copied_first(roots):
+    """The safety archive skipped a file it could not read, with a line in
+    the log; the restore then deleted the original. It refuses now."""
+    data, dest = roots
+    archive = backup.create(data, dest, kind="manual")
+    locked = data / "projects" / "ALPHA" / "notes.md"
+    locked.write_text("only here\n", encoding="utf-8")
+    locked.chmod(0)
+    try:
+        # A scheduled backup still goes ahead without it.
+        assert backup.create(data, dest, kind="manual", label="routine").files == 2
+        with pytest.raises(backup.BackupError, match="notes.md"):
+            backup.restore_with_safety(dest, archive.name, data)
+        assert locked.exists()
+    finally:
+        locked.chmod(0o644)
+    assert locked.read_text(encoding="utf-8") == "only here\n"

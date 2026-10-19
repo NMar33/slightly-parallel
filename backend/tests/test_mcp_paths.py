@@ -38,6 +38,9 @@ def test_a_marked_agent_write_the_tools_make_passes(gated) -> None:
     assert r.status_code in (200, 201), r.text
     r = gated.post("/api/tasks/tk_none/report", json={"agent_id": AGENT, "summary": "x"}, headers=MARK)
     assert r.status_code != 403, r.text
+    # #undo: refused for want of a request in the chat (409), not by the gate.
+    r = gated.post("/api/undo/propose", json={"agent_id": AGENT, "ids": ["vs_1"]}, headers=MARK)
+    assert r.status_code == 409, r.text
 
 
 def test_the_list_holds_every_path_the_translator_posts_to() -> None:
@@ -45,7 +48,8 @@ def test_the_list_holds_every_path_the_translator_posts_to() -> None:
                  "/api/tasks/tk_1/report", "/api/tasks/tk_1/evidence", "/api/tasks/tk_1/story",
                  "/api/standups/claim", "/api/standups/postpone", "/api/architecture/page",
                  "/api/map", "/api/docs/dc_1/versions", "/api/artifacts/ar_1/write",
-                 "/api/skills/sk_1/draft", "/api/visions/v_1/interpretation", "/api/scans"):
+                 "/api/skills/sk_1/draft", "/api/visions/v_1/interpretation", "/api/scans",
+                 "/api/undo/propose", "/api/undo/apply", "/api/undo/restore"):
         assert mcp_may_write(path), path
     for path in ("/api/settings", "/api/backup/run", "/api/tasks/tk_1/delete",
                  "/api/decisions/x/y/update", "/api/terminal/sessions"):

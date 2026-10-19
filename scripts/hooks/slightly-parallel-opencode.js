@@ -16,6 +16,9 @@
  * messages and in its child sessions (the helpers a task tool starts), so
  * Slightly Parallel can tell the agent's working time from its wait on you.
  *
+ * When OpenCode starts (`config`), the standup and map helpers become
+ * subagents, sp-standup and sp-map, on the models Settings give.
+ *
  * What the capture core answers when a message opens (a command's notice,
  * the id a tagged message was kept under) is added to the message as a
  * synthetic part: the agent reads it, the person's own text stays as typed.
@@ -38,6 +41,8 @@ const SP = {
   dataRoot: '/path/to/data-root',
 }
 
+const OPEN_WAIT_MS = 15000
+
 export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   const seen = new Set()
   const cwd = directory || ((typeof process !== 'undefined' && process.cwd) ? process.cwd() : '')
@@ -56,7 +61,9 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   const run = async (phase, sessionID, text, extra = []) => {
     try {
       const sid = String(sessionID || 'unknown')
-      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --text ${text} --tool opencode --session ${sid} --cwd ${cwd} ${extra}`.quiet()
+      // The text on stdin: as an argument a long paste passed the system's
+      // limit, the process never started, and the message was lost.
+      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --text-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(text)}`.quiet()
       return out.text().trim()
     } catch {
       /* capture must never break the session */
@@ -121,7 +128,9 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
     return times
   }
 
-  // The last assistant message of a session, as {id, text} — or null.
+  // The reply to the session's last prompt, as {id, text} — or null when
+  // there is none after it (an answer stopped before its first message).
+  // It went past the prompt and gave the previous turn's answer as this one's.
   const lastReply = async (sessionID) => {
     try {
       const res = await client.session.messages({ path: { id: sessionID } })
@@ -129,6 +138,7 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
       for (let i = list.length - 1; i >= 0; i--) {
         const m = list[i] || {}
         const info = m.info || m
+        if (info.role === 'user') break
         if (info.role !== 'assistant') continue
         return { id: String(info.id || ''), text: textOf(m.parts || info.parts) }
       }
@@ -138,7 +148,33 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
     return null
   }
 
+  // The standup and map helpers, as subagents on the models Settings give
+  // (Settings › Agents, "in OpenCode"). OpenCode's task tool takes no model:
+  // a subagent carries its own. "chat", or no setting, defines none — the
+  // helper then runs as `general`, on the chat's model. Read when OpenCode starts.
+  const HELPERS = {
+    standup: 'Slightly Parallel: writes the daily standup, as the skill daily-standup says.',
+    map: 'Slightly Parallel: maps the program, as the skill map-the-program says.',
+  }
+  const helperAgents = async (cfg) => {
+    try {
+      const fs = await import('node:fs')
+      const settings = JSON.parse(fs.readFileSync(SP.dataRoot + '/settings.json', 'utf8'))
+      for (const job of Object.keys(HELPERS)) {
+        const model = String((settings[job] && settings[job].model_opencode) || '')
+        if (!model || model === 'chat' || !model.includes('/')) continue
+        cfg.agent = cfg.agent || {}
+        cfg.agent['sp-' + job] = { ...(cfg.agent['sp-' + job] || {}), mode: 'subagent', model, description: HELPERS[job] }
+      }
+    } catch {
+      /* no settings yet: no helper subagents */
+    }
+  }
+
   return {
+    config: async (cfg) => {
+      if (cfg && typeof cfg === 'object') await helperAgents(cfg)
+    },
     'chat.message': async (input, output) => {
       try {
         const msg = (output && output.message) || {}
@@ -147,7 +183,13 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         if (key !== 'user:' && seen.has(key)) return
         seen.add(key)
         const text = textOf(output && output.parts)
-        const notice = text ? await run('open', sessionID, text) : ''
+        // OpenCode waits for this hook before it sends the prompt: a capture
+        // that hangs (a stalled disk) must not hold the prompt. Past the wait
+        // the notice is left out; the capture itself still finishes.
+        const notice = text ? await Promise.race([
+          run('open', sessionID, text),
+          new Promise((done) => setTimeout(() => done(''), OPEN_WAIT_MS)),
+        ]) : ''
         const parts = output && output.parts
         const first = Array.isArray(parts) && parts.find((p) => p && p.type === 'text')
         if (notice && first) {

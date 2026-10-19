@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
-from .. import archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, skilllib, repomap
+from .. import archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, skilllib, repomap, undolib
 from ..csvio import append_if_absent, rewrite_rows
 from ..db import ViewStore
 from ..docs_md import build_detail, read_detail, resolve_under, safe_ref_part
@@ -753,7 +753,7 @@ def update_entity(
 
 
 def _filter_docs(ent: Entity) -> str:
-    specs = FILTERS.get(ent.name, _COMMON)
+    specs = _specs_for(ent)
     names = ", ".join(
         f"`{p}`" + (f" (alias {', '.join(a)})" if a else "")
         for p, a, _, _ in specs
@@ -764,7 +764,13 @@ def _filter_docs(ent: Entity) -> str:
     )
 
 
-def _list_filters(specs: list, qp: Any) -> tuple[list[str], list[Any], list[str]]:
+def _specs_for(ent: Entity) -> list:
+    """The filters of a kind's list. ?project= on a kind with no project
+    column (prompt runs) is no filter: it was a DuckDB binder error, a 500."""
+    return [s for s in FILTERS.get(ent.name, _COMMON) if s is not _PROJECT or "project" in ent.columns]
+
+
+def _list_filters(specs: Sequence, qp: Any) -> tuple[list[str], list[Any], list[str]]:
     """The WHERE clauses, their parameters and the ETag's fingerprint for a
     list read's query string."""
     clauses: list[str] = ["1=1"]
@@ -819,7 +825,7 @@ def _attach_text(store: ViewStore, ent: Entity, rows: list[dict[str, Any]]) -> N
 
 def _register(ent: Entity) -> None:
     base = ROUTE_BASES[ent.name]
-    specs = FILTERS.get(ent.name, _COMMON)
+    specs = _specs_for(ent)
     order = ORDER_BY.get(ent.name, _DEFAULT_ORDER)
     default_limit = DEFAULT_LIST_LIMIT.get(ent.name, 500)
 
@@ -838,6 +844,13 @@ def _register(ent: Entity) -> None:
             adopt_when_changed(store, "done", donelib.adopt)
         qp = request.query_params
         clauses, params, fingerprint = _list_filters(specs, qp)
+        if ent.name in undolib.HIDDEN_BY_DATE:
+            # An entry the operator archived with #undo leaves the lists;
+            # ?include_archived=1 reads it, and the detail read always does.
+            if qp.get("include_archived", "").lower() in ("1", "true", "yes"):
+                fingerprint.append("include_archived=1")
+            else:
+                clauses.append("COALESCE(archived_at, '') = ''")
         limit = _list_limit(qp, default_limit)
 
         state = ETAG_STATE.get(ent.name)

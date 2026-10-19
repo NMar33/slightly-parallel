@@ -628,6 +628,23 @@ more, a normal one its alternatives, a major one also what would undo it.
   what this agent's latest `#done` did: `tasks` (each with `result` moved ·
   already · archived and its `stretch`), or `unnamed` when no task was named
   since the previous `#done`, and `next`. The MCP tool `task_done` reads it.
+- `GET /api/undo/candidates?agent_id=` — `#undo` (undolib.py): this chat's live
+  `#undo` request (`said`: the operator's words) and the entries it could mean,
+  numbered, this chat's first. 409 when the chat has no `#undo` request. The MCP
+  tool `undo_find` reads it.
+- `POST /api/undo/propose` — the entries the operator chose. Body: `agent_id`,
+  `ids`. Answers `confirm`, the text the agent shows, ending with the reply that
+  confirms (`#undo-yes`). Archives nothing. 409 without a live request.
+- `POST /api/undo/apply` — archives the proposal, only when the operator's next
+  message after it carries `#undo-yes`; any other next message cancels the
+  request (409). Body: `agent_id`. A rule, skill, artifact or prompt takes its
+  `archived` status; a vision, problem or entry point gets `archived_at` and
+  leaves the list reads (`?include_archived=1` reads it) and the sets written
+  into AGENTS.md; a task gets `archived_at`.
+- `POST /api/undo/restore` — brings one archived entry back with the status it
+  had. Body: `id`, `agent_id?`.
+- `GET /api/undo` — every `#undo` request (`undo.csv`): `state` open · proposed ·
+  done · cancelled, the proposal, the turns and what was archived.
 - `GET /api/tasks/{task_id}/done` — the task's stretches of the chat, each from
   its first message to the `#done`: `turns`, `chats`, `minutes`, `first`,
   `done_at`; and `reopened` when it left done after.
@@ -754,15 +771,22 @@ not apply here because agents never call these.
 
 - `GET /api/setup/info` — everything the Setup page needs. Answers:
   `data_root`, `app_root`, `api_url`, `contract_path`, `contract_exists`,
-  `data_projects`, `integrations`, `adapters`, `codex`.
+  `data_projects`, `integrations`, `adapters`, `codex`, `tools_installed`,
+  `computer` (start at login and the shortcut: each `on` and its `paths`;
+  `system`; `sandbox`).
 - `POST /api/setup/data-root` — switch the data root: persisted to `.env`
   and hot-swapped in the running app. Body: `path`. Answers: `data_root`,
   `env_file`, `restart_required`.
 - `POST /api/setup/integrate` — write or refresh the integration block in a
   target project. Body: `project_code`, `project_dir`, `notes`, `dry_run`,
   `write_agents`, `write_claude_bridge`, `write_claude_hooks`,
-  `write_codex_hooks`, `write_mcp`, `write_opencode_plugin`. Answers:
+  `write_codex_hooks`, `write_mcp`, `write_opencode_plugin`, `autostart`,
+  `shortcut` (true turns it on; false leaves it as it is). Answers:
   `project_code`, `project_dir`, `dry_run`, `results`.
+- `POST /api/setup/computer` — start at login and the shortcut on this
+  computer (Settings › On this computer). Body: `autostart` and/or
+  `shortcut`, each true or false. Answers: `changed` (the files written or
+  removed), `computer`. A test server (`SP_SANDBOX=1`) answers 409.
 - `POST /api/setup/codex` — install or remove the global Codex notify hook.
   Body: `action`, `dry_run`. Answers: `action`, `file`, `file_action`,
   `line`, `status`.
@@ -962,6 +986,8 @@ the operator's pages call. By purpose:
 - tasks: `tasks`, `task_update`, `task_report`, `task_done`,
   `task_evidence_ask`, `task_evidence`, `task_work`, `task_story`
 - kept messages: `interpret`, `skill_draft`, `artifact_write`
+- entries made by mistake: `undo_find`, `undo_propose`, `undo_apply`,
+  `undo_restore` (after the operator's `#undo` and `#undo-yes`)
 - the Storyboard: `doc_version` (the finished text of a document whose
   pack the operator gave)
 - what an entry is written from: `scan_material`, `standup_material`

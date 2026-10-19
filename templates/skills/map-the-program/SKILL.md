@@ -6,15 +6,16 @@ description: "Map a program for Slightly Parallel: every part of the repository 
 The map is a table, kept in versions. Mapping reads up to 40 files and
 costs a helper run, so the operator decides first.
 
-1. **Ask first, and stop.** Say in one line: "Map the program now with a
-   helper agent on <model>, or later?" The model is the one the `#map`
-   notice names (Settings › Agents › Model that maps the program). End
+1. **Ask first, and stop.** Ask in one line the question the `#map`
+   notice gives: now on the model it names (Settings › Agents › Model
+   that maps the program, for your tool), another it offers, or later. End
    your turn there: no `map_material`, no helper, until the operator
    answers. "Later": stop; nobody asks again until the next `#map`.
    Started from the standup skill, or from `#architecture` (the server
    found the program's shape changed), the operator has already chosen:
    skip this step.
-2. **A helper agent maps.** Start one helper agent on that model. It calls
+2. **A helper agent maps.** Start one helper agent on that model, the way
+   the notice says for your tool. It calls
    `map_material`, reads the computed facts, the current map and the
    instructions, opens the files it needs, and sends the map with
    `map_write {map, note}`. `note` is one line on what changed. With no

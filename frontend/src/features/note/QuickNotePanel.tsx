@@ -117,10 +117,12 @@ export default function QuickNotePanel({ within, onText, onClose }: {
 
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  // Read through refs: the listeners below stay put while the note is typed.
+  // The close button uses it too; it used to name a `close` it could not
+  // see, and got the browser's window.close().
+  const close = useRef(() => { flushRef.current(); onCloseRef.current() }).current
 
   useEffect(() => {
-    // Read through refs: the listeners stay put while the note is typed.
-    const close = () => { flushRef.current(); onCloseRef.current() }
     if (at === -1) area.current?.focus()
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
     const onDown = (e: MouseEvent) => {
@@ -132,7 +134,7 @@ export default function QuickNotePanel({ within, onText, onClose }: {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('mousedown', onDown)
     }
-  }, [at, within])
+  }, [at, within, close])
 
   // A page-leave, or the app unmounting, is the other way a draft dies.
   useEffect(() => {

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # By hand on another branch (ci-windows): the whole check before a merge.
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -35,11 +37,33 @@ jobs:
         run: pip install -r requirements.lock -r requirements-dev.txt
       - name: Lint (unused imports and names, undefined names)
         run: python -m pyflakes backend tests ../scripts ../sp.py
+      - name: Types (pyright, basic; settings in pyproject.toml)
+        if: runner.os == 'Linux'
+        run: python -m pyright
       - name: Run tests
         run: python -m pytest -q -p no:warnings tests
       - name: API reference names every route
         if: runner.os == 'Linux'
         run: python ../scripts/check_api_doc.py
+
+  audit:
+    # Known vulnerabilities in the pinned dependencies. A job of its own: an
+    # advisory published today turns this red, not the tests.
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Python (the versions users get)
+        run: pip install pip-audit==2.10.1 && pip-audit -r backend/requirements.lock
+      - name: npm (what ships; high and critical fail, moderate is listed)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
 
   frontend:
     name: Frontend (Node 20)
@@ -146,6 +170,8 @@ jobs:
           busy = s.connect_ex(("127.0.0.1", 8123)) == 0
           print("port 8123:", "still served" if busy else "free")
           sys.exit(1 if busy else 0)
+      - name: Start at login and the shortcut, for real (the runner's own login entry, its shortcut, then off)
+        run: python scripts/ci/autostart_check.py
 
   fresh-user:
     # A new user's path, with no agent: clone, first start, every page,

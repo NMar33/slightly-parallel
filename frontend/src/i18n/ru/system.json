@@ -936,6 +936,7 @@
   "Optional. With git, scans list commits, line counts and diffs. Without it, they list the files each turn changed.": "Необязательно. С git сканы перечисляют коммиты, строки и диффы. Без git — файлы, изменённые на каждом ходе.",
   "no git · files only": "без git · только файлы",
   "Re-integrate": "Подключить заново",
+  "Write Setup's files into this folder again, for the tools it records. Your own settings stay.": "Записать файлы «Подключения» в эту папку заново, для тех инструментов, что она записывает. Ваши собственные настройки останутся.",
   "Stop recording and remove what Setup wrote; the data is kept": "Остановить запись и убрать то, что записало «Подключение»; данные сохранятся",
   "Disconnect {project}": "Отключить {project}",
   "Move all of this project's data to .trash/": "Переместить все данные проекта в .trash/",
@@ -1369,5 +1370,17 @@
     "one": "{n} сессия {tool} до подключения не записана.",
     "few": "{n} сессии {tool} до подключения не записаны.",
     "many": "{n} сессий {tool} до подключения не записано."
-  }
+  },
+  "Agents write through the server: #scan, #task, the standup, decisions. While it is not running those writes fail; the hooks still record the chats.": "Агенты пишут через сервер: #scan, #task, стендап, решения. Пока он не запущен, эти записи не проходят; чаты хуки записывают всё равно.",
+  "Starting at login runs the server in the background, with no window. The shortcut opens this page, and starts the server first when it is not running.": "Автозапуск поднимает сервер в фоне при входе в систему, без окна. Ярлык открывает эту страницу и сначала запускает сервер, если он не запущен.",
+  "Load: about 300 MB of memory while in use; the processor stays almost idle (under 0.1 %).": "Нагрузка: около 300 МБ памяти при активной работе; процессор почти не занят (меньше 0,1 %).",
+  "Turn them off in Settings › On this computer.": "Выключить можно в Настройки › На этом компьютере.",
+  "On this computer": "На этом компьютере",
+  "Start Slightly Parallel when you log in": "Запускать Slightly Parallel при входе в систему",
+  "on": "включено",
+  "recommended": "рекомендуем",
+  "A test server does not change this computer.": "Тестовый сервер не меняет настройки этого компьютера.",
+  "A shortcut in the applications menu and on the desktop": "Ярлык в меню приложений и на рабочем столе",
+  "A shortcut on the desktop": "Ярлык на рабочем столе",
+  "A shortcut on the desktop and in the Start menu": "Ярлык на рабочем столе и в меню «Пуск»"
 }

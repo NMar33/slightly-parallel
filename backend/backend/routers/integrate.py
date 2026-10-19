@@ -73,7 +73,7 @@ def compose(store: ViewStore, s: dict[str, Any]) -> str:
     ent = ENTITIES[s["kind"]]
     ids = [str(i) for i in s.get("items") or []]
     rows: dict[str, dict[str, Any]] = {}
-    cols = "id, l1, md_ref, source, status" if s["kind"] == "rule" else "id, l1, md_ref, source"
+    cols = "id, l1, md_ref, source, status, archived_at" if s["kind"] == "rule" else "id, l1, md_ref, source, archived_at"
     if ids:
         ph = ",".join("?" * len(ids))
         rows = {
@@ -90,6 +90,9 @@ def compose(store: ViewStore, s: dict[str, Any]) -> str:
         if s["kind"] == "rule" and str(row.get("status") or "active") != "active":
             continue
         if str(row.get("source") or "") == "demo":
+            continue
+        # An entry archived with #undo stays in its sets, written nowhere.
+        if str(row.get("archived_at") or "").strip() and s["kind"] != "rule":
             continue
         l2, _l3, l4 = read_detail(store.data_root, str(row.get("md_ref") or ""))
         text = (l2 or l4 or "").strip()

@@ -68,6 +68,7 @@ def _load_beside(name: str):
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         f"sp_{name.replace('-', '_')}", Path(__file__).resolve().parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

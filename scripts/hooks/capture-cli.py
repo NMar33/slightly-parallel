@@ -27,6 +27,7 @@ def _write_breadcrumb(data_root: str, project: str, agent_id: str, session: str,
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "sp_claude_code_capture", Path(__file__).resolve().parent / "claude-code-capture.py")
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     mod.write_breadcrumb(data_root, project, session, cwd, tool=tool, agent_id=agent_id)
@@ -39,6 +40,11 @@ def main() -> int:
     ap.add_argument("--data-root", required=True)
     ap.add_argument("--agent", required=True)
     ap.add_argument("--text", default="")
+    # The text on stdin instead: an argument has a size limit (128 KB on
+    # Linux, the whole command 32 767 characters on Windows), and a long
+    # paste failed to start the process and was lost. --text stays for the
+    # plugins Setup wrote before this.
+    ap.add_argument("--text-stdin", action="store_true")
     ap.add_argument("--agent-text", default="")
     # Origin (optional): lets the dashboard print a resume command.
     ap.add_argument("--tool", default="")
@@ -60,6 +66,8 @@ def main() -> int:
             print(f"[slightly-parallel] capture failed: the data root {args.data_root} does not exist — tell the user.")
         return 0
     try:
+        if args.text_stdin:
+            args.text = sys.stdin.read()
         cap = TurnCapture(args.data_root, args.project, args.agent)
         # A completion with no chat behind it (a helper session, a plugin
         # loaded mid-session) leaves no trace: noting its origin made the
@@ -72,7 +80,7 @@ def main() -> int:
             # "is the hook installed?" while the contract promised identity.
             _write_breadcrumb(args.data_root, args.project, args.agent, args.session, args.cwd, args.tool or "cli")
         if args.phase == "open":
-            notice = format_signals(cap.open_turn(args.text))
+            notice = format_signals(cap.open_turn(args.text), args.tool)
             if notice:
                 print(notice)
         elif args.phase == "complete":

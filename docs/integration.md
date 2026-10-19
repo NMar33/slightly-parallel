@@ -55,7 +55,7 @@ when to write which entry, and what each entry holds. Procedures live in
 built-in skills: `make-a-scan`, `keep-the-architecture-page`,
 `map-the-program`, `update-the-architecture`, `daily-standup`,
 `log-a-decision`, `write-a-task`, `task-evidence`, `make-an-artifact`,
-`finish-a-task`, `sp-help`.
+`finish-a-task`, `undo-a-mistake`, `sp-help`.
 Slightly Parallel installs them into `~/.claude/skills` and `~/.agents/skills`, once, for all projects.
 
 Details: [`logging.md`](logging.md) for how chats are recorded,

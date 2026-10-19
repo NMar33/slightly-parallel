@@ -350,7 +350,7 @@ def main() -> int:
             cap.note_origin(args.tool, session_id, cwd)
             write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
             signals = cap.open_turn(prompt)
-            notice = format_signals(signals)
+            notice = format_signals(signals, args.tool)
             if notice:
                 tell(notice)
         elif event == "Stop":

@@ -61,7 +61,7 @@ Good to know:
 - **The chats are recorded even when the server is not running.** The hooks write them; the server reads them when it is up.
 - **To start the server again:** `./run.sh --prod` (Windows: `sp run --prod`). To keep it running in the background: [docs/running.md](docs/running.md).
 - **Where everything is:** the data folder, one folder per project under `projects/<code>/`, the chats in it as `chat.md`, the tasks and the rest as CSV plus one Markdown file per entry. Plain files; copy the folder and you have a backup.
-- **The commands** you type in a chat: `#task`, `#now`, `#scan`, `#decision`, `#vision`, `#rule`, `#problem`, `#skill`, `#prompt`, `#important`, `#entrypoint`, `#artifact`, `#help`. Each is explained [below](#the-commands).
+- **The commands** you type in a chat: `#task`, `#now`, `#scan`, `#decision`, `#vision`, `#rule`, `#problem`, `#skill`, `#prompt`, `#important`, `#entrypoint`, `#artifact`, `#undo`, `#help`. Each is explained [below](#the-commands).
 
 Working on Slightly Parallel's own code needs Node 20+: [docs/development.md](docs/development.md).
 
@@ -165,6 +165,8 @@ The lane goes in braces right after the tag: `#now {ui} fix the login timeout`, 
 
 **`#entrypoint`** — the way into a topic. Say the topic, and the agent writes what it is, where its files and links are, how to run it, where the work stopped and what is next. Repeat it on the same topic and the state is replaced. Coming back to a project after three weeks starts here.
 
+**If a tag made an entry by mistake** (a pasted text that mentions `#vision`, a `#rule` typed by accident): **type `#undo` and say what was the mistake. The agent lists the entries by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is archived without `#undo-yes`, and nothing is deleted.**
+
 **`#help`** — the list of commands, in the chat.
 
 ### Skills
@@ -221,6 +223,7 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 - [docs/running.md](docs/running.md) — the launcher: `sp.sh up`, `status`, `logs`, `restart`, `down`; Windows.
 - [docs/development.md](docs/development.md) — the hot-reload start, tests, the lock file, the fresh-user test.
 - [docs/api.md](docs/api.md), [docs/logging.md](docs/logging.md) — the HTTP API and MCP tools; how chats are recorded.
+- [docs/performance.md](docs/performance.md) — what the server uses (memory, time), how it was measured, what was changed.
 - [docs/help.md](docs/help.md) — how to: import lost chats.
 - [AGENT-README.md](AGENT-README.md) — for an agent working on Slightly Parallel's own code.
 

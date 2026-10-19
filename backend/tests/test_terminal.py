@@ -363,3 +363,23 @@ def test_the_foreground_program_is_named_without_proc(monkeypatch) -> None:
         os.kill(s.pid, 9)
         os.waitpid(s.pid, 0)
         os.close(s.fd)
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_a_text_frame_that_is_json_but_no_message_is_typed_not_fatal(env) -> None:
+    """"5", "null", "[]" parse as JSON and are no message: they ended the
+    socket with an AttributeError. They are typed, as text that is no JSON is."""
+    c, root, work = env
+    _on(c)
+    tok = c.get("/api/terminal/state").json()["token"]
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "label": "t"}).json()["session"]["id"]
+    deadline = time.time() + 5
+    seen = b""
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}&cols=80&rows=24") as ws:
+        for frame in ("[]", "null"):
+            ws.send_text(frame)
+        ws.send_text(json.dumps({"type": "input", "data": "\x15echo mk-$((6*7))-alive\r"}))
+        while b"mk-42-alive" not in seen and time.time() < deadline:
+            seen += ws.receive_bytes()
+    assert b"mk-42-alive" in seen
+    c.post(f"/api/terminal/sessions/{sid}/close", json={})

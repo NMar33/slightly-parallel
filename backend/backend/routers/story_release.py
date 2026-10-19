@@ -37,7 +37,7 @@ from ..entities import (
 )
 from ..file_safety import atomic_write, edit_json, safe_read_json
 from .deps import create_answer, get_store, mint_id, not_found, rewrite_one, task_brief
-from .tasks_extra import _append_events
+from ..taskevents import append_events as _append_events
 from ..date_utils import now_iso
 
 router = APIRouter()

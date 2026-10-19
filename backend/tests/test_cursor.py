@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.integration_text import CURSOR_EVENTS
 from backend.routers import setup as setup_router
 from backend.server import create_app
 
@@ -216,8 +217,8 @@ def test_integrate_writes_cursor_hooks_once(env) -> None:
     assert _actions(out)[".cursor/hooks.json"] == "created"
     data = json.loads((project_dir / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
     assert data["version"] == 1
-    assert sorted(data["hooks"]) == sorted(setup_router.CURSOR_EVENTS)
-    for event in setup_router.CURSOR_EVENTS:
+    assert sorted(data["hooks"]) == sorted(CURSOR_EVENTS)
+    for event in CURSOR_EVENTS:
         cmds = [e["command"] for e in data["hooks"][event]]
         assert len(cmds) == 1
         assert "cursor-capture.py" in cmds[0] and "--project my-app" in cmds[0] and cmds[0].endswith(" || exit 0")

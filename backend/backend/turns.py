@@ -50,6 +50,20 @@ TURN_HEAD_RE = re.compile(
 )
 DESCRIPTION_HEAD_RE = re.compile(r"^##\s+Description[ \t]*$", re.MULTILINE)
 
+
+def _escape(text: str) -> str:
+    """A line of a round's text that reads as a section heading (an agent's
+    markdown with its own "## Description") is written with a backslash in
+    front, as chat.md does: it split the task into extra rounds on the next
+    read. ``_unescape`` gives the text back as it was."""
+    return "\n".join("\\" + ln if DESCRIPTION_HEAD_RE.fullmatch(ln) or TURN_HEAD_RE.fullmatch(ln) else ln
+                     for ln in text.split("\n"))
+
+
+def _unescape(text: str) -> str:
+    return "\n".join(ln[1:] if ln.startswith("\\") and (DESCRIPTION_HEAD_RE.fullmatch(ln[1:]) or TURN_HEAD_RE.fullmatch(ln[1:]))
+                     else ln for ln in text.split("\n"))
+
 # The format before this one: a generic L2 section carrying marker lines.
 _LEGACY_SECTION_RE = re.compile(r"^\s*##\s+(L2|L3|L4)\b.*$", re.MULTILINE | re.IGNORECASE)
 _LEGACY_MARK_RE = re.compile(
@@ -146,7 +160,7 @@ def parse_task_doc(text: str) -> list[Turn]:
     out: list[Turn] = []
     for i, (_start, end, n, date, time) in enumerate(heads):
         stop = heads[i + 1][0] if i + 1 < len(heads) else len(body)
-        out.append(Turn(n, date, time, body[end:stop].strip()))
+        out.append(Turn(n, date, time, _unescape(body[end:stop].strip())))
     # A document may hold turns without a Description (never seen, but
     # cheap to keep honest): renumber from 1 in order.
     if out and out[0].n != 1:
@@ -160,7 +174,7 @@ def render_turns(turns: list[Turn]) -> str:
     for t in turns:
         parts.append(heading(t.n, t.date, t.time))
         parts.append("")
-        parts.append(t.text.strip())
+        parts.append(_escape(t.text.strip()))
         parts.append("")
     return "\n".join(parts)
 
@@ -230,7 +244,10 @@ def migrate_task_docs(data_root: Path) -> int:
     for path in sorted(folder.glob("*.md")):
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # Not UTF-8 (saved by hand in another encoding): left as it is.
+            # It raised past the startup's OSError guard and the server did
+            # not start.
             continue
         if is_task_doc(text):
             continue

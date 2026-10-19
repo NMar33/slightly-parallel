@@ -198,7 +198,7 @@ def _entity_col_expr(
         return f"CAST(NULL AS {ent.sql_type(col)})"
     if ent.sql_type(col) != "VARCHAR":
         return f"TRY_CAST({qsrc} AS {ent.sql_type(col)})"
-    return qsrc
+    return _q(src)
 
 
 def _entity_select(

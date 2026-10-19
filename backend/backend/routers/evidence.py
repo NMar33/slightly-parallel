@@ -252,7 +252,8 @@ def task_report(
     with ``auto_manage`` the card moves to *review*; without it only the
     badge appears. The response says whether evidence is wanted and, when
     it is, carries the operator's instructions."""
-    from .tasks_extra import _append_events, after_status_change  # shared history writer
+    from ..taskevents import append_events as _append_events  # shared history writer
+    from .tasks_extra import after_status_change
     from ..entities import ENTITIES
 
     agent_id = str(body.get("agent_id") or "").strip()
@@ -426,7 +427,7 @@ def evidence_add(
                           **({"existing": True} if raced is not None else {})})
         new = [s for s in saved if not s.get("existing")]
         if new:
-            from .tasks_extra import _append_events
+            from ..taskevents import append_events as _append_events
             _append_events(store, task_id, agent_id, [("evidence", "", f"{len(new)} item(s)")])
     finally:
         # Whatever landed is in the view, never half on disk and half unseen.

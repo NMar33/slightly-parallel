@@ -35,3 +35,16 @@ markers = [
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+
+# CI: python -m pyright. Basic mode, without the Optional checks: they fire
+# where the code has already narrowed a value through a helper or a guard
+# pyright does not follow (98 of 102 at the start were of that kind).
+[tool.pyright]
+include = ["backend", "../scripts/hooks"]
+extraPaths = ["../scripts/hooks"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportOptionalMemberAccess = "none"
+reportOptionalSubscript = "none"
+reportOptionalIterable = "none"
+reportOptionalOperand = "none"

@@ -19,7 +19,6 @@ versions. What cannot be read is skipped and said so, never guessed.
 from __future__ import annotations
 
 import json
-import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,23 +27,31 @@ from typing import Any
 from . import capturewatch
 from .db import ViewStore
 from .file_safety import atomic_write, atomic_write_json
-from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, is_human_prompt, local_iso, session_key, yymm_dd
+from .hookshared import (
+    NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, escape_content, is_human_prompt, local_iso, session_key, yymm_dd,
+)
 
 #: A session with a message in the last hour may still be going on: the hook
 #: may yet record it, and an import now would race it.
 ACTIVE_SECONDS = 3600
 
-_STRUCTURAL_RE = re.compile(r"^(## Turn \d+ · |\*\*User\*\*: ?|\*\*Agent\*\*: ?)")
-_LINE_BREAK_RE = re.compile(r"\r\n|\r|\x0c| | ")
-#: What Codex adds to the person's side itself: context in tags, the AGENTS.md it read.
-_CODEX_OWN = ("<", "# AGENTS.md instructions")
+#: What Codex adds to the person's side itself, part by part: context in
+#: tags, the AGENTS.md it read, the frame around an attached image.
+_CODEX_OWN = ("<environment_context", "<user_instructions", "<image", "</image>", "# AGENTS.md instructions")
 
 
-def escape_content(text: str) -> str:
-    """As the hook writes a message (scripts/hooks/capture.py: escape_content):
-    a line that looks like a turn header is escaped, so the reader keeps it text."""
-    text = _LINE_BREAK_RE.sub("\n", text or "")
-    return "\n".join(("\\" + line) if _STRUCTURAL_RE.match(line) else line for line in text.split("\n"))
+def _codex_person(content: Any) -> str:
+    """The person's own words in a Codex user message. Codex sends a message
+    in parts and adds its own among them; they are left out one by one. A
+    message was dropped whole when it began with one of them: every message
+    with an attached image (``<image …>`` comes first), and every message the
+    person began with ``<``."""
+    if not isinstance(content, list):
+        return _text(content, ("input_text",))
+    return "\n".join(
+        str(p.get("text")) for p in content
+        if isinstance(p, dict) and p.get("type") == "input_text" and p.get("text")
+        and not str(p.get("text")).lstrip().startswith(_CODEX_OWN))
 
 
 def _text(content: Any, kinds: tuple[str, ...]) -> str:
@@ -93,12 +100,14 @@ def codex_turns(path: Path) -> list[dict[str, str]]:
                 rec = json.loads(line)
             except ValueError:
                 continue
-            pl = rec.get("payload") if isinstance(rec, dict) else None
+            if not isinstance(rec, dict):
+                continue  # "null", "[]": a line that is JSON and no record
+            pl = rec.get("payload")
             if rec.get("type") != "response_item" or not isinstance(pl, dict) or pl.get("type") != "message":
                 continue
             if pl.get("role") == "user":
-                text = _text(pl.get("content"), ("input_text",)).strip()
-                if not text or text.startswith(_CODEX_OWN):
+                text = _codex_person(pl.get("content")).strip()
+                if not text:
                     continue
                 turns.append({"user": text, "at": local_iso(rec.get("timestamp")), "agent": "", "end": ""})
             elif pl.get("role") == "assistant" and turns:

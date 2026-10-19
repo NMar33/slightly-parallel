@@ -53,6 +53,10 @@ TOOLS: dict[str, str] = {
     "task_update": "Edit a task. Status is the operator's.",
     "task_report": "Say a task is done, in your opinion.",
     "task_done": "After #done: what the operator's #done moved, and each task's stretch of the chat.",
+    "undo_find": "After #undo: the operator's request and the entries it could mean, numbered.",
+    "undo_propose": "Send the entries the operator chose to archive; answers the confirmation to show.",
+    "undo_apply": "After #undo-yes: archive the confirmed entries. Refused without the operator's #undo-yes.",
+    "undo_restore": "Bring back one entry archived with #undo.",
     "task_evidence_ask": "After #evidence: the operator's instructions for this task.",
     "task_evidence": "Attach evidence to a task.",
     "task_work": "The files the repository saw this task touch.",
@@ -357,6 +361,33 @@ class Translator:
                  "one-line task_report and any evidence (the skill finish-a-task). You never "
                  "change a status yourself."),
              "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "undo_find",
+             "description": (
+                 "The operator typed #undo and said what was a mistake. This returns their request "
+                 "and the entries it could mean, numbered: this chat's first, then the project's "
+                 "recent ones. Show them as a numbered list and ask for the numbers. Refused when "
+                 "the chat has no #undo request: never archive on your own initiative (the skill "
+                 "undo-a-mistake)."),
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "undo_propose",
+             "description": (
+                 "Send the ids the operator chose by number. Returns `confirm`: the text to show as "
+                 "it is — what goes to the archive, a warning, and that they reply #undo-yes to "
+                 "confirm. Nothing is archived yet."),
+             "inputSchema": {"type": "object", "properties": {
+                 "ids": {"type": "array", "items": {"type": "string"},
+                         "description": "the chosen entries' ids (vs_, rl_, pb_, ep_, sk_, ar_, pm_, tk_)"}},
+                 "required": ["ids"]}},
+            {"name": "undo_apply",
+             "description": (
+                 "The operator answered #undo-yes: archive what undo_propose recorded. The server "
+                 "checks that the operator's next message after the proposal carries #undo-yes; "
+                 "any other answer cancels the request and nothing is archived."),
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "undo_restore",
+             "description": "Bring back one entry archived with #undo, with the status it had.",
+             "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
+                             "required": ["id"]}},
             {"name": "architecture_status",
              "description": (
                  "The operator typed #architecture: which of the three parts are out of "
@@ -704,6 +735,15 @@ class Translator:
         if name == "task_done":
             who = self.identity()
             return self.api.get(f"/api/done-tags?agent_id={urllib.parse.quote(str(who['agent_id']))}")
+        if name in ("undo_find", "undo_propose", "undo_apply", "undo_restore"):
+            who = self.identity()["agent_id"]
+            if name == "undo_find":
+                return self.api.get(f"/api/undo/candidates?agent_id={urllib.parse.quote(str(who))}")
+            if name == "undo_propose":
+                return self.api.post("/api/undo/propose", {"agent_id": who, "ids": list(args.get("ids") or [])})
+            if name == "undo_apply":
+                return self.api.post("/api/undo/apply", {"agent_id": who})
+            return self.api.post("/api/undo/restore", {"agent_id": who, "id": _id(args)})
         if name == "architecture_status":
             return self.api.get(
                 f"/api/architecture/status?project={urllib.parse.quote(str(self.identity()['project']))}")

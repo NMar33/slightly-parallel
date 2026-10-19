@@ -24,7 +24,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DAY_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
-def _day(value: str | None) -> str:
+def _day(value: object) -> str:
+    if value is not None and not isinstance(value, str):
+        raise HTTPException(status_code=422, detail="date is YYMM-DD, for example 2609-20")
     day = (value or "").strip() or standuplib.yesterday()
     if not _DAY_RE.match(day):
         raise HTTPException(status_code=422, detail="date is YYMM-DD, for example 2609-20")

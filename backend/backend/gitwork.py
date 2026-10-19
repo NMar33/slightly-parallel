@@ -24,6 +24,7 @@ import os as _os
 import re as _re
 import subprocess
 import sys as _sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -34,7 +35,9 @@ GIT_TIMEOUT = 5
 #: Git is run in repositories an agent works in, and a repository's own
 #: config can name programs for git to run (a file-system monitor, hooks).
 #: These switch that off for every call made from here.
-SAFE_GIT = ("-c", "core.fsmonitor=", "-c", f"core.hooksPath={_os.devnull}")
+from .hookshared import GIT_PLAIN_PATHS, numstat_path  # noqa: E402 — shared with the hook
+
+SAFE_GIT = ("-c", "core.fsmonitor=", "-c", f"core.hooksPath={_os.devnull}", *GIT_PLAIN_PATHS)
 
 
 def git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT) -> str | None:
@@ -103,6 +106,11 @@ class Commit:
 # ---------------------------------------------------------------------------
 
 _repo_of_chat: dict[str, Path | None] = {}
+# chat → when "no repository" was found. Kept for a while, not for good: a
+# git that timed out once on a busy disk, or a `git init` after the chat
+# began, left the chat with no commits until the server restarted.
+_no_repo_at: dict[str, float] = {}
+NO_REPO_RETRY_S = 300.0
 # repo → (HEAD, its commits, the day the log was last read in full).
 _log_cache: dict[str, tuple[str, list[Commit], str]] = {}
 # work.jsonl path → (its time and size, its stamps); see read_stamps.
@@ -113,7 +121,8 @@ def repo_for_chat(chat_path: Path) -> Path | None:
     """The repository the agent ran in, from the capture's own ``cwd``."""
     key = str(chat_path)
     if key in _repo_of_chat:
-        return _repo_of_chat[key]
+        if _repo_of_chat[key] is not None or time.monotonic() - _no_repo_at.get(key, 0.0) < NO_REPO_RETRY_S:
+            return _repo_of_chat[key]
     repo: Path | None = None
     try:
         meta = json.loads((chat_path.parent / "meta.json").read_text(encoding="utf-8"))
@@ -125,12 +134,15 @@ def repo_for_chat(chat_path: Path) -> Path | None:
     except (OSError, ValueError):
         repo = None
     _repo_of_chat[key] = repo
+    if repo is None:
+        _no_repo_at[key] = time.monotonic()
     return repo
 
 
 def forget() -> None:
     """Drop every cache — for tests, and for a data root swap."""
     _repo_of_chat.clear()
+    _no_repo_at.clear()
     _log_cache.clear()
     _stamps_cache.clear()
 
@@ -235,7 +247,7 @@ def _parse_log(raw: str) -> list[Commit]:
             if len(cols) != 3:
                 continue
             a, d, path = cols
-            files.append((path, int(a) if a.isdigit() else 0, int(d) if d.isdigit() else 0))
+            files.append((numstat_path(path), int(a) if a.isdigit() else 0, int(d) if d.isdigit() else 0))
         out.append(Commit(sha=sha, at=at, author=author, subject=subject.strip(),
                           session=session, files=files))
     return out
@@ -315,7 +327,9 @@ def read_stamps(chat_path: Path) -> dict[int, dict[str, Any]]:
         hit = _stamps_cache.get(str(path))
         if hit is not None and hit[0] == version:
             return hit[1]
-        lines = path.read_text(encoding="utf-8").splitlines()
+        # On "\n" only: the hook writes JSON with ensure_ascii off, so a
+        # commit subject may hold U+2028, which splitlines() cut a record at.
+        lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
     except OSError:
         return out
     for line in lines:

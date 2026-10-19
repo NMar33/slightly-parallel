@@ -18,6 +18,7 @@ from watchdog.events import (
     FileModifiedEvent, FileMovedEvent, FileSystemEvent, FileSystemEventHandler,
 )
 from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 
 if os.name == "nt":
     # Windows reports a read as a change too (the last-access time moved),
@@ -158,7 +159,7 @@ class Watcher:
         self.path = Path(path)
         self.recursive = recursive
         self._handler = DebouncedHandler(on_change, delay_ms=delay_ms, root=self.path)
-        self._observer: Observer | None = None
+        self._observer: BaseObserver | None = None
 
     def start(self) -> None:
         if self._observer is not None:

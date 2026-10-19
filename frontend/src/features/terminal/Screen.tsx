@@ -392,9 +392,6 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       fitRef.current = doFit
       api.current = { fit: doFit, focus: () => t.focus(), size: (n) => { t.options.fontSize = n; doFit() } }
       doFit()
-      // Shown and meant to take the keyboard (a new split pane): take it now —
-      // the effect below ran before the terminal existed.
-      if (visibleRef.current && autoFocusRef.current) t.focus()
       ro = new ResizeObserver(() => doFit())
       ro.observe(el)
       // Measured with the fallback font the columns come out wrong, and the
@@ -404,6 +401,10 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       // The view you type in sets the terminal's size (tmux: the latest client).
       t.textarea?.addEventListener('focus', () => { doFit(); onFocusRef.current?.(); setWork('terminal', { project: workRef.current.project, taskId: workRef.current.taskId }) })
       t.textarea?.addEventListener('blur', () => setWork('terminal', null))
+      // Shown and meant to take the keyboard (a new split pane): take it now —
+      // the effect below ran before the terminal existed. After the focus
+      // listener: taken before it, the pane never became the work at hand.
+      if (visibleRef.current && autoFocusRef.current) t.focus()
 
       t.attachCustomKeyEventHandler((e) => {
         if (e.type !== 'keydown') return true

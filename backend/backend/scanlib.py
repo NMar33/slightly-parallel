@@ -97,7 +97,8 @@ def chat_commits(store: ViewStore, agent_id: str, since: datetime | None) -> set
     stamps = _stamps_since(store, agent_id, since)
     if stamps is None:
         return None
-    if not any(stamp.get("head") for stamp in gitwork.read_stamps(sessions.chat_path(store, agent_id)).values()):
+    chat = sessions.chat_path(store, agent_id)
+    if chat is None or not any(stamp.get("head") for stamp in gitwork.read_stamps(chat).values()):
         return None     # stamps without git: files only, no commits to tell apart
     chat = sessions.chat_path(store, agent_id)
     repo = gitwork.repo_for_chat(chat) if chat is not None else None
@@ -147,7 +148,7 @@ def _uncommitted(repo: Path) -> list[dict[str, Any]]:
         cols = line.split("\t")
         if len(cols) == 3:
             a, d, path = cols
-            out.append({"path": path, "lines_add": int(a) if a.isdigit() else 0,
+            out.append({"path": gitwork.numstat_path(path), "lines_add": int(a) if a.isdigit() else 0,
                         "lines_del": int(d) if d.isdigit() else 0})
     return out
 

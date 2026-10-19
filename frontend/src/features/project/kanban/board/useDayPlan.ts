@@ -17,7 +17,7 @@ import { t, tn } from '../../../../i18n/scope/project'
 export function useDayPlan({ tasks, setTasks, patchMany, bump }: {
   tasks: TaskRow[]
   setTasks: (u: TaskRow[] | ((cur: TaskRow[]) => TaskRow[])) => void
-  patchMany: (rows: Patch[]) => Promise<void>
+  patchMany: (rows: Patch[]) => Promise<number>
   bump: () => void
 }) {
   const today = todayISO()
@@ -42,7 +42,7 @@ export function useDayPlan({ tasks, setTasks, patchMany, bump }: {
     if (moving.length === 0 || dayBusy) return
     setDayBusy(true)
     const before = moving.map((t) => ({ id: t.id, patch: { status: String(t.status || 'unclassified') } }))
-    await patchMany(moving.map((t) => ({ id: t.id, patch: { status: 'done' } })))
+    if (await patchMany(moving.map((t) => ({ id: t.id, patch: { status: 'done' } })))) return
     setDayBusy(false)
     toast.success(tn(moving.length, '{n} task moved to Done', '{n} tasks moved to Done'), {
       action: { label: t('Undo'), onClick: () => void patchMany(before) },
@@ -54,7 +54,7 @@ export function useDayPlan({ tasks, setTasks, patchMany, bump }: {
     if (clearing.length === 0 || dayBusy) return
     setDayBusy(true)
     const before = clearing.map((t) => ({ id: t.id, patch: { today_on: today } }))
-    await patchMany(clearing.map((t) => ({ id: t.id, patch: { today_on: '' } })))
+    if (await patchMany(clearing.map((t) => ({ id: t.id, patch: { today_on: '' } })))) return
     setDayBusy(false)
     toast.success(t('Removed {tasks} from today\'s plan.', { tasks: tn(clearing.length, '{n} task', '{n} tasks') }), {
       action: { label: t('Undo'), onClick: () => void patchMany(before) },
@@ -82,7 +82,7 @@ export function useDayPlan({ tasks, setTasks, patchMany, bump }: {
     const before = rows.map((t) => ({ id: t.id, patch: { today_on: t.today_on || '' } }))
     const writes = rows.map((t) => ({ id: t.id, patch: { today_on: carry.includes(t.id) ? today : '' } }))
     closeCarry()
-    await patchMany(writes)
+    if (await patchMany(writes)) return
     const carried = carry.length ? `${carry.length} planned for today` : ''
     const gone = letGo.length ? `${letGo.length} dropped` : ''
     toast.success([carried, gone].filter(Boolean).join(', '), {

@@ -177,8 +177,8 @@ def _heatmap_entry(row: dict[str, Any], sessions_by_lane: dict) -> dict[str, Any
     }
 
 
-def _add_tags(target: dict[str, Any], tags: list) -> None:
-    for t in tags:
+def _add_tags(target: dict[str, Any], tags: list | None) -> None:
+    for t in tags or []:
         ts = str(t)
         if ts and ts not in target["tags"]:
             target["tags"].append(ts)

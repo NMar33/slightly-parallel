@@ -47,7 +47,7 @@ except ImportError:  # pragma: no cover
 # "·" in a notice broke the reader. Every hook imports this module first.
 for _stream in (sys.stdin, sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except (AttributeError, ValueError, OSError):
         pass
 
@@ -78,8 +78,9 @@ def _backend_module(name: str):
     import importlib.util
     path = Path(__file__).resolve().parents[2] / "backend" / "backend" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"sp_{name}", path)
+    assert spec is not None and spec.loader is not None, path
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    spec.loader.exec_module(mod)
     return mod
 
 
@@ -160,6 +161,10 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # The operator's verdict: the server moves the task (backend donelib.py).
     "done": ("finish-a-task", "MCP tool task_done"),
     "problem solved": ("", "MCP tool update_entry, lens problem, changes {status: \"resolved\"}"),
+    # Archiving entries made by mistake: the operator asks, chooses by number
+    # and confirms; the server checks both in the chat (backend undolib.py).
+    "undo": ("undo-a-mistake", "MCP tool undo_find"),
+    "undo-yes": ("undo-a-mistake", "MCP tool undo_apply"),
     # A star: the server marks it from the chat log (backend marklib.py).
     **{k: ("", "nothing to write: the server stars it") for k in (
         "important", "important-agent", "important-task", "important-message")},
@@ -259,23 +264,8 @@ def now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
-# Lines in captured content that would collide with chat.md's own structure
-# (a user pasting a session page quotes real turn headers) are escaped with
-# a leading backslash; the sessions parser strips it when reading.
-_STRUCTURAL_RE = re.compile(r"^(## Turn \d+ · |\*\*User\*\*: ?|\*\*Agent\*\*: ?)")
-
-
-_LINE_BREAK_RE = re.compile(r"\r\n|\r|\x0c| | ")
-
-
-def escape_content(text: str) -> str:
-    # Every line separator becomes "\n" first: the reader splits on all of
-    # them, so a header hidden behind a "\r" would otherwise read as a turn.
-    text = _LINE_BREAK_RE.sub("\n", text or "")
-    return "\n".join(
-        ("\\" + line) if _STRUCTURAL_RE.match(line) else line
-        for line in text.split("\n")
-    )
+# One escape for the chat format, shared with the server's import (hookshared.py).
+escape_content = shared.escape_content
 
 
 def _load_settings(data_root: Path) -> dict:
@@ -328,6 +318,12 @@ class TurnCapture:
         self.chat_path = self.folder / "chat.md"
         self.meta_path = self.folder / "meta.json"
 
+    def _lost(self, what: str, exc: BaseException) -> None:
+        """A part of the turn not kept: the turn goes on, and the failure
+        lands where the dashboard reads hook errors."""
+        record_failure(self.data_root, self.project, self.agent_name, "capture",
+                       f"{what}: {type(exc).__name__}: {exc}")
+
     # -- meta ---------------------------------------------------------------
 
     @contextmanager
@@ -349,7 +345,7 @@ class TurnCapture:
                         fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     else:
                         fh.seek(0)
-                        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
                     held = True
                     break
                 except OSError:
@@ -364,7 +360,7 @@ class TurnCapture:
                         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
                     else:
                         fh.seek(0)
-                        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
                 except OSError:
                     pass
             fh.close()
@@ -507,6 +503,9 @@ class TurnCapture:
             # #map costs a helper run: its notice asks the operator, naming
             # the model Settings give, the way the standup's does.
             "map_model": _map_model(self.data_root) if "map" in commands else None,
+            # #standup by hand asks the same way. Each tool names models and
+            # starts helpers its own way: the notice picks this tool's.
+            "helper_models": _helper_models(self.data_root) if (standup_due or {"map", "standup"} & set(commands)) else None,
             # #task {lane} / #now {lane}: the server refuses a lane the board
             # does not have; the notice says so first, so the agent asks.
             "task_lane": _task_lane(self.data_root, self.project, user_text) if {"task", "now"} & set(commands) else None,
@@ -606,8 +605,8 @@ class TurnCapture:
                     fh.write(json.dumps({
                         "turn": turn, "at": at, "skill": u["skill"], "how": u.get("how") or "auto",
                     }) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            self._lost("skill uses not kept", exc)
 
     # -- work: what the turn changed, stamped from git ----------------------
 
@@ -632,13 +631,13 @@ class TurnCapture:
                     ms = lambda xs: [datetime.fromtimestamp(float(x) / 1000) for x in xs or [] if x]  # noqa: E731
                     line.update(tt.measure_points(
                         ms(times.get("points")), [ms(h) for h in times.get("helpers") or []], *window))
-            except Exception:  # noqa: BLE001 — timing must never cost the turn
-                pass
+            except Exception as exc:  # noqa: BLE001 — timing must never cost the turn
+                self._lost("turn timing not measured", exc)
         try:
             with open(self.folder / "turns.jsonl", "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(line) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            self._lost("turn times not kept", exc)
 
     def _last_end(self) -> str:
         """The previous answer's end, from the end of turns.jsonl ("" if none)."""
@@ -662,7 +661,8 @@ class TurnCapture:
         """
         try:
             stamp = work_stamp(cwd, self._last_stamp_head())
-        except Exception:  # noqa: BLE001 — capture must never break the tool
+        except Exception as exc:  # noqa: BLE001 — capture must never break the tool
+            self._lost("git stamp failed", exc)
             stamp = None
         files = _relative_to(cwd, touched or [])
         if stamp is None:
@@ -672,7 +672,8 @@ class TurnCapture:
                 if since:
                     try:
                         changed, capped = changed_since(cwd, since)
-                    except Exception:  # noqa: BLE001 — capture must never break the tool
+                    except Exception as exc:  # noqa: BLE001 — capture must never break the tool
+                        self._lost("changed files not found", exc)
                         changed, capped = [], False
             elif not files:
                 return
@@ -683,8 +684,8 @@ class TurnCapture:
         try:
             with open(self.folder / "work.jsonl", "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(stamp, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            self._lost("work stamp not kept", exc)
 
     def _last_stamp_at(self) -> str:
         """The previous stamp's time, from the end of work.jsonl ("" if none)."""
@@ -735,8 +736,8 @@ class TurnCapture:
             if transcript is not None:
                 meta["transcript_pos"] = {"path": str(transcript[0]), "pos": int(transcript[1])}
             _atomic_write_json(self.meta_path, meta)
-        except OSError:
-            pass
+        except OSError as exc:
+            self._lost("transcript position not kept", exc)
 
     def transcript_pos(self, path: str) -> int:
         """Where the previous Stop stopped reading this transcript (0: read
@@ -791,7 +792,7 @@ def _turntimes():
 def _git(cwd: str, *args: str) -> str | None:
     try:
         proc = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            ["git", *shared.GIT_PLAIN_PATHS, *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=_GIT_TIMEOUT, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -913,7 +914,7 @@ def work_stamp(cwd: str, prev_head: str = "") -> dict | None:
         if len(cols) != 3:
             continue
         a, d, path = cols
-        files.append({"path": path, "add": int(a) if a.isdigit() else 0,
+        files.append({"path": shared.numstat_path(path), "add": int(a) if a.isdigit() else 0,
                       "del": int(d) if d.isdigit() else 0})
     looked, budget, capped = 0, _UNTRACKED_MAX_TOTAL, False
     for path in others.splitlines():
@@ -1024,18 +1025,59 @@ def _standup_owed(data_root: Path, project: str) -> dict | None:
             "ask": prefs.get("ask") is not False}
 
 
-# A model the operator chose: one of the three names, or one they typed.
-_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+# A model the operator chose: one of the names offered, or one they typed
+# (OpenCode's carry the provider: openai/gpt-6-luna).
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$")
+
+#: "chat": the helper runs on the model of the chat that starts it.
+CHAT_MODEL = "chat"
+#: The setting for each tool under standup.* and map.*, and its default.
+_HELPER_KEYS = {"claude": ("model", "opus"), "codex": ("model_codex", CHAT_MODEL), "opencode": ("model_opencode", CHAT_MODEL)}
+
+
+def _helper_models(data_root: Path) -> dict[str, dict[str, str]]:
+    """The model Settings give each helper, per tool (Settings › Agents):
+    {"standup": {"claude": "opus", "codex": "chat", …}, "map": {…}}."""
+    try:
+        settings = json.loads((Path(data_root) / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        settings = {}
+    out: dict[str, dict[str, str]] = {}
+    for job in ("standup", "map"):
+        section = settings.get(job) if isinstance(settings, dict) and isinstance(settings.get(job), dict) else {}
+        out[job] = {}
+        for tool, (key, default) in _HELPER_KEYS.items():
+            model = str(section.get(key) or default)
+            out[job][tool] = model if _MODEL_NAME.match(model) else default
+    return out
 
 
 def _map_model(data_root: Path) -> str:
-    """The model Settings give the map helper (Settings › Agents)."""
-    try:
-        settings = json.loads((Path(data_root) / "settings.json").read_text(encoding="utf-8"))
-        model = str((settings.get("map") or {}).get("model") or "opus")
-    except (OSError, ValueError, AttributeError):
-        model = "opus"
-    return model if _MODEL_NAME.match(model) else "opus"
+    """The model Settings give the map helper in Claude Code."""
+    return _helper_models(data_root)["map"]["claude"]
+
+
+def _tool_key(tool: str) -> str:
+    return "codex" if tool == "codex" else "opencode" if tool == "opencode" else "claude"
+
+
+def helper_offer(tool: str, job: str, model: str) -> tuple[str, str]:
+    """How this tool starts the helper for a job ("standup" or "map") on the
+    model Settings give, and what else the user may pick: (on, other).
+    Claude Code names a model per helper (the Agent tool's model); Codex too
+    (spawn_agent's model); OpenCode runs a subagent on the model its config
+    gives — the plugin defines sp-standup and sp-map from Settings."""
+    t = _tool_key(tool)
+    if t == "codex":
+        on = ("a helper agent on this chat's model (spawn_agent without model)" if model == CHAT_MODEL
+              else f"a helper agent on {model} (spawn_agent with model \"{model}\")")
+        return on, "another model your spawn_agent lists"
+    if t == "opencode":
+        if model == CHAT_MODEL:
+            return "a helper agent on this chat's model (the task tool, subagent_type general)", ""
+        return (f"a helper agent on {model} (the task tool, subagent_type sp-{job})",
+                "this chat's model (subagent_type general)")
+    return f"a helper agent on {model} (the Agent tool with model)", "another model: haiku, sonnet or opus"
 
 
 def _read_csv(path: Path) -> list[dict]:
@@ -1083,9 +1125,13 @@ def _scan_without_entry(
     return None if sid in covered else sid
 
 
-def format_signals(signals: dict) -> str:
-    """Human-readable context notice; empty when nothing is due."""
+def format_signals(signals: dict, tool: str = "claude-code") -> str:
+    """Human-readable context notice; empty when nothing is due. ``tool``:
+    the one the notice is for, so a helper is offered the way it starts one."""
     notes = []
+    models = signals.get("helper_models") or {}
+    def offer(job: str, fallback: str) -> tuple[str, str]:
+        return helper_offer(tool, job, (models.get(job) or {}).get(_tool_key(tool)) or fallback)
     ident = signals.get("identity")
     if ident:
         notes.append(
@@ -1096,12 +1142,21 @@ def format_signals(signals: dict) -> str:
     for name in signals.get("commands") or []:
         skill, start = _COMMANDS[name]
         if name == "map":
-            model = signals.get("map_model") or "opus"
+            on, other = offer("map", signals.get("map_model") or "opus")
             notes.append(
                 "[slightly-parallel] #map — ask the user now, before any other work, in one line: "
-                f"\"Map the program now with a helper agent on {model}, or later?\" Then stop and wait for "
+                f"\"Map the program now with {on}{', or ' + other if other else ''}, or later?\" Then stop and wait for "
                 "the answer. Do not call map_material and do not start a helper before it. "
                 f"Now: the skill {skill} holds the steps (from its step 2). Later: nothing more."
+            )
+            continue
+        if name == "standup":
+            on, other = offer("standup", "opus")
+            notes.append(
+                "[slightly-parallel] #standup — ask the user now, before any other work, in one line: "
+                f"\"Write the standup now with {on}{', or ' + other if other else ''}, or later?\" "
+                "Then stop and wait for the answer. Do not call standup_material and do not start a helper "
+                f"before it. Then: the skill {skill} holds the steps (from its step 2), on the model the user named."
             )
             continue
         notes.append(
@@ -1138,18 +1193,20 @@ def format_signals(signals: dict) -> str:
             f"[slightly-parallel] #standup — no standup for {due['date']}: {due['messages_n']} messages in "
             f"{due['chats_n']} chat{'' if due['chats_n'] == 1 else 's'}. "
         )
+        s_on, s_other = offer("standup", due["model"])
+        m_on, _ = offer("map", due.get("map_model") or "opus")
         if due.get("ask"):
             size = int(due.get("chars") or 0)
             clipped = min(size, int(due.get("messages_n") or 0) * 2400)
             what += (
                 f"Ask the user now, before other work, with numbered choices: "
-                f"1 write it with a helper on {due['model']} and map the program with a helper on "
-                f"{due.get('map_model') or 'opus'} · 2 write only · 3 postpone; another model: haiku, sonnet or opus; "
+                f"1 write it with {s_on} and map the program with {m_on} · 2 write only · 3 postpone"
+                f"{'; or ' + s_other if s_other else ''}; "
                 f"messages whole (about {max(1, round(size / 1000))}k characters) or clipped to the start and end of each "
                 f"(about {max(1, round(clipped / 1000))}k). Whole is the default. "
             )
         else:
-            what += f"Write it now with a helper agent on {due['model']}. "
+            what += f"Write it now with {s_on}. "
         notes.append(what + "The skill daily-standup has the steps "
                             "(MCP tools standup_material, standup_postpone).")
     if signals.get("decision_hint"):

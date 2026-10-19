@@ -107,7 +107,14 @@ def install(space: Space, report: Report, source: Path, boot_seconds: int) -> su
         return None
     report.notes["commit"] = sh(["git", "rev-parse", "--short", "HEAD"], space.clone).stdout.strip()
     # A file that names a folder of the machine it was committed on is wrong on every other machine.
-    mine = sh(["git", "grep", "-l", "-F", str(Path.home()), "--", ".", ":!*.test.*", ":!*/tests/*", ":!articles"], space.clone).stdout.split()
+    # What the release leaves out (scripts/release-exclude.txt) never reaches one.
+    try:
+        unreleased = [f":!{line.strip()}" for line in (space.clone / "scripts" / "release-exclude.txt").read_text(encoding="utf-8").splitlines()
+                      if line.strip() and not line.startswith("#")]
+    except OSError:
+        unreleased = []
+    mine = sh(["git", "grep", "-l", "-F", str(Path.home()), "--", ".", ":!*.test.*", ":!*/tests/*", ":!articles", *unreleased],
+              space.clone).stdout.split()
     report.add(s, "no committed file names a folder of this machine", not mine, f"{Path.home()} is in: {', '.join(mine)}")
     report.add(s, "the clone has no leftovers of a previous install",
                not (space.clone / "backend" / ".venv").exists() and not (space.clone / "frontend" / "node_modules").exists()

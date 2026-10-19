@@ -28,6 +28,13 @@ export default tseslint.config(
       // Off: files here keep their hooks and helpers beside the component, and
       // this rule is about hot-reload speed, not correctness.
       'react-refresh/only-export-components': 'off',
+      // A name the component forgot to define resolves to the browser's own
+      // global (close, open, name, status …) and type-checks: the note's
+      // close button called window.close() and did nothing.
+      'no-restricted-globals': ['error',
+        'close', 'open', 'name', 'status', 'event', 'origin', 'parent', 'self', 'top',
+        'print', 'stop', 'find', 'blur', 'focus', 'scroll', 'length', 'closed', 'opener',
+        'confirm', 'alert', 'prompt', 'history', 'location', 'screen', 'external', 'frames'],
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', {
         argsIgnorePattern: '^_',

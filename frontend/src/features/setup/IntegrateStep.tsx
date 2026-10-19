@@ -13,6 +13,7 @@ import { postJson } from '../../lib/getJson'
 import { LABEL } from '../promptlib/taskstyle'
 import { postIgnore, postIntegrate, SETUP_INFO_KEY, type IntegrateResult, type Integration, type SetupInfo, type ToolKey } from './data'
 import { AdapterBadge, Checkbox, ConfirmDialog, Field, IntegrationRow, ResultPanel, StepCard } from './parts'
+import { IntegrateComputer } from './Computer'
 import { t, tn } from '../../i18n/scope/system'
 
 import { rich } from '../../i18n/rich'
@@ -27,6 +28,9 @@ interface IntegrateForm {
   writeOpencode: boolean
   writeCodex: boolean
   writeCursor: boolean
+  /** This computer: turned on by Integrate when ticked, never off (Settings does that). */
+  autostart: boolean
+  shortcut: boolean
 }
 
 const bodyOf = (f: IntegrateForm, dryRun: boolean) => ({
@@ -39,6 +43,8 @@ const bodyOf = (f: IntegrateForm, dryRun: boolean) => ({
   write_opencode_plugin: f.writeOpencode,
   write_codex_hooks: f.writeCodex,
   write_cursor_hooks: f.writeCursor,
+  autostart: f.autostart,
+  shortcut: f.shortcut,
   dry_run: dryRun,
 })
 
@@ -53,6 +59,8 @@ function useIntegrate() {
     code: '', dir: '', notes: '',
     // Every tool ticked: a stray file is cheaper than a lost chat. Unticking is the user's call.
     writeAgents: true, writeBridge: true, writeHooks: true, writeOpencode: true, writeCodex: true, writeCursor: true,
+    // Clear by default: the operator's computer, the operator's call.
+    autostart: false, shortcut: false,
   })
   const set = <K extends keyof IntegrateForm>(k: K) => (v: IntegrateForm[K]) => setForm((f) => ({ ...f, [k]: v }))
   const [preview, setPreview] = useState<IntegrateResult | null>(null)
@@ -85,7 +93,7 @@ function useIntegrate() {
     const any = it.tools && Object.values(it.tools).some(Boolean)
     const has = (k: ToolKey, fromForm: boolean) => (it.tools && any ? Boolean(it.tools[k]) : fromForm) || add === k
     const next = {
-      ...form, code: it.project, dir: it.path,
+      ...form, code: it.project, dir: it.path, autostart: false, shortcut: false,
       writeHooks: has('claude', form.writeHooks),
       writeCodex: has('codex', form.writeCodex),
       writeOpencode: has('opencode', form.writeOpencode),
@@ -149,7 +157,7 @@ export function IntegrateStep({ info }: { info: SetupInfo }) {
     const registered = new Set(info.integrations.map((i) => i.project))
     return info.data_projects.filter((d) => !registered.has(d.code))
   }, [info])
-  const { code, dir, notes, writeAgents, writeBridge, writeHooks, writeOpencode, writeCodex, writeCursor } = form
+  const { code, dir, notes, writeAgents, writeBridge, writeHooks, writeOpencode, writeCodex, writeCursor, autostart, shortcut } = form
 
   return (
     <StepCard
@@ -257,6 +265,14 @@ export function IntegrateStep({ info }: { info: SetupInfo }) {
           }
         />
       </fieldset>
+
+      <IntegrateComputer
+        state={info.computer}
+        autostart={autostart}
+        shortcut={shortcut}
+        onAutostart={set('autostart')}
+        onShortcut={set('shortcut')}
+      />
 
       <div className="flex items-center gap-8">
         <Button

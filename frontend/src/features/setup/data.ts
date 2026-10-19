@@ -12,6 +12,14 @@ export type ToolKey = 'claude' | 'codex' | 'opencode' | 'cursor'
 export const TOOL_KEYS: ToolKey[] = ['claude', 'codex', 'opencode', 'cursor']
 export const TOOL_NAMES: Record<ToolKey, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', cursor: 'Cursor' }
 
+export interface ComputerState {
+  autostart: { on: boolean; paths: string[] }
+  shortcut: { on: boolean; paths: string[] }
+  system: 'linux' | 'mac' | 'windows'
+  /** A test server: it does not change this computer. */
+  sandbox: boolean
+}
+
 export interface SetupInfo {
   app_root: string
   contract_path: string
@@ -26,6 +34,8 @@ export interface SetupInfo {
   codex: { state: 'installed' | 'foreign' | 'absent'; config: string }
   /** Which tools this computer has (the command, or its settings folder). */
   tools_installed?: Record<ToolKey, boolean>
+  /** Start at login and the shortcut (backend/autostart.py). */
+  computer?: ComputerState
   adapters: {
     claude_verified: boolean
     opencode_verified: boolean

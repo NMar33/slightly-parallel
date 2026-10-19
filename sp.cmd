@@ -1,6 +1,7 @@
 @echo off
 rem sp.cmd - the launcher on Windows: runs sp.py (see it for the commands).
 rem   sp up [--dev] ^| down ^| restart ^| status ^| logs ^| terminal on^|off ^| run [--prod]
+rem   sp open ^| autostart on^|off ^| shortcut [off]
 rem The exit code is sp.py's own: a script can tell "not running" from "running".
 setlocal
 cd /d "%~dp0"

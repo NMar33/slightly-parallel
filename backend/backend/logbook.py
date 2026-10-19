@@ -85,7 +85,9 @@ class RingHandler(logging.Handler):
         floor = floor if isinstance(floor, int) else logging.INFO
         with self._lock_:
             rows = list(self.records)
-        out = [r for r in rows if logging.getLevelName(r["level"]) >= floor]
+        # An unknown level name counts as 0: getLevelName answers it with a string.
+        levels = logging.getLevelNamesMapping()
+        out = [r for r in rows if levels.get(str(r["level"]), 0) >= floor]
         return out[-limit:]
 
     def snapshot(self) -> list[dict[str, Any]]:

@@ -441,7 +441,11 @@ def plan_prune(
         hold(autos[0], "newest")
 
     floor = timedelta(0)
-    for rung in RUNGS:
+    # A horizon past the last rung gets one more: the setting goes to two
+    # years, and every automatic backup older than three months was dropped
+    # however far it reached.
+    rungs = RUNGS + ((Rung("the horizon", horizon),) if horizon > RUNGS[-1].age else ())
+    for rung in rungs:
         if floor >= horizon:
             break
         ceiling = min(rung.age, horizon)
@@ -576,18 +580,25 @@ def create(
     kind: str = "auto",
     label: str = "",
     now: datetime | None = None,
+    whole: bool = False,
 ) -> Archive:
     """Tar the data root into ``backup_root``. Returns the finished archive.
+
+    ``whole``: every file or none — a file that is there and cannot be read
+    refuses the archive, naming it. The safety archive before a restore is
+    taken so: it skipped such a file with a line in the log, and the restore
+    then deleted the original.
 
     Written as ``<name>.tar.gz.part`` and renamed only once it is complete
     and hashed, so an interrupted run leaves no half archive that a later
     listing would offer as a restore point.
     """
     with BUSY:
-        return _create(data_root, backup_root, kind=kind, label=label, now=now)
+        return _create(data_root, backup_root, kind=kind, label=label, now=now, whole=whole)
 
 
-def _create(data_root: Path, backup_root: Path, *, kind: str, label: str, now: datetime | None) -> Archive:
+def _create(data_root: Path, backup_root: Path, *, kind: str, label: str, now: datetime | None,
+            whole: bool = False) -> Archive:
     if not data_root.is_dir():
         raise BackupError(f"data root does not exist: {data_root}")
     check_roots(data_root, backup_root)
@@ -610,6 +621,7 @@ def _create(data_root: Path, backup_root: Path, *, kind: str, label: str, now: d
     files = 0
     total = 0
     newest = 0.0
+    unreadable: list[str] = []
     try:
         with tarfile.open(part, "w:gz") as tar:
             for path, arcname in walk_dirs(data_root):
@@ -620,10 +632,12 @@ def _create(data_root: Path, backup_root: Path, *, kind: str, label: str, now: d
             for path, arcname in walk_source(data_root):
                 try:
                     size, mtime = _add_whole(tar, path, arcname)
+                except FileNotFoundError:
+                    continue    # deleted mid-walk: normal on a live root
                 except OSError as exc:
-                    # A file deleted mid-walk is normal on a live root; a
-                    # file that cannot be read is worth a line in the log.
+                    # A file that cannot be read is worth a line in the log.
                     log.warning("skipping %s: %s", path, exc)
+                    unreadable.append(f"{arcname} ({exc.strerror or exc})")
                     continue
                 files += 1
                 total += size
@@ -633,6 +647,12 @@ def _create(data_root: Path, backup_root: Path, *, kind: str, label: str, now: d
     except OSError as exc:
         part.unlink(missing_ok=True)
         raise BackupError(f"could not write the archive: {exc}") from exc
+    if whole and unreadable:
+        part.unlink(missing_ok=True)
+        raise BackupError(
+            f"cannot read {', '.join(unreadable[:5])}{' …' if len(unreadable) > 5 else ''}: "
+            "a restore deletes what it replaces, so it waits until every file can be copied first"
+        )
 
     archive = Archive(
         name=name, at=at, kind=kind, bytes=size, label=label[:limits.MAX_TITLE], files=files,
@@ -839,7 +859,7 @@ def restore_with_safety(backup_root: Path, name: str, data_root: Path) -> tuple[
         report = verify(backup_root, name)
         if not report["ok"]:
             raise BackupError("; ".join(report["problems"]))
-        safety = create(data_root, backup_root, kind="manual", label=f"before restoring {name}")
+        safety = create(data_root, backup_root, kind="manual", label=f"before restoring {name}", whole=True)
         return restore(backup_root, name, data_root), safety
 
 

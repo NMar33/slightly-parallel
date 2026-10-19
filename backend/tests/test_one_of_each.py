@@ -139,6 +139,16 @@ def test_edit_json_locks_reads_and_writes_in_one_cycle(tmp_path: Path) -> None:
         d.setdefault("boards", [])
 
     assert file_safety.edit_json(path, reset) == {"boards": []}
+    # …and what it held is kept beside it, not written over.
+    kept = list(tmp_path.glob("boards.json.unreadable-*"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == "{ not json"
+
+    # JSON of the wrong shape is kept the same way; an empty file holds nothing to keep.
+    path.write_text("[1, 2]", encoding="utf-8")
+    assert file_safety.edit_json(path, reset) == {"boards": []}
+    path.write_text("", encoding="utf-8")
+    assert file_safety.edit_json(path, reset) == {"boards": []}
+    assert len(list(tmp_path.glob("boards.json.unreadable-*"))) == 2
 
     # The lock sits beside the file, under one name.
     assert file_safety.lock_path(path).name == "boards.json.lock"

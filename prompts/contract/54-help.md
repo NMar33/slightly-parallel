@@ -50,6 +50,13 @@ rest; you see the result on the page named.
 | `#important` | Stars the message, this chat's agent and the task the message names. | Important |
 | `#important-agent` · `-task` · `-message` | Stars only one of them. `-task` with no id takes the last task named in the chat. | Important |
 
+**Undo a mistake**
+
+| Command | What it does | Where you see it |
+|---|---|---|
+| `#undo <what was the mistake>` | Archives entries a tag made by mistake. The agent lists the candidates by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is deleted, and each entry can be restored. | The entry's page; ask the agent to restore one |
+| `#undo-yes` | Confirms the archive the agent proposed, right after its proposal. Without it nothing is archived; any other reply cancels. | — |
+
 **Ask**
 
 | Command | What it does |
