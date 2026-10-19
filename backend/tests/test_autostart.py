@@ -3,6 +3,7 @@ written into a temporary home: never the real login or desktop."""
 
 from __future__ import annotations
 
+import os
 import plistlib
 from pathlib import Path
 
@@ -12,6 +13,9 @@ from fastapi.testclient import TestClient
 from backend import autostart
 
 PY = "/usr/bin/python3"
+# The Linux entries are written on Linux only: a Windows path holds
+# backslashes (escaped in an Exec line) and no file there is executable.
+posix = pytest.mark.skipif(os.name == "nt", reason="Linux entries are written on Linux")
 
 
 @pytest.fixture()
@@ -23,6 +27,7 @@ def where(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     return root, tmp_path / "home"
 
 
+@posix
 def test_linux_starts_it_at_login_and_turns_it_off_again(where) -> None:
     root, home = where
     written = autostart.enable(root, "autostart", home=home, plat="linux", python=PY)
@@ -35,6 +40,7 @@ def test_linux_starts_it_at_login_and_turns_it_off_again(where) -> None:
     assert not entry.exists() and autostart.status(root)["autostart"]["on"] is False
 
 
+@posix
 def test_linux_shortcut_goes_to_the_menu_and_the_desktop_by_its_own_name(where) -> None:
     root, home = where
     desk = home / "Рабочий стол"

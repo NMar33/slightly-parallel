@@ -37,6 +37,13 @@ from .integrate import sync_all_rules
 
 # Writes that are the operator's alone. Sprints are planned by a person.
 OPERATOR_ONLY: dict[str, str] = {
+    # A rule is the operator's own #rule message, kept by the server. An
+    # agent's rule was accepted with a warning, made active, and served to
+    # every agent of the project as the operator's (sp://rules).
+    "rule": (
+        "a rule is the operator's own #rule message, kept by the server — write "
+        "its interpretation with the MCP tool interpret {lens: \"rule\", id, text}"
+    ),
     "sprint": "sprints are the operator's — an agent does not start, end or change one",
     # The operator's prompt is already captured verbatim in the chat log.
     # An agent writing a second copy of it can only disagree with the first,
@@ -389,19 +396,6 @@ def _warn_problem(body: dict) -> list[str]:
     return warnings
 
 
-def _warn_rule(body: dict) -> list[str]:
-    """A rule is kept from the operator's own #rule message. An agent that
-    posts one as an entry is told where the text belongs instead; the
-    operator writing a rule on the Rules page is not coached."""
-    if not written_by_agent(body):
-        return []
-    return [
-        "a rule is the operator's message, kept by the server on #rule. "
-        "Write its interpretation with the MCP tool interpret "
-        "{lens: \"rule\", id, text} instead of an entry."
-    ]
-
-
 def _warn_file(body: dict) -> list[str]:
     warnings = []
     paths = body.get("paths") if isinstance(body.get("paths"), list) else []
@@ -430,7 +424,6 @@ def _warn_file(body: dict) -> list[str]:
 CONTRACT_CHECKS: dict[str, Callable[[dict], list[str]]] = {
     "decision": _warn_decision,
     "problem": _warn_problem,
-    "rule": _warn_rule,
     "file": _warn_file,
 }
 

@@ -81,16 +81,17 @@ def test_problem_without_impact_warns(client: TestClient) -> None:
     assert any("attempts" in w.lower() or "tried" in w for w in warnings)
 
 
-def test_a_rule_posted_by_an_agent_is_pointed_at_interpret(client: TestClient) -> None:
+def test_a_rule_posted_by_an_agent_is_refused_and_pointed_at_interpret(client: TestClient) -> None:
     """#rule is kept by the server: the agent writes the interpretation, not
-    an entry. The old warning coached the entry instead."""
+    an entry. A rule an agent posted was made active with a warning and
+    served to every agent as the operator's; it is refused now."""
+    from backend.routers.deps import AGENT_REFUSED
     r = client.post(
         "/api/rules",
         json={**_BASE, "l1": "Always take the lock", "kind": "process",
               "severity": "high", "status": "active"},
     )
-    assert r.status_code == 201
-    assert any("interpret" in w for w in r.json()["warnings"])
+    assert r.status_code == AGENT_REFUSED and "interpret" in r.json()["detail"]
     # the operator writing a rule on the Rules page is not coached
     r = client.post(
         "/api/rules",
