@@ -130,6 +130,12 @@ def after_task(space: Space, report: Report, s: str, st: State) -> None:
         report.add(s, "it is written by this agent", st.agent in json.dumps(mine[0]), json.dumps(mine[0])[:300], soft=True)
 
 
+def after_task_any(space: Space, report: Report, s: str, st: State) -> None:
+    """#task in the site scenario: a card in the agent column (the #now task stays st.task)."""
+    tasks = listed(space, "/api/tasks", "tasks", st, mine=False)
+    report.add(s, "#task put a task in the agent column", any(str(t.get("status")) == "agent" for t in tasks), json.dumps(tasks)[:300])
+
+
 def after_decision(space: Space, report: Report, s: str, st: State) -> None:
     got = listed(space, "/api/decisions", "decisions", st)
     if report.add(s, "#decision logged a decision", bool(got)):
@@ -232,6 +238,33 @@ def after_sp(space: Space, report: Report, s: str, st: State) -> None:
                st.said[-1][:300], soft=True)
 
 
+SITE_ASK = ("#now build a small notes page in this folder: index.html and notes.js — add a note, list the notes, "
+            "delete one, kept in localStorage — and notes.test.js with node:test tests for the functions that change "
+            "the list. Run the tests with `node --test`, then commit.")
+
+
+def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
+    """#now: the card is in doing, with the operator's message as its text."""
+    find_agent(space, report, s, st)          # the later checks read this agent's own entries
+    tasks = listed(space, "/api/tasks", "tasks", st, mine=False)
+    now = [t for t in tasks if str(t.get("status")) == "doing"]
+    if report.add(s, "#now put the task in doing", bool(now), json.dumps(tasks)[:300]):
+        st.task = str(now[0]["id"])
+        full = get(space, f"/api/tasks/{st.task}")
+        text = json.dumps(full)
+        report.add(s, "its text is the operator's message", "notes page" in text and "localStorage" in text, text[:300])
+    files = [st.folder / n for n in ("index.html", "notes.js", "notes.test.js")]
+    report.add(s, "the agent built the page and its tests", all(f.is_file() for f in files),
+               ", ".join(f.name for f in files if not f.is_file()) or "all there")
+    log = sh(["git", "log", "--oneline"], st.folder, space.env()).stdout.strip().splitlines()
+    report.add(s, "the agent committed", len(log) >= 2, "\n".join(log), soft=True)
+
+
+def after_site_tests(space: Space, report: Report, s: str, st: State) -> None:
+    ran = sh(["node", "--test"], st.folder, space.env())
+    report.add(s, "the page's tests pass", ran.returncode == 0, (ran.stdout + ran.stderr)[-400:])
+
+
 def after_done(space: Space, report: Report, s: str, st: State) -> None:
     tasks = {str(t.get("id")): t for t in listed(space, "/api/tasks", "tasks", st, mine=False)}
     t = eventually(lambda: str({str(x.get("id")): x for x in listed(space, "/api/tasks", "tasks", st, mine=False)}.get(st.task, {}).get("status")) == "done", 10)
@@ -276,7 +309,18 @@ FULL: list[Step] = [
     DONE,
 ]
 
-SCENARIOS = {"core": CORE, "full": FULL}
+# A real piece of work, as on a new machine: a small page built with #now,
+# a task for later, the tests run and fixed, a scan, #sp, #done.
+SITE: list[Step] = [
+    ("#now: build the page", lambda st: SITE_ASK, after_site_now),
+    ("#task", lambda st: "#task add a search box over the notes, later", after_task_any),
+    ("the tests", lambda st: "Run the tests again, fix anything that fails, and commit.", after_site_tests),
+    SCAN,
+    SP,
+    DONE,
+]
+
+SCENARIOS = {"core": CORE, "full": FULL, "site": SITE}
 
 
 # --------------------------------------------------------------------- run
@@ -324,7 +368,9 @@ def run(space: Space, report: Report, code: str, folder: Path, tool: Tool, model
     st.standup_owed = not yesterdays_standup(space, st)
     cost = chat(space, report, s, st, SCENARIOS[scenario], model, env, turn_seconds)
     report.notes[f"{s} cost_usd"] = round(cost, 2)
-    if st.agent and not stage:
+    # The pages check looks for what core and full make (a rule, a decision);
+    # the site scenario makes neither, and its checks read the API instead.
+    if st.agent and not stage and scenario != "site":
         playwright(space, report, s, "the pages show what the agent did",
                    ["--config", "playwright.fresh.config.ts", "after-agent.spec.ts"],
                    {"FRESH_CODE": code, "FRESH_AGENT": st.agent, "FRESH_TASK": st.task,

@@ -896,3 +896,33 @@ def test_codex_notify_that_cannot_write_records_why(root: Path, tmp_path: Path, 
     assert codex.main() == 0     # never breaks Codex
     err = json.loads((root / ".capture" / "errors.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert err["tool"] == "codex" and err["project"] == "alpha"
+
+
+def test_a_commit_in_the_chats_first_turn_is_that_turns(root: Path, tmp_path: Path) -> None:
+    """The first stamp had no previous HEAD to count from: a commit made in
+    the first turn (#now build it and commit) was in no turn, and #scan
+    found no commits. HEAD before the first turn is kept for it."""
+    folder = tmp_path / "repo"
+    folder.mkdir()
+    git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=folder, check=True,  # noqa: E731
+                                    capture_output=True)
+    git("init", "-q")
+    (folder / "a.txt").write_text("a\n")
+    git("add", ".")
+    git("commit", "-qm", "before the chat")
+    script = _HOOKS / "claude-code-capture.py"
+
+    def hook(payload: dict) -> None:
+        proc = subprocess.run([sys.executable, str(script), "--project", "alpha", "--data-root", str(root)],
+                              input=json.dumps({"session_id": "f1257000-0000-4000-8000-000000000001", "cwd": str(folder), **payload}),
+                              capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": "#now build it and commit"})
+    (folder / "b.txt").write_text("b\n")
+    git("add", ".")
+    git("commit", "-qm", "built in the first turn")
+    made = subprocess.run(["git", "rev-parse", "HEAD"], cwd=folder, capture_output=True, text=True).stdout.strip()
+    hook({"hook_event_name": "Stop", "last_assistant_message": "built and committed"})
+    work = next((root / "projects" / "alpha" / "chats").glob("cc-f1257000*/work.jsonl"))
+    first = json.loads(work.read_text(encoding="utf-8").splitlines()[0])
+    assert first["turn"] == 1 and first["commits"] == [made]

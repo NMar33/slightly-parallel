@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-agent", action="store_true", help=f"leave out the stages that start a real agent ({', '.join(PAID)})")
     ap.add_argument("--tools", default="claude-code", help="agent tools: claude-code, codex, opencode")
     ap.add_argument("--model", default="sonnet", help="sonnet, haiku or opus; or a model name passed to the tool as is")
-    ap.add_argument("--scenario", default="full", choices=sorted(scenario.SCENARIOS), help="core: 7 messages; full: the standup and every command")
+    ap.add_argument("--scenario", default="full", choices=sorted(scenario.SCENARIOS), help="core: 8 messages; full: the standup and every command; site: a small page built with #now, then #task, #scan, #sp, #done")
     ap.add_argument("--agent-runs", type=int, default=1, help="run the agent chat this many times, each in a new project")
     ap.add_argument("--source", default=str(REPO), help="the repository folder to clone")
     ap.add_argument("--upgrade-from", default="", help="the commit an upgrade starts from (default: the newest v* tag, else 5 commits back)")
@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     # the home folder, the data folder, the projects — as on many machines.
     space = Space(Path(tempfile.mkdtemp(prefix="sp fresh ü-")).resolve(), free_port())
     report = Report()
+    report.notes["root"] = str(space.root)          # scripts/machine/run.py takes the built page from here
     code, second = "calc", "notes"
     shots = space.root / "screens"
     started = time.time()

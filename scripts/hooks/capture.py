@@ -673,7 +673,7 @@ class TurnCapture:
         and never delays the turn: no git, no repo, no cwd — no line.
         """
         try:
-            stamp = work_stamp(cwd, self._last_stamp_head())
+            stamp = work_stamp(cwd, self._last_stamp_head() or str(self._load_meta().get("base_head") or ""))
         except Exception as exc:  # noqa: BLE001 — capture must never break the tool
             self._lost("git stamp failed", exc)
             stamp = None
@@ -720,6 +720,13 @@ class TurnCapture:
         meta = self._load_meta()
         if meta.get("cwd"):
             cwd = ""
+        elif cwd and not meta.get("base_head"):
+            # HEAD before the chat's first turn: the first stamp counts its
+            # commits from here. Without it a commit made in the first turn
+            # (#now build it and commit) was in no turn, and #scan saw none.
+            head = (_git(cwd, "rev-parse", "HEAD") or "").strip() if os.path.isdir(cwd) else ""
+            if head:
+                updates["base_head"] = head
         # SP_TERMINAL: the Slightly Parallel terminal this tool was started in (the
         # terminal sets it), so the page can tie the agent to its terminal.
         for key, val in (("tool", tool), ("session_ref", session_id), ("cwd", cwd),
