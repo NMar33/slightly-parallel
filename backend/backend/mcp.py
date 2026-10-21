@@ -77,6 +77,7 @@ TOOLS: dict[str, str] = {
     "search": "Find entries by text.",
     "project": "One project's facts.",
     "doctor": "Check the data for damage.",
+    "checkup": "After #sp: is Slightly Parallel working for this chat and folder — each check ok, note, concern or unknown.",
 }
 
 
@@ -647,6 +648,12 @@ class Translator:
             {"name": "doctor",
              "description": "Data-integrity report over the whole data root — run when something looks wrong.",
              "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "checkup",
+             "description": "After #sp: is Slightly Parallel working for this chat and this folder — the folder's "
+                            "project, this chat recorded, MCP, capture, hooks, contract, skills, data, disk, backups, "
+                            "the server's memory and errors. Each finding: ok, note, concern or unknown, with its "
+                            "evidence and next step. Reads only.",
+             "inputSchema": {"type": "object", "properties": {}}},
         ]
 
     def call(self, name: str, args: dict) -> Any:
@@ -822,6 +829,17 @@ class Translator:
             return self.api.get(f"/api/project/{urllib.parse.quote(str(code))}")
         if name == "doctor":
             return self.api.get("/api/doctor")
+        if name == "checkup":
+            # A chat the hook never saw has no identity: the checkup says so
+            # itself, rather than this call failing before it can.
+            try:
+                who = self.identity()
+            except ApiError:
+                who = {}
+            # How the chat was found goes along: a guess is not this chat.
+            q = urllib.parse.urlencode({"cwd": self.cwd, "agent_id": str(who.get("agent_id") or ""),
+                                        "identity": str(who.get("identity_source") or "")})
+            return self.api.get(f"/api/checkup?{q}")
         raise ApiError(f"unknown tool: {name}")
 
     # -- resources ---------------------------------------------------------

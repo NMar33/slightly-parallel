@@ -36,7 +36,8 @@ SLOW_REQUEST_MS = 300
 SLOW_REBUILD_MS = 2000
 
 STARTED_AT = time.time()
-EXTRA_FIELDS = ("method", "path", "status", "ms", "etag", "client", "why")
+EXTRA_FIELDS = ("method", "path", "status", "ms", "etag", "client", "why",
+                "rss_mb", "peak_mb", "threads", "open_files")
 
 _ID = re.compile(r"/(?:[a-z]{2,3}_[0-9a-f]{6,}|cc-[0-9a-f]{6,}|ses_[0-9a-f]{6,})(?=/|$)")
 
@@ -115,6 +116,55 @@ class JsonFormatter(logging.Formatter):
 RING = RingHandler()
 LOG_FILE: Path | None = None
 
+#: The memory line goes to the log this often, and warns past these.
+MEMORY_EVERY_S = 300
+MEMORY_HIGH_MB = 1024
+MEMORY_JUMP_MB = 300
+_last_rss = 0.0
+
+
+def process_memory() -> dict[str, Any]:
+    """This process: memory now and at its peak, threads, open files — on
+    Linux, macOS and Windows (psutil; the peak from the OS's own count)."""
+    out: dict[str, Any] = {"rss_mb": 0.0, "peak_mb": 0.0, "threads": 0, "open_files": 0}
+    try:
+        import psutil
+        p = psutil.Process()
+        mi = p.memory_info()
+        out["rss_mb"] = round(mi.rss / 1048576, 1)
+        out["peak_mb"] = round(getattr(mi, "peak_wset", 0) / 1048576, 1)     # Windows
+        out["threads"] = p.num_threads()
+        out["open_files"] = p.num_handles() if hasattr(p, "num_handles") else p.num_fds()  # pyright: ignore[reportAttributeAccessIssue] — Windows only
+    except Exception:  # noqa: BLE001 — a count we cannot read stays 0
+        pass
+    if not out["peak_mb"]:
+        try:
+            import resource
+            peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss     # KB on Linux, bytes on macOS
+            out["peak_mb"] = round(peak / 1048576 if sys.platform == "darwin" else peak / 1024, 1)
+        except Exception:  # noqa: BLE001
+            pass
+    # Read a moment apart, the peak can come out a hair under the reading now.
+    out["peak_mb"] = max(out["peak_mb"], out["rss_mb"])
+    return out
+
+
+def note_memory() -> dict[str, Any]:
+    """One line in the log with the process's memory: kept in the rotating
+    file, so a report after a restart still has the hours before it. A
+    warning when it is high or jumped since the last line."""
+    global _last_rss
+    m = process_memory()
+    jump = m["rss_mb"] - _last_rss if _last_rss else 0.0
+    why = ("high" if m["rss_mb"] >= MEMORY_HIGH_MB else "jump" if jump >= MEMORY_JUMP_MB else None)
+    logging.getLogger("sp.memory").log(
+        logging.WARNING if why else logging.INFO,
+        f"memory {m['rss_mb']:.0f} MB, peak {m['peak_mb']:.0f} MB" + (f" (+{jump:.0f} MB)" if why == "jump" else ""),
+        extra={**m, **({"why": why} if why else {})},
+    )
+    _last_rss = m["rss_mb"]
+    return m
+
 
 def log_dir() -> Path:
     """Where the file goes: SP_LOG_DIR, else .sp beside the repo (the
@@ -123,6 +173,10 @@ def log_dir() -> Path:
     if env:
         return Path(env).expanduser()
     root = Path(__file__).resolve().parents[2]
+    if os.environ.get("SP_SANDBOX") == "1":
+        # A test server (the browser tests, a measurement) keeps its own log:
+        # it filled the operator's with its starts and its slow requests.
+        return root / ".sp" / "sandbox"
     old = root / ".merkhet"
     return old if old.is_dir() and not (root / ".sp").exists() else root / ".sp"
 
@@ -260,7 +314,7 @@ def text(summary: dict[str, Any], tail: list[dict[str, Any]]) -> str:
         f"data root: {s['data_root']}",
         f"log file: {s.get('log_file') or 'none'} ({s.get('log_file_bytes', 0)} bytes)",
         f"views: age {s['view_age_ms']} ms, load errors {len(s['load_errors'])}",
-        f"memory: rss {s.get('rss_mb', 0)} MB, threads {s.get('threads', 0)}",
+        f"memory: rss {s.get('rss_mb', 0)} MB, peak {s.get('peak_mb', 0)} MB, threads {s.get('threads', 0)}, open files {s.get('open_files', 0)}",
         "",
         "## Rebuilds",
         f"count {s['rebuilds']['n']}, p50 {s['rebuilds']['p50_ms']} ms, "

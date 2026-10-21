@@ -321,6 +321,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     let ro: ResizeObserver | null = null
     let retry: ReturnType<typeof setTimeout> | null = null
     let tries = 0
+    let authFails = 0
 
     const init = async () => {
       const [{ Terminal: XTerminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon: Search }] = await Promise.all([
@@ -452,12 +453,23 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         ws = s
         s.binaryType = 'arraybuffer'
         s.onopen = () => { tries = 0; doFit() }
-        s.onmessage = (ev) => t.write(ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : String(ev.data))
+        // The server opens every socket and refuses after (4401 and the rest):
+        // only the terminal's first output says the token was taken.
+        s.onmessage = (ev) => { authFails = 0; t.write(ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : String(ev.data)) }
         s.onclose = (ev) => {
           if (disposed) return
           if (ev.code === ENDED) { t.write(`\r\n\x1b[90m${tr('— the terminal ended —')}\x1b[0m\r\n`); onEndedRef.current?.(); return }
-          // A restart made a new token: ask for it; the new token remounts this screen.
-          if (ev.code === INVALID_TOKEN) { void qc.invalidateQueries({ queryKey: ['terminal', 'state'] }); return }
+          // A restart made a new token: fetch it. A new token remounts this
+          // screen; the same one (fetched before a second restart, or a failed
+          // fetch) comes back here and tries again, a few times, then says so.
+          if (ev.code === INVALID_TOKEN) {
+            authFails += 1
+            if (authFails > 5) { t.write(`\r\n\x1b[90m${tr('— could not reconnect: reload the page —')}\x1b[0m\r\n`); return }
+            void qc.refetchQueries({ queryKey: ['terminal', 'state'] }).finally(() => {
+              if (!disposed) retry = setTimeout(connect, Math.min(8000, 500 * 2 ** authFails))
+            })
+            return
+          }
           if (ev.code === OFF) { t.write(`\r\n\x1b[90m${tr('— the terminal is off —')}\x1b[0m\r\n`); return }
           if (REFUSED.has(ev.code)) { t.write(`\r\n\x1b[90m${tr('— refused: {why} —', { why: ev.reason || ev.code })}\x1b[0m\r\n`); return }
           // Anything else: come back; tmux kept the terminal.

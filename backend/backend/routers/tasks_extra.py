@@ -528,22 +528,24 @@ _AGENT_CREATE_FIELDS = frozenset({
 })
 
 
-def _operator_command(store: ViewStore, agent: str) -> tuple[str, str]:
-    """(command, lane) of the operator's latest message in the agent's chat:
-    ``#now {ui} …`` → ("now", "ui"); no chat, or no command → ("", "")."""
+def _operator_command(store: ViewStore, agent: str) -> tuple[str, str, str, str]:
+    """(command, lane, column, message) of the operator's latest message in
+    the agent's chat: ``#now-todo {ui} …`` → ("now", "ui", "todo", the whole
+    message); no chat, or no command → ("", "", "", "")."""
     from ..sessions import _operator_text, chat_path, parse_turns, task_command
     path = chat_path(store, agent)
     if path is None:
-        return "", ""
+        return "", "", "", ""
     try:
         turns = parse_turns(path)
     except OSError:
-        return "", ""
+        return "", "", "", ""
     for t in reversed(turns):
         text = _operator_text(t)
         if text:
-            return task_command(text)
-    return "", ""
+            command, lane, column = task_command(text)
+            return command, lane, column, text if command else ""
+    return "", "", "", ""
 
 
 def _board_lanes(store: ViewStore, project: str) -> list[str]:
@@ -584,18 +586,27 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
 
     A house actor (the board) passes untouched. The operator's message
     decides the column and the lane: ``#task`` → the `agent` column,
-    ``#now`` → `doing`, with the lane named in braces or #now's own.
+    ``#now`` → `doing`, ``#now-todo`` and the rest → that column, with the
+    lane named in braces or #now's own. A #now task's text is the
+    operator's message itself: the agent sends the title and tags only.
     """
     agent = identity_of(body)
     if agent in _HOUSE_ACTORS:
         return []
-    command, named = _operator_command(store, agent)
-    status = str(body.get("status") or "").strip() or ("doing" if command == "now" else "agent")
-    if command == "now" and status != "doing":
+    command, named, column, message = _operator_command(store, agent)
+    status = str(body.get("status") or "").strip() or (column if command == "now" else "agent")
+    if command == "now" and status != column:
         refuse_agent(
-            "the operator wrote #now: this task starts in `doing`",
-            f"send status \"doing\" (or none), not {status!r}",
+            f"the operator's #now puts this task in `{column}`",
+            f"send status \"{column}\" (or none), not {status!r}",
         )
+    if command == "now":
+        if str(body.get("description") or "").strip():
+            refuse_agent(
+                "a #now task's text is the operator's message, kept as it was written",
+                "send the title and tags only; the server writes the message in as the text",
+            )
+        body["description"] = message
     if command != "now" and status != "agent":
         refuse_agent(
             "an agent creates tasks only in the `agent` column",
@@ -609,7 +620,7 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     dropped = {k for k in ("lane", "assignee") if str(body.pop(k, None) or "").strip()}
     if lane:
         body["lane"] = body["assignee"] = lane
-    if command == "now":
+    if command == "now" and column == "doing":
         body["today_on"] = date.today().isoformat()
     title = str(body.get("title") or "").strip()
     if not title:
@@ -658,7 +669,8 @@ def tasks_create(
             status_code=422,
             detail="a task holds title and description — send its text as description",
         )
-    started_now = identity_of(body) not in _HOUSE_ACTORS and _operator_command(store, identity_of(body))[0] == "now"
+    said = _operator_command(store, identity_of(body)) if identity_of(body) not in _HOUSE_ACTORS else ("", "", "", "")
+    started_now, column = said[0] == "now", said[2]
     ignored = _gate_agent_create(body, store)
     if len(str(body.get("title") or "")) > TITLE_MAX:
         raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
@@ -679,7 +691,8 @@ def tasks_create(
     if started_now and not out.get("existing"):
         # The card's history says where it came from: the operator's #now
         # in the chat, and the agent that wrote it down.
-        _append_events(store, task_id, _DEFAULT_ACTOR, [("started", "", f"in the chat, with #now (written by {identity_of(body)})")])
+        verb, tag = ("started", "#now") if column == "doing" else ("filed", f"#now-{column}")
+        _append_events(store, task_id, _DEFAULT_ACTOR, [(verb, "", f"in the chat, with {tag} (written by {identity_of(body)})")])
         store.rebuild()
     result = {
         "metadata": meta,

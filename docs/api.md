@@ -576,6 +576,28 @@ more, a normal one its alternatives, a major one also what would undo it.
   rebuilds, requests by path with p50 and max, errors) and the last lines;
   `GET /api/logs/text` is the same as plain text, for the health page's copy
   button and for `curl`.
+- `GET /api/checkup?cwd=&agent_id=` — `#sp`: is Slightly Parallel working for
+  this chat and folder (checkup.py). `verdict`, `counts`, and `findings`, each
+  with `status` (`ok`, `note`, `concern`, `unknown`), `title`, `evidence` and
+  `next`: the folder's project, this chat recorded, MCP (ok only when the call
+  came through the MCP tool `checkup`), capture, the contract block, hooks,
+  skills, data, disk, backups, the server's memory, errors and slow requests.
+  Each finding that is not fine also carries its `reason` (`chat.capture_stale`,
+  `hooks.script_missing` …) and `recipe` — how to confirm, who acts (the agent
+  after a yes, or only the operator), the steps, how to verify — and the answer
+  the `rules` every recipe keeps (checkup_fixes.md). Reads only. `python sp.py
+  check` prints it, and looks from outside when the server does not answer.
+- `GET /api/checkup/fix/{reason}` — one recipe by its reason, with the rules;
+  404 names the reasons there are.
+- `GET /api/diagnostics/report` — one Markdown file to send when something is
+  wrong (diagnostics.py), as an attachment: the machine, the server's memory
+  now and at its peak, memory and load hour by hour for a day and the
+  monitor's events (from the monitor), the log's memory lines, slow requests
+  and warnings, the capture hooks' errors, the data's size and the tools'
+  transcripts, the settings, the supervisor's output, and this summary. No
+  chat text, nothing from `.env`; home paths written from `~`. `python sp.py
+  report` writes the same file, and builds it from the files alone when the
+  server does not answer.
 - `GET /api/capture/health` — is capture working (capturewatch.py): `missed`, `lost` (sessions of the last week, Claude Code or Codex, never recorded),
   the active Claude Code sessions in folders registered in Setup whose latest
   messages Slightly Parallel did not record (or never saw); `errors`, hook failures of

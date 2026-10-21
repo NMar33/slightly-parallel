@@ -3,12 +3,13 @@ import { TerminalButton } from '../terminal/Dock'
 import { CaptureAlert } from '../capture/CaptureHealth'
 import { TopbarMonitor } from '../monitor/TopbarMonitor'
 import { TopbarTimer } from '../time/TopbarTimer'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, matchPath, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronRight, Monitor, Moon, Search as SearchIcon, Sun } from 'lucide-react'
 import { Button, Input, Row } from '../../components/primitives'
 import { PanelBoundary } from '../../components/ErrorBoundary'
 import { QuickNote } from '../note/QuickNote'
-import { crumbsOf } from './crumbs'
+import { crumbsOf, decodeSegment } from './crumbs'
+import { profileLabel, useAgentProfile } from '../agents/profile'
 import { useTheme } from '../../providers/ThemeProvider'
 import { t } from '../../i18n/scope/shell'
 
@@ -43,12 +44,22 @@ export function Topbar() {
  */
 function Breadcrumbs() {
   const location = useLocation()
-  const crumbs = useMemo(() => crumbsOf(location.pathname), [location.pathname])
+  // An agent's page wears the agent's name, not its id (the page has the profile already).
+  const agentId = decodeSegment(matchPath('/agent/:id', location.pathname)?.params.id ?? '')
+  const profile = useAgentProfile(agentId).data
+  const agentName = profile ? profileLabel(profile) : ''
+  const crumbs = useMemo(() => {
+    const all = crumbsOf(location.pathname)
+    const last = all[all.length - 1]
+    return agentName && last ? [...all.slice(0, -1), { ...last, label: agentName }] : all
+  }, [location.pathname, agentName])
 
   return (
     <Row gap="8" align="center" className="min-w-0">
       {crumbs.map((c, i) => (
-        <div key={`${i}:${c.to ?? c.label}`} className="flex items-center gap-8 min-w-0">
+        // Only the last crumb gives way to a narrow bar: a long agent title
+        // squeezed "Overview" and "Agents" to one letter each.
+        <div key={`${i}:${c.to ?? c.label}`} className={`flex items-center gap-8 ${i === crumbs.length - 1 ? 'min-w-0' : 'shrink-0'}`}>
           {i > 0 && (
             <ChevronRight
               size={14}

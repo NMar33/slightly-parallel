@@ -28,10 +28,11 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8123
     cors_origins: tuple[str, ...] = _DEFAULT_CORS_ORIGINS
-    # The embedded terminal spawns a real shell. It is disabled unless
-    # explicitly enabled AND a token is configured — see routers/terminal.py.
+    # The embedded terminal spawns a real shell: off until switched on.
+    # Its token is new at every start; the pages fetch it (routers/terminal.py
+    # token_of). SP_TOKEN, which fixed it, is gone: a fixed token stayed
+    # valid after it leaked.
     terminal_enabled: bool = False
-    terminal_token: str = ""
     reload: bool = False
     extra: dict = field(default_factory=dict)
 
@@ -64,7 +65,6 @@ class Settings:
             port=port,
             cors_origins=origins,
             terminal_enabled=_env_flag("SP_ENABLE_TERMINAL"),
-            terminal_token=os.environ.get("SP_TOKEN", ""),
             reload=_env_flag("RELOAD"),
         )
 

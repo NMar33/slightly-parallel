@@ -239,3 +239,9 @@ def test_a_chat_says_everything_it_made_and_what_marked_it(client: TestClient) -
 
     store = client.app.state.store
     assert produced.marks(store) is produced.marks(store)      # read once per version
+
+
+def test_a_headline_keeps_pasted_text_and_drops_its_tags() -> None:
+    from backend import sessions
+    got = sessions._clip('<pasted_content id="fb4b">tk_64f656ee · Полировка</pasted_content id="fb4b"> и вопрос')
+    assert got == "tk_64f656ee · Полировка и вопрос"

@@ -17,7 +17,7 @@ import json
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import duckdb
@@ -190,7 +190,14 @@ def _load(store: ViewStore) -> tuple[duckdb.DuckDBPyConnection, dict[str, int]]:
 
 
 def _engine(store: ViewStore) -> tuple[duckdb.DuckDBPyConnection, dict[str, int]]:
-    key = (str(store.data_root), store.view_mtime)
+    # Made again when what it is made of changes: the chats and the tasks
+    # (with their events and the git counts the task statistics carry), and
+    # the day, which ages move with. A decision, a note, a standup or a
+    # setting written no longer throws the whole copy away. The store's own
+    # stamps, set at its rebuild, not the files' times: a file newer than the
+    # views would key a copy built from the old views as fresh.
+    stamps = store.stamps
+    key = (str(store.data_root), stamps.get("chats"), stamps.get("tasks"), date.today().isoformat())
     with _lock:
         if _state["key"] != key or _state["con"] is None:
             # The old copy is left to go when the last query on it ends: closing
@@ -250,7 +257,9 @@ def run(store: ViewStore, sql: str) -> dict[str, Any]:
         rows: list[tuple] = []
         size = 0
         while len(rows) <= MAX_ROWS:
-            part = rel.fetchmany(500)
+            # A few rows at a time: the byte ceiling is checked between
+            # batches, so a batch of wide rows cannot pass it by much.
+            part = rel.fetchmany(50)
             if not part:
                 break
             for r in part:

@@ -43,7 +43,12 @@ def standing(last_change: float, now: float) -> str:
 def _repo_facts(repo: Path, subjects: int) -> dict[str, Any]:
     return {
         "commits": int(gitwork.git(repo, "rev-list", "--count", "HEAD") or 0),
-        "first_commit": (gitwork.git(repo, "log", "--reverse", "--date=short", "--format=%ad") or "").splitlines()[:1],
+        # The root commits' dates, not every commit's: the whole log was read
+        # for its first line.
+        "first_commit": sorted(
+            d for d in (gitwork.git(repo, "log", "--no-walk", "--date=short", "--format=%ad",
+                                    *(gitwork.git(repo, "rev-list", "--max-parents=0", "HEAD") or "").split()) or "").splitlines()
+            if d)[:1],
         "last_commit": gitwork.git(repo, "log", "-1", "--date=short", "--format=%ad %s") or "",
         "remote": (gitwork.git(repo, "remote", "-v") or "").splitlines()[:1],
         "tags": (gitwork.git(repo, "tag") or "").splitlines()[-5:],

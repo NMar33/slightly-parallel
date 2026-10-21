@@ -55,7 +55,10 @@ COLUMNS = (
     "disk_pct", "disk_free", "disk_read", "disk_write", "net_rx", "net_tx",
     "ping_ms", "ping_loss", "temp_c", "battery", "self_rss", "self_cpu",
 )
-PEAKS = ("cpu", "mem_pct", "disk_read", "disk_write", "net_rx", "net_tx", "ping_ms", "temp_c")
+# Kept as the bucket's maximum as well as its average: a spike of a few
+# seconds (the server at 2.5 GB on a start) must survive the minute and
+# quarter-hour tiers.
+PEAKS = ("cpu", "mem_pct", "disk_read", "disk_write", "net_rx", "net_tx", "ping_ms", "temp_c", "self_rss")
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS samples (
@@ -132,6 +135,15 @@ def db_path(data_root: Path) -> Path:
 _READY: set[str] = set()
 
 
+def _add_columns(con: sqlite3.Connection) -> None:
+    """A record made before a reading or a peak was added gets its column:
+    the table is created once, so a new name in COLUMNS or PEAKS is added here."""
+    have = {r[1] for r in con.execute("PRAGMA table_info(samples)")}
+    for name in (*COLUMNS, *(c + "_max" for c in PEAKS)):
+        if name not in have:
+            con.execute(f"ALTER TABLE samples ADD COLUMN {name} REAL")
+
+
 def connect(data_root: Path) -> sqlite3.Connection:
     p = db_path(data_root)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -142,6 +154,7 @@ def connect(data_root: Path) -> sqlite3.Connection:
     if str(p) not in _READY:
         con.execute("PRAGMA journal_mode=WAL")
         con.executescript(SCHEMA)
+        _add_columns(con)
         _READY.add(str(p))
     con.execute("PRAGMA synchronous=NORMAL")
     return con
@@ -419,8 +432,15 @@ class Monitor:
             self._thread = threading.Thread(target=self._run, name="sysmon", daemon=True)
             self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, wait: float = 5.0) -> None:
+        """Stop sampling, and wait for the thread to end: a monitor left
+        running beside its replacement (a data root swap) kept its own
+        connection and thread."""
         self._stop.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=wait)
+            if self._thread.is_alive():
+                log.warning("monitor thread did not stop in %.0f s", wait)
 
     @property
     def running(self) -> bool:
@@ -430,6 +450,17 @@ class Monitor:
         return max(1.0, _num(self.cfg, "interval_seconds", 5))
 
     def _run(self) -> None:
+        try:
+            self._loop()
+        finally:
+            con, self._con = self._con, None
+            if con is not None:
+                try:
+                    con.close()
+                except sqlite3.Error:
+                    pass
+
+    def _loop(self) -> None:
         cfg_at = 0.0
         while not self._stop.is_set():
             now = time.time()

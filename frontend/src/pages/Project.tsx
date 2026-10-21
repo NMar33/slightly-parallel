@@ -38,6 +38,10 @@ import { OverviewAnalytics } from '../features/project/OverviewAnalytics'
 import type { Decision as DecisionLogDecision } from '../components/DecisionLog'
 import { TabBar } from '../components/TabBar'
 import { useTabFromHash } from '../hooks/useTabFromHash'
+import {
+  PROJECT_TABS, isProjectTabId, setTabShown, tabShown, useTabChoices, type ProjectTabId,
+} from '../features/project/tabs'
+import { TabsPicker } from '../features/project/TabsPicker'
 import { api, qk } from '../lib/api'
 import { getJson } from '../lib/getJson'
 import { useStrSetting } from '../lib/settings'
@@ -62,6 +66,12 @@ const CalendarTab = lazy(() => import('../features/calendar/CalendarTab').then((
 const TerminalsTab = lazy(() => import('../features/project/TerminalsTab').then((m) => ({ default: m.TerminalsTab })))
 const FilesTab = lazy(() => import('../features/project/FilesTab').then((m) => ({ default: m.FilesTab })))
 const ArchitectureTab = lazy(() => import('../features/project/ArchitectureTab').then((m) => ({ default: m.ArchitectureTab })))
+const StandupsDayBook = lazy(() => import('../features/standups/DayBook').then((m) => ({ default: m.StandupsDayBook })))
+const ScansDayBook = lazy(() => import('../features/scans/DayBook').then((m) => ({ default: m.ScansDayBook })))
+const VisionsDocument = lazy(() => import('../features/visions/Document').then((m) => ({ default: m.VisionsDocument })))
+const EntryPointsBook = lazy(() => import('../features/entrypoints/Book').then((m) => ({ default: m.EntryPointsBook })))
+const ProblemsMemory = lazy(() => import('../features/problems/Memory').then((m) => ({ default: m.ProblemsMemory })))
+const RulesBook = lazy(() => import('../features/rules/Book').then((m) => ({ default: m.RulesBook })))
 
 // Re-exports so existing consumers (tests) keep importing from this module.
 export type {
@@ -76,28 +86,11 @@ export type {
 // Tab definitions
 // ---------------------------------------------------------------------------
 
-const TABS = [
-  { id: 'overview',  label: t('Overview')   },
-  { id: 'agents',    label: t('Agents')     },
-  { id: 'tasks',     label: t('Tasks')      },
-  { id: 'sprints',   label: t('Sprints')    },
-  { id: 'calendar',  label: t('Calendar')   },
-  { id: 'terminals', label: t('Terminals')  },
-  { id: 'decisions', label: t('Decisions')  },
-  { id: 'activity',  label: t('Chats')      },
-  { id: 'files',     label: t('Files')      },
-  { id: 'architecture', label: t('Architecture') },
-  // The id is what links and the saved default tab hold, so it stays.
-  { id: 'tools',     label: t('Timer')      },
-] as const
-
-type TabId = typeof TABS[number]['id']
+// The list, its defaults and the operator's choices: features/project/tabs.ts.
+type TabId = ProjectTabId
 
 const DEFAULT_TAB: TabId = 'overview'
-
-function isTabId(x: string): x is TabId {
-  return TABS.some((tab) => tab.id === x)
-}
+const isTabId = isProjectTabId
 
 // ---------------------------------------------------------------------------
 // Data fetch
@@ -229,9 +222,10 @@ export default function ProjectPage({
     queryFn: ({ signal }) => api.snapshot(signal),
   })
   const terminalEnabled = snapshot?.capabilities?.terminal_enabled ?? true
+  const choices = useTabChoices()
   const visibleTabs = useMemo(
-    () => (terminalEnabled ? TABS : TABS.filter((t) => t.id !== 'terminals')),
-    [terminalEnabled],
+    () => PROJECT_TABS.filter((x) => tabShown(x.id, choices) && (terminalEnabled || x.id !== 'terminals')),
+    [terminalEnabled, choices],
   )
 
   const configuredDefault = useStrSetting('ui.default_project_tab', DEFAULT_TAB)
@@ -242,10 +236,12 @@ export default function ProjectPage({
       : DEFAULT_TAB
 
   const [rawTab, selectTab] = useTabFromHash<TabId>(isTabId, defaultTab)
-  // A hash may still name a hidden tab (e.g. #terminals with terminals off).
+  // A hash may still name a hidden tab (e.g. #terminals with terminals off):
+  // the default tab shows, and a tab the operator turned off says so.
   const tab: TabId = visibleTabs.some((t) => t.id === rawTab)
     ? rawTab
-    : DEFAULT_TAB
+    : defaultTab
+  const turnedOff = rawTab !== tab && !tabShown(rawTab, choices) ? PROJECT_TABS.find((x) => x.id === rawTab) : undefined
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['project', code],
@@ -294,7 +290,15 @@ export default function ProjectPage({
     <div className="flex flex-col gap-24">
       <ProjectHeader payload={data} />
 
-      <TabBar tabs={visibleTabs} active={tab} onSelect={selectTab} ariaLabel={t('Project sections')} />
+      <TabBar tabs={visibleTabs} active={tab} onSelect={selectTab} ariaLabel={t('Project sections')} after={<TabsPicker />} />
+      {turnedOff && (
+        <p role="status" className="-mt-12 text-12 text-tertiary">
+          {t('The {tab} tab is turned off.', { tab: turnedOff.label })}{' '}
+          <button type="button" className="text-brand hover:underline" onClick={() => setTabShown(turnedOff.id, true)}>
+            {t('Turn it on')}
+          </button>
+        </p>
+      )}
 
       <div
         role="tabpanel"
@@ -324,6 +328,12 @@ export default function ProjectPage({
         {tab === 'tools'     && <ToolsTab      projectCode={data.code} />}
         {tab === 'files'     && <FilesTab      projectCode={data.code} />}
         {tab === 'architecture' && <ArchitectureTab projectCode={data.code} />}
+        {tab === 'standups'  && <StandupsDayBook project={data.code} />}
+        {tab === 'scans'     && <ScansDayBook    project={data.code} />}
+        {tab === 'visions'   && <VisionsDocument project={data.code} />}
+        {tab === 'entrypoints' && <EntryPointsBook project={data.code} />}
+        {tab === 'problems'  && <ProblemsMemory  project={data.code} />}
+        {tab === 'rules'     && <RulesBook       project={data.code} />}
         </Suspense>
         </PanelBoundary>
       </div>

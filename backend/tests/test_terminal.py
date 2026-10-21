@@ -383,3 +383,42 @@ def test_a_text_frame_that_is_json_but_no_message_is_typed_not_fatal(env) -> Non
             seen += ws.receive_bytes()
     assert b"mk-42-alive" in seen
     c.post(f"/api/terminal/sessions/{sid}/close", json={})
+
+
+def test_a_refused_token_is_told_after_the_handshake_so_the_page_reads_4401(env) -> None:
+    """Closed before the handshake, a socket fails with HTTP 403 and a browser
+    reports 1006: the page kept the old token after a restart and reconnected
+    with it for good. Now the handshake completes, then 4401 says why; a
+    token that is not ASCII is a refusal too, not an error."""
+    c, _, _ = env
+    _on(c)
+    from starlette.websockets import WebSocketDisconnect
+    for bad in ("nope", "токен", "x" * 5000):
+        opened = False
+        with pytest.raises(WebSocketDisconnect) as e:
+            with c.websocket_connect(f"/ws/terminal/t1?token={bad}") as ws:
+                opened = True
+                ws.receive_bytes()
+        assert opened and e.value.code == 4401, bad
+    # Another site's page is still turned away at the handshake itself.
+    opened = False
+    with pytest.raises(WebSocketDisconnect):
+        with c.websocket_connect("/ws/terminal/t1?token=nope", headers={"Origin": "https://evil.example"}):
+            opened = True
+    assert not opened
+
+
+def test_the_token_is_new_at_each_start_and_never_cached(tmp_path: Path, monkeypatch) -> None:
+    from backend.routers import terminal
+    monkeypatch.delenv("SP_TOKEN", raising=False)
+    root = tmp_path / "data"
+    (root / "projects").mkdir(parents=True)
+    a, b = create_app(data_root=root, watch=False), create_app(data_root=root, watch=False)
+    assert terminal.token_of(a) == terminal.token_of(a) != terminal.token_of(b)
+    # SP_TOKEN no longer fixes it: a set one is ignored.
+    monkeypatch.setenv("SP_TOKEN", "fixed-token-for-this-test")
+    assert terminal.token_of(create_app(data_root=root, watch=False)) != "fixed-token-for-this-test"
+    with TestClient(a) as c:
+        _on(c)
+        r = c.get("/api/terminal/state")
+        assert r.headers["cache-control"] == "no-store" and r.json()["token"] == terminal.token_of(a)

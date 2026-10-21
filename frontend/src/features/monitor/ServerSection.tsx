@@ -3,7 +3,7 @@ import { StatTile } from '../../components/StatTile'
 import { BackupProof } from '../capture/BackupProof'
 import { CaptureSection } from '../capture/CaptureHealth'
 import { useQuery } from '@tanstack/react-query'
-import { RefreshCw } from 'lucide-react'
+import { Download, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { CopyButton } from '../../components/CopyButton'
@@ -105,6 +105,14 @@ export function ServerSection() {
             label={t('copy for AI')}
             className="inline-flex items-center gap-4 whitespace-nowrap h-24 px-8 rounded-input border border-brand text-11 font-mono text-primary bg-brand-glow"
           />
+          <a
+            href="/api/diagnostics/report"
+            download
+            title={t('One file with the machine, memory over a day, warnings, the monitor\'s events and the size of the data — no chat text. Send it with a line on what went wrong.')}
+            className="inline-flex items-center gap-4 whitespace-nowrap h-24 px-8 rounded-input border border-border-subtle text-11 font-mono text-secondary hover:text-primary hover:border-brand no-underline"
+          >
+            <Download size={12} aria-hidden /> {t('download report')}
+          </a>
         </div>
       </div>
 

@@ -32,7 +32,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 log = logging.getLogger("sp.turntimes")
 
@@ -51,20 +51,23 @@ def _parse(ts: Any) -> datetime | None:
     return d
 
 
-def _lines(path: Path) -> Iterable[dict[str, Any]]:
+def _lines(path: Path) -> Iterator[dict[str, Any]]:
+    """Each JSON object of a JSON-lines file, read one line at a time. A
+    Claude Code transcript runs to hundreds of MB: read whole and parsed into
+    one list it took the server from 200 MB to 2.5 GB at every start, and
+    glibc kept most of it after (docs/performance.md)."""
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        fh = open(path, encoding="utf-8", errors="replace")
     except OSError:
-        return []
-    out = []
-    for line in raw:
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict):
-            out.append(rec)
-    return out
+        return
+    with fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                yield rec
 
 
 class Timed:
@@ -136,6 +139,13 @@ Interval = tuple[datetime, datetime]
 
 
 _points_cache: dict[str, tuple[tuple[int, int], list[datetime]]] = {}
+# Kept by the number of times held, not of files: a chat had 174 helper
+# transcripts, each asked for on every turn, and a cache of fewer files than
+# that is emptied in a cycle. 500 000 times is about 30 MB; a 330 MB
+# transcript holds about 5 000.
+POINTS_KEPT = 500_000
+#: And at most this many files, so files with no times in them pile up too.
+FILES_KEPT = 2_000
 
 
 def points_of(transcript: Path) -> list[datetime]:
@@ -146,8 +156,9 @@ def points_of(transcript: Path) -> list[datetime]:
     except OSError:
         return []
     key, version = str(transcript), (st.st_mtime_ns, st.st_size)
-    hit = _points_cache.get(key)
+    hit = _points_cache.pop(key, None)
     if hit and hit[0] == version:
+        _points_cache[key] = hit       # asked for again: kept longest
         return hit[1]
     out = []
     for rec in _lines(transcript):
@@ -155,7 +166,12 @@ def points_of(transcript: Path) -> list[datetime]:
             at = _parse(rec.get("timestamp"))
             if at is not None:
                 out.append(at)
+    if len(out) > POINTS_KEPT // 4:
+        return out          # one file this large is read again when asked, not kept
     _points_cache[key] = (version, out)
+    held = sum(len(v[1]) for v in _points_cache.values())
+    while (held > POINTS_KEPT or len(_points_cache) > FILES_KEPT) and len(_points_cache) > 1:
+        held -= len(_points_cache.pop(next(iter(_points_cache)))[1])
     return out
 
 

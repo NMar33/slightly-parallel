@@ -18,7 +18,7 @@ import { t } from '../../i18n/scope/system'
  * project starts from where the work stopped. The page is the kept book
  * (features/kept/Book) with those parts.
  */
-export function EntryPointsBook() {
+export function EntryPointsBook({ project }: { project?: string } = {}) {
   const { visions: entries, loading, error, near, complete } = useKept('entrypoint')
   return (
     <KeptBook kind="entrypoint" title={t('Entry points')} icon={DoorOpen} guide={ENTRYPOINTS_GUIDE}
@@ -27,7 +27,7 @@ export function EntryPointsBook() {
       modes={[['month', 'month'], ['project', 'project'], ['tag', 'tag']]} defaultMode="project"
       mark={(v) => isOpen(v) && <span role="img" className="h-6 w-6 rounded-pill bg-brand shrink-0 self-center" aria-label={t('open')} />}
       belowGuide={(shown) => <OpenTopics shown={shown} />}
-      section={(v, ctx) => <EntrySection v={v} ctx={ctx} />} />
+      inProject={project} section={(v, ctx) => <EntrySection v={v} ctx={ctx} />} />
   )
 }
 

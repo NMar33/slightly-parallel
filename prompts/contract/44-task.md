@@ -4,23 +4,30 @@ section: 4
 title: Agent task
 enabled: true
 command: #task <hint> | Write the task the user is pointing at, from the conversation, into the `agent` column, for later; `#task {lane} …` names the board lane (section 4)
-command: #now <text> | Write the task this chat starts on into `doing`, in the lane for #now or the one in braces, then do the work; `#done` closes it (section 4)
-brief: **Agent task** (`#task <hint>`, `#now <text>`). Only when the user writes one of them: write the task the user is pointing at, from the conversation, with `write_entry {lens: "task"}`. `#task` lands in the `agent` column for later; `#now` is the task this chat starts on and lands in `doing`. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
+command: #now <text> | Title the task this chat starts on; the server keeps the operator's message as its text, in `doing`, in the lane for #now or the one in braces; then do the work; `#done` closes it (section 4)
+command: #now-todo <text> | Title the operator's message; the server files it, as written, in To do (also `-next`, `-backlog`, `-review`, `-parked`, `-done`, `-doing`); not started in this chat (section 4)
+brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
 ---
 
 **Agent task — `#task <hint>` / `#now <text>` → `write_entry {lens: "task"}`.**
-Only when the user writes one of them. You write the task the user would
-type themselves if they had the time; you do it because you hold the
-context. The two differ in when the work happens:
+Only when the user writes one of them. They differ in who writes the text
+and when the work happens:
 
-- `#task` — a task for later. The hint says which thing; the conversation
-  holds everything else. The card lands in the `agent` column; the
-  operator drags it out, which is the review.
-- `#now` — the task this chat starts on, now. The text after the tag is
-  the task. The card lands in `doing`, in the lane for `#now` (Settings ›
-  Tasks; `Now` unless changed), marked for today, with "started in the
-  chat" in its history. Write it first, then do the work. `#done` closes
-  it (the skill `finish-a-task`).
+- `#task` — a task for later, written by you: you hold the context the
+  operator would otherwise have to type. The hint says which thing; the
+  conversation holds everything else. The card lands in the `agent`
+  column; the operator drags it out, which is the review.
+- `#now` — the task this chat starts on, now. Its text is the operator's
+  message, exactly as written: the server takes it from the captured chat.
+  You send the `title` and `tags` only; a `description` is refused. The
+  card lands in `doing`, in the lane for `#now` (Settings › Tasks; `Now`
+  unless changed), marked for today, with "started in the chat" in its
+  history. Write it first, then do the work. `#done` closes it (the skill
+  `finish-a-task`).
+- `#now-todo` — the same card, filed in To do instead, and not started:
+  write it, say so in one line, and go on with what the chat was doing.
+  `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and
+  `#now-done` file it in those columns; `#now-doing` is `#now`.
 
 `{lane}` right after either tag names the board lane: `#now {ui} fix the
 login timeout`, `#task {Kanban Board} the cards do not sort`. The server
@@ -30,7 +37,8 @@ refused with the board's lanes: ask the operator which, in one line, and
 write when they answer. The notice from the capture hook says this before
 you start.
 
-1. Find it. `#now`: the text after the tag, as the operator wrote it.
+1. Find it. `#now` (any column): the operator's message is the task; you
+   only title it — skip to step 3, title and tags.
    `#task`: go back through the conversation to where this thing came up
    — a bug noticed, an idea raised, a step deferred, a thing left undone.
    Empty hint = the last such thing not yet done. Two things fit → ask
@@ -48,8 +56,10 @@ you start.
    chars. `description`: 2–6 plain lines from step 2, nothing added.
    `tags`: 1–3 of `ag_debt · ag_bug · ag_followup · ag_idea ·
    ag_decision`, the first is the main one. `status`: `agent` for `#task`,
-   `doing` for `#now`, or none — the server knows which the operator
-   wrote and refuses the other. No other field: priority, impact, effort,
+   `doing` for `#now`, the named column for `#now-todo` and the rest, or
+   none — the server knows which the operator wrote and refuses another.
+   For any `#now` there is no `description`: the server writes the
+   operator's message in. No other field: priority, impact, effort,
    sprint, due date, lane, assignee and the rest are the operator's; the
    server drops them and names them back as `ignored`.
 4. Reply with one line: `tk_… · <title> · <tag> · <column> · <lane>`.

@@ -23,7 +23,7 @@ import { t } from '../../i18n/scope/system'
  * and the rule points back at it. The page is the kept book
  * (features/kept/Book) with those parts.
  */
-export function ProblemsMemory() {
+export function ProblemsMemory({ project }: { project?: string } = {}) {
   const { visions: problems, loading, error, near, complete } = useKept('problem')
   // The rules only for their link back to a problem: no record is read.
   const { visions: rules } = useKept('rule', '', { details: false })
@@ -43,7 +43,7 @@ export function ProblemsMemory() {
       modes={[['month', 'month'], ['tag', 'tag'], ['project', 'project'], ['set', 'sets']]} defaultMode="month"
       mark={(v) => isOpen(v) && <span role="img" className="h-6 w-6 rounded-pill bg-status-amber shrink-0 self-center" aria-label={t('open')} />}
       belowGuide={(shown) => <OpenNow shown={shown} />}
-      section={(v, ctx) => <ProblemSection v={v} ctx={ctx} rules={rulesByProblem.get(v.row.id) ?? []} />} />
+      inProject={project} section={(v, ctx) => <ProblemSection v={v} ctx={ctx} rules={rulesByProblem.get(v.row.id) ?? []} />} />
   )
 }
 

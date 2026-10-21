@@ -41,6 +41,10 @@ const MEASURES: Measure[] = [
     lines: (s) => [{ name: 'CPU', color: HUE.cpu, values: col(s, 'cpu'), peaks: col(s, 'cpu_max') }] },
   { id: 'mem', title: t('Memory'), format: pct, max: 100, kinds: ['memory', 'swap', 'leak'],
     lines: (s) => [{ name: t('Memory'), color: HUE.mem, values: col(s, 'mem_pct'), peaks: col(s, 'mem_pct_max') }] },
+  // The server's own memory, with the bucket's peak: a spike of a few
+  // seconds (2.5 GB on a start, once) stays visible in hour and day views.
+  { id: 'self', title: t('Slightly Parallel memory'), format: bytes, kinds: ['leak'],
+    lines: (s) => [{ name: t('Server'), color: HUE.self, values: col(s, 'self_rss'), peaks: col(s, 'self_rss_max') }] },
   { id: 'net', title: t('Network'), format: rate, kinds: ['network', 'unusual'], setting: 'monitor.track_network',
     lines: (s) => [
       { name: '↓', color: HUE.rx, values: col(s, 'net_rx'), peaks: col(s, 'net_rx_max') },

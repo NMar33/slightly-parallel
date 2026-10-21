@@ -16,6 +16,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import ProjectPage, { type ProjectPayload } from './Project'
+import { setTabShown } from '../features/project/tabs'
 
 // ---------------------------------------------------------------------------
 // Fixture factory
@@ -160,6 +161,35 @@ describe('ProjectPage — rendering', () => {
     expect(screen.getByText('Open tasks')).toBeTruthy()
     expect(screen.getByText('of 5')).toBeTruthy()
     expect(screen.getByText('Done this week')).toBeTruthy()
+  })
+
+  it('a tab turned off in Settings leaves the strip; its link says so and can turn it on', async () => {
+    setTabShown('files', false)
+    window.history.replaceState(null, '', '/#files')
+    try {
+      renderPage()
+      expect(await screen.findByText('The Files tab is turned off.')).toBeTruthy()
+      expect(screen.queryByRole('tab', { name: 'Files' })).toBeNull()
+      expect(screen.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true')
+      fireEvent.click(screen.getByRole('button', { name: 'Turn it on' }))
+      await waitFor(() => expect(screen.getByRole('tab', { name: 'Files' }).getAttribute('aria-selected')).toBe('true'))
+      expect(screen.queryByText('The Files tab is turned off.')).toBeNull()
+    } finally {
+      localStorage.removeItem('sp-project-tabs')
+    }
+  })
+
+  it('the Tabs menu at the end of the strip turns a tab on in place', async () => {
+    try {
+      renderPage()
+      fireEvent.click(await screen.findByRole('button', { name: /Tabs/ }))
+      expect(screen.queryByRole('tab', { name: 'Visions' })).toBeNull()
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Visions' }))
+      expect(await screen.findByRole('tab', { name: 'Visions' })).toBeTruthy()
+      expect((screen.getByRole('checkbox', { name: 'Overview' }) as HTMLInputElement).disabled).toBe(true)
+    } finally {
+      localStorage.removeItem('sp-project-tabs')
+    }
   })
 
   it('switches tabpanel when a different tab is clicked', async () => {

@@ -1382,5 +1382,11 @@
   "A test server does not change this computer.": "Тестовый сервер не меняет настройки этого компьютера.",
   "A shortcut in the applications menu and on the desktop": "Ярлык в меню приложений и на рабочем столе",
   "A shortcut on the desktop": "Ярлык на рабочем столе",
-  "A shortcut on the desktop and in the Start menu": "Ярлык на рабочем столе и в меню «Пуск»"
+  "A shortcut on the desktop and in the Start menu": "Ярлык на рабочем столе и в меню «Пуск»",
+  "Project tabs": "Вкладки проекта",
+  "which tabs a project page shows, in every project": "какие вкладки показывает страница проекта, во всех проектах",
+  "Overview always shows. A link to a tab that is off opens the tab the page opens on, and says how to turn it on.": "Обзор показывается всегда. Ссылка на выключенную вкладку открывает вкладку по умолчанию и подсказывает, как её включить.",
+  "Slightly Parallel memory": "Память Slightly Parallel",
+  "Server": "Сервер",
+  "— could not reconnect: reload the page —": "— не удалось переподключиться: обновите страницу —"
 }

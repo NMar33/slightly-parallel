@@ -61,7 +61,7 @@ Good to know:
 - **The chats are recorded even when the server is not running.** The hooks write them; the server reads them when it is up.
 - **To start the server again:** `./run.sh --prod` (Windows: `sp run --prod`). To keep it running in the background: [docs/running.md](docs/running.md).
 - **Where everything is:** the data folder, one folder per project under `projects/<code>/`, the chats in it as `chat.md`, the tasks and the rest as CSV plus one Markdown file per entry. Plain files; copy the folder and you have a backup.
-- **The commands** you type in a chat: `#task`, `#now`, `#scan`, `#decision`, `#vision`, `#rule`, `#problem`, `#skill`, `#prompt`, `#important`, `#entrypoint`, `#artifact`, `#undo`, `#help`. Each is explained [below](#the-commands).
+- **The commands** you type in a chat: `#task`, `#now`, `#scan`, `#decision`, `#vision`, `#rule`, `#problem`, `#skill`, `#prompt`, `#important`, `#entrypoint`, `#artifact`, `#undo`, `#sp`, `#help`. Each is explained [below](#the-commands).
 
 Working on Slightly Parallel's own code needs Node 20+: [docs/development.md](docs/development.md).
 
@@ -157,15 +157,19 @@ A command is one word anywhere in a message to an agent. The agent does the writ
 
 ![#task in the chat, then the card in the From agents column](docs/media/readme/task.gif)
 
-`#now` is the task being done now. `#now fix the login timeout`. The agent writes the card into Doing, in the Now lane, marks it with today, and only then starts the work. Everything that follows in the chat, the decisions, the evidence, the commits, is tied to that card. `#done` closes it: the server moves the card to done and counts its stretch of the chat. Too lazy to open the board: you do not have to.
+`#now` is the task being done now. `#now fix the login timeout`. The card's text is your message, as you wrote it; the agent only gives it a title. The card goes into Doing, in the Now lane, marked with today, and only then does the work start. Everything that follows in the chat, the decisions, the evidence, the commits, is tied to that card. `#done` closes it: the server moves the card to done and counts its stretch of the chat. Too lazy to open the board: you do not have to.
 
 ![#now in the chat, then the card in Doing, planned for today](docs/media/readme/now.gif)
+
+`#now-todo` files the message in To do instead, and the chat goes on with what it was doing. `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and `#now-done` file it in those columns.
 
 The lane goes in braces right after the tag: `#now {ui} fix the login timeout`, `#task {Kanban Board} cards do not sort`. The server reads the lane from the message, not the agent, so there is nothing to guess. A lane that is not on the board is refused with the list of those that are; the agent asks in one line. New lanes are made on the board. Without braces `#task` lands in `unassigned`, `#now` in Now (the name is a setting).
 
 **`#entrypoint`** — the way into a topic. Say the topic, and the agent writes what it is, where its files and links are, how to run it, where the work stopped and what is next. Repeat it on the same topic and the state is replaced. Coming back to a project after three weeks starts here.
 
 **If a tag made an entry by mistake** (a pasted text that mentions `#vision`, a `#rule` typed by accident): **type `#undo` and say what was the mistake. The agent lists the entries by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is archived without `#undo-yes`, and nothing is deleted.**
+
+**`#sp`** — is it working. The agent checks this chat and folder: messages recorded, MCP, hooks, skills, data, backups, the server's memory. It says what works and what is a concern, and what it could not check. `#sp the messages are not recorded` looks into that too. It changes nothing without your yes; `python sp.py check` does the same from a terminal, also when the server is down.
 
 **`#help`** — the list of commands, in the chat.
 
@@ -193,7 +197,7 @@ The Timer page keeps your own time, per project and per block of work (a sprint,
 
 ### Monitor
 
-The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so.
+The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. To report it, take one file: **download report** on that page, or `python sp.py report`, which works when the server does not start. It holds the machine, the server's memory over a day, warnings and errors, and the size of the data; no chat text and nothing from `.env`. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
 
 ![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
 

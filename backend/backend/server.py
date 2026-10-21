@@ -214,6 +214,18 @@ def _scheduled_backup(root: Path, dest: Path, every: int) -> tuple[Any, str]:
         backup_engine.BUSY.release()
 
 
+async def _memory_loop() -> None:
+    """The process's memory into the log every few minutes (logbook.note_memory):
+    the report reads it back across restarts. Reading it is a few
+    microseconds of the OS's own counters."""
+    while True:
+        try:
+            logbook.note_memory()
+        except Exception:  # noqa: BLE001 — a missing line is no reason to stop
+            log.exception("memory line not written")
+        await asyncio.sleep(logbook.MEMORY_EVERY_S)
+
+
 async def _backup_loop(app: FastAPI) -> None:
     """Scheduled archives of the data root, taken off the request path.
 
@@ -251,6 +263,10 @@ async def _backup_loop(app: FastAPI) -> None:
         except Exception:
             log.exception("scheduled backup failed — the schedule continues")
 
+
+# The largest JSON body the server reads: a story with its pictures is the
+# biggest write, well under it. Uploads are not JSON and do not pass here.
+MAX_JSON_BODY = 64 * 1024 * 1024
 
 MCP_VIA_HEADER = b"x-sp-via"
 # An MCP server started before the rename (a session still running since)
@@ -468,12 +484,22 @@ class AgentsViaMcp:
                 return
             await self.app(scope, receive, send)
             return
-        body = b""
+        # Chunks gathered once, not concatenated per chunk (each += copied the
+        # body so far), and a ceiling: no JSON write here is near it.
+        chunks: list[bytes] = []
+        size = 0
         more = True
         while more:
             message = await receive()
-            body += message.get("body", b"")
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > MAX_JSON_BODY:
+                await JSONResponse({"detail": f"a JSON body is at most {MAX_JSON_BODY // 1_000_000} MB"},
+                                   status_code=413)(scope, receive, send)
+                return
+            chunks.append(chunk)
             more = message.get("more_body", False)
+        body = b"".join(chunks)
 
         async def replay():
             return {"type": "http.request", "body": body, "more_body": False}
@@ -625,6 +651,7 @@ def create_app(
                 app.state.settings.data_root, app.state.store
             )
             app.state.backup_task = asyncio.create_task(_backup_loop(app))
+            app.state.memory_task = asyncio.create_task(_memory_loop())
             # The first page that asks for a day's commits paid for reading
             # every repository's log — 4.8 s on the calendar after a start.
             # Read them now, off the request path, so the first ask is warm.
@@ -659,9 +686,10 @@ def create_app(
             if timer is not None:
                 timer.stop()
             terminal.close_all()
-            task = getattr(app.state, "backup_task", None)
-            if task is not None:
-                task.cancel()
+            for name in ("backup_task", "memory_task"):
+                task = getattr(app.state, name, None)
+                if task is not None:
+                    task.cancel()
 
     app = FastAPI(
         title="Slightly Parallel API",
@@ -675,6 +703,9 @@ def create_app(
     app.state.store = store
     app.state.settings = settings
     app.state.operator_token = load_operator_token(settings.data_root)
+    # The terminal's token, made once before the first request, new at every
+    # start: two first asks made two before.
+    terminal.token_of(app)
     app.state.monitor = None
     app.state.timer = None
     # Where the agent prompt files live (the repo); tests point it elsewhere.
@@ -778,14 +809,15 @@ def create_app(
             new_timer = timeauto.of(app)
             if was_running:
                 new_timer.start()
-        # Three module caches are keyed on the old root's facts and one
+        # Four module caches are keyed on the old root's facts and one
         # repo's HEAD; each has a ``forget()`` written for exactly this
-        # moment.
+        # moment (the search index held the old root's text until now).
         try:
-            from . import gitwork, projectfacts, repomap
+            from . import gitwork, projectfacts, repomap, searchlib
             gitwork.forget()
             projectfacts.forget()
             repomap.forget()
+            searchlib.forget()
         except OSError as exc:  # pragma: no cover — a cache that will not clear
             log.warning("caches not cleared on swap: %s", exc)
         log.info("data root swapped to %s", new_root)

@@ -7,7 +7,7 @@ set it up, and have an agent's work appear on the pages.
 ```bash
 python3 scripts/fresh_user/run.py                  # everything; Claude Code on sonnet
 python3 scripts/fresh_user/run.py --no-agent       # the stages that cost nothing (~6 min)
-python3 scripts/fresh_user/run.py --scenario core  # 7 messages instead of 20
+python3 scripts/fresh_user/run.py --scenario core  # 8 messages instead of 21
 python3 scripts/fresh_user/run.py --agent-runs 3   # the chat three times: how steady is it
 python3 scripts/fresh_user/run.py --tools claude-code,codex,opencode
 python3 scripts/fresh_user/run.py --model haiku --keep

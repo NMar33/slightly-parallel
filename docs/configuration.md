@@ -13,7 +13,6 @@ CORS and the terminal are security settings, and a web page cannot change them.
 | `SP_ALLOW_LAN` | off | Needed to start with a `HOST` other than `127.0.0.1`; see below |
 | `SP_CORS_ORIGINS` | localhost dev origins | The addresses the pages are opened at; `SCAN_CORS_ORIGINS` is also read |
 | `SP_ENABLE_TERMINAL` | off | Forces the terminal on (it is otherwise a switch in Settings) |
-| `SP_TOKEN` | made at start | Sets the terminal's token |
 
 > **Security note:** Slightly Parallel has no login. It is built to be reached from the computer it runs on.
 >

@@ -15,13 +15,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgentCard } from './AgentCard'
 import { GroupHeading, useCardsRoster } from './cardsRoster'
 import { AgentDossier, SECTION_IDS, type SectionId } from './dossier'
+import { AgentHeader } from './AgentHeader'
 import {
-  ActivityBadge,
-  AgentIdentity,
   EditAgentButton,
   FleetStrip,
   OpenAgentButton,
-  OriginLine,
   RosterEmpty,
   RosterError,
   RosterLoading,
@@ -29,7 +27,7 @@ import {
   useDrawer,
   useTaskOpener,
 } from './parts'
-import { fmtLines, fmtMinutes, profileHeadline, useAgentProfiles, type AgentProfile } from './profile'
+import { useAgentProfiles, type AgentProfile } from './profile'
 
 import { t } from '../../i18n/scope/views'
 import { isTypingTarget } from '../../lib/typing'
@@ -134,49 +132,24 @@ export function AgentsStage({ code, hashPrefix = '' }: { code: string; hashPrefi
   )
 }
 
-/**
- * The stage header — identity, the headline, the numbers, the folder.
- * What a card shows, laid flat, so the first section can be the chats.
- */
+/** The stage's walk and buttons around the shared header (AgentHeader). */
 function StageHeader({ p, code, position, onClose, onPrev, onNext }: { p: AgentProfile; code: string; position: string; onClose: () => void; onPrev?: () => void; onNext?: () => void }) {
-  const tot = p.totals
-  const headline = profileHeadline(p)
-  const chips: Array<[string, string]> = [
-    ['time', `${fmtMinutes(tot.minutes)} · ${tot.sessions_n} ses · ${tot.days_active} d`],
-    ['turns', String(tot.turns)],
-    ['lines', fmtLines(tot.lines_add, tot.lines_del)],
-    ['files', tot.files_n ? `${tot.files_n} · ${tot.scans_n} scans` : '—'],
-    ['tasks', tot.tasks_handed_n ? `${tot.tasks_done_n} / ${tot.tasks_handed_n}` : '—'],
-    ['features · fixes', `${tot.features_n} · ${tot.bugs_resolved_n}`],
-    ['decisions', String(tot.decisions_n)],
-  ]
   return (
-    <header className="flex flex-col gap-8 min-w-0 border-b border-border-subtle pb-12">
-      <div className="flex items-start gap-10 min-w-0">
-        <AgentIdentity p={p} size="lg" linkTo={false} />
-        <span className="mt-4"><ActivityBadge p={p} /></span>
-        <div className="ml-auto flex items-center gap-4 shrink-0">
-          <span className="inline-flex items-center rounded-input border border-border-subtle overflow-hidden mr-4">
-            <button type="button" onClick={onPrev} disabled={!onPrev} aria-label={t('Previous agent')} title={t('← previous')} className="px-8 h-24 text-12 text-secondary hover:bg-hover disabled:opacity-40">←</button>
-            <span className="px-8 text-10 font-mono text-tertiary tabular border-l border-border-subtle h-24 inline-flex items-center">{position}</span>
-            <button type="button" onClick={onNext} disabled={!onNext} aria-label={t('Next agent')} title={t('→ next')} className="px-8 h-24 text-12 text-secondary hover:bg-hover disabled:opacity-40 border-l border-border-subtle">→</button>
-          </span>
-          <OpenAgentButton p={p} label />
-          <EditAgentButton p={p} code={code} label />
-          <button type="button" onClick={onClose} aria-label={t('Close')} title={t('Esc')} className="ml-4 h-24 w-24 inline-flex items-center justify-center rounded-input text-tertiary hover:text-primary hover:bg-hover">×</button>
-        </div>
-      </div>
-      {headline && <p className="text-13 text-secondary leading-relaxed max-w-[1000px]" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{headline}</p>}
-      <div className="flex items-center gap-8 flex-wrap">
-        {chips.map(([label, value]) => (
-          <span key={label} className="inline-flex items-baseline gap-6 rounded-pill border border-border-subtle bg-base/40 px-10 py-3">
-            <span className="text-10 uppercase tracking-wide font-mono text-tertiary">{label}</span>
-            <span className="text-12 font-semibold text-primary tabular">{value}</span>
-          </span>
-        ))}
-        <span className="ml-auto min-w-0 max-w-[520px]"><OriginLine p={p} /></span>
-      </div>
-    </header>
+    <AgentHeader
+      p={p}
+      nav={
+        <span className="inline-flex items-center rounded-input border border-border-subtle overflow-hidden mr-4">
+          <button type="button" onClick={onPrev} disabled={!onPrev} aria-label={t('Previous agent')} title={t('← previous')} className="px-8 h-24 text-12 text-secondary hover:bg-hover disabled:opacity-40">←</button>
+          <span className="px-8 text-10 font-mono text-tertiary tabular border-l border-border-subtle h-24 inline-flex items-center">{position}</span>
+          <button type="button" onClick={onNext} disabled={!onNext} aria-label={t('Next agent')} title={t('→ next')} className="px-8 h-24 text-12 text-secondary hover:bg-hover disabled:opacity-40 border-l border-border-subtle">→</button>
+        </span>
+      }
+      actions={<>
+        <OpenAgentButton p={p} label />
+        <EditAgentButton p={p} code={code} label />
+        <button type="button" onClick={onClose} aria-label={t('Close')} title={t('Esc')} className="ml-4 h-24 w-24 inline-flex items-center justify-center rounded-input text-tertiary hover:text-primary hover:bg-hover">×</button>
+      </>}
+    />
   )
 }
 

@@ -471,7 +471,6 @@
   "When capture fails, a turn is missing. The coding tool and the data on disk are not affected.": "Если запись не сработала, пропадает один ход. Инструмент и данные на диске не страдают.",
   "When the project's latest scan (today or yesterday) has no architecture form behind it, the agent is reminded once to post it: eight groups, each checked or with its changes.": "Если у последнего скана проекта (сегодня или вчера) нет формы архитектуры, агенту один раз напоминают её написать: восемь групп, каждая отмечена как проверенная или со своими изменениями.",
   "When the project's latest scan (today or yesterday) has no file entry behind it, the agent is reminded once to post the per-path judgment that completes it.": "Если у последнего скана проекта (сегодня или вчера) нет записи о файлах, агенту один раз напоминают её написать.",
-  "Which tab a project page shows first. Pick tasks for the board; the tab strip calls activity Chats and tools Timer. Terminals opens once the terminal is switched on. A #hash in the URL always wins.": "Какую вкладку страница проекта показывает первой. tasks — доска; в полосе вкладок activity называется «Чаты», а tools — «Таймер». terminals открывается, когда терминал включён. #хеш в адресе всегда важнее.",
   "Which tools get them": "Какие инструменты их получают",
   "White background, dark text.": "Белый фон, тёмный текст.",
   "Write a tour": "Написать тур",
@@ -964,5 +963,15 @@
   "The same helper in Codex. chat: the model of the chat that starts it. Or a Codex model name.": "Тот же помощник в Codex. chat — модель чата, который его запускает. Или название модели Codex.",
   "Model that maps the program, in OpenCode": "Модель для карты программы, в OpenCode",
   "The same helper in OpenCode. chat: the model of the chat that starts it. Or an OpenCode model, provider first. OpenCode reads it when it starts.": "Тот же помощник в OpenCode. chat — модель чата, который его запускает. Или модель OpenCode, сначала провайдер. OpenCode читает её при запуске.",
-  "On this computer": "На этом компьютере"
+  "On this computer": "На этом компьютере",
+  "Project tabs": "Вкладки проекта",
+  "The {tab} tab is turned off.": "Вкладка «{tab}» выключена.",
+  "Turn it on": "Включить",
+  "Which tab a project page shows first. Pick tasks for the board; the tab strip calls activity Chats and tools Timer. Terminals opens once the terminal is switched on. A #hash in the URL always wins. A tab turned off in Settings › Project tabs is skipped.": "Какую вкладку страница проекта показывает первой. tasks — доска; в полосе вкладок activity называется «Чаты», а tools — «Таймер». terminals открывается, когда терминал включён. #хеш в адресе всегда важнее. Вкладка, выключенная в Настройках › Вкладки проекта, пропускается.",
+  "Which tabs show, in every project": "Какие вкладки показывать, во всех проектах",
+  "Tabs": "Вкладки",
+  "For every project. Also in": "Для всех проектов. То же в",
+  "Settings › Project tabs": "Настройках › Вкладки проекта",
+  "download report": "скачать отчёт",
+  "One file with the machine, memory over a day, warnings, the monitor's events and the size of the data — no chat text. Send it with a line on what went wrong.": "Один файл: машина, память за сутки, предупреждения, события монитора и размер данных — без текста чатов. Пришлите его вместе с описанием проблемы."
 }

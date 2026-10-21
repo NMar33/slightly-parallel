@@ -159,8 +159,26 @@ jobs:
           print(log.read_text(encoding="utf-8", errors="replace")[-6000:] if log.is_file() else "no .sp/server.log")
       - name: Healthy
         run: python sp.py status
+      - name: The resource monitor reads this machine (processor, memory, disks, network, ping, processes)
+        run: python scripts/ci/monitor_check.py
+      - name: A browser for the top bar
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: The top bar shows the readings
+        run: node scripts/ci/topbar_check.mjs
+      - name: The top bar, as drawn
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: topbar-${{ matrix.os }}
+          path: .sp/ci/topbar.png
+          if-no-files-found: ignore
+      - name: "#sp's checks and the report, from the running server"
+        run: python scripts/ci/checkup_check.py up
       - name: Stop
         run: python sp.py down
+      - name: "sp.py check with the server down looks from outside"
+        run: python scripts/ci/checkup_check.py down
       - name: Nothing left serving
         shell: python
         run: |

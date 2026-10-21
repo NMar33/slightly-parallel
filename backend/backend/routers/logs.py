@@ -8,7 +8,6 @@ what ``curl`` gives a person at a terminal.
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
@@ -23,24 +22,6 @@ from .terminal import enabled as terminal_on
 router = APIRouter()
 
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
-
-
-def _rss_mb() -> float:
-    try:
-        with open("/proc/self/status", encoding="utf-8") as fh:
-            for ln in fh:
-                if ln.startswith("VmRSS:"):
-                    return round(int(ln.split()[1]) / 1024, 1)
-    except (OSError, ValueError, IndexError):
-        pass
-    return 0.0
-
-
-def _threads() -> int:
-    try:
-        return len(os.listdir("/proc/self/task"))
-    except OSError:
-        return 0
 
 
 def summary(store: ViewStore, request: Request) -> dict[str, Any]:
@@ -61,8 +42,7 @@ def summary(store: ViewStore, request: Request) -> dict[str, Any]:
         "view_age_ms": max(0, int((time.time() - fs) * 1000)) if fs else 0,
         "load_errors": list(getattr(store, "load_errors", [])),
         "stamps": store.stamps,
-        "rss_mb": _rss_mb(),
-        "threads": _threads(),
+        **logbook.process_memory(),
         "slow_request_ms": logbook.SLOW_REQUEST_MS,
         # The answer /api/terminal/state gives: the variable or the switch.
         "terminal_enabled": terminal_on(request.app),
@@ -89,6 +69,55 @@ def logs_text(
 ) -> str:
     lvl = level.upper() if level.upper() in LEVELS else "INFO"
     return logbook.text(summary(store, request), logbook.RING.tail(limit, lvl))
+
+
+@router.get("/api/checkup")
+def checkup(
+    request: Request,
+    cwd: str = Query("", description="the folder the agent or the command runs in"),
+    agent_id: str = Query("", description="the chat asking, when an agent asks"),
+    identity: str = Query("given", description="how agent_id was found: process (its tool), shared-parent or folder (guesses), given"),
+    store: ViewStore = Depends(get_store),
+) -> dict[str, Any]:
+    """#sp: is Slightly Parallel working for this chat and folder (checkup.py).
+    Each finding: ok, note, concern or unknown, its evidence and the next
+    step. Through the MCP tool the call itself proves MCP from that chat."""
+    from .. import checkup as lib
+    via_mcp = request.headers.get("x-sp-via", "").lower() == "mcp"
+    return lib.run(store, cwd=cwd, agent_id=agent_id, identity=identity, via_mcp=via_mcp)
+
+
+@router.get("/api/checkup/fix/{reason}")
+def checkup_fix(reason: str) -> dict[str, Any]:
+    """The recipe for one reason a #sp check gives (checkup_fixes.md): how to
+    confirm, who acts, the steps, how to verify — with the rules every
+    recipe carries."""
+    from .. import checkup as lib
+    book = lib.recipes()
+    if reason not in book or reason.startswith("_"):
+        raise HTTPException(status_code=404, detail=f"no recipe for {reason!r}; reasons: {', '.join(k for k in book if not k.startswith('_'))}")
+    return {"reason": reason, "recipe": book[reason], "rules": book["_rules"]}
+
+
+@router.get("/api/diagnostics/report", response_class=PlainTextResponse)
+def diagnostics_report(request: Request, store: ViewStore = Depends(get_store)) -> PlainTextResponse:
+    """One file to send when something is wrong (backend/diagnostics.py):
+    the machine, memory over a day, the log's warnings, the monitor's
+    events, the hook's errors, the data's size. No chat text, no .env."""
+    from pathlib import Path
+
+    from .. import diagnostics
+    text = diagnostics.report(
+        app_root=Path(__file__).resolve().parents[3],
+        data_root=store.data_root,
+        log_file=logbook.LOG_FILE or logbook.log_dir() / "sp.log",
+        supervisor_file=logbook.log_dir() / "server.log",
+        live=logbook.text(summary(store, request), logbook.RING.tail(200, "WARNING")),
+        server=logbook.process_memory(),
+    )
+    name = time.strftime("slightly-parallel-report-%y%m%d-%H%M%S.md")
+    return PlainTextResponse(text, media_type="text/markdown; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.post("/api/capture/ignore")

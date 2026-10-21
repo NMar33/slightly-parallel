@@ -669,12 +669,22 @@ def test_two_chats_in_one_folder_are_told_apart_by_their_process(root: Path, tmp
 
     app = create_app(data_root=root, watch=False)
     with TestClient(app) as client:
-        who = lambda pids: client.get("/api/whoami", params={"cwd": cwd, "pids": pids}).json()["agent_id"]  # noqa: E731
-        assert who("5001,4000") == "cc-aaaa1111"       # the first chat's server, though the second is newer
-        assert who("5002,4000") == "cc-bbbb2222"
-        assert who("7777,4000") == "cc-bbbb2222"       # only the terminal is shared: the newer of the two
-        assert who("7777") == "cc-bbbb2222"            # nothing shared: the newest chat in the folder
-        assert client.get("/api/whoami", params={"cwd": cwd}).json()["agent_id"] == "cc-bbbb2222"
+        def who(pids: str) -> tuple[str, str]:
+            got = client.get("/api/whoami", params={"cwd": cwd, "pids": pids}).json()
+            return got["agent_id"], got["identity_source"]
+        assert who("5001,4000") == ("cc-aaaa1111", "process")   # the first chat's server, though the second is newer
+        assert who("5002,4000") == ("cc-bbbb2222", "process")
+        assert who("8888,5001,4000") == ("cc-aaaa1111", "process")   # through a launcher
+        # A script in the same terminal shares only the terminal: a guess, never "this chat".
+        assert who("7777,4000") == ("cc-bbbb2222", "shared-parent")
+        assert who("7777") == ("cc-bbbb2222", "folder")          # nothing shared: the newest chat in the folder
+        # The first chat's own tool, through a launcher, against a newer chat
+        # met at the same distance through the terminal only: its own tool wins.
+        crumb = json.loads(files["bbbb2222-second"].read_text(encoding="utf-8"))
+        crumb["pids"] = [9002, 6000, 4000]
+        files["bbbb2222-second"].write_text(json.dumps(crumb), encoding="utf-8")
+        assert who("8888,5001,4000")[0] == "cc-aaaa1111"
+        assert client.get("/api/whoami", params={"cwd": cwd}).json()["identity_source"] == "folder"
     assert _time.time() > 0
 
 

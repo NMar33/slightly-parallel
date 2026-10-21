@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { DataRootCard } from '../components/DataRootCard'
 import { WithContents } from '../components/WithContents'
 import { AppearanceCard } from '../features/settings/AppearanceCard'
+import { ProjectTabsCard } from '../features/settings/ProjectTabsCard'
 import { SidebarCard } from '../features/settings/SidebarCard'
 import { PromptsCard } from '../features/settings/PromptsCard'
 import { ComputerCard } from '../features/setup/Computer'
@@ -91,6 +92,7 @@ export default function SettingsPage() {
             })),
             { id: 'appearance', text: t('Appearance') },
             { id: 'sidebar', text: t('Sidebar') },
+            { id: 'project-tabs', text: t('Project tabs') },
             { id: 'prompts', text: t('Agent prompts') },
             { id: 'data-root', text: t('Data folder') },
             { id: 'environment', text: t('Environment') },
@@ -125,6 +127,8 @@ export default function SettingsPage() {
           <div id="appearance" className="scroll-mt-16"><AppearanceCard /></div>
 
           <div id="sidebar" className="scroll-mt-16"><SidebarCard /></div>
+
+          <div id="project-tabs" className="scroll-mt-16"><ProjectTabsCard /></div>
 
           <div id="prompts" className="scroll-mt-16"><PromptsCard /></div>
 

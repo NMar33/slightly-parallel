@@ -230,3 +230,14 @@ def test_the_model_settings_take_a_typed_model_name() -> None:
         pass
     else:
         raise AssertionError("an ordinary choice took a free value")
+
+
+def test_now_with_a_column_is_one_command_with_its_own_notice(tmp_path) -> None:
+    """#now-todo is noticed as itself, not as #now: the agent files the
+    message there and does not start on it."""
+    capture = _hook()
+    cap = capture.TurnCapture(tmp_path, "alpha", "cc-nowcol01")
+    assert cap.open_turn("the login drops, look later #now-todo")["commands"] == ["now-todo"]
+    note = capture.format_signals({"commands": ["now-todo"]})
+    assert "#now-todo — the skill write-a-task" in note and "status todo" in note and "not started" in note
+    assert "title and tags only" in capture.format_signals({"commands": ["now"]})

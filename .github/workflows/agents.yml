@@ -1,6 +1,6 @@
 # A real agent at work, on every system: the fresh-user test with Claude
 # Code, Codex and OpenCode on cheap models (scripts/fresh_user, the "core" scenario,
-# seven messages). It costs money, so it runs by hand and once a week, never
+# eight messages). It costs money, so it runs by hand and once a week, never
 # on a push. It needs the repository secrets ANTHROPIC_API_KEY and
 # OPENAI_API_KEY (Codex and OpenCode); a tool whose key is missing is
 # skipped. The OpenAI model is the repository variable CODEX_MODEL (empty:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: "core (7 messages) or full (18)"
+        description: "core (8 messages) or full (19)"
         default: core
       tools:
         description: "JSON list of tools"

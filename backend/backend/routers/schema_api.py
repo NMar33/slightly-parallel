@@ -172,30 +172,46 @@ def breadcrumb_path(data_root: Path, cwd: str) -> Path:
     return data_root / SESSIONS_DIR / f"{digest}.json"
 
 
-def _crumb_by_process(folder: Path, pids: str) -> dict | None:
-    """The chat in this folder that shares a parent process with the client:
-    the nearest shared parent wins, and of two at the same distance the
-    newer. None when nothing is shared (or nothing was sent)."""
+#: How near the shared process must be, in both chains, to be the chat's
+#: own tool. Measured on Claude Code: the hook's chain is [its shell, claude,
+#: the terminal's bash, the terminal]; the MCP server's is [claude, bash, …].
+#: The tool is at most one step up from either (a launcher may sit between);
+#: farther up is a terminal or a shell that other chats and scripts share.
+OWN_TOOL_DEPTH = 1
+
+
+def _crumb_by_process(folder: Path, pids: str) -> tuple[dict | None, str]:
+    """The chat in this folder that shares a parent process with the client,
+    and how sure that is: ``process`` when the shared process is near both
+    (the chat's own tool), ``shared-parent`` when it is only a common
+    ancestor (a terminal, a shell — a guess). The nearest shared parent wins,
+    and of two at the same distance the newer. (None, "") when nothing is
+    shared or nothing was sent."""
     try:
         chain = [int(p) for p in pids.split(",") if p.strip()][:16]
     except ValueError:
-        return None
+        return None, ""
     if not chain or not folder.is_dir():
-        return None
-    best: tuple[int, float, dict] | None = None
+        return None, ""
+    best: tuple[tuple[bool, int, float], dict, bool] | None = None
     for file in folder.glob("*.json"):
         try:
             crumb = json.loads(file.read_text(encoding="utf-8"))
-            theirs = {int(p) for p in crumb.get("pids") or []}
+            theirs = [int(p) for p in crumb.get("pids") or []]
         except (OSError, ValueError, TypeError):
             continue
         near = next((i for i, pid in enumerate(chain) if pid in theirs), None)
         if near is None:
             continue
-        key = (near, -float(crumb.get("at") or 0))
-        if best is None or key < (best[0], best[1]):
-            best = (key[0], key[1], crumb)
-    return best[2] if best else None
+        own = near <= OWN_TOOL_DEPTH and theirs.index(chain[near]) <= OWN_TOOL_DEPTH
+        # A chat's own tool wins over a guess through a shared terminal,
+        # whatever the distances; then the nearest, then the newest.
+        key = (not own, near, -float(crumb.get("at") or 0))
+        if best is None or key < best[0]:
+            best = (key, crumb, own)
+    if best is None:
+        return None, ""
+    return best[1], "process" if best[2] else "shared-parent"
 
 
 @router.get("/api/whoami")
@@ -214,16 +230,18 @@ def whoami(
     captured session runs there.
     """
     path = breadcrumb_path(store.data_root, cwd)
-    crumb = _crumb_by_process(path.with_suffix(""), pids)
+    crumb, source = _crumb_by_process(path.with_suffix(""), pids)
     try:
-        crumb = crumb or json.loads(path.read_text(encoding="utf-8"))
+        if crumb is None:
+            crumb, source = json.loads(path.read_text(encoding="utf-8")), "folder"
     except (OSError, json.JSONDecodeError):
         raise HTTPException(
             status_code=404,
             detail=(
                 f"no captured session for cwd {cwd}. The capture hook writes the "
-                "breadcrumb on the first turn: tell the user the hook is not "
-                "installed in this directory, and write nothing as an agent."
+                "breadcrumb on each message: none here means a chat started in "
+                "another folder, a first message not recorded yet, or capture not "
+                "set up or failing here. Tell the user, and write nothing as an agent."
             ),
         )
     age_min = round((time.time() - float(crumb.get("at") or 0)) / 60)
@@ -232,4 +250,7 @@ def whoami(
         "project": str(crumb.get("project") or ""),
         "session_id": str(crumb.get("session_id") or ""),
         "age_min": age_min,
+        # How the chat was found: its own tool process (sure), a shared
+        # terminal or shell (a guess), or the newest chat in the folder (a guess).
+        "identity_source": source,
     }

@@ -50,12 +50,12 @@ scans list the commits and count the lines.
 
 Every new chat in that folder, in any tool, reads the contract
 from the section. The contract covers the commands (`#scan`, `#architecture`,
-`#map`, `#task`, `#now`, `#decision`, `#standup`, `#evidence`, `#done`, `#help` and the kept tags),
+`#map`, `#task`, `#now` (and `#now-todo` …), `#decision`, `#standup`, `#evidence`, `#done`, `#help` and the kept tags),
 when to write which entry, and what each entry holds. Procedures live in
 built-in skills: `make-a-scan`, `keep-the-architecture-page`,
 `map-the-program`, `update-the-architecture`, `daily-standup`,
 `log-a-decision`, `write-a-task`, `task-evidence`, `make-an-artifact`,
-`finish-a-task`, `undo-a-mistake`, `sp-help`.
+`finish-a-task`, `undo-a-mistake`, `sp-help`, `sp-checkup`.
 Slightly Parallel installs them into `~/.claude/skills` and `~/.agents/skills`, once, for all projects.
 
 Details: [`logging.md`](logging.md) for how chats are recorded,

@@ -110,19 +110,20 @@ def errors_since(data_root: Path, since: float) -> list[dict[str, Any]]:
     path = Path(data_root) / ERRORS
     out: list[dict[str, Any]] = []
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        fh = open(path, encoding="utf-8", errors="replace")
     except OSError:
         return out
-    for line in lines:
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(e, dict):
-            continue  # valid JSON, not a record: a hand edit or a torn line
-        at = _local(str(e.get("at") or ""))
-        if at is not None and at >= since:
-            out.append({**e, "ts": at})
+    with fh:
+        for line in fh:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(e, dict):
+                continue  # valid JSON, not a record: a hand edit or a torn line
+            at = _local(str(e.get("at") or ""))
+            if at is not None and at >= since:
+                out.append({**e, "ts": at})
     return out
 
 

@@ -26,7 +26,8 @@ rest; you see the result on the page named.
 | Command | What it does | Where you see it |
 |---|---|---|
 | `#task <hint>` | Writes the task you are pointing at onto the board, in the agent column, for later. `#task {ui} …` names the lane. | Kanban |
-| `#now <text>` | Writes the task this chat starts on: into doing, in the lane for #now (Settings › Tasks) or the one in braces, `#now {ui} …`; then the agent works on it. `#done` closes it. | Kanban |
+| `#now <text>` | Your message becomes the task this chat starts on, as you wrote it (the agent adds a title): into doing, in the lane for #now (Settings › Tasks) or the one in braces, `#now {ui} …`; then the agent works on it. `#done` closes it. | Kanban |
+| `#now-todo <text>` | Your message, as you wrote it, filed in To do and not started; `-next`, `-backlog`, `-review`, `-parked`, `-done` file it in those columns. | Kanban |
 | `#evidence` | Attaches the proof for the task: what it touched and what it did, the way you asked for it. | The task's window |
 | `#done` | Moves the task to done: the one named, else the last task named since the previous `#done`. Its messages up to here count as its work. | Kanban · the task's window |
 
@@ -62,6 +63,7 @@ rest; you see the result on the page named.
 | Command | What it does |
 |---|---|
 | `#help` | Shows this list. |
+| `#sp <what worries you>` | Checks whether Slightly Parallel works for this chat and folder: messages recorded, MCP, hooks, skills, data, backups, the server's memory. Says what works and what is a concern; with text, looks into that. Changes nothing without your yes. |
 
 A task id (`tk_…`) in a message is noticed on its own: the task shows the
 chat under its history.

@@ -90,3 +90,4 @@ fixtures/timer/
 
 # Rendered channel videos (MP4, GIF) made from the tour; large and remade on demand.
 brand/channel/videos/
+slightly-parallel-report-*.md

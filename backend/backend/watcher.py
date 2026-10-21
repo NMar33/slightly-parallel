@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -45,6 +46,29 @@ class DebouncedHandler(FileSystemEventHandler):
         self._delay = delay_ms / 1000.0
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
+        self._running = False   # a callback is in progress
+        self._dirty = False     # events came while it ran: run once more
+        self._stopped = False
+        self._worker: threading.Thread | None = None
+
+    def close(self, wait: float = 30.0) -> None:
+        """No callback after this: the pending one is cancelled, and one
+        already running is waited for (a data root swap must not overlap a
+        rebuild of the old one) and does not run again."""
+        with self._lock:
+            self._stopped = True
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+        if self._worker is threading.current_thread():
+            return              # closed from inside its own callback: nothing to wait for
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            with self._lock:
+                if not self._running:
+                    return
+            time.sleep(0.05)
+        log.warning("a watcher callback still runs after %.0f s", wait)
 
     # Folders whose contents are pictures the server itself writes. A tour
     # capture drops seventeen screenshots into the data root in a minute;
@@ -101,10 +125,31 @@ class DebouncedHandler(FileSystemEventHandler):
             self._timer.start()
 
     def _fire(self) -> None:
+        # One callback at a time: a burst during a long rebuild marks it to
+        # run once more instead of starting a thread per quiet window.
+        with self._lock:
+            if self._stopped:
+                return
+            if self._running:
+                self._dirty = True
+                return
+            self._running = True
+            self._worker = threading.current_thread()
         try:
-            self._on_change()
-        except Exception:  # never let a callback crash the observer thread
-            log.exception("watcher on_change failed")
+            while True:
+                try:
+                    self._on_change()
+                except Exception:  # never let a callback crash the observer thread
+                    log.exception("watcher on_change failed")
+                with self._lock:
+                    if not self._dirty or self._stopped:
+                        self._running = False
+                        return
+                    self._dirty = False
+        except BaseException:
+            with self._lock:
+                self._running = False
+            raise
 
     # What counts as a change. watchdog also reports every open and every
     # close-without-write, and the rebuild reads the CSVs it watches: each
@@ -174,6 +219,7 @@ class Watcher:
         log.info("watching %s (recursive=%s)", self.path, self.recursive)
 
     def stop(self) -> None:
+        self._handler.close()
         if self._observer is None:
             return
         self._observer.stop()

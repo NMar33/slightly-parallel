@@ -30,12 +30,13 @@ import { isTypingTarget } from '../../lib/typing'
  */
 const NONE = () => false
 
-export function StandupsDayBook({ guide }: { guide?: ReactNode }) {
+/** `project`: a tab of that project's page — its entries only, no project pills, no lead. */
+export function StandupsDayBook({ guide, project: inProject }: { guide?: ReactNode; project?: string }) {
   // The rows alone say which projects have a standup: no document is read for this.
   const all = useStandups(NONE)
   const withEntries = useMemo(() => projectsByNewest(all.standups, (s) => s.row.project, (s) => s.row.created_date), [all.standups])
   const known = useDayBookProjects(withEntries)
-  const { hash, setHash, q, project, month, showMonth, active, days, keys, pick } = useDayBook(known)
+  const { hash, setHash, q, project, month, showMonth, active, days, keys, pick } = useDayBook(inProject ? [inProject] : known)
   const [reach, setReach] = useReach(month)
   const [size, setSize] = useReadingSize('standups')
   const { shown, byDay, loading, error } = useDayBookEntries(project, q, reach)
@@ -67,7 +68,7 @@ export function StandupsDayBook({ guide }: { guide?: ReactNode }) {
   return (
     <div className="flex flex-col gap-16">
       <DayBookTitle icon={Sunrise} name={t('Standups')} count={shown.length}
-        projects={known} project={project} onProject={(v) => setHash({ project: v, day: '' })}
+        projects={inProject ? [] : known} project={project} onProject={(v) => setHash({ project: v, day: '' })}
         q={hash.q ?? ''} onFind={(v) => setHash({ q: v })}
         right={<>
           {canFocus && (
@@ -79,7 +80,7 @@ export function StandupsDayBook({ guide }: { guide?: ReactNode }) {
           )}
           <ReadingSizeControl value={size} onChange={setSize} />
         </>} />
-      {guide ?? <Lead />}
+      {!inProject && (guide ?? <Lead />)}
       {error && <ErrorBanner title={t('Could not read standups')} hideDismiss />}
 
       <MonthBand

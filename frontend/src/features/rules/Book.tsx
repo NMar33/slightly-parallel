@@ -38,7 +38,7 @@ function reachChapters(shown: Vision[], reach: (v: Vision) => Reach): Chapter[] 
     .filter((c) => c.full.length > 0)
 }
 
-export function RulesBook() {
+export function RulesBook({ project }: { project?: string } = {}) {
   const [hash, setHash] = useHashState()
   const showing = hash.status === 'archived' ? 'archived' : 'active'
   const { visions: rules, loading, error, near, complete } = useKept('rule')
@@ -46,9 +46,15 @@ export function RulesBook() {
   const integrationsData = useIntegrations().data
   const sets = useMemo(() => setsData ?? [], [setsData])
   const integrations = useMemo(() => integrationsData ?? [], [integrationsData])
-  const current = useMemo(() => rules.filter((v) => !isArchived(v)), [rules])
-  const archived = useMemo(() => rules.filter(isArchived), [rules])
   const reach = useCallback((v: Vision) => reachOf(v, sets, integrations), [sets, integrations])
+  // In a project's tab: the rules that reach its agents, and the ones kept in it.
+  const belongs = useCallback((v: Vision) => {
+    const r = reach(v)
+    return r.all || r.places.some((p) => p.project === project) || v.row.project === project
+  }, [reach, project])
+  const mine = useMemo(() => (project ? rules.filter(belongs) : rules), [rules, project, belongs])
+  const current = useMemo(() => mine.filter((v) => !isArchived(v)), [mine])
+  const archived = useMemo(() => mine.filter(isArchived), [mine])
   const chapters = useCallback(
     (shown: Vision[], mode: string, s: KeptSet[]) =>
       mode === 'reach'
@@ -71,6 +77,7 @@ export function RulesBook() {
           onChange={(v) => setHash({ status: v === 'archived' ? 'archived' : '' })}
           options={[['active', t('rules {n}', { n: current.length })], ['archived', t('archived {n}', { n: archived.length })]]} />
       }
+      inProject={project} belongs={belongs}
       section={(v, ctx) => <RuleSection v={v} ctx={ctx} reach={reach(v)} headline={headline(v)} />} />
   )
 }

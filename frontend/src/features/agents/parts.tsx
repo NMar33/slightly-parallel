@@ -449,7 +449,7 @@ export function EditAgentButton({ p, code, label = false }: { p: AgentProfile; c
         className={`inline-flex items-center gap-4 rounded-input text-tertiary hover:text-primary hover:bg-hover ${label ? 'px-8 h-24 text-11' : 'h-24 w-24 justify-center'}`}
       >
         <Pencil size={11} aria-hidden />
-        {label && 'edit'}
+        {label && t('edit')}
       </button>
       {open && (
         <AgentEditDialog
@@ -471,7 +471,7 @@ export function OpenAgentButton({ p, label = false }: { p: AgentProfile; label?:
       className={`inline-flex items-center gap-4 rounded-input text-tertiary hover:text-primary hover:bg-hover no-underline ${label ? 'px-8 h-24 text-11' : 'h-24 w-24 justify-center'}`}
     >
       <Eye size={12} aria-hidden />
-      {label && 'open'}
+      {label && t('open')}
     </Link>
   )
 }

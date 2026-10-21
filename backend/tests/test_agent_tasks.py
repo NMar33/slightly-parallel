@@ -138,10 +138,12 @@ def test_now_starts_the_task_in_doing_in_its_own_lane_today(tmp_path: Path) -> N
     from datetime import date
     root = tmp_path / "data"
     c = _board(root, "#now fix the login timeout")
-    wrong = _post(c, expect=422, status="agent")
+    wrong = _post(c, expect=422, status="agent", description="")
     assert "doing" in wrong["detail"]
-    out = _post(c, created_time="21:11")
+    out = _post(c, created_time="21:11", description="")
     meta = out["metadata"]
+    # The text is the operator's message, as written; the agent only titles it.
+    assert out["description"] == "#now fix the login timeout"
     assert meta["status"] == "doing" and meta["lane"] == "Now" and meta["assignee"] == "Now"
     assert meta["today_on"] == date.today().isoformat()
     events = c.get(f"/api/tasks/{meta['id']}/events").json()
@@ -154,11 +156,39 @@ def test_now_with_a_lane_and_the_lane_from_settings(tmp_path: Path) -> None:
     from backend import app_settings
     root = tmp_path / "data"
     c = _board(root, "#now {kanban board} the cards do not sort")
-    assert _post(c)["metadata"]["lane"] == "Kanban Board"
+    assert _post(c, description="")["metadata"]["lane"] == "Kanban Board"
     c.__exit__(None, None, None)
     app_settings.save(root, {"tasks.now_lane": "Chat"})
     c = _board(root, "#now fix the login timeout", lanes=())
-    assert _post(c, created_time="21:12")["metadata"]["lane"] == "Chat"
+    assert _post(c, created_time="21:12", description="")["metadata"]["lane"] == "Chat"
+    c.__exit__(None, None, None)
+
+
+def test_a_now_task_text_written_by_the_agent_is_refused(tmp_path: Path) -> None:
+    c = _board(tmp_path / "data", "#now fix the login timeout, it drops after ten minutes")
+    r = _post(c, expect=422)            # the helper sends a description of its own
+    assert "operator's message" in r["detail"] and "title and tags only" in r["detail"]
+    c.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize(("command", "column"), [
+    ("#now-todo", "todo"), ("#now-to-do", "todo"), ("#now-next", "next"), ("#now-backlog", "backlog"),
+    ("#now-review", "review"), ("#now-parked", "parked"), ("#now-done", "done"), ("#now-doing", "doing"),
+])
+def test_now_with_a_column_files_the_message_there(tmp_path: Path, command: str, column: str) -> None:
+    message = f"the login drops after ten minutes, look later {command}"
+    c = _board(tmp_path / "data", message)
+    wrong = _post(c, expect=422, status="doing" if column != "doing" else "todo", description="")
+    assert column in wrong["detail"]
+    out = _post(c, description="", created_time="21:13")
+    meta = out["metadata"]
+    assert meta["status"] == column and meta["lane"] == "Now" and out["description"] == message
+    # Only the task the chat starts on is marked for today.
+    assert bool(meta.get("today_on")) == (column == "doing")
+    events = c.get(f"/api/tasks/{meta['id']}/events").json()
+    events = events.get("events") if isinstance(events, dict) else events
+    verb = "started" if column == "doing" else "filed"
+    assert any(e.get("field") == verb for e in events)
     c.__exit__(None, None, None)
 
 
@@ -213,3 +243,11 @@ def test_the_sprint_is_the_operators_on_update_too(client: TestClient) -> None:
     # the operator still plans
     assert client.post(f"/api/tasks/{tid}/update",
                        json={"sprint_id": "sp_1", "actor": "operator"}).status_code == 200
+
+
+def test_a_column_suffix_belongs_to_now_only() -> None:
+    """#task-done is not a #task: only #now takes a column."""
+    from backend.sessions import task_command
+    assert task_command("look later #task-done") == ("", "", "")
+    assert task_command("look later #now-done {ui}") == ("now", "ui", "done")
+    assert task_command("#task {ui} the cards") == ("task", "ui", "agent")

@@ -103,11 +103,12 @@ SPECS: tuple[SettingSpec, ...] = (
             "Which tab a project page shows first. Pick tasks for the board; "
             "the tab strip calls activity Chats and tools Timer. Terminals "
             "opens once the terminal is switched on. A #hash in the URL "
-            "always wins."
+            "always wins. A tab turned off in Settings › Project tabs is skipped."
         ),
         type="choice", default="overview", group="Dashboard",
         options=("overview", "agents", "tasks", "sprints", "calendar", "terminals",
-                 "decisions", "activity", "files", "architecture", "tools"),
+                 "decisions", "standups", "scans", "activity", "files", "architecture",
+                 "visions", "entrypoints", "problems", "rules", "tools"),
     ),
     SettingSpec(
         key="ui.clock",

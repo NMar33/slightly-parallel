@@ -152,8 +152,18 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "architecture": ("update-the-architecture", "MCP tool architecture_status"),
     "task": ("write-a-task", "MCP tool write_entry, lens task, status agent"),
     # The task the chat starts on: the server puts it in doing, in the lane
-    # the message names or #now's own (backend/routers/tasks_extra.py).
-    "now": ("write-a-task", "MCP tool write_entry, lens task, status doing"),
+    # the message names or #now's own (backend/routers/tasks_extra.py). Its
+    # text is the operator's message, kept by the server: the agent titles it.
+    "now": ("write-a-task", "MCP tool write_entry, lens task, status doing, title and tags only: "
+            "the server keeps this message as the task's text"),
+    # #now-<column>: the message filed into that column, not started.
+    **{f"now-{c}": ("write-a-task", f"MCP tool write_entry, lens task, status {s}, title and tags only: "
+                    "the server keeps this message as the task's text. File it and go on: it is not "
+                    "started in this chat")
+       for c, s in (("todo", "todo"), ("to-do", "todo"), ("next", "next"), ("backlog", "backlog"),
+                    ("review", "review"), ("parked", "parked"), ("done", "done"))},
+    "now-doing": ("write-a-task", "MCP tool write_entry, lens task, status doing, title and tags only: "
+                  "the server keeps this message as the task's text"),
     "decision": ("log-a-decision", "MCP tool write_entry, lens decision, with a weight"),
     "standup": ("daily-standup", "MCP tool standup_material"),
     "prompt": ("", "nothing to write: the server keeps the message in the prompt library"),
@@ -165,6 +175,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # and confirms; the server checks both in the chat (backend undolib.py).
     "undo": ("undo-a-mistake", "MCP tool undo_find"),
     "undo-yes": ("undo-a-mistake", "MCP tool undo_apply"),
+    # Is it working: the server's checks for this chat and folder (backend checkup.py).
+    "sp": ("sp-checkup", "MCP tool checkup; report in the skill's shape, change nothing without a yes"),
     # A star: the server marks it from the chat log (backend marklib.py).
     **{k: ("", "nothing to write: the server stars it") for k in (
         "important", "important-agent", "important-task", "important-message")},
@@ -185,7 +197,7 @@ _TASK_ID_RE = re.compile(r"\b(tk_[a-z0-9][a-z0-9_-]{2,40})(?:\.\d{1,3})?\b")
 # ``#task {ui} …`` and ``#now {ui} …`` name the board lane in braces. The
 # server's pattern (backend/backend/sessions.py TASK_CMD_RE); the parity
 # test holds the two equal.
-_TASK_CMD_RE = re.compile(r"(?<![\w#])#(task|now)(?![\w-])(?:[ \t]*\{([^}\n]{1,80})\})?", re.IGNORECASE)
+_TASK_CMD_RE = re.compile(r"(?<![\w#])#(task|now(?:-(?:to-?do|next|backlog|doing|review|parked|done))?)(?![\w-])(?:[ \t]*\{([^}\n]{1,80})\})?", re.IGNORECASE)
 
 
 def _task_lane(data_root: Path, project: str, user_text: str) -> dict | None:
@@ -508,7 +520,8 @@ class TurnCapture:
             "helper_models": _helper_models(self.data_root) if (standup_due or {"map", "standup"} & set(commands)) else None,
             # #task {lane} / #now {lane}: the server refuses a lane the board
             # does not have; the notice says so first, so the agent asks.
-            "task_lane": _task_lane(self.data_root, self.project, user_text) if {"task", "now"} & set(commands) else None,
+            "task_lane": _task_lane(self.data_root, self.project, user_text)
+            if any(c == "task" or c.startswith("now") for c in commands) else None,
             "kept": [
                 # An artifact is a folder the agent writes itself; the notice
                 # names where, so the agent never guesses the data root.
@@ -1164,7 +1177,7 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
                                       if skill else f"{start}.")
         )
         lane = signals.get("task_lane")
-        if name in ("task", "now") and lane:
+        if (name == "task" or name.startswith("now")) and lane:
             if lane.get("lane"):
                 notes[-1] += f" The lane: {lane['lane']} (the server sets it from the message)."
             else:

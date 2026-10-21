@@ -145,6 +145,7 @@ def forget() -> None:
     _no_repo_at.clear()
     _log_cache.clear()
     _stamps_cache.clear()
+    _owners_cache.clear()
 
 
 def head(repo: Path) -> str:
@@ -327,18 +328,19 @@ def read_stamps(chat_path: Path) -> dict[int, dict[str, Any]]:
         hit = _stamps_cache.get(str(path))
         if hit is not None and hit[0] == version:
             return hit[1]
-        # On "\n" only: the hook writes JSON with ensure_ascii off, so a
-        # commit subject may hold U+2028, which splitlines() cut a record at.
-        lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+        # On "\n" only (newline="\n"): the hook writes JSON with ensure_ascii
+        # off, so a commit subject may hold U+2028, which splitlines() cut a
+        # record at. One line at a time: a long chat's file runs to megabytes.
+        with open(path, encoding="utf-8", errors="replace", newline="\n") as fh:
+            for line in fh:
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and isinstance(obj.get("turn"), int):
+                    out[obj["turn"]] = obj
     except OSError:
-        return out
-    for line in lines:
-        try:
-            obj = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(obj, dict) and isinstance(obj.get("turn"), int):
-            out[obj["turn"]] = obj
+        return {}
     _stamps_cache[str(path)] = (version, out)
     return out
 

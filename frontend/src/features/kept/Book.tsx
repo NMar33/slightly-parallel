@@ -65,6 +65,7 @@ export function KeptBook({
   kind, title, icon, guide, entries, pool = entries, loading, error, empty,
   modes, defaultMode, chapters: chaptersFn, headline = (v) => cleanTitle(v.row.l1), mark,
   aboveGuide, belowGuide, controls, projects: withProjects = false, section, near, complete = asIs,
+  inProject, belongs,
 }: {
   kind: KeptKind
   title: string
@@ -96,13 +97,19 @@ export function KeptBook({
   near?: Near
   /** The records of entries not read yet, for a copy (useKept's `complete`). */
   complete?: (vs: Vision[]) => Promise<Vision[]>
+  /** A tab of this project's page: its entries only, no page header, no grouping by project. */
+  inProject?: string
+  /** In a project's tab, which entries are this project's (Rules: the ones that reach it); else the project they were kept in. */
+  belongs?: (v: Vision) => boolean
 }) {
   const Icon = icon
-  useEffect(() => { document.title = `${title} — Slightly Parallel` }, [title])
+  useEffect(() => { if (!inProject) document.title = `${title} — Slightly Parallel` }, [title, inProject])
   const [hash, setHash] = useHashState()
-  const project = hash.project ?? ''
+  const project = inProject ?? hash.project ?? ''
   const q = (hash.q ?? '').trim()
-  const mode = modes.some(([m]) => m === hash.group) ? String(hash.group) : defaultMode
+  const shownModes = inProject ? modes.filter(([m]) => m !== 'project') : modes
+  const firstMode = shownModes.some(([m]) => m === defaultMode) ? defaultMode : shownModes[0]?.[0] ?? defaultMode
+  const mode = shownModes.some(([m]) => m === hash.group) ? String(hash.group) : firstMode
   const tasks = useTaskIndex()
   const sets = useSets(kind).data ?? NO_SETS
   const writes = useSetWrites(kind)
@@ -117,9 +124,9 @@ export function KeptBook({
   const known = useMemo(() => tagCounts(entries).map(([t]) => t), [entries])
   const shown = useMemo(
     () => pool
-      .filter((v) => (!project || v.row.project === project) && matches(v, q))
+      .filter((v) => (!project || (inProject && belongs ? belongs(v) : v.row.project === project)) && matches(v, q))
       .sort((a, b) => dateOf(b.row).getTime() - dateOf(a.row).getTime()),
-    [pool, project, q],
+    [pool, project, q, inProject, belongs],
   )
   const chapters = useMemo(
     () => chaptersFn?.(shown, mode, sets) ?? chaptersOf(shown, mode as ChapterMode, sets),
@@ -152,38 +159,47 @@ export function KeptBook({
     void copy(`# ${c.title}\n\n${list.map(visionText).join('\n')}`, t('Copied {what}', { what: `${c.title} · ${kindN(list.length, kind)}` }))
   }
 
+  const findAndCopy = (
+    <>
+      <Input value={hash.q ?? ''} onChange={(e) => setHash({ q: e.target.value })} placeholder={FIND[kind] ?? `Find in ${kind}s`} aria-label={FIND[kind] ?? `Find in ${kind}s`} className="w-[220px] h-24 text-12" />
+      <button type="button" onClick={() => void copyAll()} disabled={!shown.length}
+        className="inline-flex items-center gap-6 h-24 px-10 rounded-input border border-border-default text-12 text-secondary hover:text-primary hover:bg-hover disabled:opacity-50">
+        <Copy size={12} aria-hidden /> {t('Copy all')}
+      </button>
+    </>
+  )
+
   return (
     <div className="flex flex-col gap-16">
-      <PageHeader
-        variant="lens" icon={Icon} title={title}
-        actions={<>
-          <PageTourLink script={`${kind}s`} />
-          <Input value={hash.q ?? ''} onChange={(e) => setHash({ q: e.target.value })} placeholder={FIND[kind] ?? `Find in ${kind}s`} aria-label={FIND[kind] ?? `Find in ${kind}s`} className="w-[220px] h-24 text-12" />
-          <button type="button" onClick={() => void copyAll()} disabled={!shown.length}
-            className="inline-flex items-center gap-6 h-24 px-10 rounded-input border border-border-default text-12 text-secondary hover:text-primary hover:bg-hover disabled:opacity-50">
-            <Copy size={12} aria-hidden /> {t('Copy all')}
-          </button>
-        </>}
-      >
-        <ProjectPills projects={projectCounts.map(([code, count]) => ({ code, count }))} value={project}
-          all={{ count: pool.length }} clearable onPick={(v) => setHash({ project: v })} />
-      </PageHeader>
+      {inProject ? null : (
+        <PageHeader
+          variant="lens" icon={Icon} title={title}
+          actions={<>
+            <PageTourLink script={`${kind}s`} />
+            {findAndCopy}
+          </>}
+        >
+          <ProjectPills projects={projectCounts.map(([code, count]) => ({ code, count }))} value={project}
+            all={{ count: pool.length }} clearable onPick={(v) => setHash({ project: v })} />
+        </PageHeader>
+      )}
 
       {aboveGuide}
-      <PageGuide id={`${kind}s`} guide={guide} examples={entries.filter((v) => isExample(v.row)).length} />
+      {!inProject && <PageGuide id={`${kind}s`} guide={guide} examples={entries.filter((v) => isExample(v.row)).length} />}
       {belowGuide?.(shown)}
 
       <div className="flex items-center gap-16 flex-wrap">
         <PillGroup label={t('group by')} value={mode}
-          onChange={(v) => setHash({ group: v && v !== defaultMode ? v : '' })}
-          options={modes} />
+          onChange={(v) => setHash({ group: v && v !== firstMode ? v : '' })}
+          options={shownModes} />
         {controls}
+        {inProject && <div className="ml-auto flex items-center gap-8">{findAndCopy}</div>}
       </div>
 
       {drawing && <LoadingSkeleton variant="card" count={3} />}
       {!!error && <ErrorBanner title={`Could not read ${kind}s`} hideDismiss />}
-      {!drawing && !error && pool.length === 0 && <p className="text-13 text-secondary">{empty}</p>}
-      {!drawing && pool.length > 0 && shown.length === 0 && <p className="text-12 font-mono text-tertiary">{t('Nothing matches.')}</p>}
+      {!drawing && !error && (inProject ? shown.length === 0 && !q : pool.length === 0) && <p className="text-13 text-secondary">{empty}</p>}
+      {!drawing && (inProject ? q !== '' : pool.length > 0) && shown.length === 0 && <p className="text-12 font-mono text-tertiary">{t('Nothing matches.')}</p>}
 
       {!drawing && (
         <div className="grid gap-24 lg:grid-cols-[200px_minmax(0,1fr)] xl:grid-cols-[200px_minmax(0,1fr)_280px]">
@@ -192,7 +208,7 @@ export function KeptBook({
 
           <div className="order-first lg:col-span-2 xl:order-last xl:col-span-1">
             <div className="xl:sticky xl:top-[16px] flex flex-col gap-12 xl:max-h-[calc(100vh-32px)] xl:overflow-y-auto">
-              {withProjects && <ProjectsPanel />}
+              {withProjects && !inProject && <ProjectsPanel />}
               <SetsPanel draggable={withProjects} noun={kind} sets={sets} visions={entries} writes={writes} complete={complete}
                 active={hash.set ?? ''} onActive={(id) => setHash({ set: id })} />
             </div>

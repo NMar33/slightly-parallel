@@ -8,7 +8,7 @@ Security model: a terminal runs a shell on this computer, so
 - every socket must carry the token, and the token is handed out only to
   Slightly Parallel's own pages: ``GET /api/terminal/state`` refuses a request whose
   ``Origin`` is not one of Slightly Parallel's, or that a browser marks cross-site.
-  The server makes the token at start (``SP_TOKEN`` if set); nobody
+  The server makes the token at every start; nobody
   types it;
 - a WebSocket carries no CORS, so the socket checks the Origin itself — any
   other page the operator visits cannot open one.
@@ -43,7 +43,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 
 from .. import app_settings, termlib, timeauto
@@ -196,12 +196,26 @@ def enabled(request_app: Any) -> bool:
     return bool(boot.terminal_enabled) or bool(_cfg(boot.data_root).get("terminal.enabled"))
 
 
+_token_lock = threading.Lock()
+
+
 def token_of(app: Any) -> str:
+    """This server's token, new at each start (create_app makes it before the
+    first request; the lock keeps two first asks from making two)."""
     tok = getattr(app.state, "terminal_token", "")
     if not tok:
-        tok = app.state.settings.terminal_token or secrets.token_urlsafe(24)
-        app.state.terminal_token = tok
+        with _token_lock:
+            tok = getattr(app.state, "terminal_token", "") or secrets.token_urlsafe(24)
+            app.state.terminal_token = tok
     return tok
+
+
+def token_matches(app: Any, given: str) -> bool:
+    """Compared as bytes: compare_digest refuses a str with non-ASCII in it,
+    and a typed or mangled token must be a refusal, not an error."""
+    if not given or len(given) > 256:
+        return False
+    return hmac.compare_digest(given.encode("utf-8"), token_of(app).encode("utf-8"))
 
 
 def _trusted(headers: Any, settings: Settings) -> bool:
@@ -264,8 +278,11 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
 
     # ---------------------------------------------------------------- state
     @router.get("/api/terminal/state")
-    def terminal_state(request: Request) -> dict[str, Any]:
+    def terminal_state(request: Request, response: Response) -> dict[str, Any]:
         _guard(request)
+        # It carries the token: never from a cache, so after a restart the page
+        # gets the new one.
+        response.headers["Cache-Control"] = "no-store"
         boot: Settings = request.app.state.settings
         cfg = _cfg(boot.data_root)
         on = enabled(request.app)
@@ -488,6 +505,16 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     async def terminal_ws(websocket: WebSocket, session_id: str) -> None:
         app = websocket.app
         boot: Settings = app.state.settings
+        # Another site's page is turned away at the handshake: it learns nothing.
+        if not _trusted(websocket.headers, boot):
+            await websocket.close(code=4403, reason="origin not allowed")
+            return
+        # Every other refusal comes after the handshake, so the page reads its
+        # code. Closed before it, a socket fails with HTTP 403 and the browser
+        # reports 1006: a page holding the token of a server before a restart
+        # never saw 4401, never asked for the new token, and reconnected with
+        # the old one for good.
+        await websocket.accept()
         if not SUPPORTED:
             # 4403 is a refusal the screen shows and does not retry.
             await websocket.close(code=4403, reason="the terminal needs macOS or Linux")
@@ -495,18 +522,12 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         if not enabled(app):
             await websocket.close(code=4409, reason="the terminal is off")
             return
-        token = websocket.query_params.get("token", "")
-        if not hmac.compare_digest(token, token_of(app)):
+        if not token_matches(app, websocket.query_params.get("token", "")):
             await websocket.close(code=4401, reason="invalid token")
-            return
-        if not _trusted(websocket.headers, boot):
-            await websocket.close(code=4403, reason="origin not allowed")
             return
         if not termlib.SAFE_ID.match(session_id):
             await websocket.close(code=4400, reason="bad terminal id")
             return
-
-        await websocket.accept()
         root = boot.data_root
         cfg = _cfg(root)
         cols = _to_int(websocket.query_params.get("cols"), 100)

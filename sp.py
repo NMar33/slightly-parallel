@@ -14,6 +14,8 @@
                                          server first when it is not running
     python3 sp.py autostart on|off  start the server when you log in
     python3 sp.py shortcut [off]    a desktop and menu shortcut that runs open
+    python3 sp.py report            one file to send when something is wrong
+    python3 sp.py check             is it working: the #sp checks, also with the server down
 
 `./sp.sh …` and `./run.sh …` (Linux, macOS) and `sp …` (Windows,
 sp.cmd) run this file. Configuration comes from .env (see .env.example):
@@ -810,6 +812,73 @@ def autostart_module():
     return mod
 
 
+def cmd_check(_: list[str] | None = None) -> None:
+    """The #sp checks (backend/checkup.py) for the folder this runs in. With
+    the server down, what can be seen from outside it: the supervisor, the
+    port, the data folder, the disk, and the end of the supervisor's log."""
+    import json
+    from urllib.parse import urlencode
+    marks = {"ok": "ok  ", "note": "note", "concern": "!!  ", "unknown": "??  "}
+    try:
+        with urllib.request.urlopen(f"{base_url()}/api/checkup?{urlencode({'cwd': os.getcwd()})}", timeout=60) as r:
+            result = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001 — not running or not answering: look from outside
+        result = None
+    if result:
+        say(result["verdict"])
+        for f in result["findings"]:
+            print(f"  {marks.get(f['status'], '    ')} {f['title']}" + (f" — {f['evidence']}" if f["evidence"] else ""))
+            if f["next"] and f["status"] != "ok":
+                print(f"       → {f['next']}")
+        sys.exit(1 if result["counts"].get("concern") else 0)
+    say(f"the server does not answer on {base_url()}")
+    env = settings()
+    data = Path(env.get("SP_DATA_ROOT") or env.get("SCAN_DATA_ROOT") or env.get("DATA_ROOT") or str(_home_data_root()))
+    host, port = base_url().split("//", 1)[1].rsplit(":", 1)
+    print(f"  {'ok  ' if running() else '!!  '} supervisor: {'running' if running() else 'not running'}"
+          + ("" if running() else "  → python sp.py up"))
+    if not port_free(host, int(port)):
+        print(f"  !!   port {port} is taken by another program, or the server is stuck starting")
+    print(f"  {'ok  ' if data.is_dir() else '!!  '} data folder: {data}" + ("" if data.is_dir() else " (missing)"))
+    try:
+        free = shutil.disk_usage(data if data.is_dir() else ROOT).free
+        print(f"  {'ok  ' if free > 2 * 1024**3 else '!!  '} disk: {free / 1024**3:.1f} GB free")
+    except OSError:
+        pass
+    tail = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-12:] if LOG_FILE.is_file() else []
+    if tail:
+        print("  the supervisor's log ends with:")
+        for line in tail:
+            print(f"    {line}")
+    say("then: python sp.py up, or python sp.py report to send")
+    sys.exit(1)
+
+
+def cmd_report(_: list[str] | None = None) -> None:
+    """One file to send when something is wrong (backend/diagnostics.py):
+    from the running server when it answers, else from the files alone."""
+    name = time.strftime("slightly-parallel-report-%y%m%d-%H%M%S.md")
+    out = ROOT / name
+    text = ""
+    try:
+        with urllib.request.urlopen(f"{base_url()}/api/diagnostics/report", timeout=60) as r:
+            text = r.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 — not running, or not answering: build it here
+        pass
+    if not text:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sp_diagnostics", ROOT / "backend" / "backend" / "diagnostics.py")
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        env = settings()
+        data = env.get("SP_DATA_ROOT") or env.get("SCAN_DATA_ROOT") or env.get("DATA_ROOT") or str(_home_data_root())
+        text = mod.report(app_root=ROOT, data_root=Path(data), log_file=APP_LOG, supervisor_file=LOG_FILE)
+    out.write_text(text, encoding="utf-8")
+    say(f"report: {out}")
+    say("no chat text and no .env values in it; read it, then send it with a line on what went wrong")
+
+
 def cmd_open(_: list[str] | None = None) -> None:
     """The shortcut's command: start it when it is not up, then open it."""
     import webbrowser
@@ -847,7 +916,7 @@ def cmd_shortcut(args: list[str]) -> None:
 COMMANDS = {
     "run": cmd_run, "up": cmd_up, "down": cmd_down, "restart": cmd_restart, "status": cmd_status,
     "logs": cmd_logs, "terminal": cmd_terminal, "open": cmd_open, "autostart": cmd_autostart,
-    "shortcut": cmd_shortcut, "__supervise": cmd_supervise,
+    "shortcut": cmd_shortcut, "report": cmd_report, "check": cmd_check, "__supervise": cmd_supervise,
 }
 
 

@@ -263,3 +263,27 @@ def test_an_event_left_open_by_a_stop_ends_at_the_last_reading(tmp_path: Path) -
         m2.tick(t + 3600 + i)
     ended = m2.con.execute("SELECT ended FROM events WHERE key = 'net.down'").fetchone()[0]
     assert ended is not None and ended < t + 120
+
+
+def test_a_record_from_before_the_server_memory_peak_gets_its_column_and_keeps_spikes(tmp_path) -> None:
+    """The server's memory is kept with its peak per bucket, so a start-up
+    spike survives the minute tier; a record made before has the column added."""
+    import sqlite3
+    from backend import sysmon
+    db = sysmon.db_path(tmp_path)
+    db.parent.mkdir(parents=True)
+    old = sqlite3.connect(db)
+    old.execute("CREATE TABLE samples (tier INTEGER NOT NULL, ts REAL NOT NULL, cpu REAL, self_rss REAL, n INTEGER DEFAULT 1)")
+    old.commit(); old.close()
+    sysmon._READY.discard(str(db))
+    con = sysmon.connect(tmp_path)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(samples)")}
+    assert {"self_rss_max", "mem_pct", "cpu_max"} <= cols
+    con.execute("DELETE FROM samples")
+    for i, rss in enumerate((200e6, 2500e6, 210e6)):          # one spike within a minute
+        con.execute("INSERT INTO samples (tier, ts, self_rss) VALUES (0, ?, ?)", (60.0 + i * 5, rss))
+    m = sysmon.Monitor.__new__(sysmon.Monitor)
+    m._con = con
+    m._rollup(200.0)
+    row = con.execute("SELECT self_rss, self_rss_max FROM samples WHERE tier = 1").fetchone()
+    assert row["self_rss_max"] == 2500e6 and row["self_rss"] < 1000e6

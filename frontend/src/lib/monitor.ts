@@ -95,6 +95,8 @@ export type Range = (typeof RANGES)[number]
 export const HUE = {
   cpu: 'var(--m-cpu)', mem: 'var(--m-mem)', disk: 'var(--m-disk)', rx: 'var(--m-rx)',
   tx: 'var(--m-tx)', ping: 'var(--m-ping)', temp: 'var(--m-temp)',
+  // Slightly Parallel's own memory: the product's colour among the machine's.
+  self: 'var(--brand)',
 } as const
 
 export const SEVERITY_COLOR: Record<Severity, string> = {

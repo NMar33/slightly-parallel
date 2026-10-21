@@ -88,7 +88,8 @@ When the user types one of these, act as described. Commands start with
 | `#architecture` | Bring the architecture up to date: the form for the last scan, the page and the map, each only when out of date (the skill update-the-architecture) |
 | `#evidence` | Get the operator's instructions with task_evidence_ask, then attach the evidence (Finishing a task, section 4) |
 | `#task <hint>` | Write the task the user is pointing at, from the conversation, into the `agent` column, for later; `#task {lane} …` names the board lane (section 4) |
-| `#now <text>` | Write the task this chat starts on into `doing`, in the lane for #now or the one in braces, then do the work; `#done` closes it (section 4) |
+| `#now <text>` | Title the task this chat starts on; the server keeps the operator's message as its text, in `doing`, in the lane for #now or the one in braces; then do the work; `#done` closes it (section 4) |
+| `#now-todo <text>` | Title the operator's message; the server files it, as written, in To do (also `-next`, `-backlog`, `-review`, `-parked`, `-done`, `-doing`); not started in this chat (section 4) |
 | `#page` | Write the next version of the project's architecture page: architecture_material, then architecture_page (the skill keep-the-architecture-page) |
 | `#decision` | Log the decision just made (also offered on `decision_hint`) |
 | `#map` | Map the program: ask the operator first, then a helper agent calls map_material, then map_write (the skill map-the-program) |
@@ -106,6 +107,7 @@ When the user types one of these, act as described. Commands start with
 | `#entrypoint` | Nothing to write — the server keeps the message as an entry point; write its text (Kept messages, section 4): What, Where, How, State, Next |
 | `#undo <what was the mistake>` | MCP tool undo_find, list the candidates by number, then undo_propose with the operator's numbers and show its confirm text (the skill undo-a-mistake) |
 | `#undo-yes` | The operator confirmed: MCP tool undo_apply. The server archives only on this reply right after your proposal |
+| `#sp <what worries you>` | MCP tool checkup: say what works and what is a concern, in the fixed shape; with text, look into that too. Read freely; change nothing without the operator's yes (the skill sp-checkup) |
 
 **Resolving `<id or text>`**: if it looks like an id (`sp_…`, `pb_…`), use it.
 Otherwise read the lens (`search`, or `GET /api/<lens>?project=…`), match
@@ -261,7 +263,7 @@ final in the pack's shape, then post the whole text with
 this version changed. Each post is the next version; the operator reads
 and compares them on the Storyboard. An unknown id is refused.
 
-**Agent task** (`#task <hint>`, `#now <text>`). Only when the user writes one of them: write the task the user is pointing at, from the conversation, with `write_entry {lens: "task"}`. `#task` lands in the `agent` column for later; `#now` is the task this chat starts on and lands in `doing`. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
+**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
 
 **Architecture page** (part of `#architecture`, and at the end of a `#scan`; `#page` still asks for it alone). One page per project: what it is, what it does now, what it is made of and what is owed, as claims with their evidence, for a team lead who was not in the chat. Call `architecture_material`: it returns the computed facts, the current page and the instructions. Write the next version with `architecture_page {text, note}`. The skill `keep-the-architecture-page` holds the steps.
 
@@ -372,6 +374,8 @@ When the operator opens a topic that has an entry point, read it first
 where things are and where the work stopped.
 
 **Undo** (`#undo`). The operator archives entries made by mistake. List the candidates from `undo_find` by number; send their numbers' ids to `undo_propose` and show its confirm text; on `#undo-yes`, call `undo_apply`. Never archive without both. The skill `undo-a-mistake` holds the steps.
+
+**Is it working** (`#sp`). Call `checkup` and report it in the fixed shape: the verdict, each concern as what · why it matters · the next step, then one line of what is fine. What could not be checked is said, never called fine. With text after the tag, look into that worry too. Read and investigate freely; restart, re-integrate or change nothing without the operator's yes. The skill `sp-checkup` holds the steps.
 
 ## 5. Reading
 

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { FolderKanban, Users } from 'lucide-react'
 
 import { AgentDossier, type SectionId } from './dossier'
-import { ActivityBadge, AgentIdentity, EditAgentButton, useDrawer, useTaskOpener } from './parts'
+import { AgentHeader } from './AgentHeader'
+import { EditAgentButton, useDrawer, useTaskOpener } from './parts'
 import { PersonalFrame, WalkRoster, type AgentPageData } from './personal'
 
 import { t } from '../../i18n/scope/views'
@@ -43,38 +45,43 @@ export function AgentDossierPage() {
   )
 }
 
+const BUTTON = 'inline-flex items-center gap-4 px-8 h-24 rounded-input text-11 text-tertiary hover:text-primary hover:bg-hover no-underline'
+
 function Dossier({ d, sec, setSec }: { d: AgentPageData; sec: SectionId; setSec: (s: SectionId) => void }) {
   const { p, code, range, peak, byId } = d
   const { open: openDrawer, drawer } = useDrawer()
   const { open: openTask, modal } = useTaskOpener(code)
   return (
     <div className="flex flex-col gap-16 min-w-0">
-      <header className="flex items-start gap-12 flex-wrap min-w-0">
-        <AgentIdentity p={p} size="lg" linkTo={false} />
-        <ActivityBadge p={p} />
-        <span className="ml-auto flex items-center gap-8 flex-wrap">
-          <WalkRoster d={d} />
-          <EditAgentButton p={p} code={code} label />
-          <Link to={`/project/${encodeURIComponent(code)}#agents`} className="text-11 font-mono text-tertiary hover:text-primary">{t('project →')}</Link>
-          <Link to="/agent" className="text-11 font-mono text-tertiary hover:text-primary">{t('all agents →')}</Link>
-        </span>
-      </header>
-      <div className="rounded-card border border-border-subtle bg-surface p-16 min-w-0">
-        <AgentDossier
-          p={p}
-          range={range}
-          peak={peak}
-          byId={byId}
-          onOpenLens={openDrawer}
-          onOpenTask={openTask}
-          section={sec}
-          onSectionChange={setSec}
-          hotkeys
-        />
-      </div>
+      <AgentDossier
+        p={p}
+        range={range}
+        peak={peak}
+        byId={byId}
+        onOpenLens={openDrawer}
+        onOpenTask={openTask}
+        section={sec}
+        onSectionChange={setSec}
+        hotkeys
+        header={
+          <AgentHeader
+            p={p}
+            nav={<span className="mr-4"><WalkRoster d={d} /></span>}
+            actions={<>
+              <EditAgentButton p={p} code={code} label />
+              <Link to={`/project/${encodeURIComponent(code)}#agents&agent=${encodeURIComponent(p.agent.agent_id)}`} className={BUTTON}
+                title={t('This agent among the project\'s agents')}>
+                <FolderKanban size={12} aria-hidden /> {code}
+              </Link>
+              <Link to="/agent" className={BUTTON}>
+                <Users size={12} aria-hidden /> {t('all agents')}
+              </Link>
+            </>}
+          />
+        }
+      />
       {drawer}
       {modal}
     </div>
   )
 }
-

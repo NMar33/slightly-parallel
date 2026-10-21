@@ -40,7 +40,7 @@ set in the UI (Setup, Settings). Host, port, CORS and the terminal are set in
 | `SP_DATA_ROOT` | `~/.slightly-parallel` | Where all records live; made on the first start, and the example project is played into it (`backend/backend/example.py`). `SCAN_DATA_ROOT` is also read |
 | `HOST` / `SP_PORT` | `127.0.0.1` / `8123` | Backend address and port. `SCAN_PORT` and `PORT` are also read |
 | `SP_CORS_ORIGINS` | localhost dev origins | CORS allowlist. `SCAN_CORS_ORIGINS` is also read |
-| `SP_ENABLE_TERMINAL` / `SP_TOKEN` | off / made at start | Turns the terminal on (otherwise a switch in Settings) / sets its token |
+| `SP_ENABLE_TERMINAL` | off | Turns the terminal on (otherwise a switch in Settings); its token is new at every start |
 
 A fresh clone starts on a new data folder with the example project in it
 (`scripts/demo/build_example.py`: the shopfront month, played with the clock

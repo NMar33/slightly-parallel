@@ -221,6 +221,17 @@ def after_help(space: Space, report: Report, s: str, st: State) -> None:
     report.add(s, "#help lists the commands", all(c in text for c in ("#scan", "#task", "#decision", "#done")), text[:300])
 
 
+def after_sp(space: Space, report: Report, s: str, st: State) -> None:
+    """#sp: the agent asked the server (the MCP tool checkup), and answered
+    with what it found — not from its own idea of the setup."""
+    asked = eventually(lambda: any(str(r.get("path", "")).startswith("/api/checkup")
+                                   for r in rows(get(space, "/api/logs?level=INFO&limit=2000"), "records")), 10)
+    report.add(s, "#sp called the checkup", bool(asked))
+    text = st.said[-1].lower()
+    report.add(s, "#sp answered with what it found", any(w in text for w in ("recorded", "check", "concern", "fine", "ok")),
+               st.said[-1][:300], soft=True)
+
+
 def after_done(space: Space, report: Report, s: str, st: State) -> None:
     tasks = {str(t.get("id")): t for t in listed(space, "/api/tasks", "tasks", st, mine=False)}
     t = eventually(lambda: str({str(x.get("id")): x for x in listed(space, "/api/tasks", "tasks", st, mine=False)}.get(st.task, {}).get("status")) == "done", 10)
@@ -240,8 +251,9 @@ RULE: Step = ("#rule", lambda st: "#rule calc.py must stay a single file with no
 WORK: Step = ("the work", lambda st: "Write the tests now in test_calc.py, as pytest-style functions, and commit everything.", after_work)
 SCAN: Step = ("#scan", lambda st: "#scan", after_scan)
 DONE: Step = ("#done", lambda st: f"#done {st.task}".strip(), after_done)
+SP: Step = ("#sp", lambda st: "#sp", after_sp)
 
-CORE: list[Step] = [EDIT, TASK, DECISION, RULE, WORK, SCAN, DONE]
+CORE: list[Step] = [EDIT, TASK, DECISION, RULE, WORK, SCAN, SP, DONE]
 
 FULL: list[Step] = [
     ("hello", lambda st: "Hello. What is in this project?", after_hello),
@@ -260,6 +272,7 @@ FULL: list[Step] = [
     ("#skill", lambda st: "#skill how we add a function to calc.py: write it, test it with pytest, commit", after_skill),
     ("#problem solved", lambda st: f"Add a docstring to sub that says it returns a minus b, and commit. #problem solved {st.problem}".strip(), after_solved),
     ("#help", lambda st: "#help", after_help),
+    SP,
     DONE,
 ]
 

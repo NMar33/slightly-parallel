@@ -81,3 +81,21 @@ def test_nothing_spills_to_disk(c) -> None:
     assert r.status_code == 200
     t, m = r.json()["rows"][0]
     assert t == "" and m.startswith("0")
+
+
+def test_the_copy_is_made_again_when_chats_or_tasks_change_not_on_any_write(client) -> None:
+    """A decision or a setting written used to throw the whole copy away (it
+    was keyed on every view change); a task written still renews it."""
+    from backend import analytics
+    store = client.app.state.store
+    analytics.schema(store)
+    first = analytics._state["con"]
+    r = client.post("/api/decisions", json={"created_date": "2609-17", "created_time": "12:00", "project": "alpha",
+                                            "l1": "chose sqlite", "l2": "small"})
+    assert r.status_code in (200, 201), r.text
+    analytics.schema(store)
+    assert analytics._state["con"] is first
+    r = client.post("/api/tasks", json={"title": "a task", "project": "alpha", "status": "todo"})
+    assert r.status_code in (200, 201), r.text
+    analytics.schema(store)
+    assert analytics._state["con"] is not first

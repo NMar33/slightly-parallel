@@ -153,3 +153,35 @@ def test_a_helpers_report_in_the_chat_keeps_nothing(tmp_path: Path) -> None:
     [s] = derive_sessions([("alpha", "cc-abc", folder / "chat.md")], gap_minutes=30)
     assert [m["turn"] for m in s.keep_marks] == [2]
     assert s.important_tags == [] and s.done_tags == []
+
+
+def test_a_transcript_is_read_one_line_at_a_time_and_its_times_kept_by_use(tmp_path, monkeypatch) -> None:
+    """A 330 MB transcript read whole took the server to 2.5 GB at start
+    (docs/performance.md); lines are read one at a time, and the files asked
+    for last keep their times, up to a number of times held."""
+    from backend import turntimes as tt
+    files = []
+    for i in range(3):
+        f = tmp_path / f"t{i}.jsonl"
+        f.write_text('{"type": "user", "timestamp": "2026-10-20T10:00:00"}\nnot json\n[1]\n'
+                     '{"type": "assistant", "timestamp": "2026-10-20T10:01:00"}\n', encoding="utf-8")
+        files.append(f)
+    assert hasattr(tt._lines(files[0]), "__next__")          # a generator, not a list
+    assert [r["type"] for r in tt._lines(files[0])] == ["user", "assistant"]
+    assert list(tt._lines(tmp_path / "missing.jsonl")) == []
+    monkeypatch.setattr(tt, "POINTS_KEPT", 100)
+    monkeypatch.setattr(tt, "FILES_KEPT", 2)                  # two files at most
+    monkeypatch.setattr(tt, "_points_cache", {})
+    tt.points_of(files[0]); tt.points_of(files[1])
+    tt.points_of(files[0])                                    # used again: kept
+    tt.points_of(files[2])                                    # the least used goes
+    assert set(tt._points_cache) == {str(files[0]), str(files[2])}
+
+
+def test_one_file_too_large_to_keep_is_read_but_not_kept(tmp_path, monkeypatch) -> None:
+    from backend import turntimes as tt
+    f = tmp_path / "big.jsonl"
+    f.write_text("".join('{"type": "user", "timestamp": "2026-10-20T10:00:0%d"}\n' % i for i in range(8)), encoding="utf-8")
+    monkeypatch.setattr(tt, "POINTS_KEPT", 8)
+    monkeypatch.setattr(tt, "_points_cache", {})
+    assert len(tt.points_of(f)) == 8 and tt._points_cache == {}

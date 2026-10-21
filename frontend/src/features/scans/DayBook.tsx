@@ -27,11 +27,12 @@ const OPEN_KEY = 'sp-scans-daybook-open'
  * commits of the same day, so a day reads as one thing wherever it is
  * opened.
  */
-export function ScansDayBook({ guide }: { guide?: ReactNode }) {
+/** `project`: a tab of that project's page — its entries only, no project pills, no lead. */
+export function ScansDayBook({ guide, project: inProject }: { guide?: ReactNode; project?: string }) {
   const { scans, loading, error } = useScans()
   const withEntries = useMemo(() => projectsByNewest(scans, (s) => s.row.project, (s) => s.row.created_date), [scans])
   const known = useDayBookProjects(withEntries)
-  const { hash, setHash, q, project, month, showMonth, active, days, keys, pick } = useDayBook(known)
+  const { hash, setHash, q, project, month, showMonth, active, days, keys, pick } = useDayBook(inProject ? [inProject] : known)
   const [size, setSize] = useReadingSize('scans')
   const [detail, setDetail] = useState<'folded' | 'open'>(
     () => (readPref(OPEN_KEY) === 'open' ? 'open' : 'folded'),
@@ -71,13 +72,13 @@ export function ScansDayBook({ guide }: { guide?: ReactNode }) {
   return (
     <div className="flex flex-col gap-16">
       <DayBookTitle icon={Telescope} name={t('Scans')} count={mine.length}
-        projects={known} project={project} onProject={(v) => setHash({ project: v, day: '' })}
+        projects={inProject ? [] : known} project={project} onProject={(v) => setHash({ project: v, day: '' })}
         q={hash.q ?? ''} onFind={(v) => setHash({ q: v })}
         right={<><ReadingSizeControl value={size} onChange={setSize} /><Segmented label={t('Detail')} shape="pill" value={detail}
           onChange={(v) => { setDetail(v); persistPref(OPEN_KEY, v) }}
           options={[['folded', t('collapsed'), t('Files and Changes are collapsed until you open them')],
                     ['open', t('open all'), t('Every scan shows its files and changes')]] as const} /></>} />
-      {guide}
+      {!inProject && guide}
       {error && <ErrorBanner title={t('Could not read scans')} hideDismiss />}
 
       <MonthBand
