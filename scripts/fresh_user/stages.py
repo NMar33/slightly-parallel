@@ -18,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import time
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -887,6 +888,25 @@ def upgrade(space: Space, report: Report, source: Path, base: str, boot_seconds:
         fired = fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(old.sample), "prompt": "After the upgrade: still here."}, folder=old.sample)
         report.add(s, "the old project's hook still captures", fired.returncode == 0 and "After the upgrade" in chat.read_text(encoding="utf-8"), (fired.stderr or fired.stdout)[-300:])
         playwright(old, report, s, "every page opens after the upgrade", ["tests/e2e/every-page.spec.ts"])
+        # The new release's own parts reach an old install: the built-in
+        # skills in the home folder, a refreshed integration, and #sp.
+        skills = space.home / ".claude" / "skills"
+        got = eventually(lambda: (skills / "sp-checkup" / "SKILL.md").is_file(), 20)
+        report.add(s, "the new built-in skills are installed in the home folder", bool(got),
+                   ", ".join(sorted(p.name for p in skills.iterdir())) if skills.is_dir() else "no skills folder")
+        # The new server hands its own pages a cookie of its own: the old one's,
+        # kept for this address, is not it.
+        import common
+        common._COOKIES.pop("/".join(old.url.split("/")[:3]), None)
+        http(old.url + "/api/setup/integrate", {"project_code": "kept", "project_dir": str(old.sample)})
+        info = get(old, "/api/setup/info")
+        mine = [i for i in info.get("integrations", []) if i.get("project") == "kept"]
+        report.add(s, "integrating again makes the project's files current", bool(mine) and mine[0].get("status") == "fresh", json.dumps(mine)[:200])
+        check = get(old, "/api/checkup?" + urllib.parse.urlencode({"cwd": str(old.sample)}))
+        by = {f.get("id"): f for f in check.get("findings", [])}
+        report.add(s, "#sp after the upgrade: the folder, the contract and the hooks are fine",
+                   all(by.get(k, {}).get("status") == "ok" for k in ("folder", "contract", "hooks")),
+                   json.dumps({k: by.get(k, {}).get("title") for k in ("folder", "contract", "hooks")})[:300])
     finally:
         stop(proc)
 

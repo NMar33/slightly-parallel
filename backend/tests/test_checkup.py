@@ -124,3 +124,11 @@ def test_the_report_cuts_query_strings_and_long_lines(tmp_path: Path) -> None:
     assert len(diagnostics._clean("x" * 5000)) <= diagnostics.LINE_MAX + 2
     capped = diagnostics._cap(["y" * 1000] * 100, limit=5000)
     assert len(capped) < 10 and capped[-1].startswith("… cut")
+
+
+def test_an_mcp_call_that_does_not_say_how_it_found_the_chat_is_a_guess(client: TestClient) -> None:
+    """An MCP server from before the identity source was sent: its chat is
+    not known for sure, and neither is MCP for this chat."""
+    by = {f["id"]: f for f in client.get("/api/checkup", params={"agent_id": "cc-old00001"},
+                                          headers={"x-sp-via": "mcp"}).json()["findings"]}
+    assert by["chat"]["status"] == "unknown" and by["mcp"]["title"] == "MCP answers this caller"

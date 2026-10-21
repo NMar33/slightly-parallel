@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import errno
 import json
 import logging
 import os
@@ -46,6 +47,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import app_settings, backup as backup_engine, logbook
+from .csvio import DamagedFile
 from .config import Settings, lan_refusal
 from .db import FIXTURES, ViewStore
 from .routers import (
@@ -153,6 +155,27 @@ def _warm_git(store: ViewStore) -> None:
     except Exception:  # noqa: BLE001 — a request computes them again
         log.exception("task statistics not warmed")
     log.info("task statistics warm", extra={"ms": int((time.perf_counter() - t1) * 1000)})
+
+
+#: Held by the server that serves a data folder (the served app, not a
+#: test's): a second one on the same folder is refused, since two of them
+#: would each rebuild, back up and time the same files. The lock goes with
+#: the process, so a crash leaves nothing to clean; backups skip *.lock.
+SERVER_LOCK = "server.lock"
+ROOT_TAKEN = ("another Slightly Parallel server is using the data folder {root}. "
+              "Stop that one (python sp.py down in its folder), or point this one at another data folder.")
+
+
+def hold_data_root(root: Path) -> Any | None:
+    """The open, locked ``server.lock`` of ``root``; None when another
+    process holds it."""
+    from .file_safety import _try_lock
+    root.mkdir(parents=True, exist_ok=True)
+    fh = open(root / SERVER_LOCK, "a+", encoding="utf-8")
+    if _try_lock(fh):
+        return fh
+    fh.close()
+    return None
 
 
 def _backfill_turn_times(root: Path) -> None:
@@ -647,6 +670,11 @@ def create_app(
         install_builtin_skills()
         offer_example()
         if watch:
+            held = hold_data_root(app.state.settings.data_root)
+            if held is None:
+                log.error(ROOT_TAKEN.format(root=app.state.settings.data_root))
+                raise RuntimeError(ROOT_TAKEN.format(root=app.state.settings.data_root))
+            app.state.root_lock = held
             app.state.watchers = _start_watchers(
                 app.state.settings.data_root, app.state.store
             )
@@ -686,6 +714,10 @@ def create_app(
             if timer is not None:
                 timer.stop()
             terminal.close_all()
+            held = getattr(app.state, "root_lock", None)
+            if held is not None:
+                held.close()
+                app.state.root_lock = None
             for name in ("backup_task", "memory_task"):
                 task = getattr(app.state, name, None)
                 if task is not None:
@@ -734,6 +766,29 @@ def create_app(
             status_code=422, content={"detail": str(exc) or f"invalid value in {request.method} {request.url.path}"}
         )
 
+    @app.exception_handler(DamagedFile)
+    def _damaged(request: Request, exc: DamagedFile) -> JSONResponse:
+        log.warning("refused: %s", exc, extra={"method": request.method, "path": request.url.path, "status": 409})
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    # The disk or the folder refuses a write: what to do, not an error id.
+    # Atomic writes leave the old file as it was.
+    _DISK = {errno.ENOSPC: (507, "The disk is full: nothing was written. Free some space and try again."),
+             errno.EROFS: (503, "The data folder is read-only: nothing was written. Check where it is mounted."),
+             errno.EACCES: (503, "The data folder cannot be written (permission denied): nothing was written. Check its permissions."),
+             errno.EPERM: (503, "The data folder cannot be written (not permitted): nothing was written. Check its permissions.")}
+    if hasattr(errno, "EDQUOT"):
+        _DISK[errno.EDQUOT] = (507, "The disk quota is used up: nothing was written. Free some space and try again.")
+
+    @app.exception_handler(OSError)
+    def _os_error(request: Request, exc: OSError) -> JSONResponse:
+        known = _DISK.get(exc.errno or -1)
+        if known is None:
+            raise exc               # any other OSError is a bug: the catch-all below takes it
+        log.warning("write refused by the system: %s %s: %s", request.method, request.url.path, exc,
+                    extra={"method": request.method, "path": request.url.path, "status": known[0]})
+        return JSONResponse(status_code=known[0], content={"detail": known[1]})
+
     @app.exception_handler(Exception)
     def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         """Any bug becomes a traceable JSON error, never a bare 500.
@@ -765,8 +820,18 @@ def create_app(
         ever read the store/settings through ``app.state``, so the swap is
         visible immediately.
         """
+        held = None
+        if watch:
+            held = hold_data_root(new_root)
+            if held is None:
+                raise ValueError(ROOT_TAKEN.format(root=new_root))
         for w in app.state.watchers:
             w.stop()
+        if held is not None:
+            old = getattr(app.state, "root_lock", None)
+            app.state.root_lock = held
+            if old is not None:
+                old.close()
         new_store = ViewStore(data_root=new_root)
         app.state.store = new_store
         app.state.settings = dataclasses.replace(

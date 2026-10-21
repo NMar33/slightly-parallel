@@ -33,6 +33,52 @@ def csv_escape(value: Any) -> str:
     return s
 
 
+class DamagedFile(Exception):
+    """A ledger that cannot be read row for row: rewriting it from what was
+    read would lose the rows it hides. The server answers 409 with this text."""
+
+
+def swallowed_rows(csv_path: Path) -> list[int]:
+    """Lines where a quote left open makes the reader take the next rows as
+    part of one field: the record numbers (the header is 1) whose fields hold
+    whole rows of this file. Empty when the file reads row for row, and for a
+    file with no ``id`` column (nothing to tell a row from prose by).
+
+    A text field may hold line breaks and commas — a note's paragraphs do.
+    It does not hold a line that parses into as many fields as the header
+    and starts with an id of this file's kind (``tk_…``, ``nt_…``).
+    """
+    if not csv_path.exists():
+        return []
+    out: list[int] = []
+    with open(csv_path, encoding="utf-8-sig", newline="") as fh:
+        reader = csv.reader(fh)
+        header = [c.strip() for c in next(reader, [])]
+        if len(header) < 4 or "id" not in header:
+            return []
+        width, at = len(header), header.index("id")
+        kinds: set[str] = set()
+        try:
+            for n, row in enumerate(reader, start=2):
+                if at < len(row) and "_" in row[at]:
+                    kinds.add(row[at].split("_", 1)[0] + "_")
+                for field in row:
+                    if "\n" not in field:
+                        continue
+                    for ln in field.split("\n")[1:]:
+                        cells = next(csv.reader([ln]), []) if ln.strip() else []
+                        if len(cells) >= width - 1 and at < len(cells) and \
+                                any(cells[at].startswith(k) and len(cells[at]) > len(k) + 2 for k in kinds):
+                            out.append(n)
+                            break
+                    else:
+                        continue
+                    break
+        except csv.Error:
+            out.append(reader.line_num)
+    return out
+
+
 def read_rows(csv_path: Path) -> list[dict[str, str]]:
     """All rows as dicts (empty list if the file is missing)."""
     if not csv_path.exists():
@@ -149,6 +195,13 @@ def rewrite_rows(
     concurrent rewrites cannot lose each other's changes.
     """
     with acquire_flock(lock_path(csv_path), mode="a"):
+        damaged = swallowed_rows(csv_path)
+        if damaged:
+            raise DamagedFile(
+                f"{csv_path.name} is damaged near record {damaged[0]}: a quote is left open and the rows "
+                "after it read as one. Nothing was written. Fix that line (Internals › Run the data check "
+                "names it), or restore the file from a backup."
+            )
         rows = read_rows(csv_path)
         existing_cols: list[str] = []
         if csv_path.exists():

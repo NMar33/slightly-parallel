@@ -115,8 +115,9 @@ class TestSafeReadJSON:
         t = threading.Thread(target=create_after_delay)
         t.start()
         try:
-            # First attempt fails with ENOENT, sleeps 10ms, retries and finds it.
-            result = safe_read_json(p, retries=3, retry_delay_s=0.02)
+            # First attempt fails with ENOENT, retries and finds it. A wide
+            # window: a slow runner starts the writer thread late.
+            result = safe_read_json(p, retries=50, retry_delay_s=0.02)
             assert result == {"a": 1}
         finally:
             t.join()

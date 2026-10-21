@@ -18,6 +18,7 @@ from backend.watcher import DebouncedHandler
 def test_a_burst_during_a_slow_callback_runs_it_once_more_not_in_parallel(tmp_path: Path) -> None:
     running, most, calls = 0, 0, 0
     lock = threading.Lock()
+    release = threading.Event()        # the first callback waits here: no timing involved
 
     def slow() -> None:
         nonlocal running, most, calls
@@ -25,15 +26,26 @@ def test_a_burst_during_a_slow_callback_runs_it_once_more_not_in_parallel(tmp_pa
             running += 1
             calls += 1
             most = max(most, running)
-        time.sleep(0.3)
+            first = calls == 1
+        if first:
+            release.wait(10)
         with lock:
             running -= 1
 
     h = DebouncedHandler(slow, delay_ms=20, root=tmp_path)
-    for _ in range(6):            # six quiet windows inside one slow call
-        threading.Thread(target=h._fire).start()
-        time.sleep(0.05)
-    time.sleep(1.0)
+    first = threading.Thread(target=h._fire)
+    first.start()
+    for _ in range(50):                 # until the first callback is inside
+        if calls:
+            break
+        time.sleep(0.01)
+    burst = [threading.Thread(target=h._fire) for _ in range(6)]   # six quiet windows during it
+    for t in burst:
+        t.start()
+    for t in burst:
+        t.join(5)
+    release.set()
+    first.join(5)
     assert most == 1 and calls == 2       # the first, and one for everything after
     h.close()
     h._fire()

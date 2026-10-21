@@ -197,7 +197,7 @@ The Timer page keeps your own time, per project and per block of work (a sprint,
 
 ### Monitor
 
-The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. To report it, take one file: **download report** on that page, or `python sp.py report`, which works when the server does not start. It holds the machine, the server's memory over a day, warnings and errors, and the size of the data; no chat text and nothing from `.env`. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
+The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. To report it, take one file: **download report** on that page, or `python sp.py report`, which works when the server does not start. It holds the machine, the server's memory over a day, warnings and errors, and the size of the data; no chat text and no values from `.env`; read it before sending it. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
 
 ![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
 
@@ -228,6 +228,7 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 - [docs/development.md](docs/development.md) — the hot-reload start, tests, the lock file, the fresh-user test.
 - [docs/api.md](docs/api.md), [docs/logging.md](docs/logging.md) — the HTTP API and MCP tools; how chats are recorded.
 - [docs/performance.md](docs/performance.md) — what the server uses (memory, time), how it was measured, what was changed.
+- [docs/release-testing.md](docs/release-testing.md) — what is checked before a release, the checks done by hand on Windows and macOS, and the ones still to build.
 - [docs/help.md](docs/help.md) — how to: import lost chats.
 - [AGENT-README.md](AGENT-README.md) — for an agent working on Slightly Parallel's own code.
 

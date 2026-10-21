@@ -72,8 +72,9 @@ folder: the machine and version, the server's memory now and at its peak, its
 memory hour by hour for a day, slow requests, warnings and errors from the log,
 the capture hooks' errors, the size of the data and of the tools' transcripts,
 and the supervisor's output. Monitor › Server › **download report** gives the
-same file from the running server. It holds no chat text and nothing from
-`.env`; paths under the home folder start with `~`. When the server does not
+same file from the running server. It holds no chat text and no values from
+`.env`, with query strings cut; paths under the home folder start with `~`.
+Read it before sending it. When the server does not
 answer, the command builds the file from the logs and the data alone.
 
 The server writes its memory into the log every 5 minutes (`sp.memory`), and a

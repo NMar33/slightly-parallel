@@ -76,7 +76,7 @@ def checkup(
     request: Request,
     cwd: str = Query("", description="the folder the agent or the command runs in"),
     agent_id: str = Query("", description="the chat asking, when an agent asks"),
-    identity: str = Query("given", description="how agent_id was found: process (its tool), shared-parent or folder (guesses), given"),
+    identity: str = Query("", description="how agent_id was found: process (its tool), shared-parent or folder (guesses); empty: named by the caller"),
     store: ViewStore = Depends(get_store),
 ) -> dict[str, Any]:
     """#sp: is Slightly Parallel working for this chat and folder (checkup.py).
@@ -84,6 +84,9 @@ def checkup(
     step. Through the MCP tool the call itself proves MCP from that chat."""
     from .. import checkup as lib
     via_mcp = request.headers.get("x-sp-via", "").lower() == "mcp"
+    # Through MCP the chat was looked up, so its source must come with it: an
+    # MCP server from before the source was sent is a guess, not a name.
+    identity = identity or ("unsaid" if via_mcp else "given")
     return lib.run(store, cwd=cwd, agent_id=agent_id, identity=identity, via_mcp=via_mcp)
 
 

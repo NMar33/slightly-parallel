@@ -66,7 +66,9 @@ def main(argv: list[str] | None = None) -> int:
     on = lambda stage: stage in wanted  # noqa: E731
 
     # Resolved: on macOS the temp folder is /var/…, a link to /private/var/…, and the server names folders resolved.
-    space = Space(Path(tempfile.mkdtemp(prefix="sp-fresh-")).resolve(), free_port())
+    # A space and a non-English letter in every path the run makes — the clone,
+    # the home folder, the data folder, the projects — as on many machines.
+    space = Space(Path(tempfile.mkdtemp(prefix="sp fresh ü-")).resolve(), free_port())
     report = Report()
     code, second = "calc", "notes"
     shots = space.root / "screens"

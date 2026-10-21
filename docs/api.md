@@ -595,7 +595,7 @@ more, a normal one its alternatives, a major one also what would undo it.
   monitor's events (from the monitor), the log's memory lines, slow requests
   and warnings, the capture hooks' errors, the data's size and the tools'
   transcripts, the settings, the supervisor's output, and this summary. No
-  chat text, nothing from `.env`; home paths written from `~`. `python sp.py
+  chat text, no values from `.env`, query strings cut; home paths written from `~`. `python sp.py
   report` writes the same file, and builds it from the files alone when the
   server does not answer.
 - `GET /api/capture/health` — is capture working (capturewatch.py): `missed`, `lost` (sessions of the last week, Claude Code or Codex, never recorded),

@@ -44,6 +44,8 @@ frontend/tailwind.config.d.ts
 *.csv.lock
 *.json.lock
 *.md.lock
+# A running server's hold on its data folder (backend/server.py SERVER_LOCK).
+server.lock
 
 # Per-machine Slightly Parallel integration files (created by the Setup page)
 /AGENTS.md

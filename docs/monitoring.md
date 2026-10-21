@@ -64,8 +64,9 @@ disk, the end of the supervisor's log.
 Markdown file with the machine, the server's memory now and at its peak,
 memory and load hour by hour for a day, monitor events of 7 days, the log's
 memory lines, slow requests and warnings, hook errors, data and transcript
-sizes, the settings and the supervisor's output. No chat text, nothing from
-`.env`; paths under the home folder start with `~`. When the server does not
+sizes, the settings and the supervisor's output. No chat text, no values from
+`.env`, query strings cut; paths under the home folder start with `~`. A log
+line can still quote something: read it before sending. When the server does not
 answer, the command builds it from the files alone. **copy for AI** on the
 same page gives the running server's summary as text.
 

@@ -77,6 +77,11 @@ def _scan_csv_structure(path: Path, issues: list[dict[str, Any]]) -> int:
                                line=lineno)
                     else:
                         ids[rid] += 1
+            from ..csvio import swallowed_rows
+            for at in swallowed_rows(path):
+                _issue(issues, "error", "swallowed-rows", path.name,
+                       "a quote is left open here and the rows after it read as one field: "
+                       "changes to this file are refused until the line is fixed", line=at)
             for rid, count in ids.items():
                 if count > 1:
                     _issue(issues, "error", "duplicate-id", path.name,

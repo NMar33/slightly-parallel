@@ -163,7 +163,7 @@ jobs:
         run: python scripts/ci/monitor_check.py
       - name: A browser for the top bar
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: npm ci && npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
       - name: The top bar shows the readings
         run: node scripts/ci/topbar_check.mjs
       - name: The top bar, as drawn
