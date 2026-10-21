@@ -439,6 +439,32 @@ def _mark_text(mark: Path) -> str:
     return ""
 
 
+# The newest Python the backend's packages ship ready-built for: DuckDB has
+# no wheel for a Python newer than this, and building it from source fails
+# on a machine without a C++ toolchain (a Windows runner with 3.15 did).
+NEWEST_PYTHON = (3, 14)
+OLDEST_PYTHON = (3, 11)
+
+
+def base_python(version: tuple[int, int] | None = None) -> list[str]:
+    """The interpreter to make the environment with: this one when its
+    version is supported, else the newest supported one found on the
+    machine (the py launcher on Windows, python3.1x elsewhere)."""
+    if OLDEST_PYTHON <= (version or tuple(sys.version_info[:2])) <= NEWEST_PYTHON:
+        return [sys.executable]
+    versions = [(3, m) for m in range(NEWEST_PYTHON[1], OLDEST_PYTHON[1] - 1, -1)]
+    for major, minor in versions:
+        found = ([shutil.which("py"), f"-{major}.{minor}"] if os.name == "nt" and shutil.which("py")
+                 else [shutil.which(f"python{major}.{minor}")])
+        if found[0] and subprocess.run([*found, "-c", "import venv, ensurepip"], capture_output=True).returncode == 0:
+            return [str(x) for x in found]
+    fail(f"Python {sys.version.split()[0]} is newer than the backend's packages are built for "
+         f"(DuckDB has none past {NEWEST_PYTHON[0]}.{NEWEST_PYTHON[1]}). Install Python "
+         f"{NEWEST_PYTHON[0]}.{NEWEST_PYTHON[1]} from https://www.python.org and start again: "
+         "the launcher picks it.")
+    raise SystemExit(1)
+
+
 def install_backend() -> bool:
     """The backend's environment: made once, its packages installed once and
     again when the list of them changed — the way the UI's are. (pip ran on
@@ -450,8 +476,9 @@ def install_backend() -> bool:
     py = venv_python()
     fresh = not py.exists()
     if fresh:
-        print("[run] creating backend/.venv ...", flush=True)
-        subprocess.run([sys.executable, "-m", "venv", str(ROOT / "backend" / ".venv")], check=True)
+        base = base_python()
+        print(f"[run] creating backend/.venv with {' '.join(base)} ...", flush=True)
+        subprocess.run([*base, "-m", "venv", str(ROOT / "backend" / ".venv")], check=True)
     lock, ranges = backend_packages()
     source = lock if lock.is_file() else ranges
     mark = ROOT / "backend" / ".venv" / ".sp-requirements"

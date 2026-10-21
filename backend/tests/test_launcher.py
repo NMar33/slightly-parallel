@@ -352,7 +352,9 @@ def test_sp_cmd_ends_with_sp_py_s_own_exit_code() -> None:
     could not tell. Each handover ends the batch with sp.py's code."""
     lines = (Path(__file__).resolve().parents[2] / "sp.cmd").read_text(encoding="utf-8").splitlines()
     runs = [i for i, ln in enumerate(lines) if ln.strip().endswith("sp.py %*")]
-    assert len(runs) == 2 and all(lines[i + 1].strip() == "exit /b %errorlevel%" for i in runs)
+    # py with a supported version (in the loop), plain py -3, python.
+    assert len(runs) == 3 and all(lines[i + 1].strip() in ("exit /b %errorlevel%", "exit /b !errorlevel!") for i in runs)
+    assert "EnableDelayedExpansion" in "\n".join(lines)          # !errorlevel! is read inside the loop
 
 
 def test_the_hot_reload_start_sends_pages_to_the_vite_port(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -368,3 +370,19 @@ def test_the_hot_reload_start_sends_pages_to_the_vite_port(monkeypatch: pytest.M
         assert r.status_code == 307 and r.headers["location"] == "http://127.0.0.1:5181/"
         assert c.get("/api/nothing-here").status_code == 404
         assert c.get("/api/health").status_code == 200
+
+
+def test_the_environment_is_made_with_a_python_the_packages_are_built_for(launcher, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Windows runner whose newest Python was 3.15 built DuckDB from source
+    and failed: no wheel past 3.14. Too new a Python looks for a supported
+    one; none found is a sentence, not a compiler error."""
+    import subprocess as sp
+    assert launcher.base_python((3, 13)) == [launcher.sys.executable]
+    have = {"python3.13": "/usr/bin/python3.13"}
+    monkeypatch.setattr(launcher.os, "name", "posix")
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: have.get(name))
+    monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **k: sp.CompletedProcess(a, 0))
+    assert launcher.base_python((3, 15)) == ["/usr/bin/python3.13"]
+    have.clear()
+    with pytest.raises(SystemExit):
+        launcher.base_python((3, 15))
