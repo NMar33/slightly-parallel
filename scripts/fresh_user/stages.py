@@ -599,11 +599,20 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
     other = str(free_port())
     no_node = {"PATH": path_without(space, "node", "npm", "npx", "corepack"), "SP_PORT": other, "PORT": other}
     if (space.clone / "frontend" / "dist" / "index.html").is_file():
-        # A release ships the UI built: a start with no Node serves it.
+        # A release ships the UI built: a start with no Node serves it. Its
+        # own data folder (the default one in the test's home): the running
+        # server holds the one .env names, and a second server there stops.
         log = open(space.root / "server-no-node.log", "w", encoding="utf-8")
-        proc = subprocess.Popen(run_sh("--prod"), cwd=space.clone, env={**env, **no_node}, stdout=log, stderr=subprocess.STDOUT, **SPAWN)
-        up = wait_for(Space(space.root, int(other)), "/api/health", 60, alive=lambda: proc.poll() is None)
-        stop(proc)
+        dotenv, aside = space.clone / ".env", space.clone / ".env.aside"
+        if dotenv.is_file():
+            dotenv.rename(aside)
+        try:
+            proc = subprocess.Popen(run_sh("--prod"), cwd=space.clone, env={**env, **no_node}, stdout=log, stderr=subprocess.STDOUT, **SPAWN)
+            up = wait_for(Space(space.root, int(other)), "/api/health", 60, alive=lambda: proc.poll() is None)
+            stop(proc)
+        finally:
+            if aside.is_file():
+                aside.rename(dotenv)
         out = (space.root / "server-no-node.log").read_text(encoding="utf-8", errors="replace")
         report.add(s, "a start with no Node serves the UI the release ships", up and "frontend/dist" in out.replace("\\", "/"), out[-400:])
     else:

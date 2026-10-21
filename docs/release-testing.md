@@ -84,13 +84,20 @@ written.
 - **Two servers on one data folder**: the second is refused, saying why
   (`server.lock`, held by the served app, gone with its process).
 
+- **The soak test** (`scripts/soak/run.py`, run by hand on the candidate,
+  `--hours 24`): four simulated agents write through the API and the capture
+  hook while pages are read; a backup every 30 minutes, a restart every 2
+  hours (every second one a kill), a restore checked every 6 hours, a ledger
+  outside the server. `report.md` says whether nothing acknowledged was lost,
+  every restore was complete, memory held after warm-up, reads stayed fast,
+  and no server error came.
+
 ## To build (not automated yet)
 
 In order of risk. Each becomes a stage of the fresh-user test when built.
 
 | Check | What it proves | State |
 |---|---|---|
-| 24–48 h run: simulated agents write through hooks and MCP, pages read; an outside ledger counts every message; memory, threads, files measured | Nothing is lost or grows over days | measured by hand for a few hours (docs/performance.md) |
 | Cursor in the real-agent run | The fourth tool works end to end | only its hook format is tested |
 | Low memory (4 GB), a slow disk | Usable on a small laptop | not tested |
 
