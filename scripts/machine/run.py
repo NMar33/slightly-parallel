@@ -204,7 +204,7 @@ def main() -> int:
     print(f"\n{len(steps) - len(bad)} of {len(steps)} steps passed" + (f"; failed: {', '.join(bad)}" if bad else ""))
     print(f"send this file: {archive}")
     # Only the folder this run's test made and named in its report.
-    if fresh_root and fresh_root.is_dir() and fresh_root.name.startswith("sp fresh"):
+    if fresh_root and fresh_root.is_dir() and fresh_root.name.startswith(("sp fresh", "sp-fresh")):
         shutil.rmtree(fresh_root, ignore_errors=True)
     return 0 if not bad else 1
 
