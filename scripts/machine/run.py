@@ -141,6 +141,9 @@ def bundle(fresh_root: Path | None) -> Path:
     if fresh.is_dir():
         picked += [(p, f"fresh-user/{p.relative_to(fresh)}") for p in
                    [fresh / "report.json", *fresh.glob("logs/*.log"), *fresh.glob("screens/*.png")]]
+    for p in (fresh_root.glob("data/projects/*/chats/*/*") if fresh_root else []):
+        if p.name in ("meta.json", "work.jsonl"):                        # what the hooks saw, per chat
+            picked.append((p, f"chats/{p.parent.name}/{p.name}"))
     for p in (fresh_root.glob("sample*/*") if fresh_root else []):       # the page the agents built
         if p.suffix in (".html", ".js", ".css", ".md"):
             picked.append((p, f"built/{p.parent.name}/{p.name}"))

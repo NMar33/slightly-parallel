@@ -926,3 +926,39 @@ def test_a_commit_in_the_chats_first_turn_is_that_turns(root: Path, tmp_path: Pa
     work = next((root / "projects" / "alpha" / "chats").glob("cc-f1257000*/work.jsonl"))
     first = json.loads(work.read_text(encoding="utf-8").splitlines()[0])
     assert first["turn"] == 1 and first["commits"] == [made]
+
+
+def test_a_first_turn_commit_counts_even_when_the_noted_head_came_after_it(root: Path, tmp_path: Path) -> None:
+    """A hook that first saw the chat after its first turn noted the HEAD the
+    turn made (Codex on a Linux runner): the commits since the turn began
+    count by their time."""
+    import time as _time
+    folder = tmp_path / "repo"
+    folder.mkdir()
+    git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=folder, check=True,  # noqa: E731
+                                    capture_output=True)
+    git("init", "-q")
+    (folder / "a.txt").write_text("a\n")
+    git("add", ".")
+    git("commit", "-qm", "before the chat")
+    script = _HOOKS / "claude-code-capture.py"
+    sid = "1a7e0000-0000-4000-8000-000000000002"
+
+    def hook(payload: dict) -> None:
+        proc = subprocess.run([sys.executable, str(script), "--project", "alpha", "--data-root", str(root)],
+                              input=json.dumps({"session_id": sid, "cwd": str(folder), **payload}),
+                              capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": "#now build it and commit"})
+    _time.sleep(2.2)
+    (folder / "b.txt").write_text("b\n")
+    git("add", ".")
+    git("commit", "-qm", "built in the first turn")
+    made = subprocess.run(["git", "rev-parse", "HEAD"], cwd=folder, capture_output=True, text=True).stdout.strip()
+    chat = next((root / "projects" / "alpha" / "chats").glob("cc-1a7e0000*"))
+    meta = json.loads((chat / "meta.json").read_text(encoding="utf-8"))
+    meta["base_head"] = made                           # noted after the commit
+    (chat / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    hook({"hook_event_name": "Stop", "last_assistant_message": "built and committed"})
+    first = json.loads((chat / "work.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert first["commits"] == [made]
