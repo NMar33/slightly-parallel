@@ -37,6 +37,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
 STAMP = time.strftime("%y%m%d-%H%M")
+#: When this run began: the archive takes files written since. (The run
+#: folder's own time moves with every file put in it.)
+STARTED = time.time()
 OUT = REPO / ".sp" / "machine" / STAMP
 
 
@@ -73,7 +76,7 @@ def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = 900, env: d
     steps = json.loads((OUT / "steps.json").read_text(encoding="utf-8")) if (OUT / "steps.json").is_file() else []
     steps.append({"step": name, "ok": ok, "seconds": round(time.time() - t0), "log": log.name})
     (OUT / "steps.json").write_text(json.dumps(steps, indent=1), encoding="utf-8")
-    print(f"   {'ok' if ok else 'FAILED'} in {round(time.time() - t0)} s — {log}", flush=True)
+    print(f"   {'ok' if ok else 'FAILED'} in {round(time.time() - t0)} s - {log}", flush=True)
     return ok
 
 
@@ -131,7 +134,7 @@ def bundle(fresh_root: Path | None) -> Path:
     where.mkdir(parents=True, exist_ok=True)
     name = where / f"sp-machine-{platform.node() or 'machine'}-{STAMP}.zip"
     hide = secrets()
-    started = OUT.stat().st_mtime - 5
+    started = STARTED - 5
     fresh = REPO / ".sp" / "fresh-user"
     picked: list[tuple[Path, str]] = [(p, f"run/{p.relative_to(OUT)}") for p in OUT.rglob("*")
                                       if p.suffix in (".json", ".log", ".png")]
