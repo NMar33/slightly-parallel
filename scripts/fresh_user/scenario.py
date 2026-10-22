@@ -238,9 +238,17 @@ def after_sp(space: Space, report: Report, s: str, st: State) -> None:
                st.said[-1][:300], soft=True)
 
 
-SITE_ASK = ("#now build a small notes page in this folder: index.html and notes.js — add a note, list the notes, "
-            "delete one, kept in localStorage — and notes.test.js with node:test tests for the functions that change "
-            "the list. Run the tests with `node --test`, then commit.")
+def site_ask(st: "State") -> str:
+    """Each tool builds in a folder of its own: the agents run one after
+    another in one project, and the second found the first one's page done,
+    changed nothing, and had nothing to scan."""
+    return (f"#now build a small notes page in a new folder {site_dir(st)}: index.html and notes.js — add a note, "
+            "list the notes, delete one, kept in localStorage — and notes.test.js with node:test tests for the "
+            "functions that change the list. Run the tests with `node --test` in that folder, then commit.")
+
+
+def site_dir(st: "State") -> str:
+    return f"notes-{st.tool.name}"
 
 
 def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
@@ -253,7 +261,7 @@ def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
         full = get(space, f"/api/tasks/{st.task}")
         text = json.dumps(full)
         report.add(s, "its text is the operator's message", "notes page" in text and "localStorage" in text, text[:300])
-    files = [st.folder / n for n in ("index.html", "notes.js", "notes.test.js")]
+    files = [st.folder / site_dir(st) / n for n in ("index.html", "notes.js", "notes.test.js")]
     report.add(s, "the agent built the page and its tests", all(f.is_file() for f in files),
                ", ".join(f.name for f in files if not f.is_file()) or "all there")
     log = sh(["git", "log", "--oneline"], st.folder, space.env()).stdout.strip().splitlines()
@@ -261,7 +269,7 @@ def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
 
 
 def after_site_tests(space: Space, report: Report, s: str, st: State) -> None:
-    ran = sh(["node", "--test"], st.folder, space.env())
+    ran = sh(["node", "--test"], st.folder / site_dir(st), space.env())
     report.add(s, "the page's tests pass", ran.returncode == 0, (ran.stdout + ran.stderr)[-400:])
 
 
@@ -312,7 +320,7 @@ FULL: list[Step] = [
 # A real piece of work, as on a new machine: a small page built with #now,
 # a task for later, the tests run and fixed, a scan, #sp, #done.
 SITE: list[Step] = [
-    ("#now: build the page", lambda st: SITE_ASK, after_site_now),
+    ("#now: build the page", site_ask, after_site_now),
     ("#task", lambda st: "#task add a search box over the notes, later", after_task_any),
     ("the tests", lambda st: "Run the tests again, fix anything that fails, and commit.", after_site_tests),
     SCAN,
