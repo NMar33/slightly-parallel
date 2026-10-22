@@ -101,6 +101,16 @@ In order of risk. Each becomes a stage of the fresh-user test when built.
 | Cursor in the real-agent run | The fourth tool works end to end | only its hook format is tested |
 | Low memory (4 GB), a slow disk | Usable on a small laptop | not tested |
 
+## The blank-machine kit (scripts/machine)
+
+One command installs everything, asks for the agents' logins and runs every
+check; `.github/workflows/machine.yml` runs it on GitHub's runners (5 runs,
+or 9 with `full`; about $4–8 for 9 at haiku and gpt-6-luna). Not done yet:
+a check that each login works before the run starts; a real log-out and
+log-in for start at login; spotting an agent stuck in a loop and retrying
+its turn once, reported apart from a product failure; pinned versions of the
+agent CLIs in the report.
+
 ## Known limits (for the release notes)
 
 - The terminal runs on macOS and Linux only; on Windows the rest of the app works.

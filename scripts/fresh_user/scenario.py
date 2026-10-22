@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from agents import MODELS, Tool, give_login, tools
+from agents import Tool, give_login, model_for, tools
 from common import Report, Space, eventually, get, http, rows
 from stages import YESTERDAY_SESSION, playwright, sh
 
@@ -331,7 +331,7 @@ def chat(space: Space, report: Report, s: str, st: State, plan: list[Step], mode
     for i, (name, message, check) in enumerate(plan):
         text = message(st)
         print(f"  [{st.code}] > {text}", flush=True)
-        turn = st.tool.say(text, MODELS[st.tool.name].get(model, model), space, env, turn_seconds, st.folder)
+        turn = st.tool.say(text, model_for(st.tool.name, model), space, env, turn_seconds, st.folder)
         cost = max(cost, turn.cost_usd)
         st.said.append(turn.text)
         (space.root / f"{st.code}-{st.tool.name}-turn-{i + 1:02d}.txt").write_text(f"> {text}\n\n{turn.text}\n\n{turn.error}\n", encoding="utf-8")
@@ -362,7 +362,7 @@ def run(space: Space, report: Report, code: str, folder: Path, tool: Tool, model
             done, shown = False, f"{type(exc).__name__}: {exc}"
         tool.hooks_trusted = report.add(s, "the folder and its hooks are trusted on Codex's own screen", done, shown)
     st = State(code, folder, tool)
-    values, st.helper = helper_settings(tool, MODELS[tool.name].get(model, model))
+    values, st.helper = helper_settings(tool, model_for(tool.name, model))
     if values:
         http(space.url + "/api/settings", {"values": values})
     st.standup_owed = not yesterdays_standup(space, st)

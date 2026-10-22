@@ -13,6 +13,11 @@ set -euo pipefail
 
 REPO_URL="${SP_REPO_URL:-https://github.com/NMar33/slightly-parallel.git}"
 DEST="${SP_DEST:-$HOME/slightly-parallel}"
+# SP_LOCAL=1: run from the repository this script sits in (a CI checkout),
+# no clone. CI or SP_NONINTERACTIVE: no login prompts — the keys come from
+# ANTHROPIC_API_KEY and OPENAI_API_KEY.
+if [[ -n ${SP_LOCAL:-} ]]; then DEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; fi
+QUIET="${SP_NONINTERACTIVE:-${CI:-}}"
 say() { printf '\n\033[1m[sp] %s\033[0m\n' "$*"; }
 
 # ---------------------------------------------------------------- system
@@ -22,7 +27,8 @@ if [[ $(uname) == Darwin ]]; then
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
   fi
-  brew install git tmux
+  brew list git >/dev/null 2>&1 || brew install git
+  brew list tmux >/dev/null 2>&1 || brew install tmux
 else
   say "git, tmux and curl (sudo)"
   if command -v apt-get >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq git tmux curl ca-certificates
@@ -57,6 +63,10 @@ nvm install 22 >/dev/null && nvm use 22 >/dev/null
 say "Claude Code, Codex and OpenCode"
 npm install -g --silent @anthropic-ai/claude-code @openai/codex opencode-ai
 
+if [[ -n $QUIET ]]; then
+  say "No login prompts: the keys come from the environment"
+  if [[ -n ${OPENAI_API_KEY:-} && ! -f $HOME/.codex/auth.json ]]; then printenv OPENAI_API_KEY | codex login --with-api-key || true; fi
+else
 say "Log in to each agent now — the only step that needs you"
 if [[ ! -f $HOME/.claude/.credentials.json ]]; then
   echo "Claude Code opens: log in (/login if it asks), then leave with /exit."
@@ -67,12 +77,14 @@ if [[ ! -f $HOME/.codex/auth.json ]]; then
   codex login </dev/tty || true
 fi
 if [[ ! -f $HOME/.local/share/opencode/auth.json ]]; then
-  echo "OpenCode: pick Anthropic (or OpenAI) and log in."
+  echo "OpenCode: pick Anthropic and log in (the run uses OpenCode on Claude Haiku)."
   opencode auth login </dev/tty || true
+fi
 fi
 
 # ---------------------------------------------------------------- the run
-if [[ -d $DEST/.git ]]; then git -C "$DEST" pull --ff-only --quiet; else git clone --quiet "$REPO_URL" "$DEST"; fi
+if [[ -n ${SP_LOCAL:-} ]]; then :
+elif [[ -d $DEST/.git ]]; then git -C "$DEST" pull --ff-only --quiet; else git clone --quiet "$REPO_URL" "$DEST"; fi
 git -C "$DEST" config user.email >/dev/null || git config --global user.email "machine-test@example.com"
 git -C "$DEST" config user.name >/dev/null || git config --global user.name "Machine Test"
 say "Running everything (about an hour). Leave it be."
