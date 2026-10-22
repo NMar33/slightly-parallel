@@ -1,0 +1,95 @@
+# Local env
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+build/
+.vite/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Throwaway browser checks: one-off Playwright scripts an agent writes to
+# look at a page, named frontend/_<what>.mjs. The reusable form is the
+# take-a-screenshot skill, not a file per check.
+frontend/_*.mjs
+
+# Screenshots (dev-time artifacts) — except the article kit's, which are
+# the material future posts are cut from and are shot from fixtures only.
+screenshots/
+!articles/screenshots/
+!articles/screenshots/**
+
+# Compiled config artifacts
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/tailwind.config.js
+frontend/tailwind.config.d.ts
+
+# Sidecar locks (runtime artifacts)
+*.csv.lock
+*.json.lock
+*.md.lock
+# A running server's hold on its data folder (backend/server.py SERVER_LOCK).
+server.lock
+
+# Per-machine Slightly Parallel integration files (created by the Setup page)
+/AGENTS.md
+/CLAUDE.md
+/.claude/
+# What Setup writes for the other tools when this repository is integrated: this machine's paths.
+/.codex/
+/.cursor/
+/.opencode/
+/opencode.json
+# .merkhet was the state folder before the rename; the log still reads it
+/.merkhet/
+/.sp/
+
+# Playwright artifacts
+frontend/test-results/
+frontend/playwright-report/
+
+# The 2608 article kit: 21.5 MB of screenshots of pages that no longer exist
+# (a Goals page, a goals tree). Kept on disk, out of the repository — re-shoot
+# against the current product if the drafts are ever finished.
+/articles/
+
+# Untracked scratch that has no place in a clone
+*.orig
+*.rej
+.env.*.local
+
+
+# Machine-local state a data root grows as it is used (the demo data in
+# fixtures/ too, when a demo server runs on it — the e2e suite runs on a
+# copy): the terminal's sessions and tmux config, the system monitor's
+# record, the #done cutoff, the browser's saved preferences.
+fixtures/terminal/
+fixtures/monitor/
+fixtures/done.json
+fixtures/ui_prefs.json
+
+# Written by Setup for this machine: its interpreter and its folders.
+/.mcp.json
+
+# What a server started on the shipped demo data writes beside it.
+fixtures/timer/
+
+# Rendered channel videos (MP4, GIF) made from the tour; large and remade on demand.
+brand/channel/videos/
+slightly-parallel-report-*.md

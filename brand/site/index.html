@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Slightly Parallel</title>
+<meta name="description" content="A dashboard for coding agents. Self-hosted, one laptop: every chat, task, scan, standup and decision, on one set of pages.">
+<link rel="icon" href="../kit/files/favicon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;700&display=swap">
+<style>
+:root{--bg:#0C0E0E;--panel:#141817;--line:#242A28;--ink:#F2F4F3;--ink-2:#B6BEBB;--ink-3:#8A918E;--rust:#D0694F;--jade:#4FB39A;--amber:#E8A33D}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.55 "Schibsted Grotesk",system-ui,sans-serif;padding-inline:16px;padding-block:0 96px}
+.frame{max-width:1120px;margin:0 auto;display:flex;flex-direction:column;gap:72px}
+header{display:flex;align-items:center;justify-content:space-between;padding-block:22px 0;gap:16px}
+header img{height:36px;display:block}
+nav{display:flex;gap:22px;font:500 12px/1 "JetBrains Mono",monospace;letter-spacing:.1em;text-transform:uppercase}nav a{color:var(--ink-2);text-decoration:none}nav a:hover{color:var(--rust)}
+.hero{position:relative;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#07090B;aspect-ratio:16/9}
+.hero video{display:block;width:100%;height:100%;object-fit:cover}
+.hero .over{position:absolute;left:0;right:0;bottom:0;padding:28px 32px;display:flex;flex-direction:column;gap:8px;background:linear-gradient(180deg,rgba(7,9,11,0) 0%,rgba(7,9,11,.75) 100%)}
+.hero h1{margin:0;font-size:clamp(26px,4vw,40px);line-height:1.1;letter-spacing:-.01em;max-width:18ch}
+.hero p{margin:0;font:500 12px/1.6 "JetBrains Mono",monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2)}
+.eyebrow{font:500 11px/1 "JetBrains Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+section{display:flex;flex-direction:column;gap:18px}
+h2{margin:0;font-size:28px;letter-spacing:-.01em;line-height:1.15;max-width:24ch;text-wrap:balance}
+p.lead{margin:0;color:var(--ink-2);max-width:62ch;font-size:18px}
+.three{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.three div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px 22px;display:flex;flex-direction:column;gap:8px}
+.three b{font-size:17px}.three span{color:var(--ink-2);font-size:15px}
+.three i{display:block;width:28px;height:4px;border-radius:2px;margin-bottom:6px}
+.drawing{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}.drawing img{display:block;width:100%;height:auto}
+.banner img{display:block;width:100%;height:auto;border-radius:8px;border:1px solid var(--line)}
+.get{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:24px;display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media (max-width:760px){.get{grid-template-columns:1fr}}
+pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:14px 16px;font:500 13px/1.7 "JetBrains Mono",monospace;color:var(--ink);overflow-x:auto}
+pre s{color:var(--ink-3);text-decoration:none}
+.get p{margin:0;color:var(--ink-2);font-size:15px}
+footer{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font:400 12px/1.6 "JetBrains Mono",monospace;color:var(--ink-3);border-top:1px solid var(--line);padding-top:18px}
+footer a{color:var(--ink-2);text-decoration:none}footer a:hover{color:var(--rust)}
+</style>
+</head>
+<body>
+<div class="frame">
+
+<header>
+  <img src="../kit/files/wordmark-paper.svg" alt="slightly parallel">
+  <nav><a href="#what">What</a><a href="#how">How</a><a href="#get">Get it</a><a href="../kit/index.html">Brand</a></nav>
+</header>
+
+<div class="hero">
+  <video autoplay muted loop playsinline poster="../video/intro-yard-poster.png" src="../video/intro-yard.webm"></video>
+  <div class="over">
+    <h1>A dashboard for coding agents.</h1>
+    <p>Self-hosted · one laptop · every chat, task and decision of your agents</p>
+  </div>
+</div>
+
+<section id="what">
+  <div class="eyebrow">What it is</div>
+  <h2>Agents run in parallel on your projects. This is where you see them, side by side.</h2>
+  <p class="lead">Slightly Parallel records what Claude Code, Codex and OpenCode do across your projects — the chats as written, the tasks they move, the scans, standups and decisions they write — and shows it on pages. One person, one machine, no database server: the records are files.</p>
+  <div class="three">
+    <div><i style="background:var(--jade)"></i><b>Chats are recorded</b><span>A hook keeps every message of every session, in the project it ran in. Sessions, hours and heatmaps are computed from them, and recording costs no tokens.</span></div>
+    <div><i style="background:var(--amber)"></i><b>Agents write entries</b><span>Through MCP tools, by field name: a scan when you type #scan, yesterday's standup when a new day starts (it asks first), a decision as it happens, a task onto the board.</span></div>
+    <div><i style="background:var(--rust)"></i><b>You read the pages</b><span>Overview, kanban, sprints, agents, architecture, calendar, terminals. Only you move a task to done; agents report.</span></div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="eyebrow">The name</div>
+  <div class="drawing"><img src="../kit/files/drawing-dark.svg" alt="slightly parallel — the wordmark in its construction drawing: ascender, x-height, baseline, the five-degree lean"></div>
+  <p class="lead">Parallel rails, seen in perspective, do not look parallel. The mark is two stems with the second leaning five degrees, and the second l of the name leans the same way.</p>
+</section>
+
+<section>
+  <div class="eyebrow">What a project holds</div>
+  <div class="banner"><img src="../kit/files/readme-banner-containers.png" alt="containers on a train: scan, standup, decision, sprint, task"></div>
+  <p class="lead">Each container is a kind of entry: scan, standup, decision, sprint, task, chat. The jade one is the product's own colour.</p>
+</section>
+
+<section id="get">
+  <div class="eyebrow">Get it</div>
+  <div class="get">
+    <div>
+      <pre>git clone https://github.com/nmar33/slightly-parallel
+cd slightly-parallel
+./run.sh --prod          <s># the app on http://127.0.0.1:8123</s></pre>
+    </div>
+    <p>Python 3.11+ and Node 20+. The first start fills a data folder outside the clone with demo data; Setup then integrates your projects — it writes the hooks, the MCP entry, one section of AGENTS.md and a line in CLAUDE.md, and removes them on request. English or Russian interface. Linux and macOS; on Windows through <code>sp.cmd</code>.</p>
+  </div>
+</section>
+
+<footer>
+  <span>slightly parallel · 2026</span>
+  <span><a href="../kit/index.html">brand</a> · <a href="../index.html">the name study</a> · <a href="https://github.com/slightlyparallel">github</a></span>
+</footer>
+
+</div>
+</body>
+</html>

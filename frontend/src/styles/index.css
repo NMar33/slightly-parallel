@@ -1,0 +1,65 @@
+/* Tailwind v4 entry — pulls generated utilities off tokens.css vars. */
+@import "tailwindcss";
+
+/* Tailwind v4 uses inline @theme via CSS, but our source of truth is
+   tailwind.config.ts. Declare the config path so v4 loads it. */
+@config "../../tailwind.config.ts";
+
+/* App-scoped base styles that go beyond tokens.css. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Visible focus for keyboard users (WCAG AA); mouse users don't get the ring. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--brand));
+  outline-offset: 2px;
+  border-radius: var(--radius-input);
+}
+
+/* Scrollbars — quiet, theme-aware. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* The chat reader's reading size. The operator picks px on the message
+   wrapper and everything inside follows it, so a message reads at the same
+   scale whether it renders as markdown or as raw captured text. Unlayered
+   on purpose: Tailwind's text-* utilities live in a cascade layer, and
+   unlayered rules beat layered ones no matter the specificity. */
+.chat-size p,
+.chat-size li,
+.chat-size code,
+.chat-size pre,
+.chat-size td,
+.chat-size th,
+.chat-size blockquote {
+  font-size: inherit;
+}
+.chat-size h4 {
+  font-size: 1.12em;
+}
+.chat-size h5 {
+  font-size: 1.05em;
+}

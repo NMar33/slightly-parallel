@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 660" width="1280" height="660" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+<rect width="1280" height="660" fill="#0C0E0E"/>
+<defs><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.8" fill="#1C2321"/></pattern></defs>
+<rect width="1280" height="660" fill="url(#grid)"/>
+<text x="48" y="60" font-size="22" fill="#F2F4F3">The commands: one word anywhere in a message to an agent.</text>
+<line x1="48" y1="84" x2="1232" y2="84" stroke="#2E3634" stroke-width="1" stroke-dasharray="2 4"/>
+<text x="48" y="120" font-size="12" fill="#8A918E" letter-spacing="2">TASKS</text>
+<text x="48" y="150" font-size="17" fill="#D0694F" font-weight="600">#task</text><text x="230" y="150" font-size="16" fill="#F2F4F3">a task for later, from the chat</text>
+<text x="48" y="180" font-size="17" fill="#D0694F" font-weight="600">#now</text><text x="230" y="180" font-size="16" fill="#F2F4F3">the task being done now</text>
+<text x="48" y="210" font-size="17" fill="#D0694F" font-weight="600">#done</text><text x="230" y="210" font-size="16" fill="#F2F4F3">closes it; the card moves to done</text>
+<text x="48" y="268" font-size="12" fill="#8A918E" letter-spacing="2">THE RECORD</text>
+<text x="48" y="298" font-size="17" fill="#D0694F" font-weight="600">#scan</text><text x="230" y="298" font-size="16" fill="#F2F4F3">what changed, the files, the architecture</text>
+<text x="48" y="328" font-size="17" fill="#D0694F" font-weight="600">#decision</text><text x="230" y="328" font-size="16" fill="#F2F4F3">what was chosen, why, what was rejected</text>
+<text x="48" y="358" font-size="17" fill="#D0694F" font-weight="600">#entrypoint</text><text x="230" y="358" font-size="16" fill="#F2F4F3">a topic: where, how, state, next</text>
+<text x="680" y="120" font-size="12" fill="#8A918E" letter-spacing="2">KEEP A MESSAGE</text>
+<text x="680" y="150" font-size="17" fill="#D0694F" font-weight="600">#vision</text><text x="862" y="150" font-size="16" fill="#F2F4F3">where the project should go</text>
+<text x="680" y="180" font-size="17" fill="#D0694F" font-weight="600">#rule</text><text x="862" y="180" font-size="16" fill="#F2F4F3">how agents must work</text>
+<text x="680" y="210" font-size="17" fill="#D0694F" font-weight="600">#problem</text><text x="862" y="210" font-size="16" fill="#F2F4F3">what is wrong, what was tried</text>
+<text x="680" y="240" font-size="17" fill="#D0694F" font-weight="600">#prompt</text><text x="862" y="240" font-size="16" fill="#F2F4F3">a message to send again</text>
+<text x="680" y="298" font-size="12" fill="#8A918E" letter-spacing="2">REUSE</text>
+<text x="680" y="328" font-size="17" fill="#D0694F" font-weight="600">#skill</text><text x="862" y="328" font-size="16" fill="#F2F4F3">the steps of this chat, as a skill</text>
+<text x="680" y="358" font-size="17" fill="#D0694F" font-weight="600">#artifact</text><text x="862" y="358" font-size="16" fill="#F2F4F3">a folder an agent made, kept</text>
+<text x="48" y="416" font-size="12" fill="#8A918E" letter-spacing="2">MARK AND ASK</text>
+<text x="48" y="446" font-size="17" fill="#D0694F" font-weight="600">#important</text><text x="230" y="446" font-size="16" fill="#F2F4F3">star the message, its agent, its task</text>
+<text x="48" y="476" font-size="17" fill="#D0694F" font-weight="600">#help</text><text x="230" y="476" font-size="16" fill="#F2F4F3">the list of commands, in the chat</text>
+<line x1="48" y1="538" x2="1232" y2="538" stroke="#2E3634" stroke-width="1" stroke-dasharray="2 4"/>
+<text x="48" y="574" font-size="15" fill="#8A918E">The lane in braces: #now {ui} fix the login timeout · #task {Kanban Board} cards do not sort</text>
+<text x="48" y="602" font-size="15" fill="#8A918E">Written without a command: the chats, each day's standup, the decisions an agent makes. Everything else waits for a word.</text>
+<text x="1232" y="636" font-size="13" fill="#8A918E" text-anchor="end">slightly parallel</text>
+</svg>

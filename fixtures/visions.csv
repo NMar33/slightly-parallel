@@ -1,0 +1,9 @@
+id,created_date,created_time,project,agent_id,l1,category,related_goal_id,impact,effort,md_ref,source,session_id,source_turn,versions_n,tags
+vs_ca0891ac,2608-02,10:15,alpha-labs,agent-genesis-2608-01,AI-driven request replay & fuzzing on top of OpenAPI schema.,product,g_a1,high,medium,vision_details/260802-1015__alpha-labs__ca0891ac.md,,,,,
+vs_a590b622,2608-04,16:40,alpha-labs,agent-genesis-2608-01,Multi-tenant billing surface — usage metering piggybacks on rate-limit counters.,business,g_a3,high,high,vision_details/260804-1640__alpha-labs__a590b622.md,,,,,
+vs_026bcd0a,2608-06,11:20,alpha-labs,agent-genesis-2608-01,Ship a first-class CLI wrapper around the SDK for scripting workflows.,ux,g_a4,medium,low,vision_details/260806-1120__alpha-labs__026bcd0a.md,,,,,
+vs_476aa156,2608-03,14:00,beta-corp,agent-explorer-2608-03,Real-time analytics dashboard over Kafka pipeline — Grafana + Materialize.,product,g_b3,high,high,vision_details/260803-1400__beta-corp__476aa156.md,,,,,
+vs_a5aa225f,2608-05,19:10,beta-corp,agent-explorer-2608-03,CDC-based cutover pattern — reusable playbook for future migrations.,architecture,g_b2,medium,medium,vision_details/260805-1910__beta-corp__a5aa225f.md,,,,,
+vs_aea20e09,2608-07,22:30,_all,,A unified operational playbook — both projects need one 'week 4' cadence.,personal,,low,low,vision_details/260807-2230__all__aea20e09.md,,,,,
+vs_e0000001,2609-01,10:00,,example,Open the board on today's work,,,,,vision_details/vs_e0000001.md,demo,,0,2,"example,ui"
+vs_e0000002,2609-02,14:30,,example,New features take new API paths,,,,,vision_details/vs_e0000002.md,demo,,0,1,"example,backend"

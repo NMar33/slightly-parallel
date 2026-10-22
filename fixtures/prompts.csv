@@ -1,0 +1,6 @@
+id,created_date,created_time,project,agent_id,title,tags,md_ref
+pm_al_review,2608-05,11:00,alpha-labs,agent-genesis-2608-01,Auth flow code review prompt,"review,auth",prompt_details/260805-1100__alpha-labs__auth-review.md
+pm_bc_migplan,2608-06,10:00,beta-corp,agent-explorer-2608-03,Migration risk assessment prompt,"migration,risk",prompt_details/260806-1000__beta-corp__migration-plan.md
+pm_mk_lens,2608-08,15:00,pdr-framework-dev,mira-sztern-lenses,New lens scaffold prompt,"scaffold,lens",prompt_details/260808-1500__pdr-framework-dev__new-lens.md
+pm_mk_scan,2608-09,08:00,pdr-framework-dev,mira-sztern-lenses,SCAN checkpoint prompt (short version),"scan,checkpoint",prompt_details/260809-0800__pdr-framework-dev__scan-short.md
+pm_6915c3e2,2608-11,09:55,pdr-framework-dev,operator,Summarise yesterday in three lines,,prompt_details/260811-0955__pdr-framework-dev__operator.md

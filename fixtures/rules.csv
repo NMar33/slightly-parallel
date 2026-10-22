@@ -1,0 +1,10 @@
+id,created_date,created_time,project,agent_id,l1,kind,severity,status,related_incident,related_goal_id,md_ref,source,session_id,source_turn,versions_n,tags,auto
+rl_a001aa01,2608-02,14:00,alpha-labs,agent-genesis-2608-01,Never mock the database in integration tests — use a real Postgres container,rule,major,active,mock-vs-prod-migration-fail,g_a1,rule_details/260802__alpha-labs__mock-db.md,,,,,,
+rl_a002bb02,2608-04,09:30,alpha-labs,agent-genesis-2608-01,Confidence percentages tend toward optimism — halve first estimate for anything involving unknown APIs,lesson,minor,active,sdk-eta-slip,g_a4,rule_details/260804__alpha-labs__confidence-optimism.md,,,,,,
+rl_b001cc03,2608-03,11:15,beta-corp,agent-explorer-2608-03,Always test migrations on a staging replica before touching prod,rule,critical,active,near-cutover-panic,g_b1,rule_details/260803__beta-corp__staging-first.md,,,,,,
+rl_b002dd04,2608-05,16:45,beta-corp,agent-explorer-2608-03,pgloader silently drops rows with encoding mismatches — always diff row counts after,lesson,major,active,silent-row-loss,g_b1,rule_details/260805__beta-corp__pgloader-row-counts.md,,,,,,
+rl__all1ee05,2608-06,10:00,_all,operator,No parallel subagents that share a mutable file — sequential only,rule,critical,active,server-py-endpoints-dropped,,rule_details/260806__all__no-parallel-shared-file.md,,,,,,
+rl__all2ff06,2608-08,08:00,_all,operator,Log every turn (the capture hooks) — never batch-log at session close,lesson,critical,active,missed-15-turns,,rule_details/260808__all__log-every-turn.md,,,,,,
+rl_e0000001,2609-01,11:00,,example,Ask before installing anything,,,active,,,rule_details/rl_e0000001.md,demo,,0,1,"example,agents",yes
+rl_e0000002,2609-02,09:15,,example,Agents report tasks; the operator moves cards,,,active,,,rule_details/rl_e0000002.md,demo,,0,1,"example,agents",
+rl_e0000003,2609-01,17:05,,example,Test two saves made in the same minute,,,active,pb_e0000001,,rule_details/rl_e0000003.md,demo,,0,1,"example,backend",

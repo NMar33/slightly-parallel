@@ -1,0 +1,50 @@
+[project]
+name = "slightly-parallel-backend"
+version = "1.0.0"
+description = "Slightly Parallel — observability dashboard for parallel AI coding agents (API backend)"
+readme = "../README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.132,<1",
+    "uvicorn[standard]>=0.32,<1",
+    "duckdb>=1.2,<2",
+    "watchdog>=5.0,<7",
+    "pydantic>=2.9,<3",
+    "PyYAML>=6.0,<7",
+    "psutil>=6.0,<8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-xdist>=3.6",
+    "httpx>=0.27",
+    "pyflakes>=3.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Test files run side by side (pytest-xdist): every test builds its own data
+# root in a temp folder. 467 s one at a time, ~60 s on six workers.
+addopts = "-q -n auto --dist loadfile"
+markers = [
+    "slow: builds or plays something real (about a minute); deselect with -m \"not slow\"",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+# CI: python -m pyright. Basic mode, without the Optional checks: they fire
+# where the code has already narrowed a value through a helper or a guard
+# pyright does not follow (98 of 102 at the start were of that kind).
+[tool.pyright]
+include = ["backend", "../scripts/hooks"]
+extraPaths = ["../scripts/hooks"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportOptionalMemberAccess = "none"
+reportOptionalSubscript = "none"
+reportOptionalIterable = "none"
+reportOptionalOperand = "none"

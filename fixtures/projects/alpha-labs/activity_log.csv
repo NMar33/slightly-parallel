@@ -1,0 +1,3 @@
+id,agent_id,activity_type,duration_min,files_touched,related_goal_id,created_date
+al_a6,agent-genesis-2608-01,review,60,app/auth/rotation.py,g_a2,2608-06
+al_a7,agent-genesis-2608-01,docs,45,docs/api-changelog.md,g_a1,2608-07
