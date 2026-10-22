@@ -242,7 +242,11 @@ def site_ask(st: "State") -> str:
     """Each tool builds in a folder of its own: the agents run one after
     another in one project, and the second found the first one's page done,
     changed nothing, and had nothing to scan."""
-    return (f"#now build a small notes page in a new folder {site_dir(st)}: index.html and notes.js — add a note, "
+    # The folder is made here: OpenCode escapes the spaces of a path in a
+    # shell command and then takes its own project folder for an outside one,
+    # refusing `mkdir` with no one to ask (the test's paths have a space).
+    (st.folder / site_dir(st)).mkdir(exist_ok=True)
+    return (f"#now build a small notes page in the folder {site_dir(st)} (it exists, empty): index.html and notes.js — add a note, "
             "list the notes, delete one, kept in localStorage — and notes.test.js with node:test tests for the "
             "functions that change the list. Run the tests with `node --test` in that folder, then commit.")
 

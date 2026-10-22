@@ -115,5 +115,8 @@ agent CLIs in the report.
 
 - The terminal runs on macOS and Linux only; on Windows the rest of the app works.
 - One server per data folder: a second one on the same folder refuses to start.
+- OpenCode, in a project whose path has a space: it escapes the space in a shell
+  command and then asks permission for its own folder as an outside one; with
+  nobody to answer (a script), the command is refused.
 - Tested on the systems CI runs (Ubuntu, macOS and Windows, current runners)
   with Python 3.11+ and Node 20.
