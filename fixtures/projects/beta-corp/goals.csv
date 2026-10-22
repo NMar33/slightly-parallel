@@ -1,3 +1,0 @@
-id,goal_text,parent_goal_id,related,time_est,confidence_pct,success_comment,created_date,agent_id,status,retro_date,retro_notes
-g_b4,Automate post-migration row-count audit,g_b1,ops,1 day,80,diff COUNT(*) src vs dst after every run,2608-06,agent-explorer-2608-03,active,,
-g_b5,Grafana dashboard for Kafka consumer lag,g_b3,observability,2 days,75,,2608-07,agent-explorer-2608-03,active,,

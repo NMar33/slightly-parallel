@@ -1,3 +1,0 @@
-id,decision_text,rationale,source,agent_id,related_goal_id,tags,created_date
-d_a5,SELECT FOR UPDATE for refresh rotation,row lock beats optimistic retry at current load,explicit,agent-genesis-2608-01,g_a2,security,2608-03
-d_a6,fakeredis for rate-limit unit tests,keeps the suite fast; integration tier uses real Redis,explicit,agent-genesis-2608-01,g_a3,testing,2608-04

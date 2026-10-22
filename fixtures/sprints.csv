@@ -1,6 +1,0 @@
-id,created_date,started_date,ended_date,name,theme,projects,time_budget_h,status,confidence_pct,goals_declared_n,goals_shipped_n,md_ref
-sp_a001alpha,2608-01,2608-01,2608-04,Auth v1,Ship JWT auth + rate limiting for v1 API,alpha-labs,20,ended,80,3,3,sprint_details/260801__alpha-labs__auth-v1.md
-sp_a002alpha,2608-05,2608-05,,SDK generator research,Deliver TS + Python SDK generators from clean OpenAPI,alpha-labs,25,active,60,1,0,sprint_details/260805__alpha-labs__sdk-generator.md
-sp_b001beta,2608-02,2608-02,,MySQL→Postgres cutover,Zero-downtime migration + Kafka analytics pipeline,beta-corp,40,active,55,3,0,sprint_details/260802__beta-corp__pg-cutover.md
-sp__all01,2608-06,2608-06,2608-08,Ship Slightly Parallel v0.1,"Get 8-lens dashboard shipped, sellable, docs polished","_all,pdr-framework-dev",30,ended,75,6,7,sprint_details/260806__all__slightly-parallel-v0-1.md
-sp__all02,2608-09,2608-09,,Slightly Parallel v0.2 polish,"Retros, calibration deep-dive, Docker + CI",pdr-framework-dev,20,active,70,0,0,sprint_details/260809__all__slightly-parallel-v0-2.md

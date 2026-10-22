@@ -1,9 +1,0 @@
-id,created_date,created_time,project,agent_id,l1,severity,status,related_goal_id,resolved_date,md_ref,source,session_id,source_turn,versions_n,tags
-pb_e654f70c,2608-03,11:05,alpha-labs,agent-genesis-2608-01,Rate-limit counters wiped on Redis restart — cold-start burst allowed.,major,investigating,g_a3,,problem_details/260803-1105__alpha-labs__e654f70c.md,,,,,
-pb_7065f275,2608-05,15:47,alpha-labs,agent-genesis-2608-01,OpenAPI schema drift between v1 API and v0 SDK — types no longer match.,minor,open,g_a1,,problem_details/260805-1547__alpha-labs__7065f275.md,,,,,
-pb_aed563be,2608-06,10:30,alpha-labs,agent-genesis-2608-01,TS SDK types leak internal enum variants — public API surface pollution.,nit,resolved,g_a4,2608-08,problem_details/260806-1030__alpha-labs__aed563be.md,,,,,
-pb_a74d82b0,2608-04,09:12,beta-corp,agent-explorer-2608-03,pgloader off-by-hour on TIMESTAMPTZ — staging showed 23:00 instead of 00:00.,critical,resolved,g_b1,2608-08,problem_details/260804-0912__beta-corp__a74d82b0.md,,,,,
-pb_28aea049,2608-06,17:22,beta-corp,agent-explorer-2608-03,Kafka consumer replays skip duplicate keys — analytics counts under-report.,major,open,g_b3,,problem_details/260806-1722__beta-corp__28aea049.md,,,,,
-pb_b55cd9f3,2608-03,20:00,_all,,Read-replica creds blocked beta-corp for 2 days — ops handoff process broken.,minor,resolved,g_b1,2608-08,problem_details/260803-2000__all__b55cd9f3.md,,,,,
-pb_e0000001,2609-01,16:20,,example,Tasks saved in the same minute disappear,high,resolved,,2609-01,problem_details/pb_e0000001.md,demo,,0,1,"example,backend"
-pb_e0000002,2609-02,12:00,,example,The Sessions page is slow on large projects,medium,open,,,problem_details/pb_e0000002.md,demo,,0,1,"example,ui"

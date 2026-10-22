@@ -1,9 +1,0 @@
-id,created_date,created_time,project,agent_id,decision_text,rationale,source,related_goal_id,files_affected_n,alternatives_n,md_ref,weight
-dc_cc266f82,2608-01,12:00,alpha-labs,agent-genesis-2608-01,Chose FastAPI over Flask,async support + auto OpenAPI + type hints,explicit,g_a1,0,2,decision_details/260801__alpha-labs__cc266f82.md,
-dc_a2bade34,2608-01,12:00,alpha-labs,agent-genesis-2608-01,PostgreSQL over SQLite for prod,horizontal scaling + JSONB queries,explicit,g_a1,0,2,decision_details/260801__alpha-labs__a2bade34.md,
-dc_c0ee19d8,2608-02,12:00,alpha-labs,agent-genesis-2608-01,JWT with 15-min access + 7-day refresh,industry standard tradeoff,auto,g_a2,0,2,decision_details/260802__alpha-labs__c0ee19d8.md,
-dc_5cef2b16,2608-03,12:00,alpha-labs,agent-genesis-2608-01,Redis for rate-limit counters,atomic INCR + TTL cheaper than DB,explicit,g_a3,0,2,decision_details/260803__alpha-labs__5cef2b16.md,
-dc_8d124fc1,2608-03,12:00,beta-corp,agent-explorer-2608-03,Use pgloader for MySQL to PG migration,handles schema mapping + parallel load,explicit,g_b1,0,2,decision_details/260803__beta-corp__8d124fc1.md,
-dc_500eb1fd,2608-03,12:00,beta-corp,agent-explorer-2608-03,Kafka over RabbitMQ for events,retention + replay + analytics tools,explicit,g_b3,0,2,decision_details/260803__beta-corp__500eb1fd.md,
-dc_b9267e3a,2608-04,12:00,beta-corp,agent-explorer-2608-03,Use logical replication for cutover,zero-downtime + rollback path,explicit,g_b2,0,2,decision_details/260804__beta-corp__b9267e3a.md,
-dc_af63236e,2608-18,11:40,alpha-labs,agent-genesis-2608-01,"Tokens are signed with RS256, not HS256",,explicit,,,,decision_details/260818-1140__alpha-labs__agent-genesis-2608-01__dc_af63236e.md,major

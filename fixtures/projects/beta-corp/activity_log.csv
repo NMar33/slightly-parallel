@@ -1,3 +1,0 @@
-id,agent_id,activity_type,duration_min,files_touched,related_goal_id,created_date
-al_b5,agent-explorer-2608-03,admin,60,ops/backup-restore.md,g_b2,2608-07
-al_b6,agent-explorer-2608-03,research,90,docs/cdc-debezium-notes.md,g_b3,2608-08

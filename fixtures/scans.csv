@@ -1,5 +1,0 @@
-id,created_date,created_time,project,agent_id,l1,files_n,lines_add,lines_del,decisions_n,scope,md_ref
-sn_demo01,2608-05,18:00,alpha-labs,agent-genesis-2608-01,"v1 API shipped GREEN — auth + rate limit landed, SDK generator next",14,892,134,4,app/,snapshots/2608-05-1800__alpha-labs__genesis.md
-sn_demo02,2608-06,14:30,beta-corp,agent-explorer-2608-03,Migration script tested in staging Kafka pipeline scaffolded cutover next week,7,412,45,3,scripts/pgloader.conf,snapshots/2608-06-1430__beta-corp__explorer.md
-sn_pdr_files01,2608-10,09:45,pdr-framework-dev,mira-sztern-lenses-2608-09,"Files lens shipped: files_mutual view, file entity, list/detail/POST + /api/files/diff walking the prev_file_id chain",6,412,18,1,"backend/routers, frontend/files",snapshots/2608-10-0945__pdr-framework-dev__mira-sztern-lenses-2608-09.md
-sn_pdr_files02,2608-10,12:50,pdr-framework-dev,mira-sztern-lenses-2608-09,"Heatmap: paths frontmatter on every file entry, /api/files/heatmap path × date, CSS-grid density strip in the project tab",4,231,9,0,"backend/routers/files_extra, frontend FilesTab",snapshots/2608-10-1250__pdr-framework-dev__mira-sztern-lenses-2608-09.md

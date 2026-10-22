@@ -1,6 +1,0 @@
-id,created_date,created_time,project,agent_id,title,tags,md_ref
-id_al_dogfood,2608-04,11:00,alpha-labs,agent-genesis-2608-01,Dogfood the rate limiter internally before shipping publicly,"internal,rate-limit",idea_details/260804-1100__alpha-labs__dogfood.md
-id_al_openapi,2608-06,14:30,alpha-labs,agent-genesis-2608-01,Generate SDK from OpenAPI spec automatically via CI,"sdk,automation",idea_details/260806-1430__alpha-labs__openapi-auto.md
-id_bc_kafka,2608-05,10:00,beta-corp,agent-explorer-2608-03,Add Kafka consumer lag alerts to Prometheus,"observability,kafka",idea_details/260805-1000__beta-corp__kafka-lag.md
-id_mk_docker,2608-09,12:00,pdr-framework-dev,mira-sztern-lenses,Ship Docker compose for one-command Slightly Parallel spin-up,"docker,ux",idea_details/260809-1200__pdr-framework-dev__docker-compose.md
-id_6915c3e2,2608-11,09:55,pdr-framework-dev,operator,Show the last scan time on each project card,,idea_details/260811-0955__pdr-framework-dev__operator.md

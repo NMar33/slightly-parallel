@@ -1,8 +1,0 @@
-id,created_date,project,agent_id,goal_text,parent_goal_id,related,time_est,confidence_pct,success_comment,status,children_n,retro_outcome,md_ref,sprint_id
-g_a1,2608-01,alpha-labs,agent-genesis-2608-01,Ship v1 API with OpenAPI docs,,,3 days,80,swagger generation needs work,done,2,hit,goal_details/260801__alpha-labs__a1.md,sp_a001alpha
-g_a2,2608-02,alpha-labs,agent-genesis-2608-01,Auth flow with OAuth2 + refresh tokens,g_a1,,2 days,75,refresh token rotation tricky,done,0,hit,goal_details/260802__alpha-labs__a2.md,sp_a001alpha
-g_a3,2608-03,alpha-labs,agent-genesis-2608-01,Rate limiting middleware,g_a1,,1 day,90,,done,0,hit,goal_details/260803__alpha-labs__a3.md,sp_a001alpha
-g_a4,2608-05,alpha-labs,agent-genesis-2608-01,SDK client generator (TS + Python),,,5 days,60,depends on stable OpenAPI,active,0,pending,goal_details/260805__alpha-labs__a4.md,sp_a002alpha
-g_b1,2608-02,beta-corp,agent-explorer-2608-03,Migrate legacy MySQL to Postgres,,,7 days,65,long-running queries risky,active,1,pending,goal_details/260802__beta-corp__b1.md,sp_b001beta
-g_b2,2608-04,beta-corp,agent-explorer-2608-03,Zero-downtime cutover,g_b1,,2 days,55,requires read replica,active,0,pending,goal_details/260804__beta-corp__b2.md,sp_b001beta
-g_b3,2608-03,beta-corp,agent-explorer-2608-03,Analytics event pipeline (Kafka),,,10 days,70,,active,0,pending,goal_details/260803__beta-corp__b3.md,

@@ -1,0 +1,6 @@
+{"ts": 1792063568.007665, "level": "INFO", "logger": "sp.db", "msg": "views rebuilt: projects=0 tables=41 view_mtime=1792063568.007", "ms": 95}
+{"ts": 1792063568.1574104, "level": "INFO", "logger": "sp.db", "msg": "views rebuilt: projects=0 tables=4 view_mtime=1792063568.110", "ms": 42}
+{"ts": 1792063568.5159864, "level": "INFO", "logger": "sp.db", "msg": "views rebuilt: projects=0 tables=1 view_mtime=1792063568.488", "ms": 7}
+{"ts": 1792064628.0182965, "level": "INFO", "logger": "sp.db", "msg": "views rebuilt: projects=0 tables=41 view_mtime=1792064628.018", "ms": 47}
+{"ts": 1792064628.1537642, "level": "INFO", "logger": "sp.db", "msg": "views rebuilt: projects=0 tables=4 view_mtime=1792064628.122", "ms": 26}
+{"ts": 1792064628.4400606, "level": "INFO", "logger": "sp.db", "msg": "views rebuilt: projects=0 tables=1 view_mtime=1792064628.416", "ms": 6}
