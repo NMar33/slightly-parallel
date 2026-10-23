@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from agents import MODELS, Tool, give_login, tools
+from agents import Tool, give_login, model_for, tools
 from common import Report, Space, eventually, get, http, rows
 from stages import YESTERDAY_SESSION, playwright, sh
 
@@ -238,9 +238,21 @@ def after_sp(space: Space, report: Report, s: str, st: State) -> None:
                st.said[-1][:300], soft=True)
 
 
-SITE_ASK = ("#now build a small notes page in this folder: index.html and notes.js — add a note, list the notes, "
-            "delete one, kept in localStorage — and notes.test.js with node:test tests for the functions that change "
-            "the list. Run the tests with `node --test`, then commit.")
+def site_ask(st: "State") -> str:
+    """Each tool builds in a folder of its own: the agents run one after
+    another in one project, and the second found the first one's page done,
+    changed nothing, and had nothing to scan."""
+    # The folder is made here: OpenCode escapes the spaces of a path in a
+    # shell command and then takes its own project folder for an outside one,
+    # refusing `mkdir` with no one to ask (the test's paths have a space).
+    (st.folder / site_dir(st)).mkdir(exist_ok=True)
+    return (f"#now build a small notes page in the folder {site_dir(st)} (it exists, empty): index.html and notes.js — add a note, "
+            "list the notes, delete one, kept in localStorage — and notes.test.js with node:test tests for the "
+            "functions that change the list. Run the tests with `node --test` in that folder, then commit.")
+
+
+def site_dir(st: "State") -> str:
+    return f"notes-{st.tool.name}"
 
 
 def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
@@ -253,7 +265,11 @@ def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
         full = get(space, f"/api/tasks/{st.task}")
         text = json.dumps(full)
         report.add(s, "its text is the operator's message", "notes page" in text and "localStorage" in text, text[:300])
-    files = [st.folder / n for n in ("index.html", "notes.js", "notes.test.js")]
+        # The server writes the card when the agent ended the turn without it.
+        events = json.dumps(get(space, f"/api/tasks/{st.task}/events"))
+        report.add(s, "the agent wrote the #now card itself", "the server did" not in events,
+                   "the server wrote it: the agent ended the turn without one", soft=True)
+    files = [st.folder / site_dir(st) / n for n in ("index.html", "notes.js", "notes.test.js")]
     report.add(s, "the agent built the page and its tests", all(f.is_file() for f in files),
                ", ".join(f.name for f in files if not f.is_file()) or "all there")
     log = sh(["git", "log", "--oneline"], st.folder, space.env()).stdout.strip().splitlines()
@@ -261,7 +277,7 @@ def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
 
 
 def after_site_tests(space: Space, report: Report, s: str, st: State) -> None:
-    ran = sh(["node", "--test"], st.folder, space.env())
+    ran = sh(["node", "--test"], st.folder / site_dir(st), space.env())
     report.add(s, "the page's tests pass", ran.returncode == 0, (ran.stdout + ran.stderr)[-400:])
 
 
@@ -312,7 +328,7 @@ FULL: list[Step] = [
 # A real piece of work, as on a new machine: a small page built with #now,
 # a task for later, the tests run and fixed, a scan, #sp, #done.
 SITE: list[Step] = [
-    ("#now: build the page", lambda st: SITE_ASK, after_site_now),
+    ("#now: build the page", site_ask, after_site_now),
     ("#task", lambda st: "#task add a search box over the notes, later", after_task_any),
     ("the tests", lambda st: "Run the tests again, fix anything that fails, and commit.", after_site_tests),
     SCAN,
@@ -331,7 +347,7 @@ def chat(space: Space, report: Report, s: str, st: State, plan: list[Step], mode
     for i, (name, message, check) in enumerate(plan):
         text = message(st)
         print(f"  [{st.code}] > {text}", flush=True)
-        turn = st.tool.say(text, MODELS[st.tool.name].get(model, model), space, env, turn_seconds, st.folder)
+        turn = st.tool.say(text, model_for(st.tool.name, model), space, env, turn_seconds, st.folder)
         cost = max(cost, turn.cost_usd)
         st.said.append(turn.text)
         (space.root / f"{st.code}-{st.tool.name}-turn-{i + 1:02d}.txt").write_text(f"> {text}\n\n{turn.text}\n\n{turn.error}\n", encoding="utf-8")
@@ -362,7 +378,7 @@ def run(space: Space, report: Report, code: str, folder: Path, tool: Tool, model
             done, shown = False, f"{type(exc).__name__}: {exc}"
         tool.hooks_trusted = report.add(s, "the folder and its hooks are trusted on Codex's own screen", done, shown)
     st = State(code, folder, tool)
-    values, st.helper = helper_settings(tool, MODELS[tool.name].get(model, model))
+    values, st.helper = helper_settings(tool, model_for(tool.name, model))
     if values:
         http(space.url + "/api/settings", {"values": values})
     st.standup_owed = not yesterdays_standup(space, st)

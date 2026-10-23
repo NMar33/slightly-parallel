@@ -23,7 +23,9 @@ and when the work happens:
   card lands in `doing`, in the lane for `#now` (Settings › Tasks; `Now`
   unless changed), marked for today, with "started in the chat" in its
   history. Write it first, then do the work. `#done` closes it (the skill
-  `finish-a-task`).
+  `finish-a-task`). A turn that ends with no card gets one from the server,
+  titled with the message's start; a later write is refused and names that
+  card: retitle it with `task_update {id, title}`.
 - `#now-todo` — the same card, filed in To do instead, and not started:
   write it, say so in one line, and go on with what the chat was doing.
   `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and

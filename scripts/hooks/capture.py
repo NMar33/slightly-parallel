@@ -155,7 +155,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # the message names or #now's own (backend/routers/tasks_extra.py). Its
     # text is the operator's message, kept by the server: the agent titles it.
     "now": ("write-a-task", "MCP tool write_entry, lens task, status doing, title and tags only: "
-            "the server keeps this message as the task's text"),
+            "the server keeps this message as the task's text. Write it first, before the work"),
     # #now-<column>: the message filed into that column, not started.
     **{f"now-{c}": ("write-a-task", f"MCP tool write_entry, lens task, status {s}, title and tags only: "
                     "the server keeps this message as the task's text. File it and go on: it is not "
@@ -163,7 +163,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
        for c, s in (("todo", "todo"), ("to-do", "todo"), ("next", "next"), ("backlog", "backlog"),
                     ("review", "review"), ("parked", "parked"), ("done", "done"))},
     "now-doing": ("write-a-task", "MCP tool write_entry, lens task, status doing, title and tags only: "
-                  "the server keeps this message as the task's text"),
+                  "the server keeps this message as the task's text. Write it first, before the work"),
     "decision": ("log-a-decision", "MCP tool write_entry, lens decision, with a weight"),
     "standup": ("daily-standup", "MCP tool standup_material"),
     "prompt": ("", "nothing to write: the server keeps the message in the prompt library"),
@@ -673,7 +673,9 @@ class TurnCapture:
         and never delays the turn: no git, no repo, no cwd — no line.
         """
         try:
-            stamp = work_stamp(cwd, self._last_stamp_head() or str(self._load_meta().get("base_head") or ""))
+            first = not self._last_stamp_head()
+            stamp = work_stamp(cwd, self._last_stamp_head() or str(self._load_meta().get("base_head") or ""),
+                               since=(started or "") if first else "")
         except Exception as exc:  # noqa: BLE001 — capture must never break the tool
             self._lost("git stamp failed", exc)
             stamp = None
@@ -891,7 +893,7 @@ def _relative_to(cwd: str, paths: list[str]) -> list[str]:
     return out
 
 
-def work_stamp(cwd: str, prev_head: str = "") -> dict | None:
+def work_stamp(cwd: str, prev_head: str = "", since: str = "") -> dict | None:
     """What the working tree at ``cwd`` looks like right now, for one turn.
 
     ``head`` — the commit HEAD points at. ``commits`` — the shas reachable
@@ -922,6 +924,20 @@ def work_stamp(cwd: str, prev_head: str = "") -> dict | None:
             # The previous HEAD is gone (rebase, reset): this one commit at
             # least is new; the rest is unknowable, and we say so.
             commits = [head]
+    if since:
+        # A chat's first stamp: the commits made since its first turn began
+        # count too, whatever HEAD was noted before it (a hook that first
+        # saw the chat after the turn noted the HEAD the turn had made). From
+        # a second after the start: git's --since is to the second and
+        # inclusive, and a commit made just before the message is not this turn's.
+        try:
+            after = (datetime.fromisoformat(since) + timedelta(seconds=1)).isoformat(timespec="seconds")
+        except ValueError:
+            after = since
+        dated = _git(root, "rev-list", "--reverse", f"--since={after}", head)
+        for sha in (x.strip() for x in (dated or "").splitlines()):
+            if sha and sha not in commits:
+                commits.append(sha)
 
     numstat = _git(root, "diff", "--numstat", "HEAD")
     others = _git(root, "ls-files", "--others", "--exclude-standard")

@@ -608,6 +608,17 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
             )
         body["description"] = message
     if command != "now" and status != "agent":
+        # A #now written late: the server wrote the card when the turn ended.
+        from .. import nowlib
+        latest = store.query_one("SELECT max(turn) AS turn FROM now_tags WHERE agent_id = ?", (agent,)) or {}
+        last = next((r for r in nowlib.rows(store) if r.get("agent_id") == agent
+                     and int(r.get("turn") or 0) == int(latest.get("turn") or -1)), None)
+        if last:
+            refuse_agent(
+                f"the server already wrote the #now task as {last['task_id']}: "
+                "the turn ended without one",
+                f"give it a title with task_update {{id: \"{last['task_id']}\", title}}; do not write it again",
+            )
         refuse_agent(
             "an agent creates tasks only in the `agent` column",
             f"send status \"agent\" (or none), not {status!r}; the operator "

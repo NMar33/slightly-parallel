@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
-from .. import donelib
+from .. import donelib, nowlib
 from ..db import ViewStore
 from .deps import get_store
 
@@ -26,6 +26,7 @@ router = APIRouter()
 @router.get("/api/done-tags")
 def done_tags(agent_id: str = Query(""), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     store.rebuild()          # the #done message may be seconds old
+    nowlib.adopt(store)      # a #now card the agent did not write, so #done finds it
     donelib.adopt(store)
     mine = [r for r in donelib.rows(store) if not agent_id or r.get("agent_id") == agent_id]
     if not mine:

@@ -86,6 +86,9 @@ class Session:
     important_tags: list[dict] = field(default_factory=list)
     # Turns tagged #done — the operator closing a task; donelib.py applies them.
     done_tags: list[dict] = field(default_factory=list)
+    # Turns carrying #now — the task the chat starts on; nowlib.py writes the
+    # card when the agent did not.
+    now_tags: list[dict] = field(default_factory=list)
     # The agent's working minutes, the minutes it waited on the person, and
     # whether every turn's end was known ("exact") or one was estimated.
     agent_min: int = 0
@@ -482,6 +485,31 @@ def _dones_of(
     return out
 
 
+def _nows_of(
+    session_id: str, project: str, agent_id: str, block: list[Turn]
+) -> list[dict]:
+    """One row per user turn carrying #now (or #now-todo …): the column, the
+    lane named in braces, the whole message, and whether the agent answered."""
+    out: list[dict] = []
+    for i, t in enumerate(block):
+        text = _operator_text(t)
+        if not text or "#now" not in text.lower():
+            continue
+        command, lane, column = task_command(text)
+        if command != "now":
+            continue
+        out.append({
+            "project": project, "agent_id": agent_id, "session_id": session_id,
+            "turn": t.number, "at": t.at.strftime("%Y-%m-%dT%H:%M:%S"),
+            # Answered, or a later turn was: a message sent while the agent
+            # still worked does not end the agent's chance.
+            "column_": column, "lane": lane,
+            "answered": "1" if any((x.agent_summary or "").strip() for x in block[i:]) else "",
+            "body": text,
+        })
+    return out
+
+
 def parse_turns(chat_path: Path) -> list[Turn]:
     """All turns of one chat.md, with their full texts and header lines."""
     return parse_chat(chat_path)[0]
@@ -708,6 +736,7 @@ def _close(
         keep_marks=_keeps_of(sid, project, agent_id, block),
         important_tags=_importants_of(sid, project, agent_id, block),
         done_tags=_dones_of(sid, project, agent_id, block),
+        now_tags=_nows_of(sid, project, agent_id, block),
     )
 
 

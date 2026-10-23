@@ -21,7 +21,7 @@ from typing import Any, Callable, Sequence
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
-from .. import archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, skilllib, repomap, undolib
+from .. import archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, nowlib, skilllib, repomap, undolib
 from ..csvio import append_if_absent, rewrite_rows
 from ..db import ViewStore
 from ..docs_md import build_detail, read_detail, resolve_under, safe_ref_part
@@ -833,7 +833,10 @@ def _register(ent: Entity) -> None:
             # Tagged messages join the ledger on the way past, as #prompt does.
             adopt_when_changed(store, "keep", keeplib.adopt)
         if ent.name == "task":
-            # The operator's #done moves its task on the board's next read.
+            # A #now card the agent did not write is written first, so a
+            # #done after it finds it; the operator's #done then moves its
+            # task on the board's next read.
+            adopt_when_changed(store, "now", nowlib.adopt)
             adopt_when_changed(store, "done", donelib.adopt)
         qp = request.query_params
         clauses, params, fingerprint = _list_filters(specs, qp)

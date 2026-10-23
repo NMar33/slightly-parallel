@@ -34,6 +34,7 @@ import json
 import threading
 from typing import Any
 
+from . import nowlib
 from .csvio import append_row, read_rows, rewrite_rows
 from .db import ViewStore
 from .entities import ENTITIES, is_done
@@ -111,6 +112,11 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     for agent, turn, tid in _started_with_now(store, {str(t["agent_id"] or "") for t in tags}):
         if tid in tasks:
             mentions.setdefault(agent, []).append((turn, tid, "user"))
+    # The same for a #now card the server wrote because the agent did not.
+    for r in nowlib.rows(store):
+        if r.get("column") == "doing" and r.get("task_id") in tasks:
+            mentions.setdefault(r.get("agent_id") or "", []).append(
+                (int(r.get("turn") or 0), str(r["task_id"]), "user"))
     for ms in mentions.values():
         ms.sort(key=lambda m: m[0])
 

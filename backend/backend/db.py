@@ -921,6 +921,11 @@ class ViewStore:
                  k["excerpt"], k["tasks"])
                 for r in rows if r.agent_id not in imported for k in r.done_tags
             ],
+            "now_tags": [
+                (k["project"], k["agent_id"], k["session_id"], k["turn"], k["at"],
+                 k["column_"], k["lane"], k["answered"], k["body"])
+                for r in rows if r.agent_id not in imported for k in r.now_tags
+            ],
             "skill_uses": [tuple(u) for u in read_uses(chats, rows)],
             "turn_prints": [
                 (p["print"], p["project"], p["agent_id"], p["session_id"], p["turn"],
@@ -946,6 +951,8 @@ class ViewStore:
     #                 marklib.py adopts them into marks.csv on read.
     # done_tags     — turns tagged #done; donelib.py applies them to the
     #                 board and records each task's stretch of the chat.
+    # now_tags      — turns tagged #now / #now-<column>; nowlib.py writes the
+    #                 card when the agent answered without writing it.
     # skill_uses    — the skills that ran in each turn, from skills.jsonl
     #                 beside each chat; a use without a turn is placed in
     #                 its session by time.
@@ -983,6 +990,11 @@ class ViewStore:
         "done_tags": {
             "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",
             "turn": "INTEGER", "at_ts": "VARCHAR", "excerpt": "VARCHAR", "tasks": "VARCHAR",
+        },
+        "now_tags": {
+            "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",
+            "turn": "INTEGER", "at_ts": "VARCHAR", "column_": "VARCHAR", "lane": "VARCHAR",
+            "answered": "VARCHAR", "body": "VARCHAR",
         },
         "skill_uses": {
             "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",

@@ -68,7 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     # Resolved: on macOS the temp folder is /var/…, a link to /private/var/…, and the server names folders resolved.
     # A space and a non-English letter in every path the run makes — the clone,
     # the home folder, the data folder, the projects — as on many machines.
-    space = Space(Path(tempfile.mkdtemp(prefix="sp fresh ü-")).resolve(), free_port())
+    # Not the space with OpenCode: it escapes the space in every shell command
+    # and then refuses its own project as an outside folder, with nobody to ask.
+    prefix = "sp-fresh-ü-" if "opencode" in names else "sp fresh ü-"
+    space = Space(Path(tempfile.mkdtemp(prefix=prefix)).resolve(), free_port())
     report = Report()
     report.notes["root"] = str(space.root)          # scripts/machine/run.py takes the built page from here
     code, second = "calc", "notes"

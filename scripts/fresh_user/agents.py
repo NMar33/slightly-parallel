@@ -69,6 +69,10 @@ class Tool:
         to run: the model asked for, "chat" for none."""
         return []
 
+    def extra_env(self) -> dict[str, str]:
+        """What this tool's process gets on top of the run's environment."""
+        return {}
+
     def say(self, message: str, model: str, space: Space, env: dict[str, str], seconds: int, folder: Path | None = None) -> Turn:
         import time
         start = time.time()
@@ -80,7 +84,7 @@ class Tool:
             # finds them only by their full path.
             args = [shutil.which(args[0]) or args[0], *args[1:]]
             fed = self.stdin(message)
-            p = subprocess.run(args, cwd=folder or space.sample, env=env,
+            p = subprocess.run(args, cwd=folder or space.sample, env={**env, **self.extra_env()},
                                **({"input": fed} if fed is not None else {"stdin": subprocess.DEVNULL}),
                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=seconds)
         except subprocess.TimeoutExpired:
@@ -103,7 +107,14 @@ class Tool:
 class ClaudeCode(Tool):
     #: What a user would allow when asked: Slightly Parallel's tools, file edits, git and python.
     ALLOWED = ["mcp__slightly-parallel", "Read", "Edit", "Write", "Glob", "Grep", "Task", "Agent", "Skill",
-               "Bash(git:*)", "Bash(python3:*)", "Bash(python:*)", "Bash(ls:*)", "Bash(cat:*)"]
+               "Bash(git:*)", "Bash(python3:*)", "Bash(python:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(node:*)"]
+
+    def extra_env(self) -> dict[str, str]:
+        # The MCP tools loaded at the start, not searched for: haiku on a
+        # Windows runner searched for write_entry twelve times in one turn and
+        # never called it. SP_CLAUDE_TOOL_SEARCH=true runs Claude Code's default.
+        import os
+        return {"ENABLE_TOOL_SEARCH": os.environ.get("SP_CLAUDE_TOOL_SEARCH", "false")}
 
     def command(self, message: str, model: str, space: Space) -> list[str]:
         pick = ["--session-id", self.session] if self.turns == 0 else ["--resume", self.session]
@@ -259,13 +270,25 @@ def tools() -> dict[str, Tool]:
     return {
         "claude-code": ClaudeCode("claude-code", "claude", "cc-", (".claude/.credentials.json",),
                                   ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"), "write_claude_hooks"),
-        "codex": Codex("codex", "codex", "codex-", (".codex/auth.json",), ("OPENAI_API_KEY",), "write_codex_hooks"),
+        # Codex answers only from its login file: OPENAI_API_KEY in the
+        # environment gave it a 401 (codex login --with-api-key writes the file).
+        "codex": Codex("codex", "codex", "codex-", (".codex/auth.json",), (), "write_codex_hooks"),
         "opencode": OpenCode("opencode", "opencode", "oc-", (".local/share/opencode/auth.json",),
                              ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"), "write_opencode_plugin"),
     }
 
 
 #: The model each tool is given when the run says "sonnet" (the default).
+def model_for(tool: str, model: str) -> str:
+    """The model a tool runs on: --model mapped for it; Codex takes
+    CODEX_MODEL when set (the repository variable the Agents and Machine
+    workflows pass), its own default otherwise."""
+    import os
+    if tool == "codex" and os.environ.get("CODEX_MODEL"):
+        return os.environ["CODEX_MODEL"]
+    return MODELS[tool].get(model, model)
+
+
 MODELS = {
     "claude-code": {"sonnet": "sonnet", "haiku": "haiku", "opus": "opus"},
     "codex": {"sonnet": "", "haiku": "", "opus": ""},          # Codex runs its own default model
