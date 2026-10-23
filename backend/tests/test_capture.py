@@ -638,12 +638,16 @@ def test_a_chat_keeps_the_folder_it_started_in(root: Path) -> None:
     assert meta["cwd"] == "/home/user/projects/alpha"
 
 
-def test_two_chats_in_one_folder_are_told_apart_by_their_process(root: Path, tmp_path: Path) -> None:
+def test_two_chats_in_one_folder_are_told_apart_by_their_process(root: Path, tmp_path: Path, monkeypatch) -> None:
     """Each chat leaves its own file with the processes above its hook; an
     MCP client that shares one gets that chat, not the newest."""
     import time as _time
     from fastapi.testclient import TestClient
+    from backend.routers import schema_api
     from backend.server import create_app
+
+    # The made-up process numbers below may name real processes on this machine.
+    monkeypatch.setattr(schema_api, "process_started", lambda pid: None)
 
     cwd = str(tmp_path / "proj")
     script = _HOOKS / "claude-code-capture.py"
@@ -686,6 +690,34 @@ def test_two_chats_in_one_folder_are_told_apart_by_their_process(root: Path, tmp
         assert who("8888,5001,4000")[0] == "cc-aaaa1111"
         assert client.get("/api/whoami", params={"cwd": cwd}).json()["identity_source"] == "folder"
     assert _time.time() > 0
+
+
+def test_a_process_number_used_again_is_not_the_old_chat(root: Path, tmp_path: Path, monkeypatch) -> None:
+    """Windows gives a dead process's number to a new one within minutes. An
+    old chat's breadcrumb that names the number must not win over the chat
+    the new process belongs to."""
+    import time as _time
+    from fastapi.testclient import TestClient
+    from backend.routers import schema_api
+    from backend.server import create_app
+
+    cwd = str(tmp_path / "proj")
+    script = _HOOKS / "claude-code-capture.py"
+    for session in ("aaaa1111-old", "bbbb2222-new"):
+        subprocess.run([sys.executable, str(script), "--project", "alpha", "--data-root", str(root)],
+                       input=json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": session,
+                                         "cwd": cwd, "prompt": "hi"}), capture_output=True, text=True, check=True)
+    folder = next((root / ".sessions").glob("*/"))
+    now = _time.time()
+    for stem, pids, at in (("aaaa1111-old", [3333, 4000], now - 3600), ("bbbb2222-new", [7000, 5002, 4000], now)):
+        f = folder / f"{stem}.json"
+        crumb = json.loads(f.read_text(encoding="utf-8"))
+        f.write_text(json.dumps({**crumb, "pids": pids, "at": at}), encoding="utf-8")
+    # 3333 is the new chat's shell now; it started a minute ago, after the old breadcrumb.
+    monkeypatch.setattr(schema_api, "process_started", lambda pid: now - 60 if pid == 3333 else None)
+    with TestClient(create_app(data_root=root, watch=False)) as client:
+        got = client.get("/api/whoami", params={"cwd": cwd, "pids": "3333,5002,4000"}).json()
+    assert (got["agent_id"], got["identity_source"]) == ("cc-bbbb2222", "process")
 
 
 def test_the_files_a_turns_tools_touched_are_stamped_without_git(root: Path, tmp_path: Path) -> None:

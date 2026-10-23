@@ -21,6 +21,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from ..db import ViewStore
+from ..hookshared import process_started
 from .deps import etag_for, get_store, json_response, maybe_304
 from ..entities import ENTITIES
 from .. import entry_fields
@@ -194,13 +195,23 @@ def _crumb_by_process(folder: Path, pids: str) -> tuple[dict | None, str]:
     if not chain or not folder.is_dir():
         return None, ""
     best: tuple[tuple[bool, int, float], dict, bool] | None = None
+    started: dict[int, float | None] = {}
+
+    def reused(pid: int, crumb: dict) -> bool:
+        # A process with this number that started after the breadcrumb was
+        # written is not the one the breadcrumb names (Windows reuses numbers).
+        if pid not in started:
+            started[pid] = process_started(pid)
+        at = float(crumb.get("at") or 0)
+        return bool(at and started[pid] and started[pid] > at + 2)
+
     for file in folder.glob("*.json"):
         try:
             crumb = json.loads(file.read_text(encoding="utf-8"))
             theirs = [int(p) for p in crumb.get("pids") or []]
         except (OSError, ValueError, TypeError):
             continue
-        near = next((i for i, pid in enumerate(chain) if pid in theirs), None)
+        near = next((i for i, pid in enumerate(chain) if pid in theirs and not reused(pid, crumb)), None)
         if near is None:
             continue
         own = near <= OWN_TOOL_DEPTH and theirs.index(chain[near]) <= OWN_TOOL_DEPTH

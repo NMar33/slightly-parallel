@@ -288,6 +288,51 @@ def ancestors(limit: int = 12) -> list[int]:
     return out
 
 
+def process_started(pid: int) -> float | None:
+    """When ``pid`` started, as a Unix time; None when it cannot be read.
+
+    Process numbers come back: Windows hands out a dead process's number
+    again within minutes. A breadcrumb that names a number names the
+    process that had it then; a process with that number that started
+    after the breadcrumb was written is another one."""
+    try:
+        if os.name == "nt":
+            return _win_started(pid)
+        if os.path.isdir(f"/proc/{pid}"):
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+                ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+            with open("/proc/stat", encoding="utf-8") as f:
+                boot = next(int(line.split()[1]) for line in f if line.startswith("btime "))
+            return boot + ticks / os.sysconf("SC_CLK_TCK")
+        import subprocess
+        got = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=2, env={**os.environ, "LC_ALL": "C"})
+        text = " ".join(got.stdout.split())
+        return datetime.strptime(text, "%a %b %d %H:%M:%S %Y").timestamp() if text else None
+    except (OSError, ValueError, IndexError, StopIteration, Exception):  # noqa: BLE001 — unknown is an answer
+        return None
+
+
+def _win_started(pid: int) -> float | None:
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not k32.GetProcessTimes(handle, *[ctypes.byref(x) for x in times]):
+            return None
+        ft = times[0]
+        # 100-ns steps since 1601-01-01.
+        return ((ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 1e7 - 11644473600
+    finally:
+        k32.CloseHandle(handle)
+
+
 def load_beside(name: str) -> Any:
     """Another standard-library-only module of this folder, by path (for a
     caller that was itself loaded by path and has no package to import from)."""
