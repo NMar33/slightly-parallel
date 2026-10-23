@@ -155,7 +155,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # the message names or #now's own (backend/routers/tasks_extra.py). Its
     # text is the operator's message, kept by the server: the agent titles it.
     "now": ("write-a-task", "MCP tool write_entry, lens task, status doing, title and tags only: "
-            "the server keeps this message as the task's text"),
+            "the server keeps this message as the task's text. Write it first, before the work"),
     # #now-<column>: the message filed into that column, not started.
     **{f"now-{c}": ("write-a-task", f"MCP tool write_entry, lens task, status {s}, title and tags only: "
                     "the server keeps this message as the task's text. File it and go on: it is not "
@@ -163,7 +163,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
        for c, s in (("todo", "todo"), ("to-do", "todo"), ("next", "next"), ("backlog", "backlog"),
                     ("review", "review"), ("parked", "parked"), ("done", "done"))},
     "now-doing": ("write-a-task", "MCP tool write_entry, lens task, status doing, title and tags only: "
-                  "the server keeps this message as the task's text"),
+                  "the server keeps this message as the task's text. Write it first, before the work"),
     "decision": ("log-a-decision", "MCP tool write_entry, lens decision, with a weight"),
     "standup": ("daily-standup", "MCP tool standup_material"),
     "prompt": ("", "nothing to write: the server keeps the message in the prompt library"),

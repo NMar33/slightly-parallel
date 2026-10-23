@@ -265,6 +265,10 @@ def after_site_now(space: Space, report: Report, s: str, st: State) -> None:
         full = get(space, f"/api/tasks/{st.task}")
         text = json.dumps(full)
         report.add(s, "its text is the operator's message", "notes page" in text and "localStorage" in text, text[:300])
+        # The server writes the card when the agent ended the turn without it.
+        events = json.dumps(get(space, f"/api/tasks/{st.task}/events"))
+        report.add(s, "the agent wrote the #now card itself", "the server did" not in events,
+                   "the server wrote it: the agent ended the turn without one", soft=True)
     files = [st.folder / site_dir(st) / n for n in ("index.html", "notes.js", "notes.test.js")]
     report.add(s, "the agent built the page and its tests", all(f.is_file() for f in files),
                ", ".join(f.name for f in files if not f.is_file()) or "all there")
