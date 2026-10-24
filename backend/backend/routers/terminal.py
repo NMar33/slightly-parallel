@@ -131,7 +131,9 @@ class PtySession:
         self.closed = False
 
     def resize(self, cols: int, rows: int) -> None:
-        winsize = struct.pack("HHHH", rows, cols, 0, 0)
+        # The pty takes 16-bit sizes: past them struct.pack raised after the
+        # fork, and the shell lived on with no owner.
+        winsize = struct.pack("HHHH", min(max(rows, 1), 500), min(max(cols, 1), 1000), 0, 0)
         try:
             fcntl.ioctl(self.fd, termios.TIOCSWINSZ, winsize)
         except OSError:
@@ -230,6 +232,13 @@ def _guard(request: Request) -> None:
         raise HTTPException(status_code=403, detail="only Slightly Parallel's own pages can use the terminal")
 
 
+def _operator_page(headers: Any, app: Any) -> bool:
+    """The request carries the operator's cookie: the pages have it, a
+    program on this computer that only knows the port does not."""
+    from ..server import has_operator_cookie
+    return has_operator_cookie(dict(headers.raw), app)
+
+
 def _need_on(request: Request) -> None:
     _guard(request)
     if not SUPPORTED:
@@ -280,6 +289,10 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     @router.get("/api/terminal/state")
     def terminal_state(request: Request, response: Response) -> dict[str, Any]:
         _guard(request)
+        if not _operator_page(request.headers, request.app):
+            # The token opens the socket that types into a shell: a GET from
+            # any program on this computer must not be handed it.
+            raise HTTPException(status_code=403, detail="only the operator's pages read the terminal's state")
         # It carries the token: never from a cache, so after a restart the page
         # gets the new one.
         response.headers["Cache-Control"] = "no-store"
@@ -466,7 +479,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     @router.post("/api/terminal/sessions/{sid}/type")
     def terminal_type(sid: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
         _need_on(request)
-        operator_only({"actor": body.get("actor") or "operator"}, "Typing into a terminal")
+        operator_only(body, "Typing into a terminal")
         root = request.app.state.settings.data_root
         row = termlib.get(root, sid)
         if not row:
@@ -485,7 +498,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     @router.post("/api/terminal/sessions/{sid}/rename")
     def terminal_rename(sid: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
         _need_on(request)
-        operator_only({"actor": body.get("actor") or "operator"}, "Renaming a terminal")
+        operator_only(body, "Renaming a terminal")
         root = request.app.state.settings.data_root
         if not termlib.get(root, sid):
             raise not_found("terminal", sid)
@@ -494,7 +507,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     @router.post("/api/terminal/sessions/{sid}/close")
     def terminal_close(sid: str, request: Request, body: dict = Body(default={})) -> dict[str, Any]:
         _guard(request)
-        operator_only({"actor": body.get("actor") or "operator"}, "Closing a terminal")
+        operator_only(body, "Closing a terminal")
         root = request.app.state.settings.data_root
         _drop(sid)
         termlib.close(root, sid)
@@ -524,6 +537,9 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             return
         if not token_matches(app, websocket.query_params.get("token", "")):
             await websocket.close(code=4401, reason="invalid token")
+            return
+        if not _operator_page(websocket.headers, app):
+            await websocket.close(code=4403, reason="only the operator's pages open a terminal")
             return
         if not termlib.SAFE_ID.match(session_id):
             await websocket.close(code=4400, reason="bad terminal id")

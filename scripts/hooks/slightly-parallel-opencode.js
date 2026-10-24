@@ -58,12 +58,16 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   // are the time (ses_eb5cc9…, ses_eb5cc1…): sessions minutes apart shared
   // them and became one agent. Lower case: the rest are letters of both
   // cases, and on macOS and Windows a folder name ignores case.
-  const run = async (phase, sessionID, text, extra = []) => {
+  const run = async (phase, sessionID, text, extra = [], more = null) => {
     try {
       const sid = String(sessionID || 'unknown')
-      // The text on stdin: as an argument a long paste passed the system's
-      // limit, the process never started, and the message was lost.
-      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --text-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(text)}`.quiet()
+      // Everything on stdin, as one JSON: as arguments a long paste, and
+      // later the times of a long session (every message's, and every
+      // helper's), passed the system's limit on a command line — 32 767
+      // characters on Windows — the process never started, and the message
+      // or the reply was lost without a word.
+      const input = JSON.stringify({ text: String(text || ''), ...(more || {}) })
+      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --json-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(input)}`.quiet()
       return out.text().trim()
     } catch {
       /* capture must never break the session */
@@ -212,7 +216,7 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         const times = await sessionTimes(sessionID)
         const touched = times.touched
         delete times.touched
-        await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing', '--times', JSON.stringify(times), '--touched', JSON.stringify(touched)])
+        await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing'], { times, touched })
       } catch {
         /* never throw into the host */
       }

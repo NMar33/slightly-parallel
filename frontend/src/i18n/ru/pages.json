@@ -973,5 +973,7 @@
   "For every project. Also in": "Для всех проектов. То же в",
   "Settings › Project tabs": "Настройках › Вкладки проекта",
   "download report": "скачать отчёт",
-  "One file with the machine, memory over a day, warnings, the monitor's events and the size of the data — no chat text. Send it with a line on what went wrong.": "Один файл: машина, память за сутки, предупреждения, события монитора и размер данных — без текста чатов. Пришлите его вместе с описанием проблемы."
+  "One file with the machine, memory over a day, warnings, the monitor's events and the size of the data — no chat text. Send it with a line on what went wrong.": "Один файл: машина, память за сутки, предупреждения, события монитора и размер данных — без текста чатов. Пришлите его вместе с описанием проблемы.",
+  "No tasks yet.": "Задач пока нет.",
+  "Could not read the tasks.": "Не удалось прочитать задачи."
 }

@@ -297,9 +297,14 @@ def update_entity(
         raise HTTPException(status_code=422, detail="send the body as a JSON object")
     refuse_agent_write(ent, body)
     check_enum_fields(ent.name, body)
-    if ent.name == "rule" and "auto" in body and written_by_agent(body):
-        refuse_agent("whether a rule is for all agents is yours to set",
-                     "an agent does not change it")
+    if ent.name in keeplib.KINDS and written_by_agent(body):
+        probe = entry_fields.to_slots(ent.name, dict(body), ent.columns)
+        if any(k in probe for k in ("l2", "l3", "l4", "body")):
+            # The text of a kept entry is the operator's own message, kept as
+            # written; an agent's reading of it is a version of the
+            # interpretation, not an edit of the message.
+            refuse_agent(f"a {ent.name}'s text is the operator's own message, kept as it was written",
+                         f"write your reading of it with the MCP tool interpret {{lens: \"{ent.name}\", id, text}}")
     csv_path = store.data_root / ent.csv
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail=f"{ent.csv} not found")

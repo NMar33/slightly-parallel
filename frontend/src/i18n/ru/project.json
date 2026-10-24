@@ -954,5 +954,8 @@
   "The turns after a mention no #done closed, until you name another task in that chat": "Ходы после упоминания, которое не закрыто #done, пока вы не назовёте в этом чате другую задачу",
   "up to the next task ({n} turns)": "до следующей задачи (ходов: {n})",
   "in the stretch up to #done": "в отрезке до #done",
-  "before the next task": "до следующей задачи"
+  "before the next task": "до следующей задачи",
+  "Could not save the order": "Не удалось сохранить порядок",
+  "{n} card did not save.": "{n} карточка не сохранилась.",
+  "{n} cards did not save.": "{n} карточек не сохранились."
 }

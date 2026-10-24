@@ -3,9 +3,13 @@
 Each block starts in the repository folder.
 
 ```bash
-# Backend
-cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+# Backend — the pinned versions users get (the lock), plus the test tools
+cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.lock -r requirements-dev.txt
 .venv/bin/python -m pytest
+# The other checks CI runs on the backend (each fails CI):
+.venv/bin/ruff check backend tests ../scripts ../sp.py      # lint: pyflakes and bugbear's bug classes
+.venv/bin/python -m pyright                                 # types, basic (settings in pyproject.toml)
+.venv/bin/python ../scripts/check_api_doc.py                # docs/api.md names every route
 ```
 
 The backend has two layers. `backend/backend/routers/` answer HTTP: they
@@ -36,9 +40,10 @@ mv requirements.lock.new requirements.lock
 `pyproject.toml` lists the same ranges as `requirements.txt`: change both.
 
 ```bash
-# Frontend — unit tests, typecheck, build
-cd frontend && npm install
-npm test && npm run typecheck && npm run build
+# Frontend — unit tests, typecheck, lint, build (CI installs with `npm ci`: the lock, exactly)
+cd frontend && npm ci
+npm test && npm run typecheck && npm run lint && npm run build
+bash ../scripts/check-no-raw-hex.sh                          # colours come from the tokens, never a raw hex
 
 # In the browser, on a copy of the test data. It starts its own server from
 # backend/.venv and serves the build above. Once: npx playwright install chromium

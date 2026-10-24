@@ -23,6 +23,7 @@ import { formatClock, liveElapsed, type TimeEntry } from '../project/timeEntry'
 
 import { t, tn } from '../../i18n/scope/views'
 import { rich } from '../../i18n/rich'
+import { decodeSafe } from '../../hooks/useHashState'
 interface TimerLine {
   state: 'running' | 'paused' | 'idle'
   /** The timer shown: one that runs before one that is paused, yours before the smart timer's. */
@@ -73,7 +74,7 @@ export function TopbarTimer() {
   const e = line.entry
   const tone = line.state === 'paused' ? 'var(--status-amber)' : 'var(--brand)'
   const here = /^\/project\/([^/]+)/.exec(location.pathname)?.[1]
-  const project = here ? decodeURIComponent(here) : ''
+  const project = here ? decodeSafe(here) : ''
   const today = hMin(summary?.today_min ?? 0, '0m')
   const title = line.state === 'idle' ? t('No timer is running') : (line.state === 'paused' ? tn(running.length, '{n} timer paused', '{n} timers paused') : tn(running.length, '{n} timer running', '{n} timers running'))
 

@@ -245,11 +245,22 @@ def append_locked(path: Any, text: str, timeout_s: float = 2.0) -> None:
             time.sleep(0.01)
             held = try_lock(lock)
         try:
-            with open(p, "a", encoding="utf-8") as fh:
-                fh.write(text)
+            with open(p, "ab") as fh:
+                # A write cut off mid-line (a killed process) leaves no
+                # newline; appended straight after it, this line would be
+                # glued to the broken one and lost with it.
+                if fh.tell() and not _ends_with_newline(p):
+                    fh.write(b"\n")
+                fh.write(text.encode("utf-8"))
         finally:
             if held:
                 unlock(lock)
+
+
+def _ends_with_newline(p: Path) -> bool:
+    with open(p, "rb") as fh:
+        fh.seek(-1, os.SEEK_END)
+        return fh.read(1) == b"\n"
 
 
 def tail_lines(path: Any, max_bytes: int = 256 * 1024) -> list[str]:
@@ -416,6 +427,12 @@ def _win_started(pid: int) -> float | None:
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     k32.OpenProcess.restype = wintypes.HANDLE
     k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    # Without these, ctypes passes the handle as a C int: on 64-bit Windows a
+    # handle past 2**31 is cut, GetProcessTimes fails and the handle leaks.
+    k32.GetProcessTimes.restype = wintypes.BOOL
+    k32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    k32.CloseHandle.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
     handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
     if not handle:
         return None

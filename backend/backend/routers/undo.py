@@ -19,7 +19,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from .. import undolib
 from ..db import ViewStore
-from .deps import get_store
+from .deps import get_store, identity_of
 
 router = APIRouter()
 
@@ -67,6 +67,6 @@ def undo_apply(body: dict = Body(...), store: ViewStore = Depends(get_store)) ->
 @router.post("/api/undo/restore")
 def undo_restore(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     try:
-        return undolib.restore(store, str(body.get("id") or ""), str(body.get("agent_id") or "operator"))
+        return undolib.restore(store, str(body.get("id") or ""), identity_of(body) or "operator")
     except undolib.UndoRefused as e:
         raise _refused(e)

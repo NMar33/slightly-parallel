@@ -36,7 +36,7 @@ from ..db import ViewStore
 from ..docs_md import resolve_under
 from ..entities import TASK_EVIDENCE_COLUMNS, TASK_EVIDENCE_KINDS, is_done
 from ..file_safety import edit_json, safe_read_json
-from .deps import create_answer, get_store, not_found, operator_only
+from .deps import create_answer, get_store, identity_of, not_found, operator_only
 
 router = APIRouter()
 
@@ -256,7 +256,7 @@ def task_report(
     from .tasks_extra import after_status_change
     from ..entities import ENTITIES
 
-    agent_id = str(body.get("agent_id") or "").strip()
+    agent_id = identity_of(body)
     summary = str(body.get("summary") or "").strip()
     if not agent_id:
         raise HTTPException(status_code=422, detail="agent_id is required")
@@ -339,7 +339,7 @@ def evidence_add(
     body: dict = Body(...),
     store: ViewStore = Depends(get_store),
 ) -> dict:
-    agent_id = str(body.get("agent_id") or "").strip()
+    agent_id = identity_of(body)
     items = body.get("items")
     if not agent_id:
         raise HTTPException(status_code=422, detail="agent_id is required")

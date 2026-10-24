@@ -41,13 +41,17 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies (the pinned versions users get, plus the test tools)
         run: pip install -r requirements.lock -r requirements-dev.txt
+      - name: tmux (the terminal's tests skip without it; the terminal runs on macOS and Linux only)
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux; else brew install tmux; fi
       - name: Lint (ruff — pyflakes and bugbear's bug classes; settings in pyproject.toml)
         run: python -m ruff check backend tests ../scripts ../sp.py
       - name: Types (pyright, basic; settings in pyproject.toml)
         if: runner.os == 'Linux'
         run: python -m pyright
-      - name: Run tests
-        run: python -m pytest -q tests
+      - name: Run tests (-rs: a skipped test is named, never silent)
+        run: python -m pytest -q -rs tests
       - name: API reference names every route
         if: runner.os == 'Linux'
         run: python ../scripts/check_api_doc.py

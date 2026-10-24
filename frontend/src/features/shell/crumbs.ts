@@ -3,6 +3,7 @@ import { matchPath } from 'react-router-dom'
 import { LENS_HEADS } from '../../lenses/heads'
 import { CATALOG_BY_KEY } from '../sidebar/catalog'
 import { t } from '../../i18n/scope/shell'
+import { decodeSafe } from '../../hooks/useHashState'
 
 /**
  * The topbar's breadcrumbs, read from the path. The bar sits outside the
@@ -18,7 +19,7 @@ export type Crumb = { label: string; to: string | null }
 
 /** A path segment as text; a malformed escape (%E0%A4%A) stays as typed. */
 export function decodeSegment(seg: string): string {
-  try { return decodeURIComponent(seg) } catch { return seg }
+  return decodeSafe(seg)
 }
 
 function paramValues(pathname: string): Set<string> {

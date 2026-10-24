@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from backend.hookshared import command_text, plain_text
-from backend.sessions import Turn, _dones_of, _keeps_of, _nows_of
+from backend.sessions import Turn, _dones_of, _importants_of, _keeps_of, _nows_of, _prompts_of
 
 _HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
 
@@ -50,6 +50,12 @@ def test_the_server_reads_only_the_loud_command():
     # Without ### every tag is a command, as before.
     plain = [_turn(1, "the #now card, then #done")]
     assert _dones_of("s1", "alpha", "cc-a", plain) and _nows_of("s1", "alpha", "cc-a", plain)
+    # The prompt and the important readers too.
+    quiet = [_turn(1, "###now-todo see: <pasted_content>#prompt keep this, #important and #important-task</pasted_content>")]
+    assert _prompts_of("s1", "alpha", "cc-a", quiet)[0] == []
+    assert _importants_of("s1", "alpha", "cc-a", quiet) == []
+    loud = [_turn(1, "#prompt keep this #important")]
+    assert _prompts_of("s1", "alpha", "cc-a", loud)[0] and _importants_of("s1", "alpha", "cc-a", loud)
 
 
 def test_the_hook_tells_the_agent_only_the_loud_command(tmp_path: Path):

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 type HashState = Record<string, string>
 
 /** A hand-typed or truncated link (`#q=100%`) must not throw: keep the text as typed. */
-function decodeSafe(s: string): string {
+export function decodeSafe(s: string): string {
   try { return decodeURIComponent(s) } catch { return s }
 }
 

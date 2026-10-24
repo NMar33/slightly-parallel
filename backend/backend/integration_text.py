@@ -66,6 +66,7 @@ def _upsert_hooks(
     The same shape serves Claude Code (``.claude/settings.local.json``) and
     Codex (``.codex/hooks.json``): ``hooks.<Event>[].hooks[].command``.
     """
+    existing_text = existing_text.lstrip("\ufeff")   # an editor's byte-order mark
     try:
         settings = json.loads(existing_text) if existing_text.strip() else {}
         if not isinstance(settings, dict):
@@ -258,6 +259,7 @@ def _upsert_bridge(existing: str) -> tuple[str, str]:
 
 def _upsert_json_key(existing_text: str, top: str, name: str, entry: dict) -> tuple[str, str]:
     """Set ``<top>.<name>`` in a JSON file's text, keeping everything else."""
+    existing_text = existing_text.lstrip("\ufeff")
     try:
         data = json.loads(existing_text) if existing_text.strip() else {}
     except json.JSONDecodeError as exc:
@@ -275,7 +277,10 @@ def _upsert_json_key(existing_text: str, top: str, name: str, entry: dict) -> tu
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n", action
 
 
-_CODEX_MCP_RE = re.compile(r"^\[mcp_servers\.slightly-parallel\]\n(?:(?!\[).*\n?)*", re.MULTILINE)
+# Our table runs to the next header. An indented ``  [mcp_servers.mine]`` is
+# a header too (TOML allows the indent): read as part of our block, it was
+# deleted with it. Line ends may be CRLF.
+_CODEX_MCP_RE = re.compile(r"^\[mcp_servers\.slightly-parallel\][ \t]*\r?\n(?:(?![ \t]*\[).*\r?\n?)*", re.MULTILINE)
 
 
 def _upsert_codex_mcp(text: str, block: str) -> tuple[str, str]:
@@ -292,11 +297,17 @@ def _upsert_codex_mcp(text: str, block: str) -> tuple[str, str]:
     if ours and (not m or "[mcp_servers." + MCP_SERVER + "." in text):
         return text, "kept"
     if m:
-        if m.group(0).rstrip("\n") == block.rstrip("\n"):
+        if m.group(0).replace("\r\n", "\n").rstrip("\n") == block.rstrip("\n"):
             return text, "unchanged"
-        return text[:m.start()] + block + text[m.end():], "updated"
-    joined = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
-    return joined, "created" if not text.strip() else "updated"
+        out, action = text[:m.start()] + block + text[m.end():], "updated"
+    else:
+        out = (text.rstrip("\r\n") + "\n\n" if text.strip() else "") + block
+        action = "created" if not text.strip() else "updated"
+    try:
+        tomllib.loads(out)
+    except tomllib.TOMLDecodeError:
+        return text, "kept"   # the edit would leave a file Codex cannot read
+    return out, action
 
 
 _TOML_TABLE_RE = re.compile(r"^\s*\[", re.MULTILINE)

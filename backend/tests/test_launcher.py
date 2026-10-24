@@ -405,3 +405,37 @@ def test_too_old_a_python_says_how_to_get_one_on_this_system(launcher, monkeypat
     assert "deadsnakes" in launcher.python_hint()
     release.write_text("ID=arch\n", encoding="utf-8")
     assert "python.org/downloads" in launcher.python_hint()
+
+
+def test_an_env_with_a_byte_order_mark_or_in_another_encoding(launcher) -> None:
+    """Notepad's BOM made the first key "\\ufeffSP_DATA_ROOT", which nothing
+    read; an "ANSI" .env crashed every command with a traceback."""
+    launcher.ENV_FILE.write_bytes("\ufeffSP_DATA_ROOT=/data\n".encode("utf-8"))
+    assert launcher.read_env() == {"SP_DATA_ROOT": "/data"}
+    launcher.ENV_FILE.write_bytes("SP_DATA_ROOT=C:\\Users\\Jörg\\sp\n".encode("cp1252"))
+    with pytest.raises(SystemExit, match=r"^\[sp\] \.env is not UTF-8"):
+        launcher.read_env()
+
+
+def test_sp_sh_skips_an_interpreter_that_does_not_run(tmp_path: Path) -> None:
+    """A pyenv shim is on PATH for every version pyenv knows and fails for
+    one not installed; it used to be taken on its name alone."""
+    import os
+    import shutil
+    if os.name == "nt":
+        pytest.skip("sp.sh is the POSIX launcher; Windows has sp.py")
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    shim = bin_ / "python3.14"
+    shim.write_text("#!/bin/sh\necho 'pyenv: python3.14: command not found' >&2\nexit 127\n")
+    shim.chmod(0o755)
+    real = bin_ / "python3.12"
+    real.write_text("#!/bin/sh\necho python3.12\n")
+    real.chmod(0o755)
+    (bin_ / "dirname").symlink_to(shutil.which("dirname"))
+    shutil.copy(root / "sp.sh", tmp_path / "sp.sh")
+    got = subprocess.run(["/bin/bash", str(tmp_path / "sp.sh")], env={"PATH": str(bin_)},
+                         capture_output=True, text=True, timeout=10)
+    assert got.stdout.strip() == "python3.12" and got.returncode == 0

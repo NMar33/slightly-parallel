@@ -230,6 +230,10 @@ def write(store: ViewStore, project: str, agent_id: str, m: Any, note: str = "")
         raise ValueError("map is an object {template, rows: [...], relations: [...], notes: {...}}")
     if len(m["rows"]) > ROWS_MAX:
         raise ValueError(f"{len(m['rows'])} rows against at most {ROWS_MAX}: keep the ones a lead must know")
+    if m.get("relations") not in (None, "") and not isinstance(m.get("relations"), list):
+        raise ValueError("relations is a list of {from, verb, to}")
+    if m.get("notes") not in (None, "") and not isinstance(m.get("notes"), dict):
+        raise ValueError("notes is an object {shape, main_path, runs_on, not_found, not_read}")
     if len(m.get("relations") or []) > RELATIONS_MAX:
         raise ValueError(f"{len(m['relations'])} relations against at most {RELATIONS_MAX}")
     clean = {

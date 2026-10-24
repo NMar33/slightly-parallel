@@ -10,7 +10,7 @@ import { postJson } from '../../../../lib/getJson'
 import { OPERATOR_ACTOR } from '../../types'
 import { SELECTION, isToday, laneOf, laneUpdate as laneWrite, normalizeStatus, parseBulk } from '../model'
 import type { SortMode, TaskRow } from '../model'
-import { ARCHIVE } from './model'
+import { ARCHIVE, writeOrder } from './model'
 import { putBack } from '../boardData'
 import { t, tn } from '../../../../i18n/scope/project'
 
@@ -152,9 +152,13 @@ export function boardDrops({
     if (task.archived_at) void setArchived([task.id], false)
 
     // Column-mates (in target status + optional lane) sorted by position.
+    // The server keeps position as a whole number and sorts a card without
+    // one last: a half position (999.5) was rounded past its neighbour, and a
+    // card dropped before a position-less one (an agent's) jumped to the top.
     const posOf = (t: TaskRow): number => {
       const n = Number(t.position)
-      return Number.isFinite(n) ? n : 0
+      return t.position !== undefined && t.position !== null && String(t.position).trim() !== '' && Number.isFinite(n)
+        ? n : Number.POSITIVE_INFINITY
     }
     const inTarget = tasks
       .filter((t) => t.id !== draggedId) // exclude the dragged card itself
@@ -162,22 +166,22 @@ export function boardDrops({
       .filter((t) => !targetLane || laneOf(t) === targetLane)
       .sort((a, b) => posOf(a) - posOf(b))
 
-    // New position: midpoint of the gap around the drop slot.
+    // New position: the whole number in the middle of the gap around the
+    // drop slot. No room (a gap under 2, a neighbour with no position):
+    // the column is numbered again in tens, in the order it shows.
+    const slot = beforeTaskId ? inTarget.findIndex((t) => t.id === beforeTaskId) : -1
+    const idx = slot === -1 ? inTarget.length : slot
+    const above = idx === 0 ? 0 : posOf(inTarget[idx - 1]!)
+    const at = idx < inTarget.length ? posOf(inTarget[idx]!) : above + 20
     let newPos: number
-    if (beforeTaskId) {
-      const idx = inTarget.findIndex((t) => t.id === beforeTaskId)
-      if (idx === -1) {
-        newPos = inTarget.length > 0 ? posOf(inTarget[inTarget.length - 1]!) + 10 : 10
-      } else {
-        const above = idx === 0 ? 0 : posOf(inTarget[idx - 1]!)
-        const at = posOf(inTarget[idx]!)
-        newPos = (above + at) / 2
-        // Handle collision (rare) — nudge past the occupied slot.
-        if (newPos === above || newPos === at) newPos = at + 0.5
-      }
+    let renumber: Array<{ id: string; position: number }> = []
+    if (Number.isFinite(above) && Number.isFinite(at) && at - above >= 2) {
+      newPos = Math.floor((above + at) / 2)
     } else {
-      // Append at the end.
-      newPos = inTarget.length > 0 ? posOf(inTarget[inTarget.length - 1]!) + 10 : 10
+      const order = [...inTarget.slice(0, idx), task, ...inTarget.slice(idx)]
+      renumber = order.map((t, i) => ({ id: t.id, position: (i + 1) * 10 }))
+        .filter((w) => w.id !== draggedId && posOf(order[w.position / 10 - 1]!) !== w.position)
+      newPos = (idx + 1) * 10
     }
 
     const updates: Partial<TaskRow> = { position: String(newPos) }
@@ -185,7 +189,20 @@ export function boardDrops({
     if (targetLane && laneOf(task) !== targetLane) Object.assign(updates, laneWrite(targetLane))
 
     // Optimistic local update
-    setTasks((prev) => prev.map((t) => (t.id === draggedId ? { ...t, ...updates } : t)))
+    const moved = new Map(renumber.map((w) => [w.id, String(w.position)]))
+    setTasks((prev) => prev.map((t) => (
+      t.id === draggedId ? { ...t, ...updates } : moved.has(t.id) ? { ...t, position: moved.get(t.id)! } : t
+    )))
+    if (renumber.length) {
+      // Several cards, one request each: when one did not land the server's
+      // order differs from the one shown, so say so and read it back.
+      void writeOrder(renumber, postJson).then((lost) => {
+        if (lost) {
+          toast.error(t('Could not save the order'), { description: tn(lost, '{n} card did not save.', '{n} cards did not save.') })
+          setRefreshTick((n) => n + 1)
+        }
+      })
+    }
     persistUpdate(draggedId, updates)
   }
 

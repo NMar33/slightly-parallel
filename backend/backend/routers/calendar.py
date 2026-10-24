@@ -687,7 +687,7 @@ def milestones_create(body: dict = Body(...), store: ViewStore = Depends(get_sto
         "id": _mint("ms_", project, fields["title"], now), "project": project, **fields,
         "created_at": now, "updated_at": now, "actor": actor,
     }
-    wanted = [str(t) for t in (body.get("tasks") or []) if str(t).strip()]
+    wanted = [str(t) for t in _ids(body, "tasks") if str(t).strip()]
     if wanted:
         known = {str(r.get("id")) for r in _rows(store, "SELECT id FROM tasks_mutual")}
         missing = [t for t in wanted if t not in known]
@@ -746,6 +746,17 @@ def milestones_update(milestone_id: str, body: dict = Body(...), store: ViewStor
     return {"milestone": ms[0] if ms else row}
 
 
+def _ids(body: dict, key: str) -> list:
+    """A list of ids from the body, or nothing; a number or a string there
+    was a 500."""
+    got = body.get(key)
+    if got in (None, ""):
+        return []
+    if not isinstance(got, list):
+        raise HTTPException(status_code=422, detail=f"{key} is a list of task ids")
+    return got
+
+
 @router.post("/api/milestones/{milestone_id}/tasks")
 def milestones_tasks(milestone_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
     """``{add?: [task ids], remove?: [task ids], actor?}`` — a task serves one
@@ -756,8 +767,8 @@ def milestones_tasks(milestone_id: str, body: dict = Body(...), store: ViewStore
         raise not_found("milestone", milestone_id)
     actor = str(body.get("actor") or _ACTOR)
     now = now_iso()
-    add = [str(t) for t in (body.get("add") or []) if str(t).strip()]
-    remove = {str(t) for t in (body.get("remove") or []) if str(t).strip()}
+    add = [str(t) for t in _ids(body, "add") if str(t).strip()]
+    remove = {str(t) for t in _ids(body, "remove") if str(t).strip()}
     known = {str(r.get("id")) for r in _rows(store, "SELECT id FROM tasks_mutual")}
     missing = [t for t in add if t not in known]
     if missing:

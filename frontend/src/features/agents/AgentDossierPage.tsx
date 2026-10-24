@@ -29,7 +29,7 @@ function readSec(): SectionId {
 
 export function AgentDossierPage() {
   const params = useParams<{ id: string }>()
-  const id = params.id ? decodeURIComponent(params.id) : ''
+  const id = params.id ?? ''   // react-router has decoded it already; decoding twice threw on a '%'
   const [sec, setSec] = useState<SectionId>(readSec)
   // A new agent (← →) keeps the section; a new URL hash wins on load.
   useEffect(() => {

@@ -42,8 +42,11 @@ export function useDayPlan({ tasks, setTasks, patchMany, bump }: {
     if (moving.length === 0 || dayBusy) return
     setDayBusy(true)
     const before = moving.map((t) => ({ id: t.id, patch: { status: String(t.status || 'unclassified') } }))
-    if (await patchMany(moving.map((t) => ({ id: t.id, patch: { status: 'done' } })))) return
-    setDayBusy(false)
+    try {
+      if (await patchMany(moving.map((t) => ({ id: t.id, patch: { status: 'done' } })))) return
+    } finally {
+      setDayBusy(false)
+    }
     toast.success(tn(moving.length, '{n} task moved to Done', '{n} tasks moved to Done'), {
       action: { label: t('Undo'), onClick: () => void patchMany(before) },
     })
@@ -54,8 +57,11 @@ export function useDayPlan({ tasks, setTasks, patchMany, bump }: {
     if (clearing.length === 0 || dayBusy) return
     setDayBusy(true)
     const before = clearing.map((t) => ({ id: t.id, patch: { today_on: today } }))
-    if (await patchMany(clearing.map((t) => ({ id: t.id, patch: { today_on: '' } })))) return
-    setDayBusy(false)
+    try {
+      if (await patchMany(clearing.map((t) => ({ id: t.id, patch: { today_on: '' } })))) return
+    } finally {
+      setDayBusy(false)
+    }
     toast.success(t('Removed {tasks} from today\'s plan.', { tasks: tn(clearing.length, '{n} task', '{n} tasks') }), {
       action: { label: t('Undo'), onClick: () => void patchMany(before) },
     })

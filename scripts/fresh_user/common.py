@@ -112,7 +112,10 @@ def _operator_cookie(url: str) -> str:
 
 def http(url: str, body: dict | None = None, timeout: float = 30) -> Any:
     data = json.dumps(body).encode() if body is not None else None
-    headers = {"Content-Type": "application/json", "Cookie": _operator_cookie(url)} if data else {}
+    # The cookie on every request, a read too: the run stands in for the
+    # person at the browser, and the terminal's state is handed only to
+    # the operator's pages.
+    headers = {"Cookie": _operator_cookie(url), **({"Content-Type": "application/json"} if data else {})}
     req = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         raw = r.read()

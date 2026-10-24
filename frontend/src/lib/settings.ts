@@ -125,7 +125,7 @@ const FRESHNESS_QUERY_KEY = ['freshness'] as const
 export function areasOf(key: readonly unknown[]): string[] | null {
   const [head, second] = key
   if (head === 'session-turns' || head === 'chat') return ['chats']
-  if (head === 'scans-page') return ['scans']
+  if (head === 'scans-page') return ['scans', 'chats']   // its rows carry agent names
   if (head === 'lens') {
     if (second === 'sessions') return ['chats']
     if (second === 'scans' || second === 'files' || second === 'architecture') return ['scans']

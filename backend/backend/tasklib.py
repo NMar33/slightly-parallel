@@ -52,12 +52,12 @@ def _set_archived(store: ViewStore, task_id: str, value: str, actor: str) -> dic
                 return True
         return False
 
-    if csv_path.exists():
-        rewrite_rows(csv_path, ent.columns, mutate)
+    changed = csv_path.exists() and rewrite_rows(csv_path, ent.columns, mutate)
     if not hit:
         raise not_found("task", task_id)
-    _append_events(store, task_id, actor, [("archived", "" if value else "yes", "yes" if value else "")])
-    store.rebuild()
+    if changed:
+        _append_events(store, task_id, actor, [("archived", "" if value else "yes", "yes" if value else "")])
+        store.rebuild()
     return {"task_id": task_id, "archived_at": value}
 
 

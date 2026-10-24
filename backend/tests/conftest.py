@@ -101,19 +101,50 @@ def make_task(client: TestClient, title: str, status: str = "todo", **more: str)
     return r.json()["metadata"]["id"]
 
 
+def _git_home() -> str:
+    """One empty home for every git the run starts (it was one folder per
+    call, never removed: thousands under /tmp), gone when the run ends."""
+    import atexit
+    import shutil
+    import tempfile
+    global _GIT_HOME
+    if _GIT_HOME is None:
+        _GIT_HOME = tempfile.mkdtemp(prefix="sp-git-home-")
+        atexit.register(shutil.rmtree, _GIT_HOME, True)
+    return _GIT_HOME
+
+
+_GIT_HOME: str | None = None
+
+# Every git the suite runs, through git_env or not (thirteen test files call
+# `git commit` directly), sees no user or system config — a developer's
+# commit.gpgsign asked for a key and failed nine tests — and has an identity.
+os.environ.update({
+    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+})
+
+
 def git_env(**overrides: str) -> dict[str, str]:
     """The environment for a git the tests run: the machine's own, with
     every GIT_* variable dropped (a run from inside a git hook would
     otherwise act on the outer repository), no user or system config
     (a developer's commit.gpgsign would ask for a key), and the
     overrides on top."""
-    import os
-    import tempfile
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    home = tempfile.mkdtemp(prefix="sp-git-home-")
-    env.update({"HOME": home, "USERPROFILE": home, "GIT_CONFIG_NOSYSTEM": "1"})
+    home = _git_home()
+    env.update({"HOME": home, "USERPROFILE": home, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull})
     env.update(overrides)
     return env
+
+
+def free_port() -> int:
+    """A port nothing listens on right now, for a test that starts a server
+    of its own (the helper lived in three files)."""
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def git_repo(repo: Path) -> Path:

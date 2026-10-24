@@ -85,7 +85,13 @@ def read_env() -> dict[str, str]:
     out: dict[str, str] = {}
     if not ENV_FILE.exists():
         return out
-    for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+    try:
+        # utf-8-sig: Notepad's byte-order mark made the first key "\ufeffSP_DATA_ROOT",
+        # which nothing read, and the server opened the demo folder.
+        text = ENV_FILE.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        sys.exit(f"[sp] .env is not UTF-8 (byte {exc.start}): save it as UTF-8 and run sp again")
+    for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -193,6 +199,11 @@ def spawn(args: list[str], **kw) -> subprocess.Popen:
     what it started too (npm → sh → node vite → esbuild)."""
     if WINDOWS:
         kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        if Path(sys.executable).name.lower() == "pythonw.exe":
+            # Started without a console (at login, from the shortcut): a
+            # console child would open its own window, and closing that
+            # window killed the server.
+            kw["creationflags"] |= subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
     else:
         kw["process_group"] = 0
     # Its own group is not the terminal's foreground group, so a read of the
@@ -225,7 +236,10 @@ def proc_start(pid: int) -> str:
     except (OSError, IndexError):
         pass
     try:
-        got = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+        # In the C locale: the stamp is compared with one written by a
+        # LaunchAgent (no locale), and ps spells the date by the locale.
+        got = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                             timeout=5, env={**os.environ, "LC_ALL": "C"})
         return " ".join(got.stdout.split())
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -339,7 +353,8 @@ def port_free(host: str, port: int) -> bool:
     finds a listener on 0.0.0.0 that macOS lets a 127.0.0.1 bind share."""
     import socket
     target = "127.0.0.1" if host in ("", "0.0.0.0") else host
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as c:
+    family = socket.AF_INET6 if ":" in target else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as c:
         c.settimeout(0.5)
         try:
             if c.connect_ex((target, port)) == 0:

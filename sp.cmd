@@ -3,8 +3,8 @@ rem sp.cmd - the launcher on Windows: runs sp.py (see it for the commands).
 rem   sp up [--dev] ^| down ^| restart ^| status ^| logs ^| terminal on^|off ^| run [--prod]
 rem   sp open ^| autostart on^|off ^| shortcut [off]
 rem The exit code is sp.py's own: a script can tell "not running" from "running".
-setlocal EnableDelayedExpansion
 cd /d "%~dp0"
+setlocal EnableDelayedExpansion
 rem The newest Python the backend's packages are built for first (sp.py
 rem NEWEST_PYTHON): plain "py -3" is the newest installed, which may be newer.
 where py >nul 2>nul && goto :py

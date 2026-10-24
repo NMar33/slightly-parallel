@@ -140,12 +140,13 @@ def test_now_starts_the_task_in_doing_in_its_own_lane_today(tmp_path: Path) -> N
     c = _board(root, "#now fix the login timeout")
     wrong = _post(c, expect=422, status="agent", description="")
     assert "doing" in wrong["detail"]
+    today = date.today().isoformat()
     out = _post(c, created_time="21:11", description="")
     meta = out["metadata"]
     # The text is the operator's message, as written; the agent only titles it.
     assert out["description"] == "#now fix the login timeout"
     assert meta["status"] == "doing" and meta["lane"] == "Now" and meta["assignee"] == "Now"
-    assert meta["today_on"] == date.today().isoformat()
+    assert meta["today_on"] in (today, date.today().isoformat())
     events = c.get(f"/api/tasks/{meta['id']}/events").json()
     started = [e for e in (events.get("events") if isinstance(events, dict) else events) if e.get("field") == "started"]
     assert started and "#now" in started[0]["new_value"] and "cc-a" in started[0]["new_value"]

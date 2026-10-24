@@ -49,12 +49,16 @@ export function Modal({
   useModalA11y(ref, onClose)
   const isWindow = tone === 'window'
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
+  // A text selection that starts in the dialog and ends on the backdrop
+  // sends the click to the backdrop: it closed the window and lost the edit.
+  const pressedBackdrop = useRef(false)
   return (
     <div
       role="presentation"
+      onMouseDown={(e) => { pressedBackdrop.current = e.target === e.currentTarget }}
       className={`fixed inset-0 z-modal flex justify-center ${isWindow ? 'p-16 backdrop-blur-sm' : 'p-24'} ${top ? 'items-start pt-48' : 'items-center'}`}
       style={{ backgroundColor: 'color-mix(in srgb, var(--bg-base) 55%, transparent)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={(e) => { if (e.target === e.currentTarget && pressedBackdrop.current) onClose() }}
       onKeyDown={isolateKeys ? stop : undefined}
       onKeyUp={isolateKeys ? stop : undefined}
     >

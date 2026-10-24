@@ -53,8 +53,27 @@ def human(n: float) -> str:
     return f"{n:.1f} GB"
 
 
+def _env_file_root() -> str:
+    """SP_DATA_ROOT from the repository's .env, as sp.py reads it — the
+    script said "no data root" on every default install."""
+    env = Path(__file__).resolve().parents[1] / ".env"
+    try:
+        lines = env.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return ""
+    for raw in lines:
+        line = raw.strip().removeprefix("export ").strip()
+        key, _, value = line.partition("=")
+        if key.strip() in ("SP_DATA_ROOT", "SCAN_DATA_ROOT") and value.strip():
+            return value.strip().strip("'\"")
+    return ""
+
+
 def resolve_root(explicit: str | None) -> Path:
-    raw = explicit or os.environ.get("SP_DATA_ROOT") or os.environ.get("SCAN_DATA_ROOT") or os.environ.get("DATA_ROOT")
+    raw = (explicit or os.environ.get("SP_DATA_ROOT") or os.environ.get("SCAN_DATA_ROOT")
+           or os.environ.get("DATA_ROOT") or _env_file_root())
+    if not raw and (Path.home() / ".slightly-parallel").is_dir():
+        raw = str(Path.home() / ".slightly-parallel")   # where sp.py puts it when nothing names a folder
     if not raw:
         raise SystemExit(
             "no data root — pass --root or set SP_DATA_ROOT"

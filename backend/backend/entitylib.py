@@ -35,6 +35,8 @@ OPERATOR_ONLY: dict[str, str] = {
         "its interpretation with the MCP tool interpret {lens: \"rule\", id, text}"
     ),
     "sprint": "sprints are the operator's — an agent does not start, end or change one",
+    "time_entry": "time entries are the operator's timer — an agent does not start, stop or change one",
+    "prompt_run": "a prompt's rating is the operator's — an agent does not write one",
     # The operator's prompt is already captured verbatim in the chat log.
     # An agent writing a second copy of it can only disagree with the first,
     # so the library harvests #prompt instead — see promptlib.py.
@@ -257,8 +259,6 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     # Agents write what the entry holds by name (entry_fields.py); the names
     # land in the storage slots here, before anything reads them.
     entry_fields.to_slots(ent.name, body, ent.columns)
-    if ent.name == "rule" and written_by_agent(body):
-        body.pop("auto", None)  # for all agents is the operator's choice
     # L1 is the headline in the contract every agent writes to, but a few
     # entities name that column something of their own (decisions call it
     # decision_text, goals goal_text). Without this the row is created

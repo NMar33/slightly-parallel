@@ -221,7 +221,7 @@ def _validated_dir(raw: str, label: str = "project_dir") -> Path:
         )
     try:
         p = p.resolve()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"cannot resolve path: {exc}")
     if not p.is_dir():
         raise HTTPException(status_code=422, detail=f"not an existing directory: {p}")
@@ -356,7 +356,7 @@ def _switch(kind: str, on: bool) -> list[str]:
         if on:
             return autostart.enable(AUTOSTART_ROOT, kind, home=AUTOSTART_HOME)
         return autostart.disable(AUTOSTART_ROOT, kind)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"{kind}: {exc}") from exc
 
 
@@ -414,7 +414,7 @@ def integrate(
         agents_path = project_dir / "AGENTS.md"
         try:
             existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {agents_path}: {exc}")
         new_text, action = _upsert_block(existing, block)
         if not dry_run and action != "unchanged":
@@ -427,7 +427,7 @@ def integrate(
         claude_path = project_dir / "CLAUDE.md"
         try:
             existing = claude_path.read_text(encoding="utf-8") if claude_path.exists() else ""
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {claude_path}: {exc}")
         new_text, action = _upsert_bridge(existing)
         if not dry_run and action != "unchanged":
@@ -444,7 +444,7 @@ def integrate(
                 if hooks_path.exists()
                 else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(
                 status_code=422, detail=f"cannot read {hooks_path}: {exc}"
             )
@@ -466,7 +466,7 @@ def integrate(
             existing = (
                 codex_path.read_text(encoding="utf-8") if codex_path.exists() else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {codex_path}: {exc}")
         command = _hook_command(
             project_code, request.app.state.settings.data_root, tool="codex"
@@ -483,7 +483,7 @@ def integrate(
         # can write nothing it asks for.
         try:
             config = CODEX_CONFIG_PATH.read_text(encoding="utf-8") if CODEX_CONFIG_PATH.exists() else ""
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {CODEX_CONFIG_PATH}: {exc}")
         block = codex_mcp_block(_api_url(request))
         new_config, mcp_action = _upsert_codex_mcp(config, block)
@@ -499,7 +499,7 @@ def integrate(
             existing = (
                 cursor_path.read_text(encoding="utf-8") if cursor_path.exists() else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {cursor_path}: {exc}")
         new_text, action = _upsert_cursor_hooks(
             existing, _cursor_hook_command(project_code, request.app.state.settings.data_root)
@@ -522,7 +522,7 @@ def integrate(
                 if plugin_path.exists()
                 else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(
                 status_code=422, detail=f"cannot read {plugin_path}: {exc}"
             )
@@ -636,8 +636,8 @@ def forget(
         if plugin_path.exists() and _ours(plugin_path.read_text(encoding="utf-8")):
             plugin_path.unlink()
             _rmdir_if_empty(plugin_path.parent, plugin_path.parent.parent)
-    except OSError:
-        pass
+    except (OSError, UnicodeDecodeError):
+        pass   # a plugin file that is not UTF-8 is not ours: left in place
 
     # Uninstall our capture hooks from the project's local settings too:
     # Claude Code's, Codex's and Cursor's. A file left with nothing in it
@@ -653,7 +653,7 @@ def forget(
                     hooks_action = action
                     _write_or_remove(hooks_path, new_text)
                     _rmdir_if_empty(hooks_path.parent)
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             hooks_action = "unreadable"
 
     # And the MCP server Setup wired in: .mcp.json for Claude Code,
@@ -675,7 +675,7 @@ def forget(
                     mcp_action = action
                     _write_or_remove(mcp_path, new_text)
                     _rmdir_if_empty(mcp_path.parent)
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             mcp_action = "unreadable"
 
     agents_action = strip_file(
@@ -749,9 +749,13 @@ def _upsert_env_line(env_path: Path, key: str, value: str, *, replaces: str = ""
     file written before a rename does not end up saying two things."""
     line = f'{key}="{value}"'
     try:
-        text = env_path.read_text(encoding="utf-8")
-    except OSError:
-        text = ""
+        text = env_path.read_text(encoding="utf-8-sig") if env_path.exists() else ""
+    except UnicodeDecodeError as exc:
+        # Never rewrite a file that could not be read: every other setting
+        # in it would be gone.
+        raise HTTPException(status_code=422, detail=f"{env_path} is not UTF-8 (byte {exc.start}): save it as UTF-8 first")
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail=f"cannot read {env_path}: {exc}")
     lines = text.splitlines()
     prefixes = tuple(f"{k}=" for k in (key, replaces) if k)
     replaced = False
@@ -848,7 +852,7 @@ def mcp_server_entry(api_url: str) -> dict:
 def _write_mcp_file(path: Path, top: str, entry: dict, *, dry_run: bool, also=None) -> dict:
     try:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"cannot read {path}: {exc}")
     new_text, action = _upsert_json_key(existing, top, MCP_SERVER, entry)
     if also:
@@ -948,6 +952,8 @@ def codex_status() -> dict:
         text = CODEX_CONFIG_PATH.read_text(encoding="utf-8")
     except OSError:
         return {"state": "absent", "config": str(CODEX_CONFIG_PATH)}
+    except UnicodeDecodeError:
+        return {"state": "foreign", "config": str(CODEX_CONFIG_PATH)}   # a file Codex itself could not read
     m = _NOTIFY_RE.search(text)
     if not m:
         return {"state": "absent", "config": str(CODEX_CONFIG_PATH)}
@@ -978,7 +984,7 @@ def setup_codex(
             if CODEX_CONFIG_PATH.exists()
             else ""
         )
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(
             status_code=422, detail=f"cannot read {CODEX_CONFIG_PATH}: {exc}"
         )

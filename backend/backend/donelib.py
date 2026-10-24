@@ -215,14 +215,20 @@ def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str
                     ch.append((stamp, r[stamp], ""))
                     r[stamp] = ""
             # The stack advances and a repeating task re-arms, as on the board.
-            after_status_change(store, rs, r, old, ch)
+            # Their events wait for the rewrite to land: a refused rewrite
+            # (a damaged file, a Windows replace that gave up) must not
+            # leave history lines for moves that never happened.
+            after_status_change(store, rs, r, old, ch, deferred=side_events)
             history[tid] = ch
             changed = True
         return changed
 
+    side_events: list[tuple[str, str, list[tuple[str, str, str]]]] = []
     rewrite_rows(store.data_root / ent.csv, ent.columns, mutate)
     for tid, ch in history.items():
         _append_events(store, tid, "operator", ch)
+    for other_id, other_actor, other_changes in side_events:
+        _append_events(store, other_id, other_actor, other_changes)
 
 
 # ---------------------------------------------------------------------------

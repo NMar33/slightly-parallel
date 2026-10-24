@@ -206,7 +206,7 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"cannot read {path}: {exc}") from exc
 
 
@@ -263,7 +263,7 @@ def sync_all_rules(store: ViewStore) -> list[dict[str, str]]:
                 action = "removed" if removed else "unchanged"
             if new != existing:
                 write_in_place(path, new)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             results.append({"project": project, "action": "failed", "error": str(exc)})
             continue
         if block:
@@ -289,7 +289,7 @@ def status_of(store: ViewStore, s: dict[str, Any] | None, entry: dict[str, Any])
         return "missing"
     try:
         text = (folder / "AGENTS.md").read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return "missing"
     block = block_in(text, str(entry["set_id"]))
     if block is None:

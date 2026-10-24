@@ -1214,5 +1214,7 @@
   "The way into a topic, for whoever comes back to it.": "Вход в тему для того, кто к ней возвращается.",
   "Kept when you type #entrypoint about a topic: the film, the launch, a migration. The agent writes five sections from the chat: what the topic is, where its files and links are, how to run it, where the work stopped, what comes next. A second #entrypoint on the same topic is a new version. Close the topic when it is done.": "Сохраняется, когда вы пишете #entrypoint о теме: фильм, запуск, миграция. Агент пишет пять разделов из чата: что это за тема, где её файлы и ссылки, как запустить, где остановилась работа, что дальше. Второй #entrypoint по той же теме — новая версия. Закройте тему, когда она сделана.",
   "Type #entrypoint about a topic you will come back to.": "Напишите #entrypoint о теме, к которой вернётесь.",
-  "The way into each topic: where it lives, how to run it, where the work stopped.": "Вход в каждую тему: где она живёт, как запустить, где остановилась работа."
+  "The way into each topic: where it lives, how to run it, where the work stopped.": "Вход в каждую тему: где она живёт, как запустить, где остановилась работа.",
+  "Could not save the monitor setting": "Не удалось сохранить настройку монитора",
+  "Could not mark the events as seen": "Не удалось отметить события как просмотренные"
 }

@@ -1,0 +1,6 @@
+# A batch file with LF line ends misreads a label past byte 512; the shell
+# scripts and hooks must stay LF on a Windows checkout with autocrlf.
+sp.cmd text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf

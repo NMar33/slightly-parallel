@@ -486,7 +486,7 @@ def _dones_of(
 
 
 def _nows_of(
-    session_id: str, project: str, agent_id: str, block: list[Turn]
+    session_id: str, project: str, agent_id: str, block: list[Turn], answered_later: bool = False
 ) -> list[dict]:
     """One row per user turn carrying #now (or #now-todo …): the column, the
     lane named in braces, the whole message, and whether the agent answered."""
@@ -504,7 +504,7 @@ def _nows_of(
             # Answered, or a later turn was: a message sent while the agent
             # still worked does not end the agent's chance.
             "column_": column, "lane": lane,
-            "answered": "1" if any((x.agent_summary or "").strip() for x in block[i:]) else "",
+            "answered": "1" if answered_later or any((x.agent_summary or "").strip() for x in block[i:]) else "",
             "body": text,
         })
     return out
@@ -661,7 +661,12 @@ def group_sessions(
         return []
     sessions: list[Session] = []
     block: list[Turn] = [turns[0]]
-    for turn in turns[1:]:
+    # answered_from[i]: a turn at or after i has an answer (one reverse pass:
+    # a scan of the rest at every boundary was quadratic on a long chat).
+    answered_from = [False] * (len(turns) + 1)
+    for i in range(len(turns) - 1, -1, -1):
+        answered_from[i] = answered_from[i + 1] or bool((turns[i].agent_summary or "").strip())
+    for i, turn in enumerate(turns[1:], start=1):
         # Helpers still working after the last answer are recorded on this
         # turn's line, before its prompt: they belong to the block before.
         before = [(a, min(b, turn.at)) for a, b in (turn.busy or []) if a < turn.at]
@@ -670,7 +675,9 @@ def group_sessions(
         last = max([block[-1].end or block[-1].at, *(b for _, b in before)])
         gap = (turn.at - last).total_seconds() / 60
         if gap > gap_minutes or turn.at.date() != block[-1].at.date():
-            sessions.append(_close(project, agent_id, block, turn.line - 1, before, gap_minutes))
+            # A #now cut off before any answer is answered by the chat's
+            # next session, not left waiting for a card forever.
+            sessions.append(_close(project, agent_id, block, turn.line - 1, before, gap_minutes, answered_from[i]))
             block = [turn]
         else:
             block.append(turn)
@@ -682,6 +689,7 @@ def _close(
     project: str, agent_id: str, block: list[Turn], end_line: int,
     before: list[tuple[datetime, datetime]] | None = None,
     gap_minutes: int = 30,
+    answered_later: bool = False,
 ) -> Session:
     first, last = block[0], block[-1]
     seed = f"{project}|{agent_id}|{first.at.isoformat()}"
@@ -736,7 +744,7 @@ def _close(
         keep_marks=_keeps_of(sid, project, agent_id, block),
         important_tags=_importants_of(sid, project, agent_id, block),
         done_tags=_dones_of(sid, project, agent_id, block),
-        now_tags=_nows_of(sid, project, agent_id, block),
+        now_tags=_nows_of(sid, project, agent_id, block, answered_later),
     )
 
 

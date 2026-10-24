@@ -31,6 +31,7 @@ import { useAgentProfiles, type AgentProfile } from './profile'
 
 import { t } from '../../i18n/scope/views'
 import { isTypingTarget } from '../../lib/typing'
+import { decodeSafe } from '../../hooks/useHashState'
 /**
  * The hash carries `agent=<id>&sec=<section>`; inside the project page it
  * sits after the tab id (`#agents&agent=…`) so the tab survives a reload.
@@ -41,7 +42,7 @@ function readHash(): { agent: string; sec: SectionId } {
   const a = /agent=([^&]+)/.exec(h)
   const s = /sec=([a-z]+)/.exec(h)
   const sec = (s && (SECTION_IDS as string[]).includes(s[1]!)) ? (s[1] as SectionId) : 'chats'
-  return { agent: a ? decodeURIComponent(a[1]!) : '', sec }
+  return { agent: a ? decodeSafe(a[1]!) : '', sec }
 }
 
 function writeHash(prefix: string, open: string, sec: SectionId): void {

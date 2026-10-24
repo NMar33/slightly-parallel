@@ -45,6 +45,9 @@ def main() -> int:
     # paste failed to start the process and was lost. --text stays for the
     # plugins Setup wrote before this.
     ap.add_argument("--text-stdin", action="store_true")
+    # Or one JSON object on stdin: {text, times?, touched?}. The times of a
+    # long session as an argument passed the same limit as the paste did.
+    ap.add_argument("--json-stdin", action="store_true")
     ap.add_argument("--agent-text", default="")
     # Origin (optional): lets the dashboard print a resume command.
     ap.add_argument("--tool", default="")
@@ -66,7 +69,16 @@ def main() -> int:
             print(f"[slightly-parallel] capture failed: the data root {args.data_root} does not exist — tell the user.")
         return 0
     try:
-        if args.text_stdin:
+        if args.json_stdin:
+            given = json.loads(sys.stdin.read() or "{}")
+            if not isinstance(given, dict):
+                given = {}
+            args.text = str(given.get("text") or "")
+            if "times" in given:
+                args.times = json.dumps(given["times"])
+            if "touched" in given:
+                args.touched = json.dumps(given["touched"])
+        elif args.text_stdin:
             args.text = sys.stdin.read()
         cap = TurnCapture(args.data_root, args.project, args.agent)
         # A completion with no chat behind it (a helper session, a plugin

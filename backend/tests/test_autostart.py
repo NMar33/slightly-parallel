@@ -18,6 +18,12 @@ PY = "/usr/bin/python3"
 posix = pytest.mark.skipif(os.name == "nt", reason="Linux entries are written on Linux")
 
 
+@pytest.fixture(autouse=True)
+def _no_desktop_trust(monkeypatch) -> None:
+    # `gio set … metadata::trusted` writes the developer's real gvfs metadata.
+    monkeypatch.setattr(autostart, "_trust", lambda path: None)
+
+
 @pytest.fixture()
 def where(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)

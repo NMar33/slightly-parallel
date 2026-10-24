@@ -46,16 +46,22 @@ export function useSessionTurns(sessions: Versioned[]) {
   return useQuery({
     queryKey: ['session-turns', sig],
     queryFn: async ({ signal }) => {
-      const stale = sessions.filter((s) => turnCache.get(s.id)?.v !== versionOf(s)).map((s) => s.id)
-      if (stale.length) {
-        const got = await fetchTurns(stale, signal)
-        for (const id of stale) {
-          const s = sessions.find((x) => x.id === id)!
-          cacheTurns(id, versionOf(s), got[id] ?? [])
-        }
-      }
+      // The cache hits are read first and the fetched chats put in after:
+      // with more chats than the cache holds, putting the fetched ones in
+      // evicted the hits before the answer was built, and they came back empty.
       const out: Record<string, SessionTurn[]> = {}
-      for (const s of sessions) out[s.id] = turnCache.get(s.id)?.turns ?? []
+      const stale: string[] = []
+      for (const s of sessions) {
+        const hit = turnCache.get(s.id)
+        if (hit && hit.v === versionOf(s)) out[s.id] = hit.turns
+        else stale.push(s.id)
+      }
+      const got: Record<string, SessionTurn[]> = stale.length ? await fetchTurns(stale, signal) : {}
+      for (const id of stale) {
+        const s = sessions.find((x) => x.id === id)!
+        out[id] = got[id] ?? []
+        cacheTurns(id, versionOf(s), out[id])
+      }
       return out
     },
     enabled: sessions.length > 0,

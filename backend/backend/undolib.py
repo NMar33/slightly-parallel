@@ -320,10 +320,20 @@ def _archive(store: ViewStore, kind: str, eid: str, actor: str) -> None:
 
 
 def restore(store: ViewStore, eid: str, actor: str) -> dict[str, Any]:
-    """Bring one archived entry back, with the status it had."""
+    """Bring one archived entry back, with the status it had. An agent
+    brings back only what #undo archived in its own chat; the operator's
+    page brings back anything."""
+    from .actors import is_agent
+
     kind = _kind_of(store, eid)
     if not kind:
         raise UndoRefused(f"{eid}: not an entry #undo archives")
+    if is_agent(actor) and not any(
+        r.get("agent_id") == actor and r.get("state") == "done"
+        and any(a.get("id") == eid for a in json.loads(r.get("archived") or "[]"))
+        for r in _ledger(store)
+    ):
+        raise UndoRefused(f"{eid}: not archived by #undo in this chat — the operator brings it back")
     if kind == "task":
         from .tasklib import _set_archived
         _set_archived(store, eid, "", actor)

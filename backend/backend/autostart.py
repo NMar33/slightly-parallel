@@ -148,6 +148,9 @@ def _launch_agent(root: Path, python: str) -> bytes:
         "AbandonProcessGroup": True,
         "StandardOutPath": str(root / ".sp" / "autostart.log"),
         "StandardErrorPath": str(root / ".sp" / "autostart.log"),
+        # launchd gives no shell PATH: without Homebrew's folders a server
+        # started at login found neither tmux, node nor claude.
+        "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
     })
 
 
@@ -173,6 +176,9 @@ def _windowless(python: str) -> str:
 def _windows_startup_cmd(root: Path, python: str) -> str:
     return (
         "@echo off\r\n"
+        # The file is UTF-8 and cmd reads a batch file in the OEM code page:
+        # a user folder with a non-ASCII letter started nothing, silently.
+        "chcp 65001 >nul\r\n"
         f'cd /d "{root}"\r\n'
         f'start "" /b "{_windowless(python)}" "{root / "sp.py"}" up\r\n'
     )

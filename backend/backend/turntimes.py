@@ -384,9 +384,15 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
         # read and the replace.
         try:
             with acquire_flock(lock_path(folder / FILE), timeout_s=2.0):
-                hook = [r for r in _lines(folder / FILE) if r.get("source") == "hook" and "busy" in r]
+                now = [r for r in _lines(folder / FILE) if r.get("source") == "hook"]
+                hook = [r for r in now if "busy" in r]
                 fresh = [r for r in fresh if r["turn"] not in {h.get("turn") for h in hook}]
-                body = "".join(json.dumps(r) + "\n" for r in [*hook, *fresh])
+                # A hook line without busy stretches is measured again from
+                # the transcript; where the transcript has nothing for its
+                # turn, the hook's end is still the only one and is kept.
+                replaced = {r["turn"] for r in fresh}
+                kept = [r for r in now if "busy" not in r and r.get("turn") not in replaced]
+                body = "".join(json.dumps(r) + "\n" for r in [*hook, *kept, *fresh])
                 tmp = folder / (FILE + ".tmp")
                 tmp.write_text(body, encoding="utf-8")
                 replace_file(tmp, folder / FILE)

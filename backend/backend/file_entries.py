@@ -24,6 +24,7 @@ says which happened so the reader is not misled.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -177,7 +178,8 @@ def git_fill(
             if not (no_base or gpath in fresh or any(f.endswith("/" + gpath) for f in fresh)):
                 continue
             try:
-                n = sum(1 for _ in open(repo / gpath, encoding="utf-8", errors="replace"))
+                with open(repo / gpath, encoding="utf-8", errors="replace") as fh:
+                    n = sum(1 for _ in fh)
             except OSError:
                 continue
             rec["lines_add"], rec["lines_del"] = n, 0
@@ -194,9 +196,24 @@ def git_fill(
 # entry point used by the file pre-create hook
 # ---------------------------------------------------------------------------
 
+# What a commit named in a body may look like: a hash, a ref, HEAD~2, a
+# tag — never an option. ``--output=/any/path`` given as ``commit_to`` reached
+# ``git diff`` as its own argument and wrote a file wherever the server could.
+_REV_RE = re.compile(r"[0-9A-Za-z@][0-9A-Za-z._/~^@{}+-]{0,127}")
+
+
+def _checked_rev(body: dict, key: str) -> str:
+    raw = str(body.get(key) or "")
+    if raw and not _REV_RE.fullmatch(raw):
+        raise ValueError(f"{key} is not a commit or ref: {raw[:40]!r}")
+    return raw
+
+
 def prepare_file_entry(store: ViewStore, body: dict) -> None:
     """Chain, normalise and git-fill one file entry in place."""
     project = str(body.get("project") or "")
+    for key in ("commit_from", "commit_to"):
+        _checked_rev(body, key)
     prev = previous_entry(store, project) if project else None
     if not body.get("prev_file_id") and prev:
         body["prev_file_id"] = prev.get("id", "")

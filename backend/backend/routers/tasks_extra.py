@@ -53,7 +53,7 @@ _MUTABLE_FIELDS = {
 _OPERATOR_FIELDS = frozenset({
     "auto_manage", "evidence_required", "evidence_prompt",
     "resurface_on", "resurface_to", "resurface_every_days", "stack_id",
-    "sprint_id",
+    "sprint_id", "priority", "due_date",
 })
 # Keys an update body may carry that are not task columns.
 _UPDATE_META_KEYS = frozenset({"actor", "agent_id", "description", "turn", "comment"})

@@ -14,7 +14,6 @@ import csv
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -23,6 +22,8 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import free_port
 from fastapi.testclient import TestClient
 
 from backend import backup
@@ -33,15 +34,9 @@ BACKEND = Path(__file__).resolve().parents[1]
 SESSION = "10ad0000-0000-4000-8000-00000000b4c0"
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 class Server:
     def __init__(self, root: Path, tmp: Path) -> None:
-        self.port = _free_port()
+        self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}"
         env = {**os.environ, "SP_DATA_ROOT": str(root), "SP_PORT": str(self.port), "SP_SANDBOX": "1",
                "SP_EXAMPLES": "0", "SP_LOG_DIR": str(tmp / "logs"), "SP_BACKUP_ROOT": str(tmp / "backups")}

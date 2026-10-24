@@ -29,10 +29,18 @@ function statusText(status: string): string {
 }
 
 /** Each sprint's task spans, from every project's timeline that has come in. */
-function spansOf(results: Array<{ data?: { sprints?: TimelineSprint[] } }>): Spans {
+type ReadState = 'reading' | 'failed' | 'read'
+type SpanResult = { data?: { sprints?: TimelineSprint[] }; isPending?: boolean; isError?: boolean }
+/** Each sprint's task spans, and how each project's read stands: a sprint
+ *  with no tasks, or a read that failed, said "Loading tasks…" for good. */
+function spansOf(results: SpanResult[], projects: string[]): { spans: Spans; state: Record<string, ReadState> } {
   const out: Spans = {}
-  for (const r of results) for (const sp of r.data?.sprints ?? []) out[sp.id] = sp.tasks ?? []
-  return out
+  const state: Record<string, ReadState> = {}
+  results.forEach((r, i) => {
+    for (const sp of r.data?.sprints ?? []) out[sp.id] = sp.tasks ?? []
+    state[projects[i]!] = r.data !== undefined ? 'read' : r.isError ? 'failed' : 'reading'
+  })
+  return { spans: out, state }
 }
 
 export default function SprintsWeekPage({ deck, err, refresh, actions, range }: ViewProps) {
@@ -48,7 +56,9 @@ export default function SprintsWeekPage({ deck, err, refresh, actions, range }: 
   // the open rows, shared with the project's sprint timeline. A read that
   // fails leaves its rows saying the spans are still being read.
   const openProjects = deck ? [...new Set(deck.blocks.filter((b) => openRow.has(b.id)).map((b) => b.project))] : []
-  const spans = useQueries({ queries: openProjects.map(sprintsTimelineQuery), combine: spansOf })
+  const { spans, state: spanState } = useQueries({
+    queries: openProjects.map(sprintsTimelineQuery), combine: (results) => spansOf(results, openProjects),
+  })
 
   const perDay = useMemo(() => {
     if (!deck) return []
@@ -271,7 +281,10 @@ export default function SprintsWeekPage({ deck, err, refresh, actions, range }: 
 
                   {open && (
                     <div className="flex flex-col gap-2 pb-4" style={{ marginLeft: 198 }}>
-                      {(spans[b.id] ?? []).length === 0 && <span className="text-10 font-mono text-tertiary italic">{t('Loading tasks…')}</span>}
+                      {(spans[b.id] ?? []).length === 0 && <span className="text-10 font-mono text-tertiary italic">{
+                        spanState[b.project] === 'failed' ? t('Could not read the tasks.')
+                          : spanState[b.project] === 'read' ? t('No tasks yet.') : t('Loading tasks…')
+                      }</span>}
                       {(spans[b.id] ?? []).slice(0, 14).map((task) => {
                         // Local midnights, as the window's days are.
                         const a = Date.parse(`${task.joined}T00:00:00`), z = task.done ? Date.parse(`${task.done}T00:00:00`) : win.end
