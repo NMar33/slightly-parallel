@@ -43,7 +43,7 @@ NOW_COLUMNS: tuple[str, ...] = (
 )
 #: The title the server gives, at most: an agent task's own limit.
 TITLE_CHARS = 80
-#: The verbs an agent-written #now card carries in its history (tasks_extra.tasks_create).
+#: The verbs an agent-written #now card carries in its history (tasklib.create_task).
 WRITTEN_FIELDS = ("started", "filed")
 
 log = logging.getLogger("sp.now")
@@ -175,11 +175,11 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
 
 def _write_card(store: ViewStore, tag: dict) -> str:
     """The card the agent would have written; "" when the lane is not on the board."""
-    from fastapi import HTTPException, Response
+    from fastapi import HTTPException
 
     from .csvio import rewrite_rows
     from .entities import ENTITIES
-    from .routers.tasks_extra import _lane_for, tasks_create
+    from .tasklib import _lane_for, create_task
     from .taskevents import append_events
 
     project, agent = str(tag["project"] or ""), str(tag["agent_id"] or "")
@@ -198,7 +198,7 @@ def _write_card(store: ViewStore, tag: dict) -> str:
         body["lane"] = body["assignee"] = lane
     if column == "doing":
         body["today_on"] = at.date().isoformat()
-    out = tasks_create(Response(), body, store)
+    out = create_task(store, body)
     task_id = str((out.get("metadata") or {}).get("id") or "")
     if not task_id:
         return ""

@@ -22,6 +22,7 @@ import json
 from typing import Any
 
 from .db import ViewStore
+from .viewrows import attach_agent
 
 
 def thread(store: ViewStore, task_id: str, mentions: list[dict]) -> dict[str, Any]:
@@ -88,7 +89,6 @@ def thread(store: ViewStore, task_id: str, mentions: list[dict]) -> dict[str, An
                 "said": t.user_summary or "", "reply": t.agent_summary or "",
             })
     if any(r["agent"] is None for r in out):
-        from .routers.deps import attach_agent
         missing = [r for r in out if r["agent"] is None]
         attach_agent(store, missing)
     return {"turns": out, "done_turns": added["done"], "next_turns": added["next"],

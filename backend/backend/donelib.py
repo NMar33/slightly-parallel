@@ -190,7 +190,7 @@ def _row(rid: str, tid: str, tag: dict, turn: int, result: str, status: str, sta
 
 def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str, dict[str, str]]) -> None:
     """Every task to done, each change in its history as the operator's."""
-    from .routers.tasks_extra import after_status_change
+    from .tasklib import after_status_change
     from .taskevents import append_events as _append_events
 
     ent = ENTITIES["task"]

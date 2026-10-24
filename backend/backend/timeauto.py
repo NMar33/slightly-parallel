@@ -218,7 +218,7 @@ class AutoTimer:
     def _open(self, project: str, top: int, task_id: str, start: datetime) -> None:
         from .date_utils import today_yymm_dd
         from .entities import ENTITIES
-        from .routers.lenses import create_entity
+        from .entitylib import create_entity
         payload = {
             "created_date": today_yymm_dd(), "created_time": start.strftime("%H:%M"),
             "project": project, "agent_id": "operator",
@@ -231,7 +231,7 @@ class AutoTimer:
         self.spans[project] = Span(str(made["metadata"]["id"]), project, top, task_id, _iso(start))
 
     def _close(self, project: str, end: datetime) -> None:
-        from .routers.time_tracking import _delete, _patch
+        from .timelib import _delete, _patch
         span = self.spans.pop(project, None)
         if span is None:
             return
@@ -253,7 +253,7 @@ class AutoTimer:
         """After a restart: spans left open close where they were last seen;
         an auto row nobody holds any more is removed (it cannot be timed)."""
         from .entities import ENTITIES
-        from .routers.time_tracking import _delete
+        from .timelib import _delete
         with self._lock:
             for project, span in list(self.spans.items()):
                 self._close(project, _parse(span.last) or datetime.now())
@@ -285,7 +285,7 @@ class AutoTimer:
                 self._save()
 
     def _away(self, now: datetime, cfg: dict[str, Any], idle_sec: float | None) -> None:
-        from .routers.time_tracking import _patch, time_resume_row
+        from .timelib import _patch, time_resume_row
         if not cfg.get("time.idle_pause", True) or idle_sec is None:
             return
         limit = int(cfg.get("time.idle_minutes") or 10) * 60

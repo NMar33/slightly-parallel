@@ -155,20 +155,20 @@ def integration(project: str, path: str, agent_id: str = "") -> list[dict[str, A
     """The folder's own files: the contract block, the hooks, the tools wired."""
     if not path:
         return []
-    from .routers import setup
+    from . import folderstate
     out = []
-    status = setup._integration_status(path)
+    status = folderstate.integration_status(path)
     if status == "fresh":
         out.append(finding("contract", "setup", OK, "The contract block in AGENTS.md is current"))
     else:
         out.append(finding("contract:not_current", "setup", CONCERN, f"The contract block in AGENTS.md is {status}",
                            f"{project}: AGENTS.md", "Setup › Re-integrate this folder"))
-    missing = setup._missing_hook_scripts(path)
+    missing = folderstate.missing_hook_scripts(path)
     if missing:
         out.append(finding("hooks:script_missing", "setup", CONCERN, "A hook points to a script that is gone",
                            f"{len(missing)} missing, e.g. {Path(missing[0]).name}",
                            "the app folder moved: Setup › Re-integrate"))
-    elif any((tools := setup._tools_wired(path)).values()):
+    elif any((tools := folderstate.tools_wired(path)).values()):
         wired = [t for t, on in tools.items() if on]
         mine = TOOL_OF.get(agent_id.split("-", 1)[0]) if agent_id else None
         if mine and not tools.get(mine):

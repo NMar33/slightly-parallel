@@ -784,7 +784,7 @@ def _trial(backup_root: Path, name: str) -> dict[str, Any]:
 
     from .db import ViewStore
     from .entities import ENTITIES
-    from .routers.doctor import doctor
+    from .doctorlib import check as doctor_check
 
     started = time.time()
     out = verify(backup_root, name)
@@ -809,7 +809,7 @@ def _trial(backup_root: Path, name: str) -> dict[str, Any]:
                 store = ViewStore(root)
                 for e in store.load_errors:
                     problems.append(f"{Path(e.get('file', '')).name} does not load: {e.get('error', '')}")
-                report = doctor(store=store)
+                report = doctor_check(store)
                 for issue in report.get("issues", []):
                     if issue.get("severity") == "error":
                         problems.append(f"data check: {issue.get('file', '')} — {issue.get('detail', '')}")

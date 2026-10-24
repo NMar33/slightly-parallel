@@ -578,15 +578,14 @@ def test_all_rules_sync_keeps_a_set_recorded_meanwhile(client: TestClient, tmp_p
 @pytest.mark.parametrize("text", ['{"hooks": null}', '{"hooks": []}', '{"hooks": {"Stop": {}}}',
                                   '{"hooks": {"Stop": [{"hooks": null}]}}'])
 def test_hook_settings_of_another_shape(text: str) -> None:
-    from fastapi import HTTPException
-
     from backend import integration_text
 
+    # Refused in words (a ValueError the server answers as 422), never a crash.
     try:
         new, action = integration_text._upsert_hooks(text, "python3 claude-code-capture.py")
         assert "claude-code-capture.py" in new
-    except HTTPException as exc:
-        assert exc.status_code == 422
+    except ValueError as exc:
+        assert "settings.local.json" in str(exc)
     assert integration_text._remove_hooks(text)[1] in ("unchanged", "updated")
 
 

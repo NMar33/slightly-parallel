@@ -14,6 +14,7 @@ import logging
 import duckdb
 
 from .db import ViewStore
+from .viewrows import rows_or_empty
 
 # (view, label): the entries an agent can post during a run. Everything the
 # contract lets an agent write belongs here — a kind left out simply never
@@ -84,7 +85,6 @@ def task_mentions(store: ViewStore) -> dict[str, int]:
     cached = store._mentions_cache
     if cached is not None and cached[0] == version:
         return cached[1]
-    from .routers.deps import rows_or_empty
     rows = rows_or_empty(
         store, "SELECT session_id, count(DISTINCT task_id) AS n FROM task_mentions GROUP BY session_id"
     )
@@ -107,7 +107,6 @@ def marks(store: ViewStore) -> dict[str, dict[str, int]]:
     cached = store._marks_cache
     if cached is not None and cached[0] == version:
         return cached[1]
-    from .routers.deps import rows_or_empty
     out: dict[str, dict[str, int]] = {}
     # A ledger with no file yet is empty; any other failure is a real one.
     for r in rows_or_empty(store, "SELECT session_id, count(*) AS n FROM prompt_marks GROUP BY session_id"):

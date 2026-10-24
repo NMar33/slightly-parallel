@@ -345,3 +345,19 @@ def test_the_written_hook_command_runs_and_answers_even_when_its_script_is_gone(
                           input=json.dumps({"hook_event_name": "beforeSubmitPrompt", "prompt": "x",
                                             "conversation_id": "c"}), capture_output=True, text=True)
     assert proc.returncode == 0 and json.loads(proc.stdout) == {"continue": True}
+
+
+def test_a_claude_settings_file_that_is_not_json_is_refused_in_words(env) -> None:
+    """integration_text's refusals reach the operator as 422 with their sentence."""
+    client, _root, project_dir = env
+    (project_dir / ".claude").mkdir()
+    (project_dir / ".claude" / "settings.local.json").write_text("{not json", encoding="utf-8")
+    r = client.post("/api/setup/integrate", json={"project_code": "my-app", "project_dir": str(project_dir), "write_hooks": True})
+    assert r.status_code == 422 and r.json()["detail"] == ".claude/settings.local.json exists but is not valid JSON"
+    (project_dir / ".claude" / "settings.local.json").write_text(json.dumps({"hooks": []}), encoding="utf-8")
+    r = client.post("/api/setup/integrate", json={"project_code": "my-app", "project_dir": str(project_dir), "write_hooks": True})
+    assert r.status_code == 422 and r.json()["detail"] == ".claude/settings.local.json: `hooks` is not an object"
+    (project_dir / ".claude" / "settings.local.json").unlink()
+    (project_dir / ".mcp.json").write_text("[1, 2]", encoding="utf-8")
+    r = client.post("/api/setup/integrate", json={"project_code": "my-app", "project_dir": str(project_dir), "write_hooks": True})
+    assert r.status_code == 422 and "not a JSON object" in r.json()["detail"]

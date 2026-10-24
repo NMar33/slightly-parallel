@@ -363,6 +363,15 @@ def as_local(value: Union[str, datetime, None]) -> Optional[datetime]:
     return d.astimezone().replace(tzinfo=None) if d.tzinfo is not None else d
 
 
+def iso_moment(date_yymm: object, hhmm: object) -> str:
+    """'2608-19' + '02:47' → '2026-08-19T02:47:00'. '' when the day is not YYMM-DD."""
+    d = str(date_yymm or "")
+    t = str(hhmm or "00:00")
+    if len(d) == 7 and d[4] == "-":
+        return f"20{d[:2]}-{d[2:4]}-{d[5:7]}T{t if len(t) == 5 else '00:00'}:00"
+    return ""
+
+
 def now_iso() -> str:
     """This moment, local, to the second: ``2026-09-27T14:02:05`` — how every
     ledger stamps what it writes."""

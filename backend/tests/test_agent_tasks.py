@@ -266,3 +266,16 @@ def test_comments_go_after_the_operators_text_which_stays_as_written(tmp_path: P
     assert refused.status_code == 422 and "comment" in refused.json()["detail"]
     assert up({"comment": "  "}).status_code == 422
     c.__exit__(None, None, None)
+
+
+def test_the_same_task_twice_is_one_task_answered_200(client: TestClient) -> None:
+    """tasklib.create_task: a repeat finds the task (existing, 200), for the
+    board and for an agent's /task alike."""
+    board = {"created_date": "2609-01", "created_time": "09:00", "project": "alpha",
+             "agent_id": "operator", "title": "Same", "status": "todo"}
+    first = client.post("/api/tasks", json=board)
+    again = client.post("/api/tasks", json=board)
+    assert (first.status_code, again.status_code) == (201, 200)
+    assert again.json()["existing"] is True and again.json()["metadata"]["id"] == first.json()["metadata"]["id"]
+    mine = _post(client)
+    assert _post(client, expect=200)["metadata"]["id"] == mine["metadata"]["id"]

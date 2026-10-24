@@ -302,7 +302,7 @@ def apply(store: ViewStore, agent_id: str) -> dict[str, Any]:
 
 def _archive(store: ViewStore, kind: str, eid: str, actor: str) -> None:
     if kind == "task":
-        from .routers.tasks_extra import _set_archived
+        from .tasklib import _set_archived
         _set_archived(store, eid, today_yymm_dd(), actor)
         return
     ent = ENTITIES[kind]
@@ -325,7 +325,7 @@ def restore(store: ViewStore, eid: str, actor: str) -> dict[str, Any]:
     if not kind:
         raise UndoRefused(f"{eid}: not an entry #undo archives")
     if kind == "task":
-        from .routers.tasks_extra import _set_archived
+        from .tasklib import _set_archived
         _set_archived(store, eid, "", actor)
         return {"restored": eid, "kind": kind}
     before = ""

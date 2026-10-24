@@ -23,31 +23,22 @@ def checked_image(item: dict, label: str) -> tuple[str, bytes]:
 
     The evidence and story doors ran the same four checks with wordings
     that had drifted apart; this is the one copy. ``label`` names the slot
-    the caller is on ("item 2", "image 1") and prefixes every refusal.
+    the caller is on ("item 2", "image 1") and prefixes every refusal: a
+    ValueError, which the server answers as 422 with its sentence.
     """
-    from fastapi import HTTPException
-
     from . import limits
 
     ext = str(item.get("ext") or "png").lower().lstrip(".")
     if ext not in IMAGE_EXTS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"{label}: ext must be one of {', '.join(sorted(IMAGE_EXTS))}",
-        )
+        raise ValueError(f"{label}: ext must be one of {', '.join(sorted(IMAGE_EXTS))}")
     try:
         raw = base64.b64decode(str(item.get("data_base64") or ""), validate=True)
     except (binascii.Error, ValueError):
-        raise HTTPException(
-            status_code=422, detail=f"{label}: data_base64 is not valid base64"
-        )
+        raise ValueError(f"{label}: data_base64 is not valid base64")
     if not raw:
-        raise HTTPException(status_code=422, detail=f"{label}: image is empty")
+        raise ValueError(f"{label}: image is empty")
     if len(raw) > limits.MAX_IMAGE_BYTES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"{label}: image is over {limits.MAX_IMAGE_BYTES // (1024 * 1024)}MB",
-        )
+        raise ValueError(f"{label}: image is over {limits.MAX_IMAGE_BYTES // (1024 * 1024)}MB")
     return ext, raw
 
 

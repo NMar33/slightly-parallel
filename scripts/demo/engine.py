@@ -119,7 +119,7 @@ _REAL_TIME_MODULES = {
     "backend.db", "backend.file_safety", "backend.idle", "backend.logbook",
     "backend.searchlib", "backend.termlib", "backend.sysmon", "backend.capturewatch",
     "backend.projectfacts", "backend.repomap", "backend.routers.terminal",
-    "backend.routers.monitor", "backend.routers.doctor", "backend.routers.logs",
+    "backend.routers.monitor", "backend.routers.doctor", "backend.doctorlib", "backend.routers.logs",
     "backend.watcher", "backend.analytics", "backend.statslib",
 }
 

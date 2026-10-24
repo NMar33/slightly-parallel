@@ -9,15 +9,23 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-from fastapi import HTTPException, Request, Response
+from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from .. import frontmatter
-from ..csvio import rewrite_rows
 from ..db import ViewStore
 from ..docs_md import parse_sections, resolve_under
 from ..entities import DONE_STATUSES
+# Store readers the libraries use too, kept outside the routers (a library
+# never imports a router); re-exported here for the routers that read them.
+from ..date_utils import iso_moment  # noqa: F401
+from ..viewrows import AGENT_ORIGIN_FIELDS, agents_by_id, attach_agent, clean, rows_or_empty  # noqa: F401
+from ..actors import (  # noqa: F401
+    AGENT_REFUSED, HOUSE_ACTORS, identity_of, is_agent, operator_only, refuse_agent, written_by_agent,
+)
+from ..answers import create_answer, mint_id, not_found  # noqa: F401
+from ..rowedit import rewrite_one  # noqa: F401
 
 log = logging.getLogger("sp.readers")
 
@@ -25,45 +33,6 @@ log = logging.getLogger("sp.readers")
 DONE_SQL = "(" + ", ".join(f"'{s}'" for s in DONE_STATUSES) + ")"
 
 M = TypeVar("M", bound=BaseModel)
-
-# Actors that are the board itself, not an agent: the operator in the UI
-# and the server's own hands (stacks, resurfacing). Everything else is an
-# agent id, and a few writes are the operator's alone.
-HOUSE_ACTORS: tuple[str, ...] = ("", "operator", "stack", "resurface")
-
-
-def is_agent(actor: Any) -> bool:
-    return str(actor or "") not in HOUSE_ACTORS
-
-
-def identity_of(body: Any) -> str:
-    """Who is writing. The one reading, for every gate and the MCP check.
-
-    A body can carry ``actor`` and ``agent_id``. Routers used to read them in
-    two different orders, so ``{actor: "operator", agent_id: "cc-x"}`` was an
-    operator to one gate and an agent to the next — and to the check that
-    keeps agents on the MCP path it was an operator, which let a raw HTTP
-    write through. If either field names an agent, the writer is that agent.
-    """
-    if not isinstance(body, dict):
-        return ""
-    actor = str(body.get("actor") or "").strip()
-    agent = str(body.get("agent_id") or "").strip()
-    for who in (actor, agent):
-        if who and is_agent(who):
-            return who
-    return actor or agent
-
-
-def written_by_agent(body: Any) -> bool:
-    return is_agent(identity_of(body))
-
-
-# The one status an agent gets when a write is not its to make. It is 422
-# and not 403 on purpose: the frontend and the MCP translator already branch
-# on 422 for every refusal, and a published code is not changed under them.
-AGENT_REFUSED = 422
-
 
 # The ledgers keep a day as YYMM-DD and a stamp as ISO. These three are how
 # a router reads either; each had four or five private copies.
@@ -81,15 +50,6 @@ def day_date(value: Any) -> date | None:
         return date.fromisoformat(ymd(str(value))[:10])
     except ValueError:
         return None
-
-
-def iso_moment(date_yymm: Any, hhmm: Any) -> str:
-    """'2608-19' + '02:47' → '2026-08-19T02:47:00'. '' when the day is not YYMM-DD."""
-    d = str(date_yymm or "")
-    t = str(hhmm or "00:00")
-    if len(d) == 7 and d[4] == "-":
-        return f"20{d[:2]}-{d[2:4]}-{d[5:7]}T{t if len(t) == 5 else '00:00'}:00"
-    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -145,70 +105,6 @@ def foreign_origin(headers: Any, settings: Any) -> bool:
     return str(headers.get("sec-fetch-site", "") or "").strip().lower() == "cross-site"
 
 
-def mint_id(prefix: str, *parts: str) -> str:
-    """A stable short id from its parts: ``prefix`` + 8 hex of their hash."""
-    import hashlib
-    return prefix + hashlib.sha256("|".join(parts).encode()).hexdigest()[:8]
-
-
-def not_found(kind: str, item_id: str) -> HTTPException:
-    """The one wording for a missing thing: ``<kind> not found: <id>``."""
-    return HTTPException(status_code=404, detail=f"{kind} not found: {item_id}")
-
-
-def refuse_agent(reason: str, instead: str = "") -> None:
-    """Raise the one refusal an agent gets — one status, one ``detail``.
-
-    Five code paths used to raise this by hand (``operator_only`` here,
-    ``lenses.refuse_agent_write``, ``skills._operator_only`` and a dozen
-    inline raises), each spelling the status and the key itself. They all
-    come through here now, so the shape an agent reads is one shape and a
-    change to it is one edit. ``reason`` is the sentence; ``instead`` is
-    what the agent does about it, appended after an em dash.
-    """
-    tail = f" — {instead}" if instead else ""
-    raise HTTPException(status_code=AGENT_REFUSED, detail=f"{reason}{tail}")
-
-
-def operator_only(body: Any, what: str, instead: str = "") -> None:
-    """Refuse an agent. ``what`` is the act; ``instead`` is what an agent does."""
-    if written_by_agent(body):
-        refuse_agent(f"{what} is the operator's", instead)
-
-
-def create_answer(
-    payload: dict[str, Any],
-    response: Any = None,
-    *,
-    existing: bool = False,
-    warnings: list[str] | None = None,
-) -> dict[str, Any]:
-    """The one shape of an answer to a create.
-
-    Two keys every create carries, whatever it wrapped the new thing in:
-
-    * ``existing`` — true when the post found the thing already written and
-      wrote nothing. A repeat also drops 201 to 200, so an agent retrying
-      after a timeout can tell from the status alone whether it just made a
-      duplicate. Four handlers did the downgrade and six detected the repeat
-      and answered 201 anyway.
-    * ``warnings`` — always a list, empty when there is nothing to say. It
-      used to be present only when non-empty, so a caller could not tell
-      "no warnings" from "this route has none", and had to test for the key
-      before reading it.
-
-    The wrapper word around the created thing is left alone: pages read
-    ``note``, ``link``, ``board``, ``metadata`` by name, and renaming a key
-    a page reads is a separate, larger move.
-    """
-    out = dict(payload)
-    out["existing"] = existing
-    out["warnings"] = list(warnings or [])
-    if existing and response is not None:
-        response.status_code = 200
-    return out
-
-
 # A project code is a folder name under ``projects/``: letters, digits and
 # a few punctuation marks, never a path. The same shape ``artifactlib``
 # has always enforced — the other three guards checked only ``is_dir()``,
@@ -261,7 +157,7 @@ def get_store(request: Request) -> ViewStore:
     store = request.app.state.store
     # Scheduled task resurfacing rides the request path (throttled inside) —
     # no cron, no browser dependency; the lazy import avoids a cycle.
-    from .tasks_extra import maybe_resurface
+    from ..tasklib import maybe_resurface
     maybe_resurface(store)
     return store
 
@@ -322,57 +218,11 @@ def json_response(payload: Any, etag: str) -> Response:
     return resp
 
 
-def clean(row: dict[str, Any]) -> dict[str, Any]:
-    """Drop NULLs so Pydantic model defaults win for optional fields."""
-    return {k: v for k, v in row.items() if v is not None}
-
-
 def clean_agent(a: dict[str, Any]) -> dict[str, Any]:
     """Strip private ``_*`` keys and explicit nulls before model validation."""
     return {
         k: v for k, v in a.items() if not k.startswith("_") and v is not None
     }
-
-
-# What a row about an agent's work needs to carry so a reader can name the
-# agent and pick its chat back up: the fields the one labelling rule reads
-# (frontend utils/agentLabel), and the origin the capture hook recorded —
-# tool, folder and full session id, which a resume command is built from.
-# The label is not computed here: one rule, and it lives where the name is
-# drawn. A chat captured before the hook recorded origin carries empty
-# strings, which is how a reader knows to offer no resume.
-AGENT_ORIGIN_FIELDS: tuple[str, ...] = (
-    "agent_id", "agent_name", "chat_title", "created_date",
-    "tool", "cwd", "session_ref", "agent_group",
-)
-
-
-def agents_by_id(store: ViewStore) -> dict[str, dict[str, str]]:
-    """One pass over the agents the store already parsed."""
-    return {
-        str(a.get("agent_id") or ""): {
-            k: str(a.get(k) or "") for k in AGENT_ORIGIN_FIELDS
-        }
-        for a in store.agents()
-    }
-
-
-def attach_agent(store: ViewStore, rows: list[dict[str, Any]], field: str = "agent_id") -> None:
-    """Put the agent behind each row under ``agent`` (None when it is gone)."""
-    by_id = agents_by_id(store)
-    for r in rows:
-        r["agent"] = by_id.get(str(r.get(field) or ""))
-
-
-def rows_or_empty(store: ViewStore, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
-    """A query against a view that may not exist yet (no CSV behind it). A
-    missing view is an empty ledger; any other failure is a real one."""
-    try:
-        return store.query(sql, params)
-    except Exception as exc:  # noqa: BLE001
-        if "does not exist" in str(exc) or "Catalog" in type(exc).__name__:
-            return []
-        raise
 
 
 # path and kind → (what the file was when read, what was made of it).
@@ -439,35 +289,6 @@ def task_brief(store: ViewStore, task_id: str) -> dict[str, Any] | None:
         "SELECT id, title, status, project, projects, md_ref FROM tasks_mutual WHERE id = ?",
         (task_id,),
     )
-
-
-def rewrite_one(
-    store: ViewStore, csv_name: str, columns: tuple[str, ...], row_id: str,
-    change: Callable[[list[dict[str, str]], dict[str, str]], bool], what: str,
-) -> dict[str, str]:
-    """Change one row of a ledger by id, under its lock, and rebuild.
-
-    ``change(rows, row)`` edits the row (or the list, to delete it) and
-    says whether anything changed. A missing row is the one 404
-    (``not_found``). The shape was written out in every router that edits
-    a ledger of its own.
-    """
-    csv_path = store.data_root / csv_name
-    hit: list[dict[str, str]] = []
-
-    def mutate(rows: list[dict[str, str]]) -> bool:
-        for r in rows:
-            if r.get("id") == row_id:
-                hit.append(r)
-                return change(rows, r)
-        return False
-
-    if csv_path.exists():
-        rewrite_rows(csv_path, columns, mutate)
-    if not hit:
-        raise not_found(what, row_id)
-    store.rebuild()
-    return hit[0]
 
 
 def scalar(store: ViewStore, sql: str, params: tuple = ()) -> Any:

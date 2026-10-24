@@ -246,7 +246,7 @@ def source(store: Any, agent_id: str, created_date: str, created_time: str, kind
     project's entries, so a new user sees what to type to get the same."""
     from datetime import datetime, timedelta
 
-    from .routers.deps import iso_moment
+    from .date_utils import iso_moment
     from .sessions import chat_path, parse_turns
 
     moment = iso_moment(created_date, created_time)

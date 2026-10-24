@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 import re
 
-from fastapi import HTTPException
-
+# A file of the wrong shape is refused with ValueError and its sentence; the
+# server answers it as 422 with that sentence (server.py _bad_value).
 BEGIN_MARK = "<!-- slightly-parallel:begin -->"
 END_MARK = "<!-- slightly-parallel:end -->"
 BRIDGE_LINE = "@AGENTS.md"
@@ -71,24 +71,21 @@ def _upsert_hooks(
         if not isinstance(settings, dict):
             raise ValueError
     except (json.JSONDecodeError, ValueError):
-        raise HTTPException(
-            status_code=422,
-            detail=f"{label} exists but is not valid JSON",
-        )
+        raise ValueError(f"{label} exists but is not valid JSON")
     # Valid JSON of another shape is refused in words, not with a 500:
     # `"hooks": null` and `"hooks": []` are both seen in the wild.
     if settings.get("hooks") is None:
         settings["hooks"] = {}
     hooks = settings["hooks"]
     if not isinstance(hooks, dict):
-        raise HTTPException(status_code=422, detail=f"{label}: `hooks` is not an object")
+        raise ValueError(f"{label}: `hooks` is not an object")
     changed = False
     for event in ("UserPromptSubmit", "Stop"):
         if hooks.get(event) is None:
             hooks[event] = []
         entries = hooks[event]
         if not isinstance(entries, list):
-            raise HTTPException(status_code=422, detail=f"{label}: `hooks.{event}` is not a list")
+            raise ValueError(f"{label}: `hooks.{event}` is not a list")
         ours = [e for e in entries if isinstance(e, dict) and _is_sp_hook(e)]
         if ours:
             for e in ours:
@@ -153,7 +150,7 @@ def _upsert_cursor_hooks(existing_text: str, command: str) -> tuple[str, str]:
         if not isinstance(settings, dict):
             raise ValueError
     except (json.JSONDecodeError, ValueError):
-        raise HTTPException(status_code=422, detail=f"{label} exists but is not valid JSON")
+        raise ValueError(f"{label} exists but is not valid JSON")
     changed = False
     if settings.get("version") is None:
         settings["version"] = 1
@@ -162,13 +159,13 @@ def _upsert_cursor_hooks(existing_text: str, command: str) -> tuple[str, str]:
         settings["hooks"] = {}
     hooks = settings["hooks"]
     if not isinstance(hooks, dict):
-        raise HTTPException(status_code=422, detail=f"{label}: `hooks` is not an object")
+        raise ValueError(f"{label}: `hooks` is not an object")
     for event in CURSOR_EVENTS:
         if hooks.get(event) is None:
             hooks[event] = []
         entries = hooks[event]
         if not isinstance(entries, list):
-            raise HTTPException(status_code=422, detail=f"{label}: `hooks.{event}` is not a list")
+            raise ValueError(f"{label}: `hooks.{event}` is not a list")
         ours = [e for e in entries if _is_sp_cursor_hook(e)]
         if ours:
             for e in ours:
@@ -264,9 +261,9 @@ def _upsert_json_key(existing_text: str, top: str, name: str, entry: dict) -> tu
     try:
         data = json.loads(existing_text) if existing_text.strip() else {}
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=422, detail=f"not valid JSON: {exc}")
+        raise ValueError(f"not valid JSON: {exc}")
     if not isinstance(data, dict):
-        raise HTTPException(status_code=422, detail="the file is not a JSON object")
+        raise ValueError("the file is not a JSON object")
     servers = data.get(top)
     if not isinstance(servers, dict):
         servers = {}

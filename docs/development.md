@@ -8,6 +8,13 @@ cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev
 .venv/bin/python -m pytest
 ```
 
+The backend has two layers. `backend/backend/routers/` answer HTTP: they
+read the request, call the libraries and shape the answer. Every other
+module in `backend/backend` is a library: it does the work and never imports
+a router (`tests/test_layers.py` fails the run when one does). A router's
+helper that a library needs moves into a library, and the router imports it
+back under its old name.
+
 `backend/requirements.txt` holds the ranges, `backend/requirements.lock` the
 exact versions the tests ran on; `sp.py` installs from the lock, once,
 and again when the file changes. To refresh the lock — after a change to

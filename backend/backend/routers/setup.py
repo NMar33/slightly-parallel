@@ -28,7 +28,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from .. import example
 from ..config import Settings
-from ..contract_parts import CONTRACT_FILE
 from ..csvio import append_if_absent, read_rows, rewrite_rows
 from ..project_admin import (
     delete_project_data, known_projects, remove_block, remove_bridge, strip_file,
@@ -39,11 +38,19 @@ from ..file_safety import write_in_place
 from ..hookshared import codex_home
 from ..integration_text import (
     BEGIN_MARK, BRIDGE_LINE, END_MARK, MCP_SERVER, _CODEX_MCP_RE, _TOML_TABLE_RE, _drop_json_key,
-    _hook_commands, _insert_top_level, _is_sp_hook, _marks_in, _ours, _remove_cursor_hooks,
+    _insert_top_level, _marks_in, _ours, _remove_cursor_hooks,
     _remove_hooks, _upsert_block, _upsert_bridge, _upsert_codex_mcp, _upsert_cursor_hooks,
     _upsert_hooks, _upsert_json_key,
 )
 from .deps import get_store
+# What Setup left in a project folder, read by this page and by #sp alike
+# (folderstate.py: a library, so the checkup imports no router).
+from ..folderstate import (  # noqa: E402,F401
+    HOOK_FILES as _HOOK_FILES, OPENCODE_PLUGIN as _OPENCODE_PLUGIN, TOOLS, contract_path,
+    hooks_file_has as _hooks_file_has,
+    hooks_installed as _hooks_installed, integration_status as _integration_status,
+    missing_hook_scripts as _missing_hook_scripts, tools_wired as _tools_wired,
+)
 
 router = APIRouter()
 
@@ -55,10 +62,6 @@ _PROJECT_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 NOTES_MAX = 300
 
 _INTEGRATIONS_COLUMNS = ("project", "path", "created_date")
-
-
-def contract_path() -> Path:
-    return _REPO_ROOT / CONTRACT_FILE
 
 
 _AGENTS_BLOCK_TEMPLATE = _REPO_ROOT / "templates" / "agents-block.md"
@@ -87,7 +90,6 @@ def _compose_block(
 # ---------------------------------------------------------------------------
 
 _OPENCODE_TEMPLATE = _REPO_ROOT / "scripts" / "hooks" / "slightly-parallel-opencode.js"
-_OPENCODE_PLUGIN = "slightly-parallel.js"
 _CAPTURE_CLI = _REPO_ROOT / "scripts" / "hooks" / "capture-cli.py"
 
 
@@ -189,34 +191,6 @@ def _cursor_hook_command(project_code: str, data_root: Path) -> str:
     )
 
 
-_HOOK_SCRIPT_RE = re.compile(r'"([^"]*(?:claude-code-capture|cursor-capture)\.py)"')
-_HOOK_FILES = (
-    Path(".claude") / "settings.local.json", Path(".codex") / "hooks.json", Path(".cursor") / "hooks.json",
-)
-
-
-def _missing_hook_scripts(path_raw: str) -> list[str]:
-    """The capture scripts our installed hooks (Claude Code, Codex and
-    Cursor) name that no longer exist: the repository was moved, renamed
-    or deleted after Setup wrote the hook. Such a hook records nothing."""
-    missing: list[str] = []
-    for rel in _HOOK_FILES:
-        try:
-            settings = json.loads((Path(path_raw) / rel).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        hooks = settings.get("hooks") if isinstance(settings, dict) else None
-        if not isinstance(hooks, dict):
-            continue
-        for entries in hooks.values():
-            for e in entries if isinstance(entries, list) else []:
-                for command in _hook_commands(e):
-                    m = _HOOK_SCRIPT_RE.search(command)
-                    if m and m.group(1) not in missing and not Path(m.group(1)).is_file():
-                        missing.append(m.group(1))
-    return missing
-
-
 def _write_or_remove(path: Path, text: str) -> None:
     """Write the file, or remove it when all that is left is an empty object."""
     try:
@@ -264,50 +238,6 @@ def _api_url(request: Request) -> str:
     return f"http://{settings.host}:{settings.port}"
 
 
-def _hooks_installed(path_raw: str) -> bool:
-    """Are our Claude Code capture hooks present in this folder's local settings?"""
-    hooks_path = Path(path_raw) / ".claude" / "settings.local.json"
-    try:
-        settings = json.loads(hooks_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    hooks = settings.get("hooks") if isinstance(settings, dict) else None
-    if not isinstance(hooks, dict):
-        return False
-    return all(
-        any(_is_sp_hook(e) for e in hooks.get(ev, []) if isinstance(e, dict))
-        for ev in ("UserPromptSubmit", "Stop")
-    )
-
-
-def _hooks_file_has(path_raw: str, rel: str, script: str) -> bool:
-    """Does this folder's hooks file (``rel``) hold an entry that runs ``script``?"""
-    try:
-        data = json.loads((Path(path_raw) / rel).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    hooks = data.get("hooks") if isinstance(data, dict) else None
-    if not isinstance(hooks, dict):
-        return False
-    return any(script in c for entries in hooks.values() if isinstance(entries, list)
-               for e in entries for c in _hook_commands(e))
-
-
-#: The tools Setup can wire a project to, in the order the page lists them.
-TOOLS = ("claude", "codex", "opencode", "cursor")
-
-
-def _tools_wired(path_raw: str, codex_global: bool = False) -> dict[str, bool]:
-    """Which tools record their chats in this folder. Codex counts as wired
-    by the global notify hook too, which serves every integrated project."""
-    return {
-        "claude": _hooks_installed(path_raw),
-        "codex": codex_global or _hooks_file_has(path_raw, ".codex/hooks.json", "claude-code-capture.py"),
-        "opencode": (Path(path_raw) / ".opencode" / "plugin" / _OPENCODE_PLUGIN).is_file(),
-        "cursor": _hooks_file_has(path_raw, ".cursor/hooks.json", "cursor-capture.py"),
-    }
-
-
 def tools_installed(home: Path | None = None) -> dict[str, bool]:
     """Which tools this computer has: the command on PATH, or the folder the
     tool keeps its settings in (an app started from a menu leaves that too)."""
@@ -338,18 +268,6 @@ def _is_git_repo(path_raw: str) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return proc.returncode == 0
-
-
-def _integration_status(path_raw: str) -> str:
-    """fresh | stale | missing — is the recorded AGENTS.md block current?"""
-    agents = Path(path_raw) / "AGENTS.md"
-    try:
-        text = agents.read_text(encoding="utf-8")
-    except OSError:
-        return "missing"
-    if _marks_in(text) is None:
-        return "missing"
-    return "fresh" if BEGIN_MARK in text and str(contract_path()) in text else "stale"
 
 
 @router.get("/api/setup/info")
