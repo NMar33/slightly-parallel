@@ -1058,7 +1058,6 @@
   "Save as version": "Сохранить как версию",
   "Rewrite": "Переписать",
   "Rewrite from this one": "Переписать на основе этой",
-  "Whether the run did what the prompt asked, and how well": "Сделал ли запуск то, о чём просил промпт, и насколько хорошо",
   "Whether anything that worked before stopped working": "Перестало ли работать что-то, что работало раньше",
   "How much you had to step in during the run": "Насколько пришлось вмешиваться во время запуска",
   "unrated": "без оценки",
@@ -1070,7 +1069,7 @@
   "below": "ниже",
   "average": "средне",
   "better": "лучше",
-  "one-shot": "с первого раза",
+  "one-shot": "с одного промпта",
   "some": "немного",
   "serious": "серьёзно",
   "little": "чуть-чуть",
@@ -1388,5 +1387,14 @@
   "Overview always shows. A link to a tab that is off opens the tab the page opens on, and says how to turn it on.": "Обзор показывается всегда. Ссылка на выключенную вкладку открывает вкладку по умолчанию и подсказывает, как её включить.",
   "Slightly Parallel memory": "Память Slightly Parallel",
   "Server": "Сервер",
-  "— could not reconnect: reload the page —": "— не удалось переподключиться: обновите страницу —"
+  "— could not reconnect: reload the page —": "— не удалось переподключиться: обновите страницу —",
+  "How well the prompt worked: failed · partly · done · one-shot": "Насколько сработал промпт: не сделал · частично · сделал · с одного промпта",
+  "failed": "не сделал",
+  "partly": "частично",
+  "Outcome": "Результат",
+  "It didn't do what should be done": "Не сделал то, что должно было быть сделано",
+  "It was done partly: it required a lot of attention or corrections": "Сделано частично: потребовало много внимания или исправлений",
+  "It just did what it should do": "Просто сделал то, что должен был",
+  "The king of prompts: it lets you do a task in one prompt": "Король промптов: позволяет сделать задачу одним промптом",
+  "Lets you assess the quality of the prompt": "Позволяет оценить качество промпта"
 }

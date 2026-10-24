@@ -11,7 +11,7 @@ where py >nul 2>nul && goto :py
 rem "python" may be the Microsoft Store alias, which opens the Store instead
 rem of running anything: hand over only when it really runs Python.
 where python >nul 2>nul && python -c "import sys" >nul 2>nul && goto :python
-echo [sp] ERROR: Python 3.11+ not found - install it from https://www.python.org 1>&2
+echo [sp] ERROR: Python 3.11+ not found - install Python 3.12 from https://www.python.org/downloads/windows/ and run sp again 1>&2
 exit /b 1
 :py
 for %%v in (3.14 3.13 3.12 3.11) do (

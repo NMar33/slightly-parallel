@@ -54,20 +54,9 @@ _lock = threading.Lock()
 
 
 
-def since(store: ViewStore) -> str:
+def since(store: ViewStore) -> str | None:
     """The moment #done became a command here; older tags are left alone."""
-    path = store.data_root / STATE
-    try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("since") or "")
-    except (OSError, ValueError):
-        pass
-    now = now_iso()
-    try:
-        path.write_text(json.dumps({"since": now}) + "\n", encoding="utf-8")
-    except OSError:
-        pass
-    return now
-
+    return nowlib.since_stamp(store.data_root / STATE, "#done")
 
 def rows(store: ViewStore) -> list[dict[str, str]]:
     return read_rows(store.data_root / DONE_CSV)
@@ -85,6 +74,8 @@ def adopt(store: ViewStore) -> list[dict[str, str]]:
 
 def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     start = since(store)
+    if start is None:
+        return []
     tags = store.query(
         "SELECT project, agent_id, session_id, turn, at_ts, excerpt, tasks FROM done_tags "
         "WHERE at_ts >= ? ORDER BY agent_id, turn", (start,))
@@ -93,6 +84,13 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     path = store.data_root / DONE_CSV
     ledger = read_rows(path)
     known = {r.get("id") for r in ledger}
+    # A tag with a row in the ledger is settled, whatever it closed: only the
+    # new ones are worked out, and only their chats are read. Without this
+    # every captured turn read every chat that ever typed #done.
+    settled = {(r.get("agent_id") or "", int(r.get("turn") or 0)) for r in ledger}
+    tags = [t for t in tags if (str(t["agent_id"] or ""), int(t["turn"] or 0)) not in settled]
+    if not tags:
+        return []
     # Every resolved #done is a boundary, whichever task it closed.
     bounds: dict[str, list[int]] = {}
     for r in ledger:
@@ -109,7 +107,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
                 (int(m["turn"]), str(m["task_id"]), str(m["role"] or "")))
     # A task the operator started with #now is named by that message, though
     # the message carries no id: the agent wrote the card in that turn.
-    for agent, turn, tid in _started_with_now(store, {str(t["agent_id"] or "") for t in tags}):
+    for agent, turn, tid in nowlib.card_turns(store, {str(t["agent_id"] or "") for t in tags}, ("started",)):
         if tid in tasks:
             mentions.setdefault(agent, []).append((turn, tid, "user"))
     # The same for a #now card the server wrote because the agent did not.
@@ -171,38 +169,6 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     if added:
         store.rebuild()
     return added
-
-
-def _started_with_now(store: ViewStore, agents: set[str]) -> list[tuple[str, int, str]]:
-    """(agent, turn, task) for each card an agent wrote on the operator's #now:
-    the turn is the one the card was written in, read from its `started` event."""
-    from datetime import datetime
-
-    from .sessions import chat_path, parse_turns
-
-    rows = store.query(
-        "SELECT e.task_id, e.timestamp, t.agent_id FROM task_events_mutual e "
-        "JOIN tasks_mutual t ON t.id = e.task_id WHERE e.field = 'started'")
-    out: list[tuple[str, int, str]] = []
-    turns_of: dict[str, list] = {}
-    for r in rows:
-        agent = str(r["agent_id"] or "")
-        if agent not in agents:
-            continue
-        if agent not in turns_of:
-            path = chat_path(store, agent)
-            try:
-                turns_of[agent] = parse_turns(path) if path else []
-            except OSError:
-                turns_of[agent] = []
-        try:
-            at = datetime.fromisoformat(str(r["timestamp"]))
-        except ValueError:
-            continue
-        before = [t.number for t in turns_of[agent] if t.at.replace(tzinfo=None) <= at]
-        if before:
-            out.append((agent, before[-1], str(r["task_id"])))
-    return out
 
 
 def _iso_minute(day: str, hm: str) -> str:

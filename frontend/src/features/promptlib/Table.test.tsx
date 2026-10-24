@@ -10,7 +10,7 @@ import { PromptsTable } from './Table'
 
 const prompt = {
   id: 'pm_1', created_date: '2609-28', created_time: '10:05', project: 'p', agent_id: 'cc-a', title: 'plan before code',
-  tags: '', status: 'active', source: 'captured', versions_n: 1, marks: {}, preview: 'Before writing code: say what you will change.',
+  tags: '', status: 'active', source: 'captured', versions_n: 1, marks: {}, preview: 'Before writing code: say what you will change.', text: 'Before writing code: say what you will change. ' + 'Then do it. '.repeat(40),
   chars: 46, words: 8, current_rating: null, current_version: 1, made: { commits: 1, files: 1, add: 1, del: 0, tasks: 0 },
   metrics: { uses: 2, reuses: 1, first_used: '2026-09-28T10:05:00', sessions: 2, turns: 4, minutes: 10, projects: ['p'], tasks: [], last_used: '2026-09-29T10:05:00', by_version: { 1: 1 }, by_day: { '2609-28': 1 } },
 }
@@ -31,7 +31,7 @@ describe('PromptsTable keys', () => {
     fireEvent.keyDown(window, { key: 'c', metaKey: true })
     expect(copied).not.toHaveBeenCalled()
     fireEvent.keyDown(window, { key: 'c' })
-    expect(copied).toHaveBeenCalledWith(prompt.preview)
+    expect(copied).toHaveBeenCalledWith(prompt.text)
   })
 
   it('Enter on a focused link or button is left to that control', async () => {

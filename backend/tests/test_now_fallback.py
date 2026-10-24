@@ -106,6 +106,38 @@ def test_the_agent_wrote_it_so_the_server_does_not(env) -> None:
     assert [x["title"] for x in _cards(c)] == ["Build the export"]
 
 
+def test_a_tag_that_needs_no_card_is_looked_at_once(env, monkeypatch) -> None:
+    """The agent wrote the card: later reads do not read its chat again to
+    find that out (they did, on every captured turn)."""
+    from backend import nowlib
+    c, root = env
+    head = [(_at(-20), "#now build the export", "")]
+    _chat(root, head)
+    c.app.state.store.rebuild()
+    c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "10:00", "project": "alpha",
+                               "agent_id": AGENT, "title": "Build the export", "tags": "ag_idea"})
+    _chat(root, [(head[0][0], head[0][1], "done")])
+    c.app.state.store.rebuild()
+    calls: list[set[str]] = []
+    real = nowlib.card_turns
+    monkeypatch.setattr(nowlib, "card_turns", lambda store, agents, *a, **k: calls.append(agents) or real(store, agents, *a, **k))
+    assert nowlib.adopt(c.app.state.store) == [] and len(calls) == 1
+    assert nowlib.adopt(c.app.state.store) == [] and len(calls) == 1
+
+
+def test_a_done_already_applied_reads_no_chat_again(env, monkeypatch) -> None:
+    from backend import donelib, nowlib
+    c, root = env
+    tid = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "09:00", "project": "alpha",
+                                     "agent_id": "operator", "title": "Export", "status": "doing"}).json()["metadata"]["id"]
+    _chat(root, [(_at(-20), f"{tid} build it", "ok"), (_at(-10), "#done", "closed")])
+    c.app.state.store.rebuild()
+    assert [r["result"] for r in donelib.adopt(c.app.state.store)] == ["moved"]
+    calls: list[int] = []
+    monkeypatch.setattr(nowlib, "card_turns", lambda *a, **k: calls.append(1) or [])
+    assert donelib.adopt(c.app.state.store) == [] and calls == []
+
+
 def test_todo_files_it_in_its_column_and_a_late_write_is_pointed_at_it(env) -> None:
     c, root = env
     _chat(root, [(_at(-5), "#now-todo look at the import later", "noted"), (_at(-1), "and?", "")])
@@ -145,3 +177,28 @@ def test_tags_from_before_the_feature_are_history(env) -> None:
 ])
 def test_the_title(message, title) -> None:
     assert title_of(message) == title
+
+
+def test_a_message_that_names_a_task_on_the_board_is_about_that_task(env) -> None:
+    c, root = env
+    tid = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "09:00", "project": "alpha",
+                                     "agent_id": "operator", "title": "Prompts axis", "status": "todo"}).json()["metadata"]["id"]
+    _chat(root, [(_at(-5), f"{tid} · Prompts axis\n#now-todo the axis misleads. let's discuss it", "discussed")])
+    assert [x["id"] for x in _cards(c)] == [tid]
+
+
+def test_the_since_stamp_is_kept_and_a_failed_write_applies_nothing(tmp_path: Path, monkeypatch) -> None:
+    from backend import nowlib
+    path = tmp_path / "now.json"
+    first = nowlib.since_stamp(path, "#now")
+    assert first and json.loads(path.read_text(encoding="utf-8")) == {"since": first}
+    assert nowlib.since_stamp(path, "#now") == first           # kept, not "now" again
+    path.write_text('{"since": "not a time"}', encoding="utf-8")
+    assert nowlib.since_stamp(path, "#now") not in (None, "not a time")
+    path.unlink()
+
+    def refuse(*_a, **_k):
+        raise OSError("read-only")
+    monkeypatch.setattr(nowlib, "atomic_write_json", refuse)
+    # Unkept, the moment would be "now" on every call and pass every tag by.
+    assert nowlib.since_stamp(path, "#now") is None

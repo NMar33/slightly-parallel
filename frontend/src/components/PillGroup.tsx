@@ -15,7 +15,8 @@ export function PillGroup({
   label: string
   value: string
   onChange: (v: string) => void
-  options: Array<[string, string]>
+  /** Value, the word on the button, and an optional tooltip. */
+  options: Array<readonly [string, string, string?]>
   /** A tooltip on the label. */
   hint?: string
   /** The label column's width in px, for rows stacked under each other. */

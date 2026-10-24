@@ -68,8 +68,8 @@ def _rec(kind: str, at: str, content) -> dict:
     return {"type": kind, "timestamp": at, "message": {"content": content}}
 
 
-def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> None:
-    folder = _chat(tmp_path, meta={"tool": "claude-code", "session_ref": "sess-1"})
+def _transcript(tmp_path: Path) -> Path:
+    """A Claude Code transcript answering both turns of CHAT."""
     claude = tmp_path / "claude" / "-work"
     claude.mkdir(parents=True)
     # Transcript times carry their zone; build them from local times.
@@ -90,6 +90,12 @@ def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> 
         _rec("assistant", utc("2026-09-29T10:25:00"), [{"type": "text", "text": "done too"}]),
     ]
     (claude / "sess-1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+    return tmp_path / "claude"
+
+
+def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> None:
+    folder = _chat(tmp_path, meta={"tool": "claude-code", "session_ref": "sess-1"})
+    _transcript(tmp_path)
 
     assert turntimes.backfill(tmp_path / "data", claude_dir=tmp_path / "claude") == 2
     got = turntimes.times(folder)
@@ -98,6 +104,24 @@ def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> 
     # Twice is once.
     assert turntimes.backfill(tmp_path / "data", claude_dir=tmp_path / "claude") == 0
     assert _session(folder).timed == "exact"
+
+
+def test_the_backfill_waits_for_the_hooks_lock_and_loses_no_line(tmp_path: Path) -> None:
+    """The hook appends turns.jsonl under its lock; a backfill that cannot
+    take it leaves the file as it is and tries again on the next start."""
+    from backend.file_safety import acquire_flock, lock_path
+    from backend.hookshared import append_locked
+
+    folder = _chat(tmp_path, meta={"tool": "claude-code", "session_ref": "sess-1"})
+    claude = _transcript(tmp_path)
+    hook_line = {"turn": 9, "start": "", "end": "2026-09-29T11:00:00", "source": "hook", "busy": []}
+    with acquire_flock(lock_path(folder / "turns.jsonl")):
+        assert turntimes.backfill(tmp_path / "data", claude_dir=claude) == 0
+        # The hook never hangs: past its wait it appends anyway.
+        append_locked(folder / "turns.jsonl", json.dumps(hook_line) + "\n", timeout_s=0.05)
+    assert turntimes.backfill(tmp_path / "data", claude_dir=claude) == 2
+    lines = [json.loads(x) for x in (folder / "turns.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert hook_line in lines
 
 
 def test_a_turn_ends_before_the_next_captured_turn_even_unseen_in_the_transcript(tmp_path: Path) -> None:

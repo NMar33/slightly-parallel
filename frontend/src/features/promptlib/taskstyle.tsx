@@ -31,8 +31,31 @@ export const FIELD =
 // The assessment of a run, as pill groups; and as chips when not editing
 // ---------------------------------------------------------------------------
 
+/**
+ * The outcome scale's words. The stored steps keep their first names
+ * (below · average · better · one-shot — the API and the ledger hold them);
+ * what a person reads is failed · partly · done · one-shot, each with what
+ * it means.
+ */
+const OUTCOME: Record<string, [string, string]> = {
+  below: [t('failed'), t("It didn't do what should be done")],
+  average: [t('partly'), t('It was done partly: it required a lot of attention or corrections')],
+  better: [t('done'), t('It just did what it should do')],
+  'one-shot': [t('one-shot'), t('The king of prompts: it lets you do a task in one prompt')],
+}
+
+/** The word a step of a scale shows; the outcome scale has words of its own. */
+export function stepWord(scale: string, step: string): string {
+  return scale === 'task_success' ? OUTCOME[step]?.[0] ?? t(step) : t(step)
+}
+
+/** What an outcome step means, for its tooltip; '' for the other scales. */
+export function stepHint(scale: string, step: string): string {
+  return scale === 'task_success' ? OUTCOME[step]?.[1] ?? '' : ''
+}
+
 const HINTS: Record<string, string> = {
-  task_success: t('Whether the run did what the prompt asked, and how well'),
+  task_success: t('Lets you assess the quality of the prompt'),
   regression: t('Whether anything that worked before stopped working'),
   intervention: t('How much you had to step in during the run'),
 }
@@ -56,7 +79,7 @@ export function RunChips({ rating }: { rating: Rating | null }) {
   )
   return (
     <span className="inline-flex items-center gap-4 text-10 font-mono">
-      {rating.task_success && chip(t(rating.task_success), rating.task_success)}
+      {rating.task_success && chip(stepWord('task_success', rating.task_success), rating.task_success)}
       {rating.regression && chip(`${t('reg')} ${t(rating.regression)}`, rating.regression)}
       {rating.intervention && chip(`${t('int')} ${t(rating.intervention)}`, rating.intervention)}
       {rating.score != null && <span className="px-4 py-1 rounded-input bg-brand/16 text-brand">{rating.score}/10</span>}
@@ -69,7 +92,7 @@ export function RunChips({ rating }: { rating: Rating | null }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Under a version's text: Task · Regression · Intervention · Score as the
+ * Under a version's text: Outcome · Regression · Intervention · Score as the
  * same pill rows the task window uses for Impact · Effort · Tokens ·
  * Novelty, then Tags. One judgement per wording, which is how the operator
  * works: rewrite, send, judge. Nothing pops up and nothing submits — a pill
@@ -97,7 +120,7 @@ export function RatingPills({
   )
   return (
     <div className="flex flex-col gap-6">
-      <PillGroup labelWidth={92} label={t('Task')} hint={HINTS.task_success} value={r?.task_success ?? ''} onChange={(v) => set({ task_success: v || null })} options={scales.task_success.map((s) => [s, t(s)])} />
+      <PillGroup labelWidth={92} label={t('Outcome')} hint={HINTS.task_success} value={r?.task_success ?? ''} onChange={(v) => set({ task_success: v || null })} options={scales.task_success.map((s) => [s, stepWord('task_success', s), stepHint('task_success', s)])} />
       <PillGroup labelWidth={92} label={t('Regression')} hint={HINTS.regression} value={r?.regression ?? ''} onChange={(v) => set({ regression: v || null })} options={scales.regression.map((s) => [s, t(s)])} />
       <PillGroup labelWidth={92} label={t('Intervention')} hint={HINTS.intervention} value={r?.intervention ?? ''} onChange={(v) => set({ intervention: v || null })} options={scales.intervention.map((s) => [s, t(s)])} />
       <PillGroup labelWidth={92} label={t('Score')} value={r?.score != null ? String(r.score) : ''} onChange={(v) => set({ score: v ? Number(v) : null })} options={scoreOpts} />

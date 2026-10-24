@@ -33,6 +33,7 @@ from .csvio import read_rows
 from .db import ViewStore
 from .gitwork import git
 from .docs_md import resolve_under
+from .file_safety import given_path
 
 _EMPTY_TREE = "4b825dc642cb6eb9a0060e64d5c3f2dd6f2c8b8f"  # git's well-known empty tree
 _L4_MAX_LINES = 80
@@ -80,8 +81,8 @@ def project_path(store: ViewStore, project: str) -> Path | None:
     for row in read_rows(store.data_root / "integrations.csv"):
         if row.get("project") != project:
             continue
-        p = Path(row.get("path") or "").expanduser()
-        if p.is_dir():
+        p = given_path(row.get("path"))
+        if p is not None and p.is_dir():
             return p
     return None
 

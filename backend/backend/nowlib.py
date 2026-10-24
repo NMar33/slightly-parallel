@@ -24,13 +24,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import threading
 from datetime import datetime
+from pathlib import Path
 
 from .csvio import append_row, read_rows
-from .date_utils import now_iso
+from .date_utils import as_local, now_iso
 from .db import ViewStore
+from .file_safety import atomic_write_json
+from .sessions import _TASK_ID_RE
 
 NOW_CSV = "now.csv"
 STATE = "now.json"
@@ -42,26 +46,47 @@ TITLE_CHARS = 80
 #: The verbs an agent-written #now card carries in its history (tasks_extra.tasks_create).
 WRITTEN_FIELDS = ("started", "filed")
 
+log = logging.getLogger("sp.now")
 _lock = threading.Lock()
+# Tags found to need no card — the agent wrote it, or the message is about a
+# task already on the board — per data root. They get no row in now.csv
+# (its rows are the server's cards, which the task thread and the late-write
+# refusal read), so without this they were looked at again on every read.
+# In memory: after a restart each is checked once more.
+_settled: dict[str, set[str]] = {}
 _NOW_TAG_RE = re.compile(
     r"(?<![\w#])#now(?:-(?:to-?do|next|backlog|doing|review|parked|done))?(?![\w-])(?:[ \t]*\{[^}\n]{1,80}\})?",
     re.IGNORECASE)
 
 
-def since(store: ViewStore) -> str:
-    """The moment the server began writing #now cards; older tags are history."""
-    path = store.data_root / STATE
+def since_stamp(path: Path, what: str) -> str | None:
+    """The moment a chat command became one here (``{"since": …}`` in
+    ``path``); tags older than it are history. Written on first use. None
+    when it cannot be kept: the caller applies nothing, rather than run with
+    a moment that is "now" again on every call and so passes every tag by.
+    #now and #done each keep one (now.json, done.json)."""
     try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("since") or "")
-    except (OSError, ValueError):
+        got = json.loads(path.read_text(encoding="utf-8"))
+        value = str(got.get("since") or "") if isinstance(got, dict) else ""
+        if as_local(value) is not None:
+            return value
+        log.warning("%s: %s holds no readable moment; starting it again", what, path.name)
+    except FileNotFoundError:
         pass
+    except (OSError, ValueError) as exc:
+        log.warning("%s: %s unreadable (%s); starting it again", what, path.name, exc)
     now = now_iso()
     try:
-        path.write_text(json.dumps({"since": now}) + "\n", encoding="utf-8")
-    except OSError:
-        pass
+        atomic_write_json(path, {"since": now}, indent=0)
+    except OSError as exc:
+        log.warning("%s not applied: %s cannot be written (%s)", what, path.name, exc)
+        return None
     return now
 
+
+def since(store: ViewStore) -> str | None:
+    """The moment the server began writing #now cards; older tags are history."""
+    return since_stamp(store.data_root / STATE, "#now")
 
 def rows(store: ViewStore) -> list[dict[str, str]]:
     return read_rows(store.data_root / NOW_CSV)
@@ -91,24 +116,34 @@ def adopt(store: ViewStore) -> list[dict[str, str]]:
 
 def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     start = since(store)
+    if start is None:
+        return []
     tags = store.query(
         "SELECT project, agent_id, session_id, turn, at_ts, column_, lane, answered, body "
         "FROM now_tags WHERE at_ts >= ? ORDER BY agent_id, turn", (start,))
     if not tags:
         return []
     path = store.data_root / NOW_CSV
-    known = {r.get("id") for r in read_rows(path)}
+    settled = _settled.setdefault(str(store.data_root), set())
+    known = {r.get("id") for r in read_rows(path)} | settled
     # The agent's chance is over once it answered this turn or a later one.
     open_ = [t for t in tags if str(t["answered"] or "")
              and _id(str(t["agent_id"] or ""), int(t["turn"] or 0)) not in known]
     if not open_:
         return []
-    written = {(a, n) for a, n, _ in written_by_agents(store, {str(t["agent_id"] or "") for t in open_})}
+    written = {(a, n) for a, n, _ in card_turns(store, {str(t["agent_id"] or "") for t in open_}, skip_server=True)}
+    tasks = {str(r["id"]) for r in store.query("SELECT id FROM tasks_mutual")}
     added: list[dict[str, str]] = []
     for tag in open_:
         agent, turn = str(tag["agent_id"] or ""), int(tag["turn"] or 0)
         rid = _id(agent, turn)
         if (agent, turn) in written:
+            settled.add(rid)
+            continue
+        # A message that names a task already on the board is about that task
+        # (a card pasted back to talk about it): a second card would copy it.
+        if any(m.group(1) in tasks for m in _TASK_ID_RE.finditer(str(tag["body"] or ""))):
+            settled.add(rid)
             continue
         task_id = _write_card(store, tag)
         if not task_id:
@@ -139,10 +174,7 @@ def _write_card(store: ViewStore, tag: dict) -> str:
         lane = _lane_for(store, project, "now", str(tag["lane"] or ""))
     except HTTPException:
         return ""                        # the agent asks the operator which lane
-    try:
-        at = datetime.fromisoformat(str(tag["at_ts"]))
-    except ValueError:
-        at = datetime.now()
+    at = as_local(str(tag["at_ts"])) or datetime.now()
     body = {
         "project": project, "title": title_of(str(tag["body"] or "")), "status": column,
         "created_date": at.strftime("%y%m-%d"), "created_time": at.strftime("%H:%M"),
@@ -179,16 +211,20 @@ def _own(rs: list[dict[str, str]], task_id: str, agent: str) -> bool:
     return False
 
 
-def written_by_agents(store: ViewStore, agents: set[str]) -> list[tuple[str, int, str]]:
-    """(agent, turn, task) for each card an agent wrote on the operator's #now:
-    the turn is the one the card was written in, read from its history."""
+def card_turns(store: ViewStore, agents: set[str], fields: tuple[str, ...] = WRITTEN_FIELDS,
+               *, skip_server: bool = False) -> list[tuple[str, int, str]]:
+    """(agent, turn, task) for each card an agent wrote: the turn is the last
+    one of its chat that began by the card's first history event of
+    ``fields`` (#done reads ``started``; #now also ``filed``). With
+    ``skip_server`` the cards the server wrote for an unwritten #now are left
+    out — their turn is in the ledger, exact."""
     from .sessions import chat_path, parse_turns
 
-    marks = ",".join("?" for _ in WRITTEN_FIELDS)
+    marks = ",".join("?" for _ in fields)
     found = store.query(
         "SELECT e.task_id, e.timestamp, t.agent_id FROM task_events_mutual e "
-        f"JOIN tasks_mutual t ON t.id = e.task_id WHERE e.field IN ({marks})", WRITTEN_FIELDS)
-    server = {r.get("task_id") for r in rows(store)}
+        f"JOIN tasks_mutual t ON t.id = e.task_id WHERE e.field IN ({marks})", fields)
+    server = {r.get("task_id") for r in rows(store)} if skip_server else set()
     out: list[tuple[str, int, str]] = []
     turns_of: dict[str, list] = {}
     for r in found:
@@ -197,22 +233,11 @@ def written_by_agents(store: ViewStore, agents: set[str]) -> list[tuple[str, int
             continue
         if agent not in turns_of:
             path = chat_path(store, agent)
-            try:
-                turns_of[agent] = parse_turns(path) if path else []
-            except OSError:
-                turns_of[agent] = []
-        try:
-            at = datetime.fromisoformat(str(r["timestamp"])).replace(tzinfo=None)
-        except ValueError:
+            turns_of[agent] = parse_turns(path) if path else []
+        at = as_local(str(r["timestamp"]))
+        if at is None:
             continue
-        before = [t.number for t in turns_of[agent] if t.at.replace(tzinfo=None) <= at]
+        before = [t.number for t in turns_of[agent] if (as_local(t.at) or t.at) <= at]
         if before:
             out.append((agent, before[-1], str(r["task_id"])))
     return out
-
-
-def server_cards(store: ViewStore) -> list[tuple[str, int, str]]:
-    """(agent, turn, task) for each card the server wrote, exact from the ledger."""
-    return [(r.get("agent_id") or "", int(r.get("turn") or 0), r.get("task_id") or "")
-            for r in rows(store) if r.get("task_id")]
-

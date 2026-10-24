@@ -169,10 +169,10 @@ ROOT_TAKEN = ("another Slightly Parallel server is using the data folder {root}.
 def hold_data_root(root: Path) -> Any | None:
     """The open, locked ``server.lock`` of ``root``; None when another
     process holds it."""
-    from .file_safety import _try_lock
+    from .hookshared import try_lock
     root.mkdir(parents=True, exist_ok=True)
     fh = open(root / SERVER_LOCK, "a+", encoding="utf-8")
-    if _try_lock(fh):
+    if try_lock(fh):
         return fh
     fh.close()
     return None

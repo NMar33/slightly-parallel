@@ -22,7 +22,6 @@ the moment Windows refuses a replace.
 from __future__ import annotations
 
 import copy
-import errno
 import json
 import logging
 import os
@@ -42,41 +41,12 @@ except ImportError:  # pragma: no cover
     msvcrt = None  # type: ignore[assignment]
 
 
-# ``os.replace``, patient on Windows. The capture hook replaces files the
-# same way, so the one copy is in hookshared.py.
+# ``os.replace``, patient on Windows, and the one-try lock: the capture hook
+# replaces and locks files the same way, so the one copy is in hookshared.py.
 from .hookshared import replace_file  # noqa: E402
+from .hookshared import try_lock as _try_lock  # noqa: E402
+from .hookshared import unlock as _unlock  # noqa: E402
 
-
-def _try_lock(fh: Any) -> bool:
-    """One non-blocking try at an exclusive lock; True when held."""
-    if fcntl is not None:
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except BlockingIOError:
-            return False
-        except OSError as exc:
-            if exc.errno == errno.EWOULDBLOCK:
-                return False
-            raise
-    # Windows: lock the first byte; a lock may lie past the end of an empty file.
-    fh.seek(0)  # pragma: no cover
-    try:  # pragma: no cover
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
-        return True
-    except OSError:  # pragma: no cover
-        return False
-
-
-def _unlock(fh: Any) -> None:
-    try:
-        if fcntl is not None:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        else:  # pragma: no cover
-            fh.seek(0)
-            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
-    except OSError:
-        pass
 
 __all__ = [
     "atomic_write",
@@ -84,6 +54,7 @@ __all__ = [
     "safe_read_json",
     "acquire_flock",
     "edit_json",
+    "given_path",
     "lock_path",
     "replace_file",
     "FileSafetyError",
@@ -248,6 +219,15 @@ def safe_read_json(
 # ---------------------------------------------------------------------------
 # File locks
 # ---------------------------------------------------------------------------
+
+
+def given_path(raw: Any) -> Path | None:
+    """A folder or file named in a ledger or meta.json, or None when none is
+    named. ``Path("")`` is ``.`` — the server's own working folder — so an
+    empty field read straight into a Path pointed every caller at the
+    server's checkout instead of at nothing."""
+    text = str(raw or "").strip()
+    return Path(text).expanduser() if text else None
 
 
 def lock_path(path: PathLike) -> Path:

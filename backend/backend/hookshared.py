@@ -12,6 +12,7 @@ compile, the setting defaults) is held equal by tests/test_hook_parity.py.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -19,6 +20,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+try:  # pragma: no cover — non-Unix platforms
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
+try:  # pragma: no cover — Windows: the same lock, spelled msvcrt.locking
+    import msvcrt
+except ImportError:  # pragma: no cover
+    msvcrt = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Who is speaking
@@ -153,6 +163,61 @@ def replace_file(src: Any, dst: Any) -> None:
             if attempt == 39:
                 raise
             time.sleep(0.025)
+
+
+def try_lock(fh: Any) -> bool:
+    """One non-blocking try at an exclusive lock on an open file; True when
+    held. ``flock`` on Linux and macOS, the first byte on Windows (a lock may
+    lie past the end of an empty file)."""
+    if fcntl is not None:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+        except OSError as exc:
+            if exc.errno == errno.EWOULDBLOCK:
+                return False
+            raise
+    if msvcrt is None:  # pragma: no cover
+        return False
+    fh.seek(0)  # pragma: no cover
+    try:  # pragma: no cover
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
+        return True
+    except OSError:  # pragma: no cover
+        return False
+
+
+def unlock(fh: Any) -> None:
+    try:
+        if fcntl is not None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        elif msvcrt is not None:  # pragma: no cover
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)  # pyright: ignore[reportAttributeAccessIssue] — Windows only
+    except OSError:
+        pass
+
+
+def append_locked(path: Any, text: str, timeout_s: float = 2.0) -> None:
+    """Append ``text`` to ``path`` under the lock beside it (``<name>.lock``,
+    file_safety.lock_path's spelling), so a server rewriting the file meanwhile
+    does not drop the line. A hook must never hang the session it observes:
+    after ``timeout_s`` the line is appended without the lock."""
+    p = Path(path)
+    with open(p.with_name(p.name + ".lock"), "a", encoding="utf-8") as lock:
+        deadline = time.monotonic() + timeout_s
+        held = try_lock(lock)
+        while not held and time.monotonic() < deadline:
+            time.sleep(0.01)
+            held = try_lock(lock)
+        try:
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write(text)
+        finally:
+            if held:
+                unlock(lock)
 
 
 def tail_lines(path: Any, max_bytes: int = 256 * 1024) -> list[str]:

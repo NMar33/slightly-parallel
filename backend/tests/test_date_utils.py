@@ -267,3 +267,17 @@ def test_parse_hot_path_smoke():
         parse_yymm_dd(s)
     elapsed = time.perf_counter() - t0
     assert elapsed < 5.0, f"10k parses took {elapsed:.3f}s"
+
+
+def test_as_local_converts_a_zoned_moment_instead_of_cutting_the_zone():
+    from datetime import timezone
+
+    from backend.date_utils import as_local
+
+    naive = datetime(2026, 10, 24, 12, 0, 0)
+    assert as_local("2026-10-24T12:00:00") == naive          # naive is local already
+    assert as_local(naive) == naive
+    zoned = naive.astimezone()                                  # the same moment, with this machine's zone
+    assert as_local(zoned.isoformat()) == naive
+    assert as_local(zoned.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")) == naive
+    assert as_local("not a time") is None and as_local(None) is None

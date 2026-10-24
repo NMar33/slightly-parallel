@@ -647,8 +647,8 @@ class TurnCapture:
             except Exception as exc:  # noqa: BLE001 — timing must never cost the turn
                 self._lost("turn timing not measured", exc)
         try:
-            with open(self.folder / "turns.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(line) + "\n")
+            # Under the lock the server's backfill rewrites the file with.
+            shared.append_locked(self.folder / "turns.jsonl", json.dumps(line) + "\n")
         except OSError as exc:
             self._lost("turn times not kept", exc)
 

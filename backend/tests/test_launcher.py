@@ -386,3 +386,22 @@ def test_the_environment_is_made_with_a_python_the_packages_are_built_for(launch
     have.clear()
     with pytest.raises(SystemExit):
         launcher.base_python((3, 15))
+
+
+def test_too_old_a_python_says_how_to_get_one_on_this_system(launcher, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Ubuntu 22.04 ships 3.10, macOS's own python3 is 3.9: the refusal names
+    the install command for the system, not only "a newer Python"."""
+    monkeypatch.setattr(launcher, "WINDOWS", True)
+    assert "python.org/downloads/windows" in launcher.python_hint()
+    monkeypatch.setattr(launcher, "WINDOWS", False)
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+    assert "brew install python@3.12" in launcher.python_hint()
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
+    release = tmp_path / "os-release"
+    real = launcher.Path
+    monkeypatch.setattr(launcher, "Path", lambda p, *a: release if p == "/etc/os-release" else real(p, *a))
+    release.write_text('ID=ubuntu\nVERSION_ID="22.04"\n', encoding="utf-8")
+    assert "sudo apt install python3.12 python3.12-venv" in launcher.python_hint()
+    assert "deadsnakes" in launcher.python_hint()
+    release.write_text("ID=arch\n", encoding="utf-8")
+    assert "python.org/downloads" in launcher.python_hint()

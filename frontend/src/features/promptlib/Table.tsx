@@ -32,12 +32,12 @@ import { isTypingTarget } from '../../lib/typing'
  */
 type Col = 'name' | 'project' | 'version' | 'task' | 'score' | 'sends' | 'made' | 'last' | 'pulse'
 
-const COLS: Array<{ key: Col; label: string; right?: boolean; w?: string }> = [
+const COLS: Array<{ key: Col; label: string; right?: boolean; w?: string; hint?: string }> = [
   { key: 'pulse', label: '', w: '20px' },
   { key: 'name', label: t('prompt') },
   { key: 'project', label: t('project'), w: '120px' },
   { key: 'version', label: 'v', right: true, w: '44px' },
-  { key: 'task', label: t('task'), w: '96px' },
+  { key: 'task', label: t('outcome'), w: '96px', hint: t('How well the prompt worked: failed · partly · done · one-shot') },
   { key: 'score', label: t('score'), right: true, w: '64px' },
   { key: 'sends', label: t('sends'), right: true, w: '64px' },
   { key: 'made', label: t('made'), w: '140px' },
@@ -108,7 +108,7 @@ export function PromptsTable() {
         const next = shown[Math.min(shown.length - 1, Math.max(0, i + (e.key === 'j' ? 1 : -1)))]
         if (next) setOpen(next.id)
       } else if (e.key === 'c' && at) {
-        void copyText(at.preview)
+        void copyText(at.text)
       } else if (e.key === 'o' && at) {
         window.location.assign(`/prompts/${at.id}`)
       } else if (e.key === 'Enter' && at) {
@@ -176,7 +176,7 @@ export function PromptsTable() {
                 {COLS.map((c) => (
                   <th key={c.key} style={{ width: c.w }} className={`px-8 py-6 ${c.right ? 'text-right' : 'text-left'}`}>
                     {c.label && (
-                      <button type="button" onClick={head(c.key)} className={`inline-flex items-center gap-4 whitespace-nowrap ${TH_BUTTON}`} aria-label={t('sort by {col}', { col: c.label })}>
+                      <button type="button" onClick={head(c.key)} title={c.hint} className={`inline-flex items-center gap-4 whitespace-nowrap ${TH_BUTTON}`} aria-label={t('sort by {col}', { col: c.label })}>
                         {c.label}{sort === c.key && (desc ? <ArrowDown size={10} /> : <ArrowUp size={10} />)}
                       </button>
                     )}
@@ -217,7 +217,7 @@ export function PromptsTable() {
                       <td className="px-8 py-6 text-tertiary truncate" style={{ width: '160px' }}>{tagList(r).join(', ')}</td>
                       <td className="px-4 py-6 text-right whitespace-nowrap">
                         <button type="button" title={t('copy the current wording')} aria-label={t('copy {name}', { name: r.title })} className="text-tertiary hover:text-brand px-4"
-                          onClick={(e) => { e.stopPropagation(); void copyText(r.preview) }}>
+                          onClick={(e) => { e.stopPropagation(); void copyText(r.text) }}>
                           <Copy size={12} />
                         </button>
                         <button type="button" title={status === 'archived' ? t('restore') : t('archive')} aria-label={`${status === 'archived' ? t('restore') : t('archive')} ${r.title}`} className="text-tertiary hover:text-primary px-4"

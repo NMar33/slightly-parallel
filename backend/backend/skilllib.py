@@ -42,7 +42,7 @@ from .db import ViewStore
 from .docs_md import build_detail, read_detail, resolve_under, safe_ref_part
 from .entities import ENTITIES
 from .file_safety import (
-    acquire_flock, atomic_write, atomic_write_json, lock_path, safe_read_json,
+    acquire_flock, atomic_write, atomic_write_json, given_path, lock_path, safe_read_json,
 )
 # One copy for the capture hook and for the backfill here (hookshared.py).
 from .hookshared import local_iso, skill_uses as uses_in_record
@@ -364,8 +364,11 @@ def _ledger(store: ViewStore) -> Iterator[list[dict[str, Any]]]:
             _save_installs(store, rows)
 
 
-def _dests(folder: Path, name: str) -> list[Path]:
-    return [folder / rel / name for rel in TOOL_DIRS]
+def _dests(folder: Path | str | None, name: str) -> list[Path]:
+    """Where a copy of the skill lives in a project folder — none when the
+    install names no folder (never the server's own)."""
+    root = folder if isinstance(folder, Path) else given_path(folder)
+    return [root / rel / name for rel in TOOL_DIRS] if root is not None else []
 
 
 def _folder(store: ViewStore, project: str) -> Path:
@@ -533,7 +536,7 @@ def install_status(store: ViewStore, row: dict[str, Any], entry: dict[str, Any])
     kid = str(row["id"])
     current = read_version(store, kid)
     states: list[str] = []
-    for dest in _dests(Path(str(entry.get("path") or "")), str(entry.get("name") or row.get("name") or "")):
+    for dest in _dests(entry.get("path"), str(entry.get("name") or row.get("name") or "")):
         marker = _marker(dest)
         if marker is None or marker.get("skill_id") != kid:
             states.append("missing")
@@ -557,7 +560,7 @@ def install_fingerprint(store: ViewStore) -> str:
     h = hashlib.sha256()
     for entry in _installs(store):
         h.update(f"{entry.get('skill_id')}|{entry.get('project')}|{entry.get('name')}|{entry.get('version')}".encode())
-        for dest in _dests(Path(str(entry.get("path") or "")), str(entry.get("name") or "")):
+        for dest in _dests(entry.get("path"), str(entry.get("name") or "")):
             try:
                 for p in sorted(dest.rglob("*")):
                     st = p.stat()
@@ -575,7 +578,7 @@ def _differs(store: ViewStore, row: dict[str, Any], entry: dict[str, Any]) -> li
         return []
     mine = {"SKILL.md": current["skill_md"].strip(), **current["files"]}
     out: set[str] = set()
-    for dest in _dests(Path(str(entry.get("path") or "")), str(entry.get("name") or row.get("name") or "")):
+    for dest in _dests(entry.get("path"), str(entry.get("name") or row.get("name") or "")):
         if (_marker(dest) or {}).get("skill_id") != kid:
             continue
         found = _read_folder(dest)
@@ -593,7 +596,7 @@ def read_copy(store: ViewStore, row: dict[str, Any], project: str) -> dict[str, 
     entry = next((e for e in _installs(store) if e.get("skill_id") == kid and e.get("project") == project), None)
     if entry is None:
         raise LookupError(f"the skill is not installed in {project}")
-    for dest in _dests(Path(str(entry["path"])), str(entry.get("name") or row.get("name") or "")):
+    for dest in _dests(entry.get("path"), str(entry.get("name") or row.get("name") or "")):
         found = _read_folder(dest) if (_marker(dest) or {}).get("skill_id") == kid else None
         if found is not None:
             return {"project": project, "path": str(dest), "skill_md": found.skill_md, "files": found.files,
@@ -624,7 +627,7 @@ def uninstall(store: ViewStore, row: dict[str, Any], project: str, *, force: boo
         entry = next((e for e in rows if e.get("skill_id") == kid and e.get("project") == project), None)
         if entry is None:
             return []
-        dests = _dests(Path(str(entry["path"])), str(entry.get("name") or row.get("name") or ""))
+        dests = _dests(entry.get("path"), str(entry.get("name") or row.get("name") or ""))
         mine = [(d, m) for d in dests if (m := _marker(d)) is not None and m.get("skill_id") == kid]
         if not force:
             edited = [d for d, m in mine if _changed(d, m)]
@@ -651,7 +654,7 @@ def keep_disk(store: ViewStore, row: dict[str, Any], project: str, path: str = "
     if entry is None:
         raise LookupError(f"the skill is not installed in {project}")
     copies: list[tuple[Path, FolderRead, bool]] = []
-    for dest in _dests(Path(str(entry["path"])), str(entry.get("name") or row.get("name") or "")):
+    for dest in _dests(entry.get("path"), str(entry.get("name") or row.get("name") or "")):
         marker = _marker(dest)
         found = _read_folder(dest) if (marker or {}).get("skill_id") == kid else None
         if found is not None and marker is not None:

@@ -28,6 +28,12 @@ testpaths = ["tests"]
 # Test files run side by side (pytest-xdist): every test builds its own data
 # root in a temp folder. 467 s one at a time, ~60 s on six workers.
 addopts = "-q -n auto --dist loadfile"
+# Warnings are shown, not hidden (CI passed -p no:warnings before); a
+# deprecation raised by our own code fails the run.
+filterwarnings = [
+    "default",
+    "error::DeprecationWarning:backend",
+]
 markers = [
     "slow: builds or plays something real (about a minute); deselect with -m \"not slow\"",
 ]
@@ -36,11 +42,27 @@ markers = [
 line-length = 88
 target-version = "py311"
 
+# CI: ruff check (backend, tests, scripts, sp.py). Errors and pyflakes, plus
+# bugbear's bug classes; not its style ones.
+[tool.ruff.lint]
+select = ["E9", "F", "B"]
+ignore = [
+    "B008",   # Depends()/Body()/Query() in a default: FastAPI's own idiom
+    "B904",   # raise … from inside except: the HTTP error is the message
+    "B905",   # zip(strict=): pairs here come from one source
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Closures made in a loop and run within the same round (threads joined,
+# a poll called at once): the late binding B023 warns about cannot happen.
+"tests/test_crash_mid_write.py" = ["B023"]
+"../scripts/fresh_user/scenario.py" = ["B023"]
+
 # CI: python -m pyright. Basic mode, without the Optional checks: they fire
 # where the code has already narrowed a value through a helper or a guard
 # pyright does not follow (98 of 102 at the start were of that kind).
 [tool.pyright]
-include = ["backend", "../scripts/hooks"]
+include = ["backend", "../scripts/hooks", "../sp.py"]
 extraPaths = ["../scripts/hooks"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"

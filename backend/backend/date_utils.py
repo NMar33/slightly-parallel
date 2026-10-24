@@ -348,6 +348,21 @@ def day_before(yymm_dd: Union[str, None]) -> str:
         return ""
 
 
+def as_local(value: Union[str, datetime, None]) -> Optional[datetime]:
+    """A moment as naive local time, the way every ledger and chat writes it.
+    A naive value is taken as local already; one with a zone (an event
+    stamped ``…+02:00`` or ``…Z``) is converted to local first, not cut —
+    cutting the zone off would move it by the offset. None when unreadable."""
+    if isinstance(value, datetime):
+        d = value
+    else:
+        try:
+            d = datetime.fromisoformat(str(value or "").strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return d.astimezone().replace(tzinfo=None) if d.tzinfo is not None else d
+
+
 def now_iso() -> str:
     """This moment, local, to the second: ``2026-09-27T14:02:05`` — how every
     ledger stamps what it writes."""

@@ -60,7 +60,7 @@ describe('runs', () => {
 
   it('clicking a step saves it against the run, and the chat link carries the turn', async () => {
     wrap(<RunCard promptId="pm_x" send={SEND} scales={SCALES} open onToggle={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: 'task: one-shot' }))
+    fireEvent.click(screen.getByRole('button', { name: 'outcome: one-shot' }))
     await waitFor(() => expect(posted).toHaveLength(1))
     expect(posted[0].url).toBe('/api/prompt-library/pm_x/runs/ses_abc/7')
     expect(posted[0].body).toEqual({ task_success: 'one-shot' })
@@ -77,7 +77,7 @@ describe('runs', () => {
   it('a chosen step clicked again clears it', async () => {
     const rated = { ...SEND, rating: { task_success: 'better', regression: '', intervention: '', score: 7, note: '', rated_at: '' } }
     wrap(<RunCard promptId="pm_x" send={rated} scales={SCALES} open onToggle={() => {}} />)
-    const on = screen.getByRole('button', { name: 'task: better' })
+    const on = screen.getByRole('button', { name: 'outcome: done' })
     expect(on).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(on)
     await waitFor(() => expect(posted).toHaveLength(1))
@@ -96,7 +96,7 @@ describe('runs', () => {
     }
     wrap(<RollupBars rollup={r} scales={SCALES} />)
     expect(screen.getByText(/5 sends · 4 rated · median 8\/10/)).toBeInTheDocument()
-    expect(screen.getByText('1 average · 3 one-shot')).toBeInTheDocument()
+    expect(screen.getByText('1 partly · 3 one-shot')).toBeInTheDocument()
     expect(screen.getByText('3 none · 1 some')).toBeInTheDocument()
     expect(screen.queryByText(/7\.\d/)).toBeNull()
   })

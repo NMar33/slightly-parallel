@@ -388,16 +388,38 @@ def builds_ui(dev: bool) -> bool:
     return (settings().get("SP_REBUILD_UI") or "").lower() in ("1", "true", "yes", "on")
 
 
+def python_hint() -> str:
+    """How to get a supported Python on this system, in one clause. The
+    launcher picks it up by itself afterwards (sp.sh, sp.cmd look for
+    python3.14 … python3.11 first)."""
+    if WINDOWS:
+        return "install Python 3.12 from https://www.python.org/downloads/windows/ and start again"
+    if sys.platform == "darwin":
+        return ("install it with brew install python@3.12, or from https://www.python.org/downloads/macos/, "
+                "and start again")
+    try:
+        release = Path("/etc/os-release").read_text(encoding="utf-8").lower()
+    except OSError:
+        release = ""
+    if "ubuntu" in release or "debian" in release:
+        # Ubuntu 22.04 ships 3.10: python3.12 comes from the deadsnakes PPA there.
+        return ("install it with sudo apt install python3.12 python3.12-venv (on Ubuntu 22.04 first: "
+                "sudo add-apt-repository ppa:deadsnakes/ppa), and start again")
+    if "fedora" in release or "rhel" in release:
+        return "install it with sudo dnf install python3.12, and start again"
+    return "install Python 3.12 (https://www.python.org/downloads/) and start again"
+
+
 def preflight(dev: bool) -> None:
     """What a first start needs, checked before minutes are spent installing:
     each miss is one line that says what to do."""
     if sys.version_info < (3, 11):
-        fail(f"Python 3.11+ is needed, this is {sys.version.split()[0]} — install a newer Python and run this with it")
+        fail(f"Python 3.11+ is needed, this is {sys.version.split()[0]} — {python_hint()}")
     import tarfile
     if not hasattr(tarfile, "data_filter"):
         # Restoring a backup unpacks it with tarfile's safety filter, which
         # Python 3.11.0–3.11.3 does not have.
-        fail(f"Python 3.11.4+ is needed, this is {sys.version.split()[0]} — install a newer Python and run this with it")
+        fail(f"Python 3.11.4+ is needed, this is {sys.version.split()[0]} — {python_hint()}")
     if not venv_python().exists():
         import importlib.util
         # `python -m venv` needs ensurepip to give the environment its pip.
@@ -453,11 +475,14 @@ def base_python(version: tuple[int, int] | None = None) -> list[str]:
     if OLDEST_PYTHON <= (version or tuple(sys.version_info[:2])) <= NEWEST_PYTHON:
         return [sys.executable]
     versions = [(3, m) for m in range(NEWEST_PYTHON[1], OLDEST_PYTHON[1] - 1, -1)]
+    py = shutil.which("py") if os.name == "nt" else None
     for major, minor in versions:
-        found = ([shutil.which("py"), f"-{major}.{minor}"] if os.name == "nt" and shutil.which("py")
-                 else [shutil.which(f"python{major}.{minor}")])
-        if found[0] and subprocess.run([*found, "-c", "import venv, ensurepip"], capture_output=True).returncode == 0:
-            return [str(x) for x in found]
+        exe = py or shutil.which(f"python{major}.{minor}")
+        if not exe:
+            continue
+        found = [exe, f"-{major}.{minor}"] if py else [exe]
+        if subprocess.run([*found, "-c", "import venv, ensurepip"], capture_output=True).returncode == 0:
+            return found
     fail(f"Python {sys.version.split()[0]} is newer than the backend's packages are built for "
          f"(DuckDB has none past {NEWEST_PYTHON[0]}.{NEWEST_PYTHON[1]}). Install Python "
          f"{NEWEST_PYTHON[0]}.{NEWEST_PYTHON[1]} from https://www.python.org and start again: "
@@ -715,7 +740,7 @@ def cmd_down(_: list[str] | None = None) -> None:
     # The supervisor leads its own group: stopping the group stops it, the
     # run, and both servers.
     stop_tree(pid)
-    for _ in range(10):
+    for _wait in range(10):
         if not alive(pid):
             break
         time.sleep(1)

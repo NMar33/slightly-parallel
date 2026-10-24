@@ -6,5 +6,5 @@
 cd "$(dirname "$0")" || exit 1
 # The newest named interpreter first: on macOS plain python3 is often an
 # old system one while a newer python3.1x sits beside it.
-PY="$(command -v python3.14 || command -v python3.13 || command -v python3.12 || command -v python3.11 || command -v python3 || command -v python)" || { echo "[sp] ERROR: Python 3.11+ not found" >&2; exit 1; }
+PY="$(command -v python3.14 || command -v python3.13 || command -v python3.12 || command -v python3.11 || command -v python3 || command -v python)" || { echo "[sp] ERROR: Python 3.11+ not found — Ubuntu/Debian: sudo apt install python3.12 python3.12-venv · macOS: brew install python@3.12 · or https://www.python.org/downloads/" >&2; exit 1; }
 exec "$PY" sp.py "$@"

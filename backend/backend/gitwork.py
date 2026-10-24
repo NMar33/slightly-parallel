@@ -35,6 +35,7 @@ GIT_TIMEOUT = 5
 #: Git is run in repositories an agent works in, and a repository's own
 #: config can name programs for git to run (a file-system monitor, hooks).
 #: These switch that off for every call made from here.
+from .file_safety import given_path  # noqa: E402
 from .hookshared import GIT_PLAIN_PATHS, numstat_path  # noqa: E402 — shared with the hook
 
 SAFE_GIT = ("-c", "core.fsmonitor=", "-c", f"core.hooksPath={_os.devnull}", *GIT_PLAIN_PATHS)
@@ -126,8 +127,8 @@ def repo_for_chat(chat_path: Path) -> Path | None:
     repo: Path | None = None
     try:
         meta = json.loads((chat_path.parent / "meta.json").read_text(encoding="utf-8"))
-        cwd = Path(str(meta.get("cwd") or ""))
-        if cwd.is_dir():
+        cwd = given_path(meta.get("cwd"))
+        if cwd is not None and cwd.is_dir():
             top = git(cwd, "rev-parse", "--show-toplevel")
             if top:
                 repo = Path(top.strip())

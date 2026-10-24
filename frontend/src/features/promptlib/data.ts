@@ -99,6 +99,8 @@ export interface PromptRow {
   /** What the prompt caused, over the distinct sessions it was sent in. */
   made?: { commits: number; files: number; add: number; del: number; tasks: number }
   preview: string
+  /** The whole current wording; `preview` is its first 400 characters. */
+  text: string
   chars: number
   words: number
   metrics: Metrics

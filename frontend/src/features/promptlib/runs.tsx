@@ -10,6 +10,7 @@ import {
   chatHref, useLibraryWrites, versionLabel,
   type Facts, type Rating, type Scales, type Send, type Version, type VersionRollup,
 } from './data'
+import { stepHint, stepWord } from './taskstyle'
 import { t, tn } from '../../i18n/scope/system'
 
 /**
@@ -37,7 +38,7 @@ const TONES: Record<string, Record<string, BadgeTone>> = {
 }
 
 const LABELS: Record<string, string> = {
-  task_success: t('task'),
+  task_success: t('outcome'),
   regression: t('regression'),
   intervention: t('intervention'),
 }
@@ -129,14 +130,15 @@ function RatingEditor({
                   <button
                     key={step}
                     aria-pressed={on}
-                    aria-label={`${LABELS[scale]}: ${t(step)}`}
+                    aria-label={`${LABELS[scale]}: ${stepWord(scale, step)}`}
+                    title={stepHint(scale, step) || undefined}
                     onClick={() => set({ [scale]: on ? null : step })}
                     style={on ? { background: toneColor(tone), color: 'var(--bg-base)' } : undefined}
                     className={`text-11 px-8 py-3 border-r border-border-subtle last:border-r-0 ${
                       on ? '' : 'text-secondary hover:bg-base'
                     }`}
                   >
-                    {t(step)}
+                    {stepWord(scale, step)}
                   </button>
                 )
               })}
@@ -191,7 +193,7 @@ function RatingChips({ rating }: { rating: Rating | null }) {
       {(['task_success', 'regression', 'intervention'] as const).map((s) =>
         rating[s] ? (
           <Badge key={s} tone={toneFor(s, rating[s])}>
-            {s === 'task_success' ? t(rating[s]) : `${LABELS[s]} ${t(rating[s])}`}
+            {s === 'task_success' ? stepWord(s, rating[s]) : `${LABELS[s]} ${t(rating[s])}`}
           </Badge>
         ) : null,
       )}
@@ -273,7 +275,7 @@ export function RollupBars({
               {LABELS[scale]}
             </span>
             <div className="flex h-8 flex-1 rounded-pill overflow-hidden bg-border-subtle" title={
-              scales[scale].map((s) => `${t(s)}: ${rollup.dist[scale]?.[s] ?? 0}`).join(' · ')
+              scales[scale].map((s) => `${stepWord(scale, s)}: ${rollup.dist[scale]?.[s] ?? 0}`).join(' · ')
             }>
               {total > 0 && scales[scale].map((step) => {
                 const n = rollup.dist[scale]?.[step] ?? 0
@@ -292,7 +294,7 @@ export function RollupBars({
                 ? '—'
                 : scales[scale]
                     .filter((s) => (rollup.dist[scale]?.[s] ?? 0) > 0)
-                    .map((s) => `${rollup.dist[scale][s]} ${t(s)}`)
+                    .map((s) => `${rollup.dist[scale][s]} ${stepWord(scale, s)}`)
                     .join(' · ')}
             </span>
           </div>

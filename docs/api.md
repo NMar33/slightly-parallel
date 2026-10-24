@@ -222,7 +222,12 @@ The board, its blocks, and everything hung off a task.
 - `GET /api/tasks/{task_id}/mentions` — every captured turn naming this
   task, newest first. Copying a task puts its id in the text (`tk_… · Title`)
   and the chat reading scans every turn for `tk_[0-9a-f]{8}`, so
-  mentions cost nothing extra and need no ledger.
+  mentions cost nothing extra and need no ledger. `?full=1` adds the task's
+  thread: `turns`, each once, with `why` (`mention`; `done` — inside a
+  stretch a #done closed; `next` — after a mention no #done closed, up to
+  the next task the operator names), `roles` (which sides named it), the
+  operator's message `said` and the agent's `reply`, whole; and
+  `done_turns`, `next_turns`, `has_done`.
 - `GET /api/tasks/mentions/summary?project=` — per task: count and last
   mention.
 - `GET /api/tasks/mentions/by-agent?project=` — the same, per agent lane.
@@ -742,7 +747,8 @@ and the MCP prompt. The scan, file-entry and architecture parts do.
 The library:
 
 - `GET /api/prompt-library` — the library newest first, each row with its
-  use count. Harvests on the way past.
+  use count, `preview` (the first 400 characters) and `text` (the whole
+  current wording). Harvests on the way past.
 - `POST /api/prompt-library` — write one by hand. Body: `title`, `text`,
   `tags`, `project`.
 - `GET /api/prompt-library/{prompt_id}` — one prompt: every version, the

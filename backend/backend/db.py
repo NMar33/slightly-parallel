@@ -306,6 +306,7 @@ class ProjectFolder:
 FILE_SOURCES: tuple[str, ...] = (
     "marks.csv",        # the ★ (marklib.py)
     "done.csv",         # #done in a chat (donelib.py): statistics and analytics read it
+    "now.csv",          # the #now cards the server wrote (nowlib.py): the task thread reads it
 )
 # Documents kept as numbered versions under a project (versioned.py).
 VERSIONED_KINDS: tuple[str, ...] = ("map",)

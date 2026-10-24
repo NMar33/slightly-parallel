@@ -1,6 +1,9 @@
 -r requirements.txt
-pytest>=8.0
-httpx>=0.27
-pyflakes>=3.2
-pytest-xdist>=3.6
+# The test tools, pinned: a new release must not change a CI result on a day
+# no code changed. Raise them on purpose, together.
+pytest==9.1.1
+pytest-xdist==3.8.0
+httpx==0.28.1
+pyflakes==4.0.0
 pyright==1.1.414
+ruff==0.17.2

@@ -41,7 +41,7 @@ from ..csvio import read_rows
 from ..db import ViewStore
 from ..docs_md import read_detail
 from ..entities import ENTITIES
-from ..file_safety import edit_json, safe_read_json, write_in_place
+from ..file_safety import edit_json, given_path, safe_read_json, write_in_place
 from .deps import get_store
 from .sets import _find as find_set
 from .sets import _read as read_sets
@@ -284,8 +284,11 @@ def _set_for(store: ViewStore, set_id: str, sets: dict[str, dict[str, Any]]) -> 
 
 
 def status_of(store: ViewStore, s: dict[str, Any] | None, entry: dict[str, Any]) -> str:
+    folder = given_path(entry.get("path"))
+    if folder is None:
+        return "missing"
     try:
-        text = (Path(str(entry.get("path") or "")) / "AGENTS.md").read_text(encoding="utf-8")
+        text = (folder / "AGENTS.md").read_text(encoding="utf-8")
     except OSError:
         return "missing"
     block = block_in(text, str(entry["set_id"]))

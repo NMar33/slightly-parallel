@@ -338,6 +338,7 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
     """Time every Claude Code turn the hook did not, from its transcript.
     Rewrites a chat's turns.jsonl only when its answer changed; answers how
     many turns were written."""
+    from .file_safety import acquire_flock, lock_path, replace_file
     from .sessions import parse_turns
 
     claude_dir = claude_dir or Path.home() / ".claude" / "projects"
@@ -378,15 +379,18 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
         old = [r for r in lines if r.get("source") == "transcript" or (r.get("source") == "hook" and "busy" not in r)]
         if fresh == old:
             continue
-        # The hook may have timed a turn meanwhile: take its lines as they are now.
-        hook = [r for r in _lines(folder / FILE) if r.get("source") == "hook" and "busy" in r]
-        fresh = [r for r in fresh if r["turn"] not in {h.get("turn") for h in hook}]
-        body = "".join(json.dumps(r) + "\n" for r in [*hook, *fresh])
-        tmp = folder / (FILE + ".tmp")
+        # The hook may have timed a turn meanwhile: take its lines as they are
+        # now, under the lock its append takes, so none lands between the
+        # read and the replace.
         try:
-            tmp.write_text(body, encoding="utf-8")
-            tmp.replace(folder / FILE)
-        except OSError as exc:
+            with acquire_flock(lock_path(folder / FILE), timeout_s=2.0):
+                hook = [r for r in _lines(folder / FILE) if r.get("source") == "hook" and "busy" in r]
+                fresh = [r for r in fresh if r["turn"] not in {h.get("turn") for h in hook}]
+                body = "".join(json.dumps(r) + "\n" for r in [*hook, *fresh])
+                tmp = folder / (FILE + ".tmp")
+                tmp.write_text(body, encoding="utf-8")
+                replace_file(tmp, folder / FILE)
+        except OSError as exc:   # FileSafetyError too: the hook holds it, next start
             log.info("turn times for %s: %s", folder, exc)
             continue
         written += len(fresh)
