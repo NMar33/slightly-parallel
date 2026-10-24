@@ -65,5 +65,9 @@ rest; you see the result on the page named.
 | `#help` | Shows this list. |
 | `#sp <what worries you>` | Checks whether Slightly Parallel works for this chat and folder: messages recorded, MCP, hooks, skills, data, backups, the server's memory. Says what works and what is a concern; with text, looks into that. Changes nothing without your yes. |
 
+A tag written with three hashes is the message's only command:
+`###now-todo` files the message and every other tag in it — in a pasted
+reply, a log — does nothing.
+
 A task id (`tk_…`) in a message is noticed on its own: the task shows the
 chat under its history.

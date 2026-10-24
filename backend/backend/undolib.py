@@ -39,6 +39,7 @@ from .csvio import append_row, read_rows, rewrite_rows
 from .date_utils import now_iso, today_yymm_dd
 from .db import ViewStore
 from .entities import ENTITIES
+from .hookshared import command_text, plain_text
 from .sessions import Turn, _operator_text, parse_turns
 
 UNDO_CSV = "undo.csv"
@@ -93,11 +94,11 @@ def _tags(t: Turn) -> set[str]:
     text = _operator_text(t)
     if "#undo" not in text.lower():
         return set()
-    return {"yes" if m.group(1) else "ask" for m in UNDO_TAG_RE.finditer(text)}
+    return {"yes" if m.group(1) else "ask" for m in UNDO_TAG_RE.finditer(command_text(text))}
 
 
 def _hint(t: Turn) -> str:
-    body = UNDO_TAG_RE.sub("", _operator_text(t)).strip()
+    body = UNDO_TAG_RE.sub("", plain_text(_operator_text(t))).strip()
     return " ".join(body.split())[:300]
 
 

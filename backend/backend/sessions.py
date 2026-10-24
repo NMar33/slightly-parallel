@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .hookshared import NOT_OPERATOR, yymm_dd as _yymm_dd
+from .hookshared import NOT_OPERATOR, command_text, plain_text, yymm_dd as _yymm_dd
 
 _TURN_RE = re.compile(r"^## Turn (\d+) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 # Quoted structure inside captured content is escaped at write time.
@@ -387,10 +387,10 @@ def _prompts_of(
             "body": text.strip(),
             "shingles": shingles(text),
         })
-        m = PROMPT_TAG_RE.search(text)
+        m = PROMPT_TAG_RE.search(command_text(text))
         if m is None:
             continue
-        body = prompt_body(text)
+        body = prompt_body(plain_text(text))
         if not body:
             continue
         marks.append({
@@ -414,13 +414,13 @@ def _keeps_of(
         if not text or "#" not in text:
             continue
         named: dict[str, str] = {}
-        for m in KEEP_TAG_RE.finditer(text):
+        for m in KEEP_TAG_RE.finditer(command_text(text)):
             kind = m.group(1).lower()
             if not named.get(kind):
                 named[kind] = m.group(2) or ""
         if not named:
             continue
-        body = keep_body(text)
+        body = keep_body(plain_text(text))
         if not body:
             continue
         for kind, name in named.items():
@@ -443,14 +443,14 @@ def _importants_of(
         text = _operator_text(t)
         if not text or "#important" not in text.lower():
             continue
-        kinds = {(m.group(1) or "all").lower() for m in IMPORTANT_TAG_RE.finditer(text)}
+        kinds = {(m.group(1) or "all").lower() for m in IMPORTANT_TAG_RE.finditer(command_text(text))}
         if not kinds:
             continue
         named = []
         for m in _TASK_ID_RE.finditer(text):
             if m.group(1).startswith("tk_") and m.group(1) not in named:
                 named.append(m.group(1))
-        body = IMPORTANT_TAG_RE.sub("", text).strip()
+        body = IMPORTANT_TAG_RE.sub("", plain_text(text)).strip()
         head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         for kind in sorted(kinds):
             out.append({
@@ -469,13 +469,13 @@ def _dones_of(
     out: list[dict] = []
     for t in block:
         text = _operator_text(t)
-        if not text or "#done" not in text.lower() or not DONE_TAG_RE.search(text):
+        if not text or "#done" not in text.lower() or not DONE_TAG_RE.search(command_text(text)):
             continue
         named: list[str] = []
         for m in _TASK_ID_RE.finditer(text):
             if m.group(1).startswith("tk_") and m.group(1) not in named:
                 named.append(m.group(1))
-        body = DONE_TAG_RE.sub("", text).strip()
+        body = DONE_TAG_RE.sub("", plain_text(text)).strip()
         head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         out.append({
             "project": project, "agent_id": agent_id, "session_id": session_id,
@@ -495,7 +495,7 @@ def _nows_of(
         text = _operator_text(t)
         if not text or "#now" not in text.lower():
             continue
-        command, lane, column = task_command(text)
+        command, lane, column = task_command(command_text(text))
         if command != "now":
             continue
         out.append({

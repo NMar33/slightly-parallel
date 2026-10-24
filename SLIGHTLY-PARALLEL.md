@@ -80,7 +80,9 @@ required fields and path checks (section 4). A decision requires its
 ## 2. Commands
 
 When the user types one of these, act as described. Commands start with
-`#` and may stand anywhere in the message.
+`#` and may stand anywhere in the message. One written with three hashes
+(`###now-todo`) is the message's only command: the other tags in it are
+silenced, and the notice names only that one.
 
 | Command | What you do |
 |---|---|
@@ -263,7 +265,7 @@ final in the pack's shape, then post the whole text with
 this version changed. Each post is the next version; the operator reads
 and compares them on the Storyboard. An unknown id is refused.
 
-**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
+**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
 
 **Architecture page** (part of `#architecture`, and at the end of a `#scan`; `#page` still asks for it alone). One page per project: what it is, what it does now, what it is made of and what is owed, as claims with their evidence, for a team lead who was not in the chat. Call `architecture_material`: it returns the computed facts, the current page and the instructions. Write the next version with `architecture_page {text, note}`. The skill `keep-the-architecture-page` holds the steps.
 

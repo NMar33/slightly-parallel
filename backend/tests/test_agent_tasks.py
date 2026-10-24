@@ -251,3 +251,18 @@ def test_a_column_suffix_belongs_to_now_only() -> None:
     assert task_command("look later #task-done") == ("", "", "")
     assert task_command("look later #now-done {ui}") == ("now", "ui", "done")
     assert task_command("#task {ui} the cards") == ("task", "ui", "agent")
+
+
+def test_comments_go_after_the_operators_text_which_stays_as_written(tmp_path: Path) -> None:
+    c = _board(tmp_path / "data", "#now fix the login timeout")
+    tid = _post(c, description="", title="Login timeout")["metadata"]["id"]
+    up = lambda body: c.post(f"/api/tasks/{tid}/update", json={"actor": "cc-a", **body})  # noqa: E731
+    assert up({"comment": "the timeout is in auth/session.py"}).status_code == 200
+    assert up({"comment": "fixed: 30 min, a test added"}).status_code == 200
+    assert c.get(f"/api/tasks/{tid}").json()["description"] == (
+        "#now fix the login timeout\n\n--- comment from agent:\nthe timeout is in auth/session.py"
+        "\n\n--- comment from agent:\nfixed: 30 min, a test added")
+    refused = up({"description": "my own words"})
+    assert refused.status_code == 422 and "comment" in refused.json()["detail"]
+    assert up({"comment": "  "}).status_code == 422
+    c.__exit__(None, None, None)

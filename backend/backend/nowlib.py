@@ -54,10 +54,6 @@ _lock = threading.Lock()
 # refusal read), so without this they were looked at again on every read.
 # In memory: after a restart each is checked once more.
 _settled: dict[str, set[str]] = {}
-_NOW_TAG_RE = re.compile(
-    r"(?<![\w#])#now(?:-(?:to-?do|next|backlog|doing|review|parked|done))?(?![\w-])(?:[ \t]*\{[^}\n]{1,80}\})?",
-    re.IGNORECASE)
-
 
 def since_stamp(path: Path, what: str) -> str | None:
     """The moment a chat command became one here (``{"since": …}`` in
@@ -96,16 +92,34 @@ def _id(agent_id: str, turn: int) -> str:
     return "nw_" + hashlib.sha256(f"{agent_id}|{turn}".encode()).hexdigest()[:8]
 
 
-def title_of(message: str) -> str:
-    """The message without its #now tag, on one line, cut at a word to 80 characters."""
-    text = " ".join(_NOW_TAG_RE.sub(" ", message or "").split())
+_PASTE_RE = re.compile(r"<pasted_content\b[^>]*>(.*?)</pasted_content>", re.DOTALL | re.IGNORECASE)
+_PASTE_TAG_RE = re.compile(r"</?pasted_content\b[^>]*>", re.IGNORECASE)
+# Any tag as typed — #now, ###now-todo, #skill — with a {lane} after it.
+_ANY_TAG_RE = re.compile(r"(?<![\w#])#{1,3}[A-Za-z][\w-]*(?:[ \t]*\{[^}\n]{1,80}\})?")
+#: When neither the operator's own words nor a paste give one.
+NO_TITLE = "Task from this chat"
+
+
+def _cut(text: str) -> str:
     if len(text) <= TITLE_CHARS:
-        return text or "#now"
+        return text
     cut = text[: TITLE_CHARS - 1]
     # A word cut in half goes; one that ends right at the limit stays.
     whole = text[TITLE_CHARS - 1] == " "
     head = cut if whole or " " not in cut[TITLE_CHARS // 2:] else cut.rsplit(" ", 1)[0]
     return head.rstrip(" ,.;:—-") + "…"
+
+
+def title_of(message: str) -> str:
+    """The card's title from the operator's message: their own words outside
+    a paste, the tags taken out, on one line, cut at a word to 80
+    characters; with no words of their own, the paste without its wrapper;
+    with neither, NO_TITLE."""
+    own = " ".join(_ANY_TAG_RE.sub(" ", _PASTE_RE.sub(" ", message or "")).split())
+    if own:
+        return _cut(own)
+    pasted = " ".join(_ANY_TAG_RE.sub(" ", _PASTE_TAG_RE.sub(" ", message or "")).split())
+    return _cut(pasted) if pasted else NO_TITLE
 
 
 def adopt(store: ViewStore) -> list[dict[str, str]]:

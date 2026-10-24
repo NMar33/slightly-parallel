@@ -561,7 +561,11 @@ class Translator:
                      "today_on": {"type": "string",
                                   "description": "ISO date to plan it for that day; empty clears"},
                      "description": {"type": "string",
-                                     "description": "the task's text: what is wrong or wanted, and where"},
+                                     "description": "the task's text: what is wrong or wanted, and where "
+                                                    "(not on a #now card: its text is the operator's message)"},
+                     "comment": {"type": "string",
+                                 "description": "a note of yours, added after the task's text under "
+                                                "'--- comment from agent:'; each call adds one"},
                  },
                  "required": ["id"],
              }},

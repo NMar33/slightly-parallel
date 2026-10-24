@@ -480,8 +480,11 @@ class TurnCapture:
         named = _TASK_ID_RE.findall(user_text or "")
         if named:
             meta["last_task"] = named[-1]
+        # The message as the commands read it: a ###command silences the
+        # other tags (hookshared.command_text, the server reads the same).
+        said = shared.command_text(user_text or "")
         evidence_for = None
-        if _EVIDENCE_RE.search(user_text or ""):
+        if _EVIDENCE_RE.search(said):
             tid = named[0] if named else str(meta.get("last_task") or "")
             evidence_for = {"id": tid, "title": _task_title(self.data_root, tid) if tid else ""}
 
@@ -511,7 +514,7 @@ class TurnCapture:
             "architecture_due": architecture_due,
             "evidence_for": evidence_for,
             "commands": (commands := list(dict.fromkeys(
-                " ".join(m.group(1).lower().split()) for m in _COMMAND_RE.finditer(user_text or "")))),
+                " ".join(m.group(1).lower().split()) for m in _COMMAND_RE.finditer(said)))),
             # #map costs a helper run: its notice asks the operator, naming
             # the model Settings give, the way the standup's does.
             "map_model": _map_model(self.data_root) if "map" in commands else None,
@@ -520,14 +523,14 @@ class TurnCapture:
             "helper_models": _helper_models(self.data_root) if (standup_due or {"map", "standup"} & set(commands)) else None,
             # #task {lane} / #now {lane}: the server refuses a lane the board
             # does not have; the notice says so first, so the agent asks.
-            "task_lane": _task_lane(self.data_root, self.project, user_text)
+            "task_lane": _task_lane(self.data_root, self.project, said)
             if any(c == "task" or c.startswith("now") for c in commands) else None,
             "kept": [
                 # An artifact is a folder the agent writes itself; the notice
                 # names where, so the agent never guesses the data root.
                 {**k, "folder": str(self.data_root / "projects" / self.project / "artifacts")}
                 if k["kind"] == "artifact" else k
-                for k in _kept(user_text, self.project, self.agent_name, turn)
+                for k in _kept(said, self.project, self.agent_name, turn)
             ],
             # Identity + clock on the first turn and every refresh: entries
             # posted with this agent_id and time line up with the captured

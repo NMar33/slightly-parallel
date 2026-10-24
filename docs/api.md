@@ -211,7 +211,10 @@ The board, its blocks, and everything hung off a task.
   `status`, `turn` (which round to rewrite), plus the mutable columns
   (`assignee`, `priority`, `lane`, `sprint_id`, `remember`, `today_on`,
   `stack_id`, `resurface_on`, `resurface_to`, `resurface_every_days`, …).
-  Status is the operator's; an agent that sets it is refused.
+  Status is the operator's; an agent that sets it is refused. `comment`
+  adds a note after the task's text, under `--- comment from agent:` (an
+  agent's) — each call adds one; on a #now card an agent's `description` is
+  refused, since its text is the operator's message.
 - `POST /api/tasks/{task_id}/turn` — the next round of instruction. Body:
   `text`, `actor`, `created_date`, `created_time`. Answers: `task`, `turn`,
   `turns`, `description`, `ref`.

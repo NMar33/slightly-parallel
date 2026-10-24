@@ -53,6 +53,38 @@ NOT_OPERATOR: tuple[str, ...] = (
 TRANSCRIPT_NOISE: tuple[str, ...] = ("<command-", "<local-command", "Caveat:")
 
 
+# ---------------------------------------------------------------------------
+# The ### suppressor
+# ---------------------------------------------------------------------------
+
+#: A command written with three hashes (``###now-todo``, ``###done``) is the
+#: message's only command: every other tag in it is silenced — the ones in a
+#: pasted reply, a log, a document. Every tag reader goes through
+#: command_text, the hook's and the server's alike.
+_LOUD_RE = re.compile(r"(?<![\w#])###(?=[A-Za-z])")
+#: A tag's ``#``: the regexes of every command read ``(?<![\w#])#word``, so a
+#: second ``#`` in front makes it read by none.
+_TAG_HASH_RE = re.compile(r"(?<![\w#])#(?=[A-Za-z])")
+
+
+def command_text(text: str) -> str:
+    """The message as the commands read it. With a ``###`` command in it, that
+    command reads as an ordinary one and every other tag is silenced (its
+    ``#`` doubled); without one, the message as it is."""
+    if not text or not _LOUD_RE.search(text):
+        return text
+    return _LOUD_RE.sub("#", _TAG_HASH_RE.sub("##", text))
+
+
+def plain_text(text: str) -> str:
+    """The message for what a command keeps of it (a prompt's body, a
+    vision's text): the ``###`` command written as an ordinary one, so it is
+    taken out like one; every other tag stays as it was typed."""
+    if not text or not _LOUD_RE.search(text):
+        return text
+    return _LOUD_RE.sub("#", text)
+
+
 def is_human_prompt(rec: dict[str, Any]) -> bool:
     """A transcript ``user`` record that is the person typing — not a tool result."""
     if rec.get("type") != "user":

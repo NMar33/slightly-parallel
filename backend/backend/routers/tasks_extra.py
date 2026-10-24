@@ -56,7 +56,9 @@ _OPERATOR_FIELDS = frozenset({
     "sprint_id",
 })
 # Keys an update body may carry that are not task columns.
-_UPDATE_META_KEYS = frozenset({"actor", "agent_id", "description", "turn"})
+_UPDATE_META_KEYS = frozenset({"actor", "agent_id", "description", "turn", "comment"})
+#: Above an agent's comment, after the operator's text (the operator's wording).
+COMMENT_MARK = "--- comment from agent:"
 TITLE_MAX = limits.MAX_TASK_TITLE
 DESCRIPTION_MAX = limits.MAX_TASK_DESCRIPTION
 RESURFACE_EVERY_MAX = 36500   # a hundred years
@@ -112,6 +114,15 @@ def tasks_update(
                             detail=f"resurface_every_days is at most {RESURFACE_EVERY_MAX} days")
     if "description" in body and len(str(body.get("description") or "")) > DESCRIPTION_MAX:
         raise HTTPException(status_code=422, detail=f"description is at most {DESCRIPTION_MAX} characters")
+    comment = str(body.get("comment") or "").strip()
+    if "comment" in body and not comment:
+        raise HTTPException(status_code=422, detail="a comment needs its text")
+    if is_agent and "description" in body and store.query_one(
+            "SELECT task_id FROM task_events_mutual WHERE task_id = ? AND field IN ('started', 'filed') "
+            "AND new_value LIKE '%#now%'", (task_id,)):
+        # The operator's #now message is the card's text, kept as written.
+        refuse_agent("a #now task's text is the operator's message, kept as it was written",
+                     f"add yours after it: task_update {{id: \"{task_id}\", comment}}")
     ignored = sorted(
         k for k in body
         if k not in _MUTABLE_FIELDS and k not in _UPDATE_META_KEYS and k not in ("l2", "l3", "l4", "body")
@@ -171,7 +182,7 @@ def tasks_update(
         old_status = next((old for f, old, _new in changes if f == "status"), None)
         after_status_change(store, rows, target, old_status, changes, deferred=side_events)
 
-        if "description" in body or "turn" in body:
+        if "description" in body or "turn" in body or comment:
             md_ref, _ = doc_path(store, ent, target, task_id)
             target["md_ref"] = md_ref
             fm, turns = _task_doc(store, md_ref, target, task_id)
@@ -179,6 +190,16 @@ def tasks_update(
                 if "description" in body:
                     turns = replace_turn(turns, str(body.get("description") or ""), 1)
                     changes.append(("description", "", "(updated)"))
+                if comment:
+                    # Each comment goes after the text and the comments before it.
+                    text = description_of(turns).rstrip()
+                    mark = COMMENT_MARK if is_agent else "--- comment:"
+                    grown = f"{text}\n\n{mark}\n{comment}" if text else f"{mark}\n{comment}"
+                    if len(grown) > DESCRIPTION_MAX:
+                        raise HTTPException(status_code=422, detail=(
+                            f"the text with this comment is over {DESCRIPTION_MAX} characters: write it shorter"))
+                    turns = replace_turn(turns, grown, 1)
+                    changes.append(("comment", "", "(added)"))
                 if "turn" in body:
                     spec = body.get("turn") if isinstance(body.get("turn"), dict) else {"text": body.get("turn")}
                     n = spec.get("n")
@@ -533,6 +554,7 @@ def _operator_command(store: ViewStore, agent: str) -> tuple[str, str, str, str]
     the agent's chat: ``#now-todo {ui} …`` → ("now", "ui", "todo", the whole
     message); no chat, or no command → ("", "", "", "")."""
     from ..sessions import _operator_text, chat_path, parse_turns, task_command
+    from ..hookshared import command_text
     path = chat_path(store, agent)
     if path is None:
         return "", "", "", ""
@@ -543,7 +565,7 @@ def _operator_command(store: ViewStore, agent: str) -> tuple[str, str, str, str]
     for t in reversed(turns):
         text = _operator_text(t)
         if text:
-            command, lane, column = task_command(text)
+            command, lane, column = task_command(command_text(text))
             return command, lane, column, text if command else ""
     return "", "", "", ""
 

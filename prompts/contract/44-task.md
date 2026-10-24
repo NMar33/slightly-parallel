@@ -6,7 +6,7 @@ enabled: true
 command: #task <hint> | Write the task the user is pointing at, from the conversation, into the `agent` column, for later; `#task {lane} …` names the board lane (section 4)
 command: #now <text> | Title the task this chat starts on; the server keeps the operator's message as its text, in `doing`, in the lane for #now or the one in braces; then do the work; `#done` closes it (section 4)
 command: #now-todo <text> | Title the operator's message; the server files it, as written, in To do (also `-next`, `-backlog`, `-review`, `-parked`, `-done`, `-doing`); not started in this chat (section 4)
-brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
+brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
 ---
 
 **Agent task — `#task <hint>` / `#now <text>` → `write_entry {lens: "task"}`.**
@@ -24,8 +24,11 @@ and when the work happens:
   unless changed), marked for today, with "started in the chat" in its
   history. Write it first, then do the work. `#done` closes it (the skill
   `finish-a-task`). A turn that ends with no card gets one from the server,
-  titled with the message's start; a later write is refused and names that
-  card: retitle it with `task_update {id, title}`.
+  titled with the operator's own words; a later write is refused and names
+  that card: retitle it with `task_update {id, title}`. A note of yours
+  goes after the operator's text with `task_update {id, comment}` (each
+  call adds one, under `--- comment from agent:`); the card's own text is
+  the operator's and is not rewritten.
 - `#now-todo` — the same card, filed in To do instead, and not started:
   write it, say so in one line, and go on with what the chat was doing.
   `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and

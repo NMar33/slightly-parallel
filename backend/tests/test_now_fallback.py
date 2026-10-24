@@ -172,8 +172,14 @@ def test_tags_from_before_the_feature_are_history(env) -> None:
 @pytest.mark.parametrize("message,title", [
     ("#now fix it", "fix it"),
     ("please #NOW {ui}  fix   the\nbutton", "please fix the button"),
-    ("#now", "#now"),
+    ("#now", "Task from this chat"),
     ("#now " + "word " * 30, ("word " * 16).strip() + "…"),
+    # The operator's own words, not the paste; the paste when there are none.
+    ('look at this <pasted_content id="5a">the #now card idea</pasted_content> and fix it',
+     "look at this and fix it"),
+    ('#now-todo <pasted_content id="5a">Nested reply: plan the refactor</pasted_content>',
+     "Nested reply: plan the refactor"),
+    ("###now-todo keep only this #skill", "keep only this"),
 ])
 def test_the_title(message, title) -> None:
     assert title_of(message) == title
