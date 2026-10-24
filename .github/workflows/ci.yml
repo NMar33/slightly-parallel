@@ -50,7 +50,7 @@ jobs:
       - name: Types (pyright, basic; settings in pyproject.toml)
         if: runner.os == 'Linux'
         run: python -m pyright
-      - name: Run tests (-rs: a skipped test is named, never silent)
+      - name: "Run tests (-rs: a skipped test is named, never silent)"
         run: python -m pytest -q -rs tests
       - name: API reference names every route
         if: runner.os == 'Linux'
