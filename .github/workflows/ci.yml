@@ -75,6 +75,49 @@ jobs:
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
 
+  codex:
+    # The real Codex program, not the tests' stand-in: does the plan limits' read
+    # start and end on each system. It spends no tokens (scripts/ci/check_codex_limits.py).
+    name: Real Codex (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: The key
+        id: key
+        shell: bash
+        env:
+          KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else echo "No key (a fork's pull request): skipped."; fi
+      - uses: actions/checkout@v7
+        if: steps.key.outputs.ok
+      - uses: actions/setup-python@v7
+        if: steps.key.outputs.ok
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        if: steps.key.outputs.ok
+        with:
+          node-version: 22
+      - name: Install the backend and Codex, logged in with the key
+        if: steps.key.outputs.ok
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python -m pip install -q -r backend/requirements.txt
+          npm install -g @openai/codex
+          printenv OPENAI_API_KEY | codex login --with-api-key
+      - name: One read of the limits from the real program
+        if: steps.key.outputs.ok
+        run: python scripts/ci/check_codex_limits.py
+
   frontend:
     name: Frontend (Node ${{ matrix.node }})
     runs-on: ubuntu-latest

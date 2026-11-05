@@ -25,6 +25,8 @@ the checks still to build, and the limits the release notes must name.
 
 ## By hand, on real Windows and macOS
 
+CI's job Real Codex starts the real program and reads the plan limits on each system, logged in with an API key, so it shows whether the read works and ends, not the percentages. On each system, with Codex logged in through ChatGPT, run `python scripts/ci/check_codex_limits.py` and see the percentages.
+
 A standard user account, no developer shell set up. Follow the README as
 written.
 
