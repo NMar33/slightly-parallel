@@ -63,7 +63,7 @@ def _hook(root: Path, payload: dict, tool: str = "claude-code") -> subprocess.Co
     args = [sys.executable, str(_HOOK), "--project", "alpha", "--data-root", str(root)]
     if tool != "claude-code":
         args += ["--tool", tool]
-    return subprocess.run(args, input=json.dumps(payload), capture_output=True, text=True, timeout=60)
+    return subprocess.run(args, input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", timeout=60)
 
 
 def _usage(root: Path, agent: str) -> list[dict]:
@@ -473,7 +473,7 @@ def test_setup_without_a_status_line_installs_ours_alone(env) -> None:
     out = _integrate(client, project_dir)
     cmd = _local(project_dir)["statusLine"]["command"]
     data_root = _data_root(client)
-    assert cmd.startswith('python3 "') and f'--data-root "{data_root}" --then-key ' in cmd and "--then " not in cmd
+    assert cmd.startswith(('python3 "', 'py -3 "')) and f'--data-root "{data_root}" --then-key ' in cmd and "--then " not in cmd
     assert _side(client, project_dir) == {"from": "user", "command": "", "folder": str(project_dir),
                                           "user_settings": str(env[2])}
     assert _run_status(client, project_dir, {"rate_limits": {"five_hour": {"used_percentage": 62.5}}}) == "SP · 5-hour 62%\n"
@@ -623,7 +623,7 @@ def _env(now: str, tz: str = "UTC", config: str = _CONFIG_DIR) -> dict:
 
 def _hook_at(root: Path, payload: dict, now: str, tz: str = "UTC") -> subprocess.CompletedProcess:
     args = [sys.executable, str(_HOOK), "--project", "alpha", "--data-root", str(root)]
-    p = subprocess.run(args, input=json.dumps(payload), capture_output=True, text=True, timeout=60, env=_env(now, tz))
+    p = subprocess.run(args, input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", timeout=60, env=_env(now, tz))
     assert p.returncode == 0, p.stderr
     return p
 
@@ -695,6 +695,8 @@ def test_the_hour_the_clocks_go_back_is_told_apart(root: Path, tmp_path: Path) -
     """New York, 1 November 2026: 01:00–02:00 happens twice. Turn 1 begins at
     01:30 EDT, turn 2 at 01:10 EST (40 minutes later); a message at 01:50 EDT
     is turn 1's although its wall-clock time is later than turn 2's start."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("Windows: a process's time zone cannot be set from TZ")
     tz = "America/New_York"
     _hook_at(root, {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "one"},
              "2026-11-01T01:30:00-04:00", tz)
@@ -800,7 +802,7 @@ def test_a_codex_call_written_after_its_stop_is_kept_at_the_next(root: Path, tmp
 
     def run(payload: dict, now: str) -> None:
         args = [sys.executable, str(_HOOK), "--project", "alpha", "--data-root", str(root), "--tool", "codex"]
-        subprocess.run(args, input=json.dumps(payload), capture_output=True, text=True, timeout=60, env=_env(now), check=True)
+        subprocess.run(args, input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", timeout=60, env=_env(now), check=True)
 
     stop = {"hook_event_name": "Stop", "session_id": sid, "transcript_path": str(rollout), "last_assistant_message": "ok"}
     run({"hook_event_name": "UserPromptSubmit", "session_id": sid, "prompt": "a"}, "2026-11-01T10:00:00")
@@ -956,7 +958,6 @@ def test_the_writer_skips_lower_readings_of_the_same_reset(root: Path) -> None:
 
 def test_the_status_line_sweeps_what_a_killed_run_left_once_an_hour(root: Path) -> None:
     import os
-    import signal
     folder = root / ".usage" / "sessions"
     folder.mkdir(parents=True)
     old_tmp, fresh_tmp = folder / ".claude-code-x.json.111.tmp", folder / ".claude-code-y.json.222.tmp"
@@ -981,7 +982,7 @@ def test_the_status_line_sweeps_what_a_killed_run_left_once_an_hour(root: Path) 
     deadline = time.time() + 30
     while not target.exists() and time.time() < deadline:
         time.sleep(0.05)
-    proc.send_signal(signal.SIGKILL)
+    proc.kill()
     proc.wait(timeout=30)
     assert json.loads(target.read_text(encoding="utf-8"))["session_id"] == "sess-k"
     assert [f.name for f in folder.glob(".*.tmp")] == [fresh_tmp.name]
@@ -996,7 +997,7 @@ def test_the_status_line_runs_the_line_its_side_file_names(root: Path, tmp_path:
     side.parent.mkdir(parents=True)
     side.write_text(json.dumps({"from": "user", "command": "echo old", "folder": str(folder),
                                 "user_settings": str(user)}), encoding="utf-8")
-    run = lambda: _status_at(root, "2026-11-01T14:02:11", b'{"session_id": "s"}', "--then-key", key).stdout  # noqa: E731
+    run = lambda: _status_at(root, "2026-11-01T14:02:11", b'{"session_id": "s"}', "--then-key", key).stdout.replace(b"\r\n", b"\n")  # noqa: E731
     assert run() == b""                                         # nothing in either settings file now
     user.write_text(json.dumps({"statusLine": {"type": "command", "command": "echo from-user"}}), encoding="utf-8")
     assert run() == b"from-user\n"
@@ -1058,4 +1059,4 @@ def test_setup_again_from_a_moved_data_folder_keeps_the_operators_line(tmp_path:
     setup_mod._write_side(side)
     text2, _action, side2 = setup_mod._statusline_plan(text, folder, new_root)
     assert side2 is not None and side2[1]["entry"] == own and str(new_root) in str(side2[0])
-    assert f'--data-root "{new_root}"' in json.loads(text2)["statusLine"]["command"]
+    assert f'--data-root "{new_root.as_posix()}"' in json.loads(text2)["statusLine"]["command"]

@@ -38,6 +38,8 @@ _LATER = ["2026-11-01T05:00:00", "2026-11-01T06:00:00", "2026-11-01T07:00:00"]
 
 @pytest.fixture()
 def utc(monkeypatch):
+    if not hasattr(time, "tzset"):
+        pytest.skip("Windows: a process cannot set its time zone")
     monkeypatch.setenv("TZ", "UTC")
     time.tzset()
     yield

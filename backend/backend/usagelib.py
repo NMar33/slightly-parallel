@@ -712,7 +712,7 @@ _EMPTY_USAGE: dict[str, Any] = {"turns": {}, "buckets": {}, "tools": [], "bad": 
                                 "unreadable": False, "sig": None}
 
 # path → (sig, parsed): a usage file is parsed again only when it moved.
-_usage: dict[str, tuple[tuple[int, int, int], dict[str, Any]]] = {}
+_usage: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
 _lock = threading.Lock()
 _swept = [0.0]
 
@@ -847,8 +847,10 @@ class _Limits:
                 self._reset()
                 self.ino, self.mtime = -1, -1
                 return
+            # A grown file is checked too: a clock with a coarse tick (Windows)
+            # can show a rewrite with the same mtime.
             if st.st_ino != self.ino or st.st_size < self.offset or (
-                    st.st_mtime_ns != self.mtime and not self._same_start(path)):
+                    (st.st_mtime_ns != self.mtime or st.st_size != self.offset) and not self._same_start(path)):
                 # Rotated or cut: from the start.
                 self._reset()
                 self.ino = st.st_ino
