@@ -206,14 +206,22 @@ def test_lines_are_cut_out_by_their_absolute_ids(env) -> None:
     # Typed over the socket, as the page types: the Enter stamps the history.
     with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}") as ws:
         ws.send_text(json.dumps({"type": "input", "data": "printf 'A%s\\n' 1 2 3 4 5\r"}))
-        deadline = time.time() + 5
+        deadline = time.time() + 20
         while time.time() < deadline and "A5" not in termlib.capture(root, sid)["text"]:
             time.sleep(0.1)
-    screen = termlib.capture(root, sid)
+    # The screen and its position are two reads, and the shell may still be
+    # drawing its prompt on a slow machine: the same screen and position twice.
+    screen, pos = None, None
+    while time.time() < deadline:
+        now = termlib.capture(root, sid), c.get(f"/api/terminal/sessions/{sid}/pos").json()
+        if now == (screen, pos):
+            break
+        screen, pos = now
+        time.sleep(0.2)
+    assert screen is not None and pos is not None
     assert screen["lines"] >= 5 and "A5" in screen["text"]
 
     # The row that shows A2, anchored to an absolute id, survives arithmetic.
-    pos = c.get(f"/api/terminal/sessions/{sid}/pos").json()
     rows = screen["text"].split("\n")
     idx = next(i for i, l in enumerate(rows) if l.strip() == "A2")
     a = pos["history"] - pos["scroll"] + idx

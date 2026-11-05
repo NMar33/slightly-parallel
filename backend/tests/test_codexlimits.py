@@ -134,7 +134,8 @@ def test_read_names_its_causes(tmp_path: Path) -> None:
 
 def test_a_read_that_times_out_ends_what_the_wrapper_started(tmp_path: Path) -> None:
     psutil = pytest.importorskip("psutil")
-    assert codexlimits.read(timeout=3, exe=fake_codex(tmp_path, mode="tree"))["cause"] == "no answer in 3 s"
+    # Long enough for the stand-in to start its child with the whole suite running.
+    assert codexlimits.read(timeout=8, exe=fake_codex(tmp_path, mode="tree"))["cause"] == "no answer in 8 s"
     child = int((tmp_path / "child.pid").read_text())
     for _ in range(50):
         if not psutil.pid_exists(child) or psutil.Process(child).status() == psutil.STATUS_ZOMBIE:
