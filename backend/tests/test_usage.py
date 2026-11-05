@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -855,7 +856,9 @@ def test_the_caches_let_go_of_files_that_are_gone(tmp_path: Path, monkeypatch) -
     usagelib.turns_in(folder, tmp_path)
     assert key in usagelib._usage and key in usagelib._derived
     (folder / "usage.jsonl").unlink()
-    monkeypatch.setattr(usagelib, "_swept", [0.0])
+    # The last sweep a minute ago, by the same clock: 0.0 is not that on a machine
+    # that booted less than a minute ago (monotonic time counts from the boot).
+    monkeypatch.setattr(usagelib, "_swept", [time.monotonic() - usagelib.SWEEP_S - 1])
     usagelib._sweep()
     assert key not in usagelib._usage and key not in usagelib._derived
 
