@@ -33,8 +33,29 @@ function dataRoot(): string {
   if (process.env.TEST_WORKER_INDEX !== undefined || process.env.SP_E2E_URL) return ''
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-e2e-'))
   fs.cpSync(path.join(REPO, 'fixtures'), root, { recursive: true })
+  addUsageGolden(root)
   process.on('exit', () => { try { fs.rmSync(root, { recursive: true, force: true }) } catch { /* the OS cleans tmp */ } })
   return root
+}
+/**
+ * The Usage page's golden data (testdata/usage/root, the server's own test
+ * data): its projects' chats and the plan limits go into the copy beside the
+ * demo projects — never its root files, which would replace the demo's tasks.
+ * The server's usage clock is then fixed to the moment the data describes
+ * (SP_NOW, read by usagelib only), so tests/e2e/usage.spec.ts can check
+ * the exact numbers.
+ */
+const USAGE_GOLDEN = path.join(REPO, 'testdata', 'usage', 'root')
+export const USAGE_NOW = '2026-11-01T14:48:00'
+function addUsageGolden(root: string): void {
+  if (!fs.existsSync(USAGE_GOLDEN)) return
+  const projects = path.join(USAGE_GOLDEN, 'projects')
+  for (const p of fs.existsSync(projects) ? fs.readdirSync(projects) : []) {
+    const to = path.join(root, 'projects', p)
+    if (!fs.existsSync(to)) fs.cpSync(path.join(projects, p), to, { recursive: true })
+  }
+  const usage = path.join(USAGE_GOLDEN, '.usage')
+  if (fs.existsSync(usage)) fs.cpSync(usage, path.join(root, '.usage'), { recursive: true })
 }
 const DATA_ROOT = dataRoot()
 // The backend's own interpreter, where each system puts it.
@@ -79,6 +100,8 @@ export default defineConfig({
           SP_PORT: String(E2E_PORT),
           // No skills into the home folder, no monitor writing into the fixtures.
           SP_SANDBOX: '1',
+          // The usage clock of the golden data (see addUsageGolden).
+          ...(fs.existsSync(USAGE_GOLDEN) ? { SP_NOW: USAGE_NOW } : {}),
           // The terminal flow opens a shell: a plain one, never the
           // operator's interactive bash (its rc may prompt for sudo).
           SHELL: '/bin/sh',

@@ -8,6 +8,7 @@ import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
+from .. import limits
 from ..csvio import rewrite_rows
 from ..db import ViewStore
 from ..docs_md import resolve_under
@@ -54,6 +55,10 @@ _OPERATOR_FIELDS = frozenset({
     "auto_manage", "evidence_required", "evidence_prompt",
     "resurface_on", "resurface_to", "resurface_every_days", "stack_id",
     "sprint_id", "priority", "due_date",
+    # Planning and placing (contract 44-task: the operator's): the lane and
+    # the assignee, the value axes, the projects a card shows on, its
+    # position in the column, and the operator's own note.
+    "lane", "assignee", "impact", "effort", "novelty", "tokens", "position", "projects", "remember",
 })
 # Keys an update body may carry that are not task columns.
 _UPDATE_META_KEYS = frozenset({"actor", "agent_id", "description", "turn", "comment"})
@@ -99,9 +104,17 @@ def tasks_update(
             )
         if "turn" in body:
             # The rounds after the first are the operator's, added on the
-            # card; an agent's way to the text is `description` (round 1).
+            # card; an agent adds its own words after the text as a comment.
             refuse_agent("a task's later rounds are the operator's",
-                         "change the task's own text with `description`.")
+                         f"add your words after the text: task_update {{id: \"{task_id}\", comment}}.")
+        if "tags" in body:
+            tags = [t.strip() for t in str(body.get("tags") or "").split(",") if t.strip()]
+            if any(t not in AGENT_TAGS for t in tags) or len(tags) > AGENT_TAGS_MAX:
+                refuse_agent(
+                    f"an agent's tags are {', '.join(AGENT_TAGS)}, at most {AGENT_TAGS_MAX}",
+                    "the operator's tags stay as they are; set yours from that list.",
+                )
+            body["_agent_tags"] = tags
     if "title" in body and len(str(body.get("title") or "")) > TITLE_MAX:
         raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
     every = str(body.get("resurface_every_days") or "").strip()
@@ -110,8 +123,6 @@ def tasks_update(
         # that is not a number is stored and never acted on, as before.
         raise HTTPException(status_code=422,
                             detail=f"resurface_every_days is at most {RESURFACE_EVERY_MAX} days")
-    if "description" in body and len(str(body.get("description") or "")) > DESCRIPTION_MAX:
-        raise HTTPException(status_code=422, detail=f"description is at most {DESCRIPTION_MAX} characters")
     comment = str(body.get("comment") or "").strip()
     if "comment" in body and not comment:
         raise HTTPException(status_code=422, detail="a comment needs its text")
@@ -165,9 +176,17 @@ def tasks_update(
                 if old:
                     target[stamp_field] = ""
                     changes.append((stamp_field, old, ""))
+        if "_agent_tags" in body:
+            # The agent's tags replace its own (ag_*) on the card; the
+            # operator's stay.
+            kept = [t for t in str(target.get("tags") or "").split(",") if t.strip() and t.strip() not in AGENT_TAGS]
+            body["tags"] = ",".join(kept + list(body.pop("_agent_tags")))
         for k, v in body.items():
             if k not in _MUTABLE_FIELDS:
                 continue
+            if isinstance(v, (list, dict)):
+                # A list would be stored as its Python text ("['ag_bug']").
+                raise HTTPException(status_code=422, detail=f"{k} is text, not a list or an object")
             new_v = str(v) if v is not None else ""
             if k == "projects":
                 # Membership can grow or shrink but never loses the home project.
@@ -180,20 +199,38 @@ def tasks_update(
         old_status = next((old for f, old, _new in changes if f == "status"), None)
         after_status_change(store, rows, target, old_status, changes, deferred=side_events)
 
+        doc_minted = False
         if "description" in body or "turn" in body or comment:
             md_ref, _ = doc_path(store, ent, target, task_id)
+            doc_minted = md_ref != str(target.get("md_ref") or "")
             target["md_ref"] = md_ref
-            fm, turns = _task_doc(store, md_ref, target, task_id)
+            fm, turns = _task_doc(store, md_ref, target, task_id, for_write=True)
             try:
                 if "description" in body:
-                    turns = replace_turn(turns, str(body.get("description") or ""), 1)
-                    changes.append(("description", "", "(updated)"))
+                    new_text = str(body.get("description") or "")
+                    was = description_of(turns)
+                    if len(new_text) > DESCRIPTION_MAX and (is_agent or len(was) <= DESCRIPTION_MAX):
+                        # Over the limit: an agent never makes a card longer; the
+                        # operator's own words are kept whole on a card that is
+                        # already over it (the server's #now card), and only a
+                        # card under the limit is held to it.
+                        raise HTTPException(status_code=422, detail=(
+                            f"description is at most {DESCRIPTION_MAX} characters"
+                            if len(was) <= DESCRIPTION_MAX else
+                            f"this text is already over {DESCRIPTION_MAX} characters; an agent edits it, it does not make it longer"))
+                    if new_text.strip() != was.strip():
+                        # The window sends the text with every save; the history
+                        # notes an edit only when the text changed.
+                        turns = replace_turn(turns, new_text, 1)
+                        changes.append(("description", "", "(updated)"))
                 if comment:
+                    if len(comment) > limits.MAX_TEXT:
+                        raise HTTPException(status_code=422, detail=f"a comment is at most {limits.MAX_TEXT} characters")
                     # Each comment goes after the text and the comments before it.
                     text = description_of(turns).rstrip()
                     mark = COMMENT_MARK if is_agent else "--- comment:"
                     grown = f"{text}\n\n{mark}\n{comment}" if text else f"{mark}\n{comment}"
-                    if len(grown) > DESCRIPTION_MAX:
+                    if len(grown) > DESCRIPTION_MAX and len(text) <= DESCRIPTION_MAX:
                         raise HTTPException(status_code=422, detail=(
                             f"the text with this comment is over {DESCRIPTION_MAX} characters: write it shorter"))
                     turns = replace_turn(turns, grown, 1)
@@ -210,7 +247,9 @@ def tasks_update(
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
             _write_task_doc(store, md_ref, fm, turns)
-        return bool(changes)
+        # A document minted for a task that had none is a change of the row
+        # (its md_ref), even when the text itself did not change.
+        return bool(changes) or doc_minted
 
     rewrite_rows(csv_path, ent.columns, mutate)
 
@@ -247,6 +286,10 @@ def tasks_add_turn(
     text = str(body.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="a turn needs text: send text")
+    if identity_of(body) not in _HOUSE_ACTORS:
+        # The same rule as `turn` on /update: the rounds are the operator's.
+        refuse_agent("a task's later rounds are the operator's",
+                     f"add your words after the text: task_update {{id: \"{task_id}\", comment}}.")
     row = store.query_one("SELECT * FROM tasks_mutual WHERE id = ?", (task_id,))
     if not row:
         raise not_found("task", task_id)
@@ -265,7 +308,7 @@ def tasks_add_turn(
     # under: two turns at once each read the document, and the second write
     # dropped the first one's turn.
     with acquire_flock(lock_path(store.data_root / ENTITIES["task"].csv)):
-        fm, turns = _task_doc(store, md_ref, row, task_id)
+        fm, turns = _task_doc(store, md_ref, row, task_id, for_write=True)
         before = len(turns)
         try:
             turns = append_turn(turns, text, date, stamp)

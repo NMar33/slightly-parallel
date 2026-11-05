@@ -1,0 +1,10 @@
+{
+ "agent_id": "cc-nousage",
+ "agent_name": "cc-nousage",
+ "project": "GOLD",
+ "tool": "claude-code",
+ "session_ref": "sess-none",
+ "chat_title": "Not recorded",
+ "created_date": "22611-01",
+ "last_active": "2026-11-01T08:00:00"
+}

@@ -22,13 +22,15 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import capturewatch
 from .db import ViewStore
 from .file_safety import atomic_write, atomic_write_json
 from .hookshared import (
-    NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, escape_content, is_human_prompt, local_iso, session_key, yymm_dd,
+    HISTORY_SLACK_S, NOT_OPERATOR, TRANSCRIPT_NOISE, assign_turns, codex_home, epoch_of, escape_content,
+    helper_starts, is_compact, is_human_prompt, local_iso, session_key, usage_line_claude, usage_records_claude,
+    usage_records_codex, yymm_dd,
 )
 
 #: A session with a message in the last hour may still be going on: the hook
@@ -63,6 +65,19 @@ def _text(content: Any, kinds: tuple[str, ...]) -> str:
     return ""
 
 
+def _claude_prompt(rec: dict[str, Any]) -> str:
+    """The person's message in one Claude Code record ("" when it is none):
+    tool results, the harness's notes, helper agents and the compact
+    summary are not the person."""
+    if rec.get("isSidechain") or rec.get("isCompactSummary"):
+        return ""
+    if rec.get("type") != "user" or rec.get("isMeta") or not is_human_prompt(rec):
+        return ""
+    msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+    text = _text(msg.get("content"), ("text",)).strip()
+    return "" if not text or text.startswith(NOT_OPERATOR + TRANSCRIPT_NOISE) else text
+
+
 def claude_turns(path: Path) -> list[dict[str, str]]:
     """The person's messages and the last reply to each, from a Claude Code
     transcript. Tool results, the harness's notes, helper agents and the
@@ -78,9 +93,9 @@ def claude_turns(path: Path) -> list[dict[str, str]]:
             if not isinstance(rec, dict) or rec.get("isSidechain") or rec.get("isCompactSummary"):
                 continue
             msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
-            if rec.get("type") == "user" and not rec.get("isMeta") and is_human_prompt(rec):
-                text = _text(msg.get("content"), ("text",)).strip()
-                if not text or text.startswith(NOT_OPERATOR + TRANSCRIPT_NOISE):
+            if rec.get("type") == "user":
+                text = _claude_prompt(rec)
+                if not text:
                     continue
                 turns.append({"user": text, "at": local_iso(rec.get("timestamp")), "agent": "", "end": ""})
             elif rec.get("type") == "assistant" and turns:
@@ -117,7 +132,137 @@ def codex_turns(path: Path) -> list[dict[str, str]]:
     return turns
 
 
+def _jsonl(path: Path):
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                yield rec
+
+
+def _prompt_turns(times: list[float | None]) -> tuple[list[list[Any]], float | None]:
+    """The turn history of an imported chat (hookshared.assign_turns): each
+    prompt begins a turn; what was written more than a minute before the
+    first one is earlier history, as the hook counts it."""
+    turns = [[n, t, False] for n, t in enumerate(times, start=1)]
+    first = next((t for t in times if t is not None), None)
+    return turns, (first - HISTORY_SLACK_S if first is not None else None)
+
+
+_Parts = tuple[list[float | None], list[str], Callable[..., list[dict[str, Any]]]]
+
+
+def claude_usage_parts(path: Path, session: str) -> _Parts:
+    """(the transcript's human prompts, as epochs; their texts; a function
+    that gives its usage lines their turns): claude_usage in two steps, so
+    the backfill (usagebackfill.py) can number the turns by the chat's own
+    chat.md. The function takes (turns, cutoff, default) as
+    hookshared.assign_turns."""
+    lines: dict[str, dict[str, Any]] = {}
+    starts: dict[str, dict[str, Any]] = {}
+    compacts: list[float] = []
+    prompts: list[float | None] = []
+    texts: list[str] = []
+    for rec in _jsonl(path):
+        said = _claude_prompt(rec) if rec.get("type") == "user" else ""
+        if said:
+            prompts.append(epoch_of(rec.get("timestamp")))
+            texts.append(said)
+            continue
+        try:
+            if is_compact(rec):
+                at = epoch_of(rec.get("timestamp"))
+                if at is not None:
+                    compacts.append(at)
+            line = usage_line_claude(rec, session)
+            if line is not None:
+                lines[line["id"]] = line
+            for call in helper_starts(rec):
+                starts.setdefault(call, {"t": epoch_of(rec.get("timestamp")), "parent": ""})
+        except Exception:  # noqa: BLE001 — one bad record never stops the import
+            continue
+    helper_lines: list[dict[str, Any]] = []
+    base = path.with_suffix("") / "subagents"
+    try:
+        helpers = sorted(base.rglob("*.jsonl")) if base.is_dir() else []
+    except OSError:
+        helpers = []
+    for f in helpers:
+        try:
+            call = str(json.loads(f.with_name(f.stem + ".meta.json").read_text(encoding="utf-8")).get("toolUseId") or "")
+        except (OSError, ValueError, AttributeError):
+            call = ""
+        try:
+            recs = [r for r in _jsonl(f) if r.get("type") == "assistant"]
+        except OSError:
+            continue
+        helper_lines.extend({**line, "tool_use": call}
+                            for line in usage_records_claude(recs, session, helper=f.stem.removeprefix("agent-") or f.stem))
+        for rec in recs:
+            for inner in helper_starts(rec):
+                starts.setdefault(inner, {"t": epoch_of(rec.get("timestamp")), "parent": call})
+
+    def assign(turns: list[list[Any]], cutoff: float | None, default: int) -> list[dict[str, Any]]:
+        out, _left = assign_turns(list(lines.values()) + helper_lines, turns, starts=dict(starts),
+                                  compacts=compacts, cutoff=cutoff, default=default)
+        return out
+    return prompts, texts, assign
+
+
+def claude_usage(path: Path, session: str) -> list[dict[str, Any]]:
+    """The usage lines of a Claude Code transcript, each with the turn the
+    import gives it (the same prompts claude_turns counts): one per API
+    message, the copies of another session skipped (hookshared). The helper
+    agents' transcripts beside it (``<session>/subagents``) go to the turn
+    whose Agent call started them, else to the turn they began in. The turns
+    are given by the hook's own rule (hookshared.assign_turns), so a chat
+    imported and the same chat recorded hold the same usage."""
+    prompts, _texts, assign = claude_usage_parts(path, session)
+    if not prompts:
+        return []
+    turns, cutoff = _prompt_turns(prompts)
+    return assign(turns, cutoff, len(turns))
+
+
+def codex_usage_parts(path: Path, session: str = "") -> _Parts:
+    """codex_usage in two steps, as claude_usage_parts."""
+    recs: list[dict[str, Any]] = []
+    prompts: list[float | None] = []
+    texts: list[str] = []
+    for rec in _jsonl(path):
+        pl = rec.get("payload")
+        if not isinstance(pl, dict):
+            continue
+        if rec.get("type") == "response_item" and pl.get("type") == "message" and pl.get("role") == "user":
+            said = _codex_person(pl.get("content")).strip()
+            if said:
+                prompts.append(epoch_of(rec.get("timestamp")))
+                texts.append(said)
+            continue
+        recs.append(rec)
+    lines = usage_records_codex(recs)
+
+    def assign(turns: list[list[Any]], cutoff: float | None, default: int) -> list[dict[str, Any]]:
+        out, _left = assign_turns(list(lines), turns, cutoff=cutoff, default=default)
+        return out
+    return prompts, texts, assign
+
+
+def codex_usage(path: Path, session: str = "") -> list[dict[str, Any]]:
+    """The usage lines of a Codex rollout, each with the turn the import
+    gives it (the same messages codex_turns counts), by the hook's rule."""
+    prompts, _texts, assign = codex_usage_parts(path, session)
+    if not prompts:
+        return []
+    turns, cutoff = _prompt_turns(prompts)
+    return assign(turns, cutoff, len(turns))
+
+
 _READERS = {"claude": claude_turns, "codex": codex_turns}
+_USAGE = {"claude": claude_usage, "codex": codex_usage}
 _TOOL = {"claude": "claude-code", "codex": "codex"}
 _TOOL_NAME = {"claude": "Claude Code", "codex": "Codex"}
 
@@ -180,6 +325,14 @@ def _write(store: ViewStore, project: str, tool: str, c: dict[str, Any]) -> str:
     folder.mkdir(parents=True, exist_ok=True)
     atomic_write(folder / "chat.md", "".join(parts))
     atomic_write_json(folder / "meta.json", meta)
+    # The tokens of each turn, from the same log (the Usage page). A log
+    # whose usage cannot be read leaves the chat without it.
+    try:
+        usage = _USAGE[tool](Path(c["file"]), str(c["session"]))
+    except (OSError, ValueError):
+        usage = []
+    if usage:
+        atomic_write(folder / "usage.jsonl", "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in usage))
     return ""
 
 

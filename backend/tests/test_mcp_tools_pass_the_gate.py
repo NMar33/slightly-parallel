@@ -31,6 +31,10 @@ ARGS: dict[str, dict[str, Any]] = {
     "map_write": {"map": {"template": "tool", "rows": []}, "note": "x"},
     "architecture_page": {"text": "x", "note": "x"},
     "task_update": {"id": "tk_none", "title": "x"},
+    "task_commits": {"id": "tk_none", "shas": ["abc1234"]},
+    "core_new": {"name": "x", "type": "feature", "text": "x"},
+    "core_attach": {"id": "cr_none", "turn": 1},
+    "publish_attach": {"id": "pu_none", "links": [{"title": "x", "url": "https://example.org"}]},
 }
 
 

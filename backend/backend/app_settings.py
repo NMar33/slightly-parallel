@@ -95,6 +95,32 @@ SPECS: tuple[SettingSpec, ...] = (
         ),
         type="bool", default=True, group="Agent signals",
     ),
+    SettingSpec(
+        key="agent.usage_show",
+        label="Show usage after each reply",
+        description=(
+            "After each reply the terminal and the chat viewer show the turn's "
+            "tokens: → new ↑ output ↓ (cache). Tokens are recorded either way. "
+            "#usage-on and #usage-off in a chat change this for that chat."
+        ),
+        type="bool", default=False, group="Agent signals",
+    ),
+    SettingSpec(
+        key="usage.codex_poll",
+        label="Read Codex's plan limits in the background",
+        description=(
+            "When Codex is on this machine, its plan limits are read through "
+            "codex app-server on a schedule, without a chat and without tokens. "
+            "Off: they come only from Codex chats in integrated folders."
+        ),
+        type="bool", default=True, group="Agent signals",
+    ),
+    SettingSpec(
+        key="usage.codex_poll_hours",
+        label="Read Codex's limits every",
+        description="Hours between two scheduled readings. The Usage page asks for a fresh one on its own when the last is older than 15 minutes.",
+        type="int", default=6, group="Agent signals", unit="hours", minimum=1, maximum=168,
+    ),
     # ---------------------------------------------------------- dashboard ---
     SettingSpec(
         key="ui.default_project_tab",

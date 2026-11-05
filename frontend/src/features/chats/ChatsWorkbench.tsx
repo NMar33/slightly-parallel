@@ -28,7 +28,7 @@ import { isGroupKey } from '../../lib/groups'
 import { messageTarget, useMarks, useMarkToggle } from '../../lib/marks'
 import { StarButton } from '../../components/StarButton'
 import { agentLines, gapLabel, ofAgent, producedWords, toSession, type Row } from './data'
-import { paneColumns, readChatsPrefs, storeChatsPrefs, type ChatsPrefs } from './prefs'
+import { USAGE_PREF_KEY, paneColumns, readChatsPrefs, storeChatsPrefs, type ChatsPrefs } from './prefs'
 
 import { t, tn } from '../../i18n/scope/views'
 import { isTypingTarget } from '../../lib/typing'
@@ -71,6 +71,15 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
 
   const [prefs, setPrefs] = useState<ChatsPrefs>(readChatsPrefs)
   const applyPrefs = (p: ChatsPrefs) => { setPrefs(p); storeChatsPrefs(p) }
+  // The agent page's reader may change "usage" on this page too: follow it.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ key: string; value: string | null }>).detail
+      if (d?.key === USAGE_PREF_KEY) setPrefs((p) => (p.usage === (d.value !== 'off') ? p : { ...p, usage: d.value !== 'off' }))
+    }
+    window.addEventListener('sp:pref', on)
+    return () => window.removeEventListener('sp:pref', on)
+  }, [])
   const [settings, setSettings] = useState(false)
 
   const [scope, setScope] = useState<Scope>(() => {
@@ -194,6 +203,8 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
   onKeyRef.current = (e: KeyboardEvent) => {
     if (isTypingTarget(e)) return
     if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey && cur && !focus) { e.preventDefault(); setFocus(true) }
+    // U shows and hides the tokens line of each reply.
+    if (e.key === 'u' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && cur && !focus) { e.preventDefault(); applyPrefs({ ...prefs, usage: !prefs.usage }) }
   }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => onKeyRef.current(e)
@@ -382,7 +393,7 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
               }}
               find={hash.q ?? ''}
               onFind={(v) => setHash({ q: v })}
-              reading={{ size: prefs.chat, md: prefs.md, reverse: prefs.order === 'newest', work: prefs.work }}
+              reading={{ size: prefs.chat, md: prefs.md, reverse: prefs.order === 'newest', work: prefs.work, usage: prefs.usage }}
               extra={(v: Row | ProfileSession) => {
                 // The chat this header speaks for: the open one, or in the
                 // whole history the one in view.

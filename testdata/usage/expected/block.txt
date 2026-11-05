@@ -1,0 +1,11 @@
+This chat · 7 turns · claude-opus-4-5
+  new 93k · output 8.8k · cache 460k · share 83% · helpers 33k
+  context 61% of 200k · cache warm, 3 min left · 2 rebuilds
+Plan limits
+  Claude Code  5-hour  62%  resets 16:40, in 1 h 52 min   (read 14:40)
+               weekly  31%  resets Thu 09:00
+  Codex        5-hour   —  Reset at 14:10. No reading since.
+               weekly  81%  resets Tue 06:00              (read 13:48)
+GOLD today · 8.5× your usual day
+  new + output 89k · cache 420k · share 84% · 1 chat
+  Usage page: http://127.0.0.1:8123/usage

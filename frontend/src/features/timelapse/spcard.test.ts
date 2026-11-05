@@ -1,12 +1,12 @@
 import { describe, expect, it, beforeAll } from 'vitest'
 
-import metricsRaw from '../../../../brand/kit/metrics.json?raw'
+import metricsRaw from './wordmark-metrics.json?raw'
 
 import { SP_LEAN_DEG, SP_LEAN_INDEX, SP_METRICS, SP_WORDMARK, SP_WORDMARK_WIDTH } from './spmark'
 import { drawPlate, drawSheet, drawWordmark, plateWidth, sheetInk } from './spcard'
 
 /**
- * spmark.ts is written by brand/kit/build.py from metrics.json. A wordmark
+ * spmark.ts is written by brand/kit/build.py from wordmark-metrics.json. A wordmark
  * changed in the kit and not rebuilt shows here; so does a drawing that
  * stops drawing the glyphs, the lean or the construction.
  */

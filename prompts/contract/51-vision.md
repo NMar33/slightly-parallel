@@ -4,6 +4,7 @@ section: 4
 title: Vision
 enabled: true
 command: #vision | Nothing to write — the server keeps the message as a vision; write its interpretation (Kept messages, section 4)
+command: #publish <text> | Nothing to write — the server keeps the message as a card on the Publish page (what shipped, worth telling)
 command: #prompt | Nothing to write — the server keeps the message in the operator's prompt library
 command: #important | Nothing to write — the server stars the message, its agent and the tasks it names; `#important-agent`, `-task` or `-message` stars one of them
 ---
@@ -19,6 +20,14 @@ minted and no notice appears — ask the user what to keep. The hook names the i
 is the interpretation, written in the same turn:
 `interpret {lens: "vision" | "rule" | "problem" | "entrypoint", id, text}` (`text` is
 markdown; `note` is one optional line on what changed).
+
+`#publish` is kept the same way, as a card on the Publish page (what
+shipped, worth telling). Its text is the operator's: no interpretation, no
+entry. What you add is what they may need to tell about it: 1–3
+screenshots of what it is about (the page or the product, as you can
+render it), each in its original size, never shrunk or recompressed, given
+by its file `path`, and the links, with `publish_attach {id, images,
+links}` in the same turn. The notice names the card.
 
 The interpretation is the message read with the conversation around it:
 what the user means, in plain words, with what the context settles —

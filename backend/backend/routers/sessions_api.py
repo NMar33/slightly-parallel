@@ -123,24 +123,32 @@ def sessions_list(
     return json_response({"total": len(rows), "sessions": rows}, etag)
 
 
-_turns_with_work = sessions.turns_with_work
+# The chat viewer's turns: what each changed, and the tokens it used.
+_turns_with_work = sessions.turns_with_usage
 
 
 @router.get("/api/sessions/turns")
 def sessions_turns(
-    ids: str = Query(""), store: ViewStore = Depends(get_store),
-) -> dict:
+    request: Request, ids: str = Query(""), store: ViewStore = Depends(get_store),
+) -> Response:
     """The turns of many sessions in one round trip — ``ids=a,b,c``, up to 500.
 
     The reader's "all" mode used to fetch 164 details one by one; the whole
-    history is one request now, each turn still carrying its work.
+    history is one request now, each turn still carrying its work. Each
+    chat's usage is read once per request; the ETag follows the store and
+    the files the usage reads beside it (the limits, the status line).
     """
     wanted = [x.strip() for x in ids.split(",") if x.strip()][:500]
     if not wanted:
-        return {"turns": {}}
+        return json_response({"turns": {}}, etag_for("sessions-turns:", store))
     ph = ",".join("?" * len(wanted))
     rows = store.query(f"SELECT * FROM sessions WHERE id IN ({ph})", tuple(wanted))
-    return {"turns": {str(r["id"]): _turns_with_work(store, r) for r in rows}}
+    sig = sessions.usage_signature(store, {str(r.get("agent_id") or "") for r in rows})
+    etag = etag_for(f"sessions-turns:{','.join(wanted)}:{sig}", store)
+    if (r := maybe_304(request, etag)) is not None:
+        return r
+    memo: dict[str, dict[int, dict[str, Any]]] = {}
+    return json_response({"turns": {str(r["id"]): _turns_with_work(store, r, memo) for r in rows}}, etag)
 
 
 @router.get("/api/sessions/{session_id}/diff")
@@ -274,12 +282,15 @@ def sessions_detail(
     store: ViewStore = Depends(get_store),
 ) -> Response:
     """One session's pyramid: turn summaries (L3) + raw chat excerpt (L4)."""
-    etag = etag_for(f"sessions:{session_id}", store)
-    if (r := maybe_304(request, etag)) is not None:
-        return r
     row = store.query_one(
         "SELECT * FROM sessions WHERE id = ?", (session_id,)
     )
+    # The turns carry usage, which also reads the limits and the status
+    # line beside the store: the tag follows them too.
+    sig = sessions.usage_signature(store, [str(row.get("agent_id") or "")]) if row is not None else ""
+    etag = etag_for(f"sessions:{session_id}:{sig}", store)
+    if (r := maybe_304(request, etag)) is not None:
+        return r
     if row is None:
         raise not_found("session", session_id)
 

@@ -50,13 +50,29 @@ scans list the commits and count the lines.
 
 Every new chat in that folder, in any tool, reads the contract
 from the section. The contract covers the commands (`#scan`, `#architecture`,
-`#map`, `#task`, `#now` (and `#now-todo` …), `#decision`, `#standup`, `#evidence`, `#done`, `#help` and the kept tags),
+`#map`, `#task`, `#now` (and `#now-todo` …), `#decision`, `#standup`, `#evidence`, `#done`, `#core-new` (and `#core-note`, `#core`, `#core-off`), `#usage` (and `#usage-on`, `#usage-off`), `#help` and the kept tags),
 when to write which entry, and what each entry holds. Procedures live in
 built-in skills: `make-a-scan`, `keep-the-architecture-page`,
 `map-the-program`, `update-the-architecture`, `daily-standup`,
 `log-a-decision`, `write-a-task`, `task-evidence`, `make-an-artifact`,
-`finish-a-task`, `undo-a-mistake`, `sp-help`, `sp-checkup`.
+`finish-a-task`, `undo-a-mistake`, `keep-a-core`, `sp-help`, `sp-checkup`.
 Slightly Parallel installs them into `~/.claude/skills` and `~/.agents/skills`, once, for all projects.
+
+The hooks also record the tokens of every reply (`usage.jsonl` beside each
+chat) and the plan limits (Claude Code's through the status line Setup adds,
+Codex's from its log, and — when Codex is on this machine — through
+`codex app-server` on a schedule, every 6 hours by default, with no chat
+and no tokens spent; Settings › Agent signals has the switch and the
+hours); the **Usage** page (`/usage`) shows them, and `#usage`
+in a chat prints them in the terminal. For Claude Code, Setup also installs the
+`SessionEnd` and `StopFailure` hooks (they only record tokens, so an interrupted
+last turn is not lost) and a status line beside the hooks. The status line keeps
+the operator's own: its command is stored in
+`<data root>/.usage/statusline-then/<folder key>.json` and run after ours, read
+again at each run when it comes from the user's or the project's settings. A
+folder that does not want the status line has `statusline = off` in
+`integrations.csv` (Setup's "write_claude_statusline: false"); the server
+adds the line to every other connected folder at its start.
 
 Details: [`logging.md`](logging.md) for how chats are recorded,
 [`api.md`](api.md) for the HTTP API and the MCP tools, interactive

@@ -211,6 +211,19 @@ export const GUIDE_PAGES: GuidePage[] = [
       t('This computer\'s CPU, memory, disk, network, connection and temperature, read every few seconds. Unusual readings are saved as events with the processes running at that moment; readings are thinned out as they age, events are kept longer. The switch turns monitoring off; Settings set what is read, how often, and what counts as unusual. Under the charts, the server itself: uptime, memory, whether every data file was read, reloads, capture and backups, the request time per path and the log by level. One button copies that section as text for an AI.'),
   },
   {
+    route: '/usage',
+    title: t('Usage'),
+    text:
+      t('The tokens your agents used and how much of each plan\'s limits is used. At the top, the 5-hour and weekly limit of Claude Code and Codex, with when each resets; the mark on a bar is even pace. Then the totals against your usual day, a table by tool and model (click a row to narrow the lists), and the chats and tasks that used the most. New counts tokens read for the first time, cache those read again from cache. In a chat, the numbers of a reply show on its row; the gear on the Chats page shows or hides them.'),
+  },
+  {
+    route: '/publish',
+    title: t('Publish'),
+    command: '#publish',
+    text:
+      t('What shipped and is worth telling. Type #publish in a message in a chat and it is kept here as a card, with the task, its commits and its images. On the right, the documents you make: a release note, a post, a video script, each in versions. Press a number or drag a card onto a tab to place it in that document; edit the text on the card or inside the document. Each card shows its life: the original, your edits and the documents it went into.'),
+  },
+  {
     route: '/backups',
     title: t('Backups'),
     text:

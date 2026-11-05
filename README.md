@@ -1,4 +1,4 @@
-![Slightly Parallel](brand/kit/files/readme-banner.svg)
+![Slightly Parallel](docs/media/readme/banner.svg)
 
 # Slightly Parallel
 
@@ -133,7 +133,7 @@ This is the project's diary, written without you.
 
 A command is one word anywhere in a message to an agent. The agent does the writing; you read the pages.
 
-![The commands](brand/kit/files/readme-commands.svg)
+![The commands](docs/media/readme/commands.svg)
 
 **`#scan`** — a checkpoint. Type it when a stage is shipped, while the agent still holds the context. The agent writes what changed since the last scan, the important files with why they matter + the architecture form.
 

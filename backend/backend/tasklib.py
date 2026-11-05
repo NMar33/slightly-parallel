@@ -18,7 +18,7 @@ from . import app_settings, limits
 from .actors import HOUSE_ACTORS as _HOUSE_ACTORS
 from .actors import identity_of, refuse_agent
 from .answers import create_answer, not_found
-from .csvio import rewrite_rows
+from .csvio import as_int, rewrite_rows
 from .db import ViewStore
 from .docs_md import build_detail, resolve_under
 from .entities import ENTITIES, is_done
@@ -33,6 +33,7 @@ from .vocab import ENUM_FIELDS
 TASK_STATUSES = ENUM_FIELDS["task"]["status"]
 TITLE_MAX = limits.MAX_TASK_TITLE
 DESCRIPTION_MAX = limits.MAX_TASK_DESCRIPTION
+log = logging.getLogger("sp.tasks")
 
 
 def _set_archived(store: ViewStore, task_id: str, value: str, actor: str) -> dict:
@@ -161,25 +162,46 @@ def after_status_change(store: ViewStore, rows: list[dict[str, str]], target: di
     if every.isdigit() and is_done(target.get("status") or "") \
             and not str(target.get("resurface_on") or "").strip():
         import datetime as _dt
-        due = (_dt.date.today() + _dt.timedelta(days=int(every))).isoformat()
-        target["resurface_on"] = due
-        changes.append(("resurface_on", "", due))
+        try:
+            due = (_dt.date.today() + _dt.timedelta(days=int(every))).isoformat()
+        except (OverflowError, ValueError):
+            # A stored count past the calendar (an old or damaged row) is no
+            # reason to refuse the move: the task is done, and comes back never.
+            log.warning("task %s: resurface_every_days=%s is past the calendar; not re-armed", target.get("id"), every)
+        else:
+            target["resurface_on"] = due
+            changes.append(("resurface_on", "", due))
 
 
-def _task_doc(store: ViewStore, md_ref: str, row: dict, task_id: str) -> tuple[str, list[Turn]]:
+def _task_doc(store: ViewStore, md_ref: str, row: dict, task_id: str, *, for_write: bool = False) -> tuple[str, list[Turn]]:
     """(frontmatter, turns) of a task's document — a fresh frontmatter from
-    the row when the file does not exist yet."""
+    the row when the file does not exist yet.
+
+    A file that is there but cannot be read, or does not start with its
+    frontmatter, is not an empty one: read for a write (``for_write``), it
+    is refused with 422 naming the file, so the rounds in it are never
+    written over with the new text alone. Read for showing, it shows empty
+    and the log says why."""
     path = resolve_under(store.data_root, md_ref) if md_ref else None
     if path is not None and path.exists():
         try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
+            text = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError) as exc:
+            if for_write:
+                raise HTTPException(status_code=422, detail=f"the task's text file cannot be read ({path.name}: {exc})")
+            log.warning("task %s: %s cannot be read (%s); shown without its text", task_id, path.name, exc)
             text = ""
         # The parameter name ``frontmatter`` is taken in this module, so
         # the one parser comes in under its function name.
         fm, _ = fm_block(text)
         if text.startswith("---"):
             return fm, parse_task_doc(text)
+        if text.strip():
+            if for_write:
+                raise HTTPException(status_code=422, detail=(
+                    f"the task's text file does not start with its frontmatter ({path.name}); "
+                    "fix the file before editing the task"))
+            log.warning("task %s: %s does not start with its frontmatter; shown without its text", task_id, path.name)
     front = {k: v for k, v in row.items() if k not in ("l2", "l3", "l4") and v not in (None, "")}
     return build_detail(front, task_id).rstrip("\n"), []
 
@@ -259,6 +281,19 @@ def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
     return ""
 
 
+def _now_card_written(store: ViewStore, agent: str) -> bool:
+    """Whether the latest #now of this chat has its card: one the agent wrote
+    in that turn (its history says so), or the server's (now.csv)."""
+    from . import nowlib
+    latest = store.query_one("SELECT max(turn) AS turn FROM now_tags WHERE agent_id = ?", (agent,)) or {}
+    if latest.get("turn") is None:
+        return False
+    turn = as_int(latest.get("turn"))
+    if any(r.get("agent_id") == agent and as_int(r.get("turn")) == turn for r in nowlib.rows(store)):
+        return True
+    return any(n == turn for _a, n, _t in nowlib.card_turns(store, {agent}, skip_server=True))
+
+
 def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     """Apply the /task contract to an agent's create; return the fields dropped.
 
@@ -272,6 +307,11 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     if agent in _HOUSE_ACTORS:
         return []
     command, named, column, message = _operator_command(store, agent)
+    if command == "now" and _now_card_written(store, agent):
+        # The #now card is on the board (the agent's or the server's): what
+        # the agent writes after it, while that message is still the latest,
+        # are ordinary #task cards (the findings of the work), in `agent`.
+        command, named, column, message = "", "", "agent", ""
     status = str(body.get("status") or "").strip() or (column if command == "now" else "agent")
     if command == "now" and status != column:
         refuse_agent(
@@ -285,24 +325,26 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
                 "send the title and tags only; the server writes the message in as the text",
             )
         body["description"] = message
-    if command != "now" and status != "agent":
-        # A #now written late: the server wrote the card when the turn ended.
+    if status != "agent":
+        # A #now written late: the server wrote the card when the turn ended
+        # (whether or not that message is still the operator's latest).
         from . import nowlib
         latest = store.query_one("SELECT max(turn) AS turn FROM now_tags WHERE agent_id = ?", (agent,)) or {}
         last = next((r for r in nowlib.rows(store) if r.get("agent_id") == agent
-                     and int(r.get("turn") or 0) == int(latest.get("turn") or -1)), None)
+                     and as_int(r.get("turn")) == as_int(latest.get("turn"), -1)), None)
         if last:
             refuse_agent(
                 f"the server already wrote the #now task as {last['task_id']}: "
                 "the turn ended without one",
                 f"give it a title with task_update {{id: \"{last['task_id']}\", title}}; do not write it again",
             )
-        refuse_agent(
-            "an agent creates tasks only in the `agent` column",
-            f"send status \"agent\" (or none), not {status!r}; the operator "
-            "classifies the card from there"
-            + ("" if command else " (#now in the operator's message starts a task in `doing`)"),
-        )
+        if command != "now":
+            refuse_agent(
+                "an agent creates tasks only in the `agent` column",
+                f"send status \"agent\" (or none), not {status!r}; the operator "
+                "classifies the card from there"
+                + ("" if command else " (#now in the operator's message starts a task in `doing`)"),
+            )
     body["status"] = status
     # The lane comes from the operator's message, never from the agent.
     lane = _lane_for(store, str(body.get("project") or ""), command, named)
@@ -341,7 +383,7 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     return sorted(set(ignored) | dropped)
 
 
-def create_task(store: ViewStore, body: dict) -> dict:
+def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPTION_MAX) -> dict:
     """One task, as POST /api/tasks makes it — the operator's board, an
     agent through the /task gate, the server's own #now card (nowlib). The
     answer is create_answer's: ``existing`` true when the same task was
@@ -359,13 +401,15 @@ def create_task(store: ViewStore, body: dict) -> dict:
     if len(str(body.get("title") or "")) > TITLE_MAX:
         raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
     description = str(body.pop("description", "") or "").strip()
-    if len(description) > DESCRIPTION_MAX:
-        raise HTTPException(status_code=422, detail=f"description is at most {DESCRIPTION_MAX} characters")
+    # A #now card's text is the operator's message, put in by the gate: it is
+    # kept whole, as the server's own card keeps it (nowlib._write_card).
+    if text_max is not None and not started_now and len(description) > text_max:
+        raise HTTPException(status_code=422, detail=f"description is at most {text_max} characters")
     out = create_entity(store, ENTITIES["task"], body, seed_extra=description)
     meta = dict(out.get("metadata") or {})
     task_id = str(meta.get("id") or "")
     md_ref = str(meta.get("md_ref") or "")
-    fm, turns = _task_doc(store, md_ref, meta, task_id)
+    fm, turns = _task_doc(store, md_ref, meta, task_id, for_write=bool(out.get("existing")))
     if description and not turns and md_ref:
         turns = [Turn(1, "", "", description)]
         _write_task_doc(store, md_ref, fm, turns)

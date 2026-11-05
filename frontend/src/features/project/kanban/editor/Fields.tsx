@@ -10,11 +10,13 @@ import { PillGroup, ValueInfo } from '../parts'
 import type { ModalPrefs } from '../model'
 import { FIELD, LABEL } from '../../../promptlib/taskstyle'
 import type { MilestoneOption } from './types'
+import type { CoreOption } from './cores'
+import { TypeDot } from '../../../architecture/cores/parts'
 import { t } from '../../../../i18n/scope/project'
 
-/** Metadata row: priority + assignee + due + milestone + tags. */
+/** Metadata row: priority + assignee + due + core + milestone + tags. */
 export function MetaFields({
-  priority, setPriority, assignee, setAssignee, dueDate, setDueDate, milestones, milestoneId, setMilestoneId, tags, setTags,
+  priority, setPriority, assignee, setAssignee, dueDate, setDueDate, coreOptions, cores, setCores, milestones, milestoneId, setMilestoneId, tags, setTags,
 }: {
   priority: string
   setPriority: (v: string) => void
@@ -22,6 +24,9 @@ export function MetaFields({
   setAssignee: (v: string) => void
   dueDate: string
   setDueDate: (v: string) => void
+  coreOptions: CoreOption[]
+  cores: string[]
+  setCores: (v: string[]) => void
   milestones: MilestoneOption[]
   milestoneId: string
   setMilestoneId: (v: string) => void
@@ -38,6 +43,7 @@ export function MetaFields({
           onChange={(e) => setPriority(e.target.value)}
           className={FIELD}
         >
+          {!['high', 'med', 'low'].includes(priority) && <option value={priority}>{t('none')}</option>}
           <option value="high">{t('high')}</option>
           <option value="med">{t('med')}</option>
           <option value="low">{t('low')}</option>
@@ -64,6 +70,7 @@ export function MetaFields({
           className={FIELD}
         />
       </div>
+      {coreOptions.length > 0 && <CoreField options={coreOptions} cores={cores} setCores={setCores} />}
       {milestones.length > 0 && milestones.length <= 5 && (
         // A row of its own: a milestone's name is a sentence, not a word.
         <div className="col-span-full flex flex-col gap-3 min-w-0">
@@ -103,6 +110,38 @@ export function MetaFields({
           placeholder={t('comma,separated')}
           className={FIELD}
         />
+      </div>
+    </div>
+  )
+}
+
+/** The cores the task belongs to: chips with a remove button, and a list
+ *  to add one more. Most tasks have one; an agent may attach a second. */
+function CoreField({ options, cores, setCores }: { options: CoreOption[]; cores: string[]; setCores: (v: string[]) => void }) {
+  const byId = new Map(options.map((o) => [o.id, o]))
+  const rest = options.filter((o) => !cores.includes(o.id))
+  return (
+    <div className="flex flex-col gap-3 min-w-0">
+      <label htmlFor="task-core" className={LABEL} title={t('The core of the program this task is about')}>{t('Core')}</label>
+      <div className="flex items-center gap-4 flex-wrap min-w-0">
+        {cores.map((id) => {
+          const c = byId.get(id)
+          return (
+            <span key={id} className="inline-flex items-center gap-4 h-24 pl-6 pr-2 rounded-input border border-border-default text-11 font-mono text-primary max-w-full">
+              {c && <TypeDot type={c.type} size={8} />}
+              <span className="truncate max-w-[104px]">{c?.name ?? id}</span>
+              <button type="button" onClick={() => setCores(cores.filter((x) => x !== id))} aria-label={t('Remove {core}', { core: c?.name ?? id })}
+                className="px-4 text-tertiary hover:text-primary">×</button>
+            </span>
+          )
+        })}
+        {rest.length > 0 && (
+          <select id="task-core" value="" onChange={(e) => e.target.value && setCores([...cores, e.target.value])}
+            className={`${FIELD} ${cores.length ? 'w-[44px] px-4' : 'flex-1 min-w-0'}`} aria-label={t('Add a core')} title={t('Add a core')}>
+            <option value="">{cores.length ? '+' : t('none')}</option>
+            {rest.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+        )}
       </div>
     </div>
   )

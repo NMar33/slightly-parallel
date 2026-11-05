@@ -6,7 +6,7 @@ enabled: true
 command: #task <hint> | Write the task the user is pointing at, from the conversation, into the `agent` column, for later; `#task {lane} …` names the board lane (section 4)
 command: #now <text> | Title the task this chat starts on; the server keeps the operator's message as its text, in `doing`, in the lane for #now or the one in braces; then do the work; `#done` closes it (section 4)
 command: #now-todo <text> | Title the operator's message; the server files it, as written, in To do (also `-next`, `-backlog`, `-review`, `-parked`, `-done`, `-doing`); not started in this chat (section 4)
-brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
+brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
 ---
 
 **Agent task — `#task <hint>` / `#now <text>` → `write_entry {lens: "task"}`.**
@@ -34,6 +34,23 @@ and when the work happens:
   `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and
   `#now-done` file it in those columns; `#now-doing` is `#now`.
 
+**Commits.** Every commit you make for a task says so: end its message
+with a blank line, then `Task: tk_…` (one line per task it serves) and
+`Agent: <your agent_id>` (the identity notice gives it):
+
+```
+Hook: append a cut-off line on its own line
+
+Task: tk_54406e4e
+Agent: cc-25eaa814
+```
+
+That line is how the task's commits, files and time are counted, and with
+two agents in one repository it is the only exact way. A commit for no
+task has no `Task:` line. When a commit went out without it, link it with
+`task_commits {id, shas}` (the commits notice names them on your next
+turn): never amend or rewrite a commit for it.
+
 `{lane}` right after either tag names the board lane: `#now {ui} fix the
 login timeout`, `#task {Kanban Board} the cards do not sort`. The server
 reads it from the message and sets the lane; you never send `lane` or
@@ -43,7 +60,9 @@ write when they answer. The notice from the capture hook says this before
 you start.
 
 1. Find it. `#now` (any column): the operator's message is the task; you
-   only title it — skip to step 3, title and tags.
+   only title it — skip to step 3, title and tags. Once that card is on
+   the board, what you write next while working (a bug found, a thing
+   left undone) is an ordinary task: `status: "agent"`, as with `#task`.
    `#task`: go back through the conversation to where this thing came up
    — a bug noticed, an idea raised, a step deferred, a thing left undone.
    Empty hint = the last such thing not yet done. Two things fit → ask

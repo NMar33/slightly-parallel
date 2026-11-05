@@ -4,6 +4,7 @@ section: 4
 title: Help
 enabled: true
 command: #help | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it)
+command: #mute | No command in the message runs, `###` ones too: every tag in it is plain text. Do nothing for its tags
 brief: **Help** (`#help`). Answer the operator with the list of commands, what each does for them and where they see the result. The skill `sp-help` holds the list; give it as it is, in the operator's language, and add nothing that is not in it.
 ---
 
@@ -39,10 +40,29 @@ rest; you see the result on the page named.
 | `#rule <text>` | Keeps the message as a rule for agents; the agent writes what it means. | Rules |
 | `#problem <text>` | Keeps the message as a problem; the agent writes what it means. | Problems |
 | `#problem solved <id or text>` | Marks that problem solved. | Problems |
+| `#publish <text>` | Keeps the message as a card of what shipped, worth telling; the agent attaches screenshots and links, writes nothing. | Publish |
 | `#entrypoint <topic>` | Keeps the message as the entry point of a topic; the agent writes what it is, where it lives, how to run it, where the work stopped and what is next. | Entry points |
 | `#prompt` | Keeps the message in your prompt library, to send again. | Prompts |
 | `#skill` | Turns what was done in this chat into a skill agents can use. | Skills |
 | `#artifact <what>` | Makes an artifact: a dataset, a document, a page or an app, kept as a folder. | Artifacts |
+
+**Cores — the program's core elements you keep in view**
+
+| Command | What it does | Where you see it |
+|---|---|---|
+| `#core-new <text>` | Keeps a core element of the program in view: a capability, a feature, a store, a part of the interface. The agent sets its name, type and files; your message is its first note. | Architecture · switch "cores" |
+| `#core-note <text>` | Adds your message as a note on the matching core, with one line from the agent. If two cores match, the agent asks you to choose by number. | The core's page |
+| `#core` | Attaches this message, and the task this chat works on, to the matching core. | The core's page |
+| `#core-off <words>` | Removes a core from view after you confirm by number. Its notes and links are kept; restore it on its page. | Architecture · switch "cores" |
+
+**Usage — tokens and plan limits**
+
+| Command | What it does | Where you see it |
+|---|---|---|
+| `#usage` | Shows this chat's tokens, the plan limits of Claude Code and Codex, and the project's day against your usual one. The hook answers; the agent adds nothing. | The terminal · Usage |
+| `#usage-on` | Shows the tokens after each reply in this chat: → new ↑ output ↓ (cache). Tokens are recorded in any case. | The terminal · the chat viewer |
+| `#usage-off` | Hides the tokens after each reply in this chat. They are still recorded. | The terminal |
+| `#usage-price` | Updates the API prices the Usage page counts dollars with: a helper agent reads the providers' pricing pages. The days before keep their prices. | Usage |
 
 **Mark**
 
@@ -63,7 +83,10 @@ rest; you see the result on the page named.
 | Command | What it does |
 |---|---|
 | `#help` | Shows this list. |
+| `#mute` | Turns off every command in the message, `###` ones too: you can write about `#now` or paste a log without anything running. |
 | `#sp <what worries you>` | Checks whether Slightly Parallel works for this chat and folder: messages recorded, MCP, hooks, skills, data, backups, the server's memory. Says what works and what is a concern; with text, looks into that. Changes nothing without your yes. |
+
+`#mute` anywhere in a message turns all its commands off.
 
 A tag written with three hashes is the message's only command:
 `###now-todo` files the message and every other tag in it — in a pasted

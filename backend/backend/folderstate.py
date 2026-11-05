@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from .contract_parts import CONTRACT_FILE
-from .integration_text import BEGIN_MARK, _hook_commands, _is_sp_hook, _marks_in
+from .integration_text import BEGIN_MARK, _hook_commands, _is_sp_hook, _marks_in, is_sp_statusline
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 #: The OpenCode plugin file Setup writes into a project.
@@ -47,10 +47,12 @@ def missing_hook_scripts(path_raw: str) -> list[str]:
 
 
 def hooks_installed(path_raw: str) -> bool:
-    """Are our Claude Code capture hooks present in this folder's local settings?"""
+    """Are our Claude Code capture hooks present in this folder's local
+    settings? The two that capture a turn; SessionEnd and StopFailure only
+    add tokens, and an install from before them still records."""
     hooks_path = Path(path_raw) / ".claude" / "settings.local.json"
     try:
-        settings = json.loads(hooks_path.read_text(encoding="utf-8"))
+        settings = json.loads(hooks_path.read_text(encoding="utf-8-sig"))   # an editor's byte-order mark
     except (OSError, json.JSONDecodeError):
         return False
     hooks = settings.get("hooks") if isinstance(settings, dict) else None
@@ -60,6 +62,16 @@ def hooks_installed(path_raw: str) -> bool:
         any(_is_sp_hook(e) for e in hooks.get(ev, []) if isinstance(e, dict))
         for ev in ("UserPromptSubmit", "Stop")
     )
+
+
+def statusline_installed(path_raw: str) -> bool:
+    """Is our Claude Code status line (scripts/hooks/statusline.py) in this
+    folder's local settings? It is what reads the plan limits."""
+    try:
+        settings = json.loads((Path(path_raw) / ".claude" / "settings.local.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(settings, dict) and is_sp_statusline(settings.get("statusLine"))
 
 
 def hooks_file_has(path_raw: str, rel: str, script: str) -> bool:

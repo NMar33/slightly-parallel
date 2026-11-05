@@ -1,0 +1,211 @@
+{
+ "agent_id": "cc-golden",
+ "project": "GOLD",
+ "show": false,
+ "turns": {
+  "1": {
+   "at": "2026-11-01T00:03:00",
+   "cache": 92000,
+   "cache_write": 11500,
+   "compacted": false,
+   "context_tokens": 54000,
+   "helpers": {
+    "cache": 0,
+    "n": 0,
+    "new_output": 0
+   },
+   "limit": null,
+   "line": "→ 14k ↑ 2k ↓ (92k)",
+   "messages": 2,
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "new": 14000,
+   "output": 2000,
+   "rebuild": null,
+   "share": 0.8679,
+   "thinking": 100,
+   "tool": "claude-code",
+   "ttl": "5m",
+   "turn": 1
+  },
+  "2": {
+   "at": "2026-11-01T09:01:30",
+   "cache": 56000,
+   "cache_write": 55800,
+   "compacted": false,
+   "context_tokens": 57000,
+   "helpers": {
+    "cache": 0,
+    "n": 0,
+    "new_output": 0
+   },
+   "limit": {
+    "five_hour": 12.0,
+    "seven_day": 28.0
+   },
+   "line": "→ 57k ↑ 1k ↓ (56k) · cache expired",
+   "messages": 2,
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "new": 57000,
+   "output": 1000,
+   "rebuild": {
+    "cause": "cache expired: 8 h 58 min since the last turn",
+    "kind": "expired"
+   },
+   "share": 0.4956,
+   "thinking": 0,
+   "tool": "claude-code",
+   "ttl": "5m",
+   "turn": 2
+  },
+  "3": {
+   "at": "2026-11-01T09:10:20",
+   "cache": 57000,
+   "cache_write": 300,
+   "compacted": false,
+   "context_tokens": 57400,
+   "helpers": {
+    "cache": 0,
+    "n": 0,
+    "new_output": 0
+   },
+   "limit": {
+    "five_hour": 12.0,
+    "seven_day": 28.0
+   },
+   "line": "→ 400 ↑ 120 ↓ (57k)",
+   "messages": 1,
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "new": 400,
+   "output": 120,
+   "rebuild": null,
+   "share": 0.993,
+   "thinking": 0,
+   "tool": "claude-code",
+   "ttl": "5m",
+   "turn": 3
+  },
+  "4": {
+   "at": "2026-11-01T10:00:40",
+   "cache": 57500,
+   "cache_write": 1200,
+   "compacted": false,
+   "context_tokens": 59000,
+   "helpers": {
+    "cache": 0,
+    "n": 0,
+    "new_output": 0
+   },
+   "limit": null,
+   "line": "→ 1.5k ↑ 2.4k ↓ (57k)",
+   "messages": 1,
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "new": 1500,
+   "output": 2400,
+   "rebuild": null,
+   "share": 0.9746,
+   "thinking": 800,
+   "tool": "claude-code",
+   "ttl": "1h",
+   "turn": 4
+  },
+  "5": {
+   "at": "2026-11-01T10:25:00",
+   "cache": 118500,
+   "cache_write": 1200,
+   "compacted": false,
+   "context_tokens": 60400,
+   "helpers": {
+    "cache": 8000,
+    "n": 2,
+    "new_output": 33300
+   },
+   "limit": null,
+   "line": "→ 1.5k ↑ 1.8k ↓ (118k) + helpers 33k",
+   "messages": 2,
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "new": 1500,
+   "output": 1850,
+   "rebuild": null,
+   "share": 0.9875,
+   "thinking": 0,
+   "tool": "claude-code",
+   "ttl": "1h",
+   "turn": 5
+  },
+  "6": {
+   "at": "2026-11-01T14:30:20",
+   "cache": 61000,
+   "cache_write": 200,
+   "compacted": false,
+   "context_tokens": 61300,
+   "helpers": {
+    "cache": 0,
+    "n": 0,
+    "new_output": 0
+   },
+   "limit": null,
+   "line": "→ 300 ↑ 150 ↓ (61k)",
+   "messages": 1,
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "new": 300,
+   "output": 150,
+   "rebuild": null,
+   "share": 0.9951,
+   "thinking": 0,
+   "tool": "claude-code",
+   "ttl": "",
+   "turn": 6
+  },
+  "7": {
+   "at": "2026-11-01T14:41:30",
+   "cache": 18000,
+   "cache_write": 17500,
+   "compacted": true,
+   "context_tokens": 18700,
+   "helpers": {
+    "cache": 0,
+    "n": 0,
+    "new_output": 0
+   },
+   "limit": {
+    "five_hour": 62.5,
+    "seven_day": 31.0
+   },
+   "line": "→ 19k ↑ 1.3k ↓ (18k) · context compacted · 5-hour 62%",
+   "messages": 3,
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "new": 18750,
+   "output": 1305,
+   "rebuild": {
+    "cause": "context compacted",
+    "kind": "compacted"
+   },
+   "share": 0.4898,
+   "thinking": 0,
+   "tool": "claude-code",
+   "ttl": "",
+   "turn": 7
+  }
+ }
+}

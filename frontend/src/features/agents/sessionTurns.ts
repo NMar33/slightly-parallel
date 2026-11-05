@@ -7,8 +7,10 @@ import { useQuery } from '@tanstack/react-query'
 
 import { getJson } from '../../lib/getJson'
 import type { TurnWork } from '../../lib/api'
+import type { TurnUsage } from '../usage/data'
 
-export interface SessionTurn { n: number; at: string; user: string; agent: string; work?: TurnWork }
+/** One turn; `usage` when its tokens were recorded (GET /api/sessions/turns). */
+export interface SessionTurn { n: number; at: string; user: string; agent: string; work?: TurnWork; usage?: TurnUsage }
 
 async function fetchTurns(ids: string[], signal?: AbortSignal): Promise<Record<string, SessionTurn[]>> {
   const out: Record<string, SessionTurn[]> = {}

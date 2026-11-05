@@ -18,6 +18,13 @@ export type PendingDrop = {
   draggedId: string; targetStatus: string; targetLane?: string; beforeTaskId?: string | null
 }
 
+/** A card's position as a number; none (an agent's card) sorts last, as the server sorts it. */
+export const posOf = (t: TaskRow): number => {
+  const n = Number(t.position)
+  return t.position !== undefined && t.position !== null && String(t.position).trim() !== '' && Number.isFinite(n)
+    ? n : Number.POSITIVE_INFINITY
+}
+
 export function boardDrops({
   tasks, setTasks, columnKeyOf, today, sorts, setPendingDrop, setArchived, moveSelection, setRefreshTick,
 }: {
@@ -155,11 +162,6 @@ export function boardDrops({
     // The server keeps position as a whole number and sorts a card without
     // one last: a half position (999.5) was rounded past its neighbour, and a
     // card dropped before a position-less one (an agent's) jumped to the top.
-    const posOf = (t: TaskRow): number => {
-      const n = Number(t.position)
-      return t.position !== undefined && t.position !== null && String(t.position).trim() !== '' && Number.isFinite(n)
-        ? n : Number.POSITIVE_INFINITY
-    }
     const inTarget = tasks
       .filter((t) => t.id !== draggedId) // exclude the dragged card itself
       .filter((t) => columnKeyOf(t) === targetStatus)

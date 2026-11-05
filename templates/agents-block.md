@@ -15,6 +15,11 @@ Slightly Parallel MCP tools when the contract says so.
   searched for (Codex): if `write_entry` is not in your list, look for the
   `slightly-parallel` tools, or call its `doctor`. Only if that fails is the
   server not connected: then tell the user before writing anything.
+- Commits: end the message of every commit you make for a task with
+  `Task: tk_…` (one line per task) and `Agent: <your agent_id>`, after a
+  blank line. That is how Slightly Parallel knows which task a commit is
+  for, with several agents in one repository. A commit you forgot: link it
+  with the MCP tool `task_commits`.
 - Server: $api_url (reading, and the operator's own pages)
 - Data root: `$data_root`
 - Capture check: in Claude Code, Slightly Parallel's hook prints

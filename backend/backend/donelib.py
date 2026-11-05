@@ -35,7 +35,7 @@ import threading
 from typing import Any
 
 from . import nowlib
-from .csvio import append_row, read_rows, rewrite_rows
+from .csvio import as_int, append_row, read_rows, rewrite_rows
 from .db import ViewStore
 from .entities import ENTITIES, is_done
 from .date_utils import now_iso
@@ -87,15 +87,15 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     # A tag with a row in the ledger is settled, whatever it closed: only the
     # new ones are worked out, and only their chats are read. Without this
     # every captured turn read every chat that ever typed #done.
-    settled = {(r.get("agent_id") or "", int(r.get("turn") or 0)) for r in ledger}
-    tags = [t for t in tags if (str(t["agent_id"] or ""), int(t["turn"] or 0)) not in settled]
+    settled = {(r.get("agent_id") or "", as_int(r.get("turn"))) for r in ledger}
+    tags = [t for t in tags if (str(t["agent_id"] or ""), as_int(t["turn"])) not in settled]
     if not tags:
         return []
     # Every resolved #done is a boundary, whichever task it closed.
     bounds: dict[str, list[int]] = {}
     for r in ledger:
         if r.get("result") in RESOLVED:
-            bounds.setdefault(r.get("agent_id") or "", []).append(int(r.get("turn") or 0))
+            bounds.setdefault(r.get("agent_id") or "", []).append(as_int(r.get("turn")))
     tasks = {str(t["id"]): t for t in store.query(
         "SELECT id, title, status, archived_at FROM tasks_mutual")}
     mentions: dict[str, list[tuple[int, str, str]]] = {}
@@ -107,27 +107,33 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
                 (int(m["turn"]), str(m["task_id"]), str(m["role"] or "")))
     # A task the operator started with #now is named by that message, though
     # the message carries no id: the agent wrote the card in that turn.
-    for agent, turn, tid in nowlib.card_turns(store, {str(t["agent_id"] or "") for t in tags}, ("started",)):
+    for agent, turn, tid in nowlib.card_turns(store, {str(t["agent_id"] or "") for t in tags}, ("started",), skip_server=True):
         if tid in tasks:
             mentions.setdefault(agent, []).append((turn, tid, "user"))
     # The same for a #now card the server wrote because the agent did not.
     for r in nowlib.rows(store):
         if r.get("column") == "doing" and r.get("task_id") in tasks:
             mentions.setdefault(r.get("agent_id") or "", []).append(
-                (int(r.get("turn") or 0), str(r["task_id"]), "user"))
+                (as_int(r.get("turn")), str(r["task_id"]), "user"))
     for ms in mentions.values():
         ms.sort(key=lambda m: m[0])
 
     added: list[dict[str, str]] = []
     moves: list[tuple[str, str, int]] = []
     for tag in tags:
-        agent, turn = str(tag["agent_id"] or ""), int(tag["turn"] or 0)
+        agent, turn = str(tag["agent_id"] or ""), as_int(tag["turn"])
         prev = max((b for b in bounds.get(agent, []) if b < turn), default=0)
         given = [x for x in str(tag["tasks"] or "").split(",") if x]
         named = [x for x in given if x in tasks]
         window = [m for m in mentions.get(agent, []) if prev < m[0] <= turn]
-        # An id the operator typed that is no task (a typo) is no task named:
-        # it closed the last task named before it instead.
+        if not given and any(prev < t < turn for t in nowlib.pending(store.data_root, agent)):
+            # The card this #done would close is a #now the server could not
+            # write yet (nowlib tries again): this #done waits for it, or it
+            # would be recorded as "unnamed" for good.
+            continue
+        # An id the operator typed that is no task (a typo) names no task:
+        # the #done is recorded as unnamed and the agent asks (not closing
+        # the last task named before it, which may be the wrong one).
         if not named and not given:
             # The last task the operator named — not one an agent's answer
             # mentioned in passing ("done; tk_B depends on this").
@@ -238,7 +244,7 @@ def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str
 
 def stretches_raw(store: ViewStore, task_id: str) -> list[tuple[str, int, int]]:
     """(agent_id, first turn, #done turn) for each #done that closed this task."""
-    return [(r["agent_id"], int(r.get("start_turn") or 1), int(r.get("turn") or 0))
+    return [(r["agent_id"], as_int(r.get("start_turn"), 1), as_int(r.get("turn")))
             for r in rows(store) if r.get("task_id") == task_id and r.get("result") in RESOLVED]
 
 
@@ -248,7 +254,7 @@ def stretches(store: ViewStore, task_id: str) -> list[dict[str, Any]]:
     for r in rows(store):
         if r.get("task_id") != task_id or r.get("result") not in RESOLVED:
             continue
-        agent, lo, hi = r["agent_id"], int(r.get("start_turn") or 1), int(r.get("turn") or 0)
+        agent, lo, hi = r["agent_id"], as_int(r.get("start_turn"), 1), as_int(r.get("turn"))
         turns: list[tuple[str, str, str]] = []   # (session, day, hh:mm)
         for s in store.query(
                 "SELECT id, created_date, turns_json FROM sessions WHERE agent_id = ? ORDER BY chat_start_line",
@@ -257,15 +263,15 @@ def stretches(store: ViewStore, task_id: str) -> list[dict[str, Any]]:
                 ts = json.loads(s.get("turns_json") or "[]")
             except ValueError:
                 continue
-            for t in ts:
-                if lo <= int(t.get("n") or 0) <= hi:
+            for t in ts if isinstance(ts, list) else []:
+                if isinstance(t, dict) and lo <= as_int(t.get("n")) <= hi:
                     turns.append((str(s["id"]), str(s["created_date"]), str(t.get("at") or "")))
         minutes = 0
         by_session: dict[str, list[str]] = {}
         for sid, _, at in turns:
             by_session.setdefault(sid, []).append(at)
         for ats in by_session.values():
-            mins = [int(a[:2]) * 60 + int(a[3:5]) for a in ats if len(a) >= 5 and a[:2].isdigit()]
+            mins = [int(a[:2]) * 60 + int(a[3:5]) for a in ats if len(a) >= 5 and a[:2].isdigit() and a[3:5].isdigit()]
             if mins:
                 minutes += max(1, max(mins) - min(mins) + 1)
         out.append({

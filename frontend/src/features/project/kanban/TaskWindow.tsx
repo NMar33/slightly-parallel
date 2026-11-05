@@ -8,7 +8,10 @@
  * when somebody opens one. Nothing is drawn while it arrives.
  */
 
-import { Suspense, lazy, type ComponentProps } from 'react'
+import { Suspense, lazy, useState, type ComponentProps } from 'react'
+
+import { openTaskRow } from '../../calendar/tasks'
+import type { TaskRow } from './model'
 
 const Window = lazy(() => import('./TaskEditor').then((m) => ({ default: m.TaskAddModal })))
 
@@ -19,5 +22,15 @@ const Window = lazy(() => import('./TaskEditor').then((m) => ({ default: m.TaskA
  * one's id, and Save wrote them there.
  */
 export function TaskAddModal(props: ComponentProps<typeof import('./TaskEditor').TaskAddModal>) {
-  return <Suspense fallback={null}><Window key={props.existingTask?.id ?? 'new'} {...props} /></Suspense>
+  // A linked task (or the one a duplicate title names) opens here, in the
+  // same window, on every page: only the board passed its own opener, so
+  // on the other ten pages the link did nothing.
+  const [other, setOther] = useState<TaskRow | null>(null)
+  const openOther = props.onOpenOther ?? ((id: string) => { void openTaskRow(id, setOther) })
+  const task = other ?? props.existingTask
+  return (
+    <Suspense fallback={null}>
+      <Window key={task?.id ?? 'new'} {...props} existingTask={task} onOpenOther={openOther} />
+    </Suspense>
+  )
 }

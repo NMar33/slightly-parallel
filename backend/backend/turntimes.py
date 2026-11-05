@@ -95,8 +95,18 @@ def times(chat_dir: Path) -> dict[int, Timed]:
         if isinstance(rec.get("busy"), list):
             pairs = ((_parse(x[0]), _parse(x[1])) for x in rec["busy"] if isinstance(x, list) and len(x) == 2)
             busy = [(a, b) for a, b in pairs if a and b]
-        out[rec["turn"]] = Timed(at, int(active) if isinstance(active, (int, float)) else None,
-                                 busy, int(rec.get("helper_sec") or 0))
+        timed = Timed(at, int(active) if isinstance(active, (int, float)) else None,
+                      busy, int(rec.get("helper_sec") or 0))
+        before = out.get(rec["turn"])
+        if before is not None and before.busy is not None and before.end <= at:
+            # A second hook stamp for the turn: the reply after the tool woke
+            # the agent itself (a helper's report). The turn's answer ran on:
+            # its stretches add up, its end is the later one.
+            timed.busy = before.busy + (busy or [])
+            if before.active_sec is not None or timed.active_sec is not None:
+                timed.active_sec = (before.active_sec or 0) + (timed.active_sec or 0)
+            timed.helper_sec += before.helper_sec
+        out[rec["turn"]] = timed
     return out
 
 

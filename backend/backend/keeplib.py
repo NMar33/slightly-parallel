@@ -40,12 +40,13 @@ from .promptlib import Version, _stamp, parse_doc, render_doc
 from .sessions import Turn, parse_turns
 
 # The tags that are adopted, each into the entity of the same name.
-KINDS: tuple[str, ...] = ("vision", "rule", "problem", "entrypoint", "skill", "artifact")
+KINDS: tuple[str, ...] = ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "publish")
 
 # What a kept row starts as beyond the shared columns. A rule is in force
 # from the moment the operator writes it; a problem is open until solved.
 _DEFAULTS: dict[str, dict[str, str]] = {
     "vision": {},
+    "publish": {},
     "rule": {"status": "active"},
     "problem": {"status": "open"},
     # An entry point is open while the topic is worked on; closed when it is done.

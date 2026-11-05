@@ -29,6 +29,7 @@ import { ResurfaceRow } from './editor/Resurface'
 import { ThenSteps } from './editor/ThenSteps'
 import { SprintPicker, useSprintChoice } from './editor/Sprint'
 import { useMilestone } from './editor/milestone'
+import { useTaskCoreField } from './editor/cores'
 import { EditorFooter } from './editor/Footer'
 import { TaskLinks } from './editor/Links'
 import { TaskStory } from './editor/Story'
@@ -45,9 +46,11 @@ import { t, tn } from '../../../i18n/scope/project'
  */
 
 export function TaskAddModal({
-  projectCode, boardProjects, initialStatus, initialAssignee, initialSprint, initialDue, initialTitle, existingTask, onClose, onSaved, onOpenOther, onLinksChanged, onRelease,
+  projectCode, boardProjects, initialStatus, initialAssignee, initialSprint, initialDue, initialTitle, initialCores, existingTask, onClose, onSaved, onOpenOther, onLinksChanged, onRelease,
 }: {
   projectCode: string
+  /** A core's page asked for a task: it belongs to that core. */
+  initialCores?: string[]
   /** The calendar opened the window on a day: the new task is due then. */
   initialDue?: string
   /** A quick-add line asked for a task: its words become the title. */
@@ -82,7 +85,9 @@ export function TaskAddModal({
   const [evidenceRequired, setEvidenceRequired] = useState(() =>
     existingTask ? existingTask.evidence_required === 'yes' : readModalPrefs().evidenceNew)
   const [evidencePromptId, setEvidencePromptId] = useState(existingTask?.evidence_prompt ?? '')
-  const [priority, setPriority] = useState(existingTask?.priority ?? 'med')
+  // An existing task keeps its priority as it is (none included): the box
+  // showed "high" for a task with none, and a save wrote that in.
+  const [priority, setPriority] = useState(existingTask ? (existingTask.priority ?? '') : 'med')
   const [impact, setImpact] = useState(existingTask?.impact ?? '')
   const [effort, setEffort] = useState(existingTask?.effort ?? '')
   const [tokens, setTokens] = useState(existingTask?.tokens ?? '')
@@ -128,11 +133,15 @@ export function TaskAddModal({
   // takes the comma list and the options are grouped by project.
   const milestoneProject = Array.from(new Set([existingTask?.project || projects[0] || projectCode, ...projects, ...(boardProjects ?? [])].filter(Boolean))).join(',')
   const { milestones, milestoneId, setMilestoneId, syncMilestone } = useMilestone(milestoneProject, existingTask)
+  const { coreOptions, cores, setCores, syncCores } = useTaskCoreField(existingTask?.project || projects[0] || projectCode, existingTask, initialCores)
   const [assignee, setAssignee] = useState(existingTask?.assignee ?? initialAssignee ?? '')
   const [dueDate, setDueDate] = useState(existingTask?.due_date ?? initialDue ?? '')
   const [tags, setTags] = useState(existingTask?.tags ?? '')
   const [body, setBody] = useState('')
   const [bodyLoaded, setBodyLoaded] = useState(!isEdit)
+  // The text as it was read: sent back only when it changed, so a save of
+  // the title alone does not re-upload the text or log an edit of it.
+  const [loadedText, setLoadedText] = useState('')
   // The description as stored, with every round it already holds; `body`
   // is only the round being written. Splitting them is what lets the next
   // round be added without retyping — or disturbing — the earlier ones.
@@ -177,6 +186,7 @@ export function TaskAddModal({
         const ts: Turn[] = Array.isArray(d.turns) ? d.turns : []
         setSrcTurns(ts)
         setBody(ts.length ? ts[ts.length - 1].text : '')
+        setLoadedText(ts.length ? ts[ts.length - 1].text : '')
         setNewTurn(false)
         setBodyLoaded(true)
       })
@@ -241,10 +251,14 @@ export function TaskAddModal({
         const kept = newTurn ? (srcTurns[srcTurns.length - 1]?.text ?? '') : body.trim()
         // A description not read yet (or not readable) is not sent: the
         // empty box would overwrite the stored text.
-        const textPayload = !bodyLoaded || (newTurn && srcTurns.length === 0)
+        const textPayload = !bodyLoaded || (newTurn && srcTurns.length === 0) || kept === loadedText.trim()
           ? {}
           : srcTurns.length > 1 ? { turn: { text: kept } } : { description: kept }
-        await postJson(`/api/tasks/${encodeURIComponent(existingTask.id)}/update`, {
+        // Only what changed goes to the server. Every field went before, so
+        // a title fix sent `status` too, which the server reads as the
+        // operator's verdict (it cleared the agent's report), and it wrote
+        // back stale values over changes made while the window was open.
+        const full: Record<string, string> = {
           title: title.trim(),
           status,
           priority,
@@ -264,8 +278,19 @@ export function TaskAddModal({
           resurface_to: resurfaceTo,
           resurface_every_days: resurfaceEvery,
           remember: remember ? 'yes' : '',
-          ...textPayload,
           projects: projects.join(','),
+        }
+        const was = (k: string) => {
+          const v = (existingTask as unknown as Record<string, unknown>)[k]
+          if (k === 'lane') return String(existingTask.lane || existingTask.assignee || '') || 'unassigned'
+          if (k === 'projects') return String(existingTask.projects || existingTask.project || '')
+          if (k === 'resurface_to') return String(v || 'todo')
+          return v === null || v === undefined ? '' : String(v)
+        }
+        const changed = Object.fromEntries(Object.entries(full).filter(([k, v]) => v !== was(k)))
+        await postJson(`/api/tasks/${encodeURIComponent(existingTask.id)}/update`, {
+          ...changed,
+          ...textPayload,
           actor: OPERATOR_ACTOR,
         })
         if (newTurn && body.trim()) {
@@ -360,12 +385,14 @@ export function TaskAddModal({
         setBody('')
         setThenSteps([])
         await syncMilestone([id, ...stepIds])
+        await syncCores([id, ...stepIds])
         setSaving(false)
         onSaved({ keepOpen: true, id })
         titleRef.current?.focus()
         return
       }
       await syncMilestone([id, ...stepIds])
+      await syncCores([id, ...stepIds])
       onSaved({ id })
     } catch (e) {
       setErr(String((e as Error)?.message ?? e))
@@ -402,9 +429,9 @@ export function TaskAddModal({
           startNextTurn={startNextTurn} cancelNextTurn={cancelNextTurn}
           minHeight={MODAL_DESC_PX[prefs.desc]} />
 
-        {/* Metadata row: priority + assignee + due + tags */}
+        {/* Metadata row: priority + assignee + due + core + tags */}
         <MetaFields priority={priority} setPriority={setPriority} assignee={assignee} setAssignee={setAssignee}
-          dueDate={dueDate} setDueDate={setDueDate} milestones={milestones} milestoneId={milestoneId}
+          dueDate={dueDate} setDueDate={setDueDate} coreOptions={coreOptions} cores={cores} setCores={setCores} milestones={milestones} milestoneId={milestoneId}
           setMilestoneId={setMilestoneId} tags={tags} setTags={setTags} />
 
         {/* Projects — only when the board spans several; home = the first tick */}

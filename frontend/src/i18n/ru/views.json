@@ -1037,7 +1037,6 @@
   "film": "фильм",
   "brand": "бренд",
   "export": "экспорт",
-  "Page settings — order, text, commits": "Настройки страницы — порядок, текст, коммиты",
   "{n} match": {
     "one": "{n} совпадение",
     "few": "{n} совпадения",
@@ -1073,5 +1072,12 @@
   "{band} needs a git repository and {project} has none, so the pulse is drawn instead. Open another project: #project=<code> in the address.": "{band}: нужен git-репозиторий, а у {project} его нет, поэтому нарисован пульс. Другой проект: #project=<код> в адресе.",
   "an entry point": "точка входа",
   "all agents": "все агенты",
-  "This agent among the project's agents": "Этот агент среди агентов проекта"
+  "This agent among the project's agents": "Этот агент среди агентов проекта",
+  "Show the tokens of each reply": "Показать токены каждого ответа",
+  "usage": "расход",
+  "Page settings — order, text, commits, usage": "Настройки страницы — порядок, текст, коммиты, расход",
+  "Usage on a turn": "Расход за ход",
+  "Tokens of each reply. Hover the numbers for the detail.": "Токены каждого ответа. Наведите на числа, чтобы увидеть подробности.",
+  "Show the tokens of each reply (U)": "Показать токены каждого ответа (U)",
+  "Hide the tokens of each reply (U)": "Скрыть токены каждого ответа (U)"
 }

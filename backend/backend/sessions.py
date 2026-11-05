@@ -158,9 +158,9 @@ _BOILERPLATE_RE = re.compile(
 # The other things an operator keeps by tagging a message. Same rules as
 # #prompt, plus one: ``#problem solved <id>`` asks the agent to close a
 # problem, so it is a command and not a new problem.
-KEEP_KINDS = ("vision", "rule", "problem", "entrypoint", "skill", "artifact")
+KEEP_KINDS = ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "publish")
 KEEP_TAG_RE = re.compile(
-    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact)(?:\(([^)\n]{1,80})\))?(?![\w-])(?!\s+solved\b)",
+    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact|publish)(?:\(([^)\n]{1,80})\))?(?![\w-])(?!\s+solved\b)",
     re.IGNORECASE,
 )
 
@@ -194,7 +194,10 @@ def task_command(text: str) -> tuple[str, str, str]:
     hits = list(TASK_CMD_RE.finditer(text or ""))
     if not hits:
         return "", "", ""
-    m = hits[-1]
+    # Both in one message ("#now fix it, and #task the docs later"): the
+    # #now is the task this chat starts on, so it is the one the card is
+    # for; the hook names both, and the agent writes the #task one as well.
+    m = next((h for h in hits if h.group(1).lower().split("-")[0] == "now"), hits[-1])
     command, _, suffix = m.group(1).lower().partition("-")
     column = NOW_COLUMNS[suffix] if command == "now" else "agent"
     return command, " ".join((m.group(2) or "").split()), column
@@ -808,3 +811,42 @@ def turns_with_work(store: Any, row: dict[str, Any]) -> list[dict[str, Any]]:
             if changed:
                 turn["work"] = changed
     return turns
+
+
+def turns_with_usage(store: Any, row: dict[str, Any],
+                     memo: dict[str, dict[int, dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
+    """One chat's turns with their work, each also carrying ``usage`` (the
+    tokens of that turn, usagelib.TurnUsage) when the chat recorded them.
+    ``memo`` (agent → its turns' usage) lets a request over many sessions
+    of one chat read its usage once."""
+    from . import usagelib
+
+    turns = turns_with_work(store, row)
+    agent = str(row.get("agent_id") or "")
+    path = chat_path(store, agent)
+    if path is None or not turns:
+        return turns
+    if memo is not None and agent in memo:
+        used = memo[agent]
+    else:
+        used = usagelib.turns_in(path.parent, Path(store.data_root))
+        if memo is not None:
+            memo[agent] = used
+    if used:
+        for turn in turns:
+            got = used.get(usagelib._int(turn.get("n")))
+            if got is not None:
+                turn["usage"] = got
+    return turns
+
+
+def usage_signature(store: Any, agents: Any) -> str:
+    """What the usage on these chats' turns depends on outside the store
+    (the limits, each chat's status-line file, settings): for their ETags."""
+    from . import usagelib
+
+    parts = []
+    for agent in sorted({str(a) for a in agents}):
+        path = chat_path(store, agent)
+        parts.append(usagelib.signature(Path(store.data_root), path.parent if path is not None else None))
+    return ";".join(parts)

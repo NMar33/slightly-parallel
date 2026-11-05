@@ -30,11 +30,11 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 
-from .. import evidence_items, limits, story_images, taskwork
+from .. import evidence_items, gitwork, limits, story_images, taskwork
 from ..csvio import append_if_absent, read_rows, rewrite_rows
 from ..db import ViewStore
 from ..docs_md import resolve_under
-from ..entities import TASK_EVIDENCE_COLUMNS, TASK_EVIDENCE_KINDS, is_done
+from ..entities import COMMIT_LINK_COLUMNS, TASK_EVIDENCE_COLUMNS, TASK_EVIDENCE_KINDS, is_done
 from ..file_safety import edit_json, safe_read_json
 from .deps import create_answer, get_store, identity_of, not_found, operator_only
 
@@ -257,6 +257,8 @@ def task_report(
     from ..entities import ENTITIES
 
     agent_id = identity_of(body)
+    if body.get("summary") is not None and not isinstance(body.get("summary"), str):
+        raise HTTPException(status_code=422, detail="summary is one line of text")
     summary = str(body.get("summary") or "").strip()
     if not agent_id:
         raise HTTPException(status_code=422, detail="agent_id is required")
@@ -487,6 +489,92 @@ def task_work(task_id: str, store: ViewStore = Depends(get_store)) -> dict:
     judges the list instead of hunting for it (``taskwork.py``).
     """
     return {"task_id": task_id, "work": taskwork.task_work(store, task_id)}
+
+
+@router.post("/api/tasks/{task_id}/commits")
+def task_commits(task_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    """``{shas: [sha …]}`` — the agent (or the operator) says these commits
+    were made for this task: the same as a ``Task:`` line in each, for a
+    commit that has none. A commit linked twice is linked once."""
+    import re
+
+    if not store.query_one("SELECT id FROM tasks_mutual WHERE id = ?", (task_id,)):
+        raise not_found("task", task_id)
+    raw = body.get("shas")
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(status_code=422, detail="shas is a list of commit hashes")
+    shas = [str(x).strip().lower() for x in raw]
+    bad = [x for x in shas if not re.fullmatch(r"[0-9a-f]{7,40}", x)]
+    if bad:
+        raise HTTPException(status_code=422, detail=f"not a commit hash: {', '.join(bad[:5])}")
+    who = identity_of(body) or "operator"
+    # The hashes name commits of the project's repository (the last 120 days,
+    # gitwork.HORIZON_DAYS); an agent links only its own commits ("Only
+    # commits you made"), and none already signed for another task.
+    known = {c.sha: c for c in taskwork._repo_log(store, task_id)}
+    if known:
+        found: dict[str, str] = {}
+        for sha in shas:
+            full = next((k for k in known if k.startswith(sha)), None)
+            if full is None:
+                raise HTTPException(status_code=422, detail=(
+                    f"{sha[:7]} is not a commit of the project's repository (the last {gitwork.HORIZON_DAYS} days)"))
+            c = known[full]
+            if who != "operator" and c.agent and c.agent != who:
+                raise HTTPException(status_code=422, detail=f"{sha[:7]} was made by {c.agent}, not by this chat")
+            if c.tasks and task_id not in c.tasks:
+                raise HTTPException(status_code=422, detail=(
+                    f"{sha[:7]} is signed for {', '.join(c.tasks)}: a commit counts for one task"))
+            found[sha] = full
+        shas = [found[s] for s in shas]
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    added = []
+    for sha in dict.fromkeys(shas):
+        row = {"id": "cm_" + hashlib.sha256(f"{sha[:7]}|{task_id}".encode()).hexdigest()[:8], "sha": sha,
+               "task_id": task_id, "agent_id": who if who != "operator" else "", "at": now, "actor": who}
+        if append_if_absent(store.data_root / taskwork.LINKS_FILE, COMMIT_LINK_COLUMNS, row) is None:
+            added.append(sha[:7])
+    store.rebuild()
+    return {"task_id": task_id, "linked": added, "work": taskwork.task_work(store, task_id)}
+
+
+@router.get("/api/commits/signed")
+def commits_signed(project: str = "", days: int = 7, store: ViewStore = Depends(get_store)) -> dict:
+    """How many commits of the last ``days`` days say which task they are
+    for (a ``Task:`` line, or linked afterwards), per project with a
+    repository — or for the one ``project`` — and by the agent that signed."""
+    from datetime import datetime, timedelta
+
+    from .. import gitwork
+    from ..file_entries import project_repo
+    from .deps import known_project
+
+    days = max(1, min(int(days or 7), 120))
+    codes = [known_project(store, project)] if project else sorted({pf.code for pf in store.projects})
+    since = datetime.now() - timedelta(days=days)
+    linked = set(taskwork._links(store))
+    out = []
+    for code in codes:
+        repo = project_repo(store, code)
+        if repo is None:
+            continue
+        total = signed = by_link = 0
+        agents: dict[str, list[int]] = {}
+        for c in gitwork.commits(repo):
+            if c.at < since:
+                continue
+            total += 1
+            said = bool(c.tasks) or c.sha[:7] in linked
+            signed += 1 if c.tasks else 0
+            by_link += 1 if not c.tasks and c.sha[:7] in linked else 0
+            row = agents.setdefault(c.agent or "", [0, 0])
+            row[0] += 1
+            row[1] += 1 if said else 0
+        if total:
+            out.append({"project": code, "total": total, "signed": signed, "linked": by_link,
+                        "agents": [{"agent_id": a, "commits": n, "signed": k}
+                                   for a, (n, k) in sorted(agents.items(), key=lambda kv: -kv[1][0])]})
+    return {"days": days, "projects": out}
 
 
 @router.get("/api/tasks/{task_id}/evidence")

@@ -27,6 +27,9 @@ from .vocab import HEADLINE_REQUIRED, check_enum_fields
 
 # Writes that are the operator's alone. Sprints are planned by a person.
 OPERATOR_ONLY: dict[str, str] = {
+    # A publish card is the operator's own #publish message (what shipped,
+    # worth telling); the page and its documents are the operator's.
+    "publish": "a publish card is the operator's own #publish message, kept by the server; nothing is written for it",
     # A rule is the operator's own #rule message, kept by the server. An
     # agent's rule was accepted with a warning, made active, and served to
     # every agent of the project as the operator's (sp://rules).

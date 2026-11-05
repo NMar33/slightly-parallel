@@ -22,6 +22,7 @@ import json
 from typing import Any
 
 from .db import ViewStore
+from .csvio import as_int
 from .viewrows import attach_agent
 
 
@@ -33,13 +34,13 @@ def thread(store: ViewStore, task_id: str, mentions: list[dict]) -> dict[str, An
 
     roles: dict[tuple[str, int], list[str]] = {}
     for m in mentions:
-        roles.setdefault((str(m["agent_id"]), int(m["turn"] or 0)), [])
-        if m["role"] not in roles[(str(m["agent_id"]), int(m["turn"] or 0))]:
-            roles[(str(m["agent_id"]), int(m["turn"] or 0))].append(m["role"])
+        roles.setdefault((str(m["agent_id"]), as_int(m["turn"])), [])
+        if m["role"] not in roles[(str(m["agent_id"]), as_int(m["turn"]))]:
+            roles[(str(m["agent_id"]), as_int(m["turn"]))].append(m["role"])
     # The #now that started the card names it, though its message has no id.
     started = [(a, n) for a, n, tid in nowlib.card_turns(store, {a for a, _ in roles} | _now_agents(store, task_id), ("started",))
                if tid == task_id]
-    started += [(r["agent_id"], int(r["turn"] or 0)) for r in nowlib.rows(store) if r.get("task_id") == task_id]
+    started += [(r["agent_id"], as_int(r["turn"])) for r in nowlib.rows(store) if r.get("task_id") == task_id]
     for key in started:
         roles.setdefault(key, [])
         if "user" not in roles[key]:
@@ -114,8 +115,8 @@ def _sessions_of(store: ViewStore, agent: str) -> dict[int, str]:
 
 def _other_tasks_named(store: ViewStore, agent: str, task_id: str) -> set[int]:
     """The turns where the operator named another task: its id, a #now, a #done."""
-    turns = {int(r["turn"] or 0) for r in store.query(
+    turns = {as_int(r["turn"]) for r in store.query(
         "SELECT turn FROM task_mentions WHERE agent_id = ? AND role = 'user' AND task_id <> ?", (agent, task_id))}
     for table in ("now_tags", "done_tags"):
-        turns |= {int(r["turn"] or 0) for r in store.query(f"SELECT turn FROM {table} WHERE agent_id = ?", (agent,))}
+        turns |= {as_int(r["turn"]) for r in store.query(f"SELECT turn FROM {table} WHERE agent_id = ?", (agent,))}
     return turns

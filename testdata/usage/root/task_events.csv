@@ -1,0 +1,4 @@
+event_id,task_id,timestamp,actor,field,old_value,new_value
+ev_g1,tk_gold_a,2026-11-01T09:10:30,operator,status,doing,done
+ev_g2,tk_gold_a,2026-11-01T14:39:00,operator,status,done,doing
+ev_g3,tk_gold_b,2026-11-01T14:30:30,operator,status,doing,done

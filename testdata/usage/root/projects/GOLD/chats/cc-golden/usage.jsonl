@@ -1,0 +1,18 @@
+{"turn": 1, "at": "2026-10-31T23:58:00", "id": "msg_a1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 12000, "cache_write": 10000, "cache": 40000, "output": 900, "thinking": 100, "ttl": "5m", "helper": ""}
+{"turn": 1, "at": "2026-11-01T00:03:00", "id": "msg_a2", "tool": "claude-code", "model": "claude-opus-4-5", "new": 2000, "cache_write": 1500, "cache": 52000, "output": 1100, "thinking": 0, "ttl": "5m", "helper": ""}
+{"turn": 2, "at": "2026-11-01T09:00:30", "id": "msg_b1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 56000, "cache_write": 55000, "cache": 0, "output": 700, "thinking": 0, "ttl": "5m", "helper": ""}
+{"turn": 2, "at": "2026-11-01T09:01:30", "id": "msg_b2", "tool": "claude-code", "model": "claude-opus-4-5", "new": 1000, "cache_write": 800, "cache": 56000, "output": 300, "thinking": 0, "ttl": "5m", "helper": ""}
+{"turn": 3, "at": "2026-11-01T09:10:20", "id": "msg_c1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 400, "cache_write": 300, "cache": 57000, "output": 120, "thinking": 0, "ttl": "5m", "helper": ""}
+{not json at all
+{"turn": 4, "at": "2026-11-01T10:00:40", "id": "msg_d1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 1500, "cache_write": 1200, "cache": 57500, "output": 2400, "thinking": 800, "ttl": "1h", "helper": ""}
+{"turn": 5, "at": "2026-11-01T10:20:10", "id": "msg_e1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 600, "cache_write": 500, "cache": 59000, "output": 10, "thinking": 0, "ttl": "1h", "helper": ""}
+{"turn": 5, "at": "2026-11-01T10:20:12", "id": "msg_e1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 600, "cache_write": 500, "cache": 59000, "output": 40, "thinking": 0, "ttl": "1h", "helper": ""}
+{"turn": 5, "at": "2026-11-01T10:20:15", "id": "msg_e1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 600, "cache_write": 500, "cache": 59000, "output": 50, "thinking": 0, "ttl": "1h", "helper": ""}
+{"turn": 5, "at": "2026-11-01T10:21:00", "id": "msg_h1a", "tool": "claude-code", "model": "claude-haiku-4-5", "new": 8000, "cache_write": 7000, "cache": 0, "output": 1200, "thinking": 0, "ttl": "5m", "helper": "agent-h1"}
+{"turn": 5, "at": "2026-11-01T10:22:00", "id": "msg_h1b", "tool": "claude-code", "model": "claude-haiku-4-5", "new": 500, "cache_write": 400, "cache": 8000, "output": 600, "thinking": 0, "ttl": "5m", "helper": "agent-h1"}
+{"turn": 5, "at": "2026-11-01T10:23:00", "id": "msg_h2a", "tool": "claude-code", "model": "claude-sonnet-4-5", "new": 20000, "cache_write": 19000, "cache": 0, "output": 3000, "thinking": 0, "ttl": "5m", "helper": "agent-h2"}
+{"turn": 5, "at": "2026-11-01T10:25:00", "id": "msg_e2", "tool": "claude-code", "model": "claude-opus-4-5", "new": 900, "cache_write": 700, "cache": 59500, "output": 1800, "thinking": 0, "ttl": "1h", "helper": ""}
+{"turn": 6, "at": "2026-11-01T14:30:20", "id": "msg_f1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 300, "cache_write": 200, "cache": 61000, "output": 150, "thinking": 0, "ttl": "", "helper": ""}
+{"turn": 7, "at": "2026-11-01T14:40:30", "id": "msg_g1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 18000, "cache_write": 17000, "cache": 0, "output": 900, "thinking": 0, "ttl": "", "helper": "", "compacted": true}
+{"turn": 7, "at": "2026-11-01T14:41:30", "id": "msg_g2", "tool": "claude-code", "model": "claude-opus-4-5", "new": 700, "cache_write": 500, "cache": 18000, "output": 400, "thinking": 0, "ttl": "", "helper": ""}
+{"turn": 7, "at": "yesterday-ish", "id": "msg_g3", "tool": "claude-code", "model": "claude-opus-4-5", "new": 50, "cache_write": 0, "cache": 0, "output": 5, "thinking": 0, "ttl": "", "helper": ""}

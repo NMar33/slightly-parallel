@@ -63,6 +63,17 @@
   --status-neutral: #8A8F98;
   --status-purple:  #9B6BD6;
 
+  /* ---- Cores: the colour of a core's type, never its condition
+     (features/architecture/cores). Eight kinds, told apart in lightness too. */
+  --core-capability:  var(--brand);
+  --core-feature:     #7A9A1E;
+  --core-interface:     var(--status-info);
+  --core-store:       #B07D1A;
+  --core-integration: var(--status-purple);
+  --core-internals:      var(--status-neutral);
+  --core-workflow:    #1F8A8A;
+  --core-experiment:  #C24E7A;
+
   /* ---- Ink: a status colour as text on a tint of itself -------------------
      The light theme's status hues are too pale to read on their own 14%
      tint (2:1 for amber); these darker inks clear 4.5:1 on that tint over
@@ -186,6 +197,10 @@
     --lane-1: #4A7BFF;
     --lane-5: #8B5CF6;
     --status-info: #6E9CF2;
+    --core-feature:    #9DBE3A;
+    --core-store:      #D29A2E;
+    --core-workflow:   #3AADAD;
+    --core-experiment: #E07AA3;
 
     /* Ink on a tint: in the dark the hue itself reads. */
     --status-green-ink:   var(--status-green);
@@ -231,6 +246,10 @@
   --lane-1: #4A7BFF;
   --lane-5: #8B5CF6;
   --status-info: #6E9CF2;
+  --core-feature:    #9DBE3A;
+  --core-store:      #D29A2E;
+  --core-workflow:   #3AADAD;
+  --core-experiment: #E07AA3;
 
   /* Ink on a tint: in the dark the hue itself reads. */
   --status-green-ink:   var(--status-green);

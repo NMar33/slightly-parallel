@@ -7,7 +7,9 @@ command: #evidence | Get the operator's instructions with task_evidence_ask, the
 ---
 
 **Finishing a task — `task_report {id, summary}`.** Task status belongs to
-the operator: never change a task's `status` yourself. When you believe a
+the operator: never change a task's `status` yourself (the two exceptions:
+a task the operator switched auto-manage on for, and dropping a card you
+made in the agent column with `done-archived`). When you believe a
 task is done, report it — `summary` is one line: what shipped. The server
 records your opinion (the operator sees a badge), moves the card to
 *review* only if the operator switched auto-manage on for that task, and

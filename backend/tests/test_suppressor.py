@@ -68,3 +68,25 @@ def test_the_hook_tells_the_agent_only_the_loud_command(tmp_path: Path):
     assert signals["kept"] == []
     # The chat keeps the message as it was typed.
     assert "###now-todo look at this reply" in (cap.folder / "chat.md").read_text(encoding="utf-8")
+
+
+def test_mute_turns_every_command_off_and_says_so(data_root) -> None:
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    from backend.hookshared import command_text
+
+    # Every tag doubled, ### ones too; #mute itself stays, in any case.
+    assert command_text("#now fix it #mute") == "##now fix it #mute"
+    assert command_text("###now x #vision #MUTE") == "##now x ##vision #mute"
+    assert command_text("##mute is text, #now runs") == "##mute is text, #now runs"
+    hooks = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
+    spec = importlib.util.spec_from_file_location("sp_capture_mute", hooks / "capture.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["sp_capture_mute"] = mod
+    spec.loader.exec_module(mod)
+    cap = mod.TurnCapture(data_root, "ALPHA", "cc-mute")
+    signals = cap.open_turn("about #now and #vision, nothing to run #mute")
+    assert signals["commands"] == ["mute"] and signals["kept"] == []
+    assert "#mute — nothing to do" in mod.format_signals(signals)

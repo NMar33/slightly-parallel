@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 
 import { persistPref, readPref } from '../../lib/uiPrefs'
+import { USAGE_PREF_KEY, storeUsagePref } from '../chats/prefs'
 
 import { t } from '../../i18n/scope/views'
 /** A reader preference that outlives the session (markdown on, order…) — through uiPrefs. */
@@ -38,6 +39,8 @@ export interface ReadingPrefs {
   reverse: boolean
   /** Show the commits and files a turn made. */
   work: boolean
+  /** Show a turn's tokens on its meta row (the reader's own switch when left out). */
+  usage?: boolean
 }
 
 /** The settings in force: the host's when it hands them down, else the reader's own. */
@@ -51,13 +54,25 @@ export function useReadingPrefs(reading: ReadingPrefs | undefined) {
     return TEXT_SIZES.some((it) => it.px === n) ? n : 12
   })
   const pickSize = (px: number) => { setSize(px); persistPref('sp-chat-size', String(px)) }
+  const [ownUsage, setUsage] = useState(() => readPrefOr(USAGE_PREF_KEY, 'on') !== 'off')
+  const pickUsage = (on: boolean) => { setUsage(on); storeUsagePref(on) }
+  // Set elsewhere on this page (the chats page's gear, another reader): follow it.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ key: string; value: string | null }>).detail
+      if (d?.key === USAGE_PREF_KEY) setUsage(d.value !== 'off')
+    }
+    window.addEventListener('sp:pref', on)
+    return () => window.removeEventListener('sp:pref', on)
+  }, [])
   // A host with a settings panel decides; without one the buttons above do.
   return {
     md: reading ? reading.md : ownMd,
     reverse: reading ? reading.reverse : ownReverse,
     size: reading ? reading.size : ownSize,
     showWork: reading ? reading.work : true,
-    flipMd, flipOrder, pickSize,
+    showUsage: reading?.usage ?? ownUsage,
+    flipMd, flipOrder, pickSize, pickUsage,
   }
 }
 

@@ -126,6 +126,10 @@ export function areasOf(key: readonly unknown[]): string[] | null {
   const [head, second] = key
   if (head === 'session-turns' || head === 'chat') return ['chats']
   if (head === 'scans-page') return ['scans', 'chats']   // its rows carry agent names
+  // A core's ledgers land in "rest"; its linked tasks and their events in "tasks".
+  if (head === 'cores' || head === 'core') return ['rest', 'tasks']
+  // Publish: the cards are kept entries ("rest"), their tasks, commits and images task data.
+  if (head === 'publish' || head === 'publish-card') return ['rest', 'tasks']
   if (head === 'lens') {
     if (second === 'sessions') return ['chats']
     if (second === 'scans' || second === 'files' || second === 'architecture') return ['scans']

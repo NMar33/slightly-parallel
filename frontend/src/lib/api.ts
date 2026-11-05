@@ -17,6 +17,7 @@
  */
 
 import { answered } from './getJson'
+import type { TurnUsage } from '../features/usage/data'
 
 // ---------- Types (mirror backend response shapes) ---------------------------
 
@@ -202,6 +203,8 @@ export interface SessionTurn {
   user: string
   agent: string
   work?: TurnWork
+  /** The turn's tokens, when they were recorded (features/usage). */
+  usage?: TurnUsage
 }
 
 /** One annotated path on a file entry — mechanics from git, judgment from the agent. */

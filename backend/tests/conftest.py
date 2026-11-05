@@ -363,3 +363,5 @@ def _codex_config_in_tmp(tmp_path, monkeypatch):
     # Start at login and the shortcut: never the real login or desktop.
     monkeypatch.setattr(setup_router, "AUTOSTART_HOME", tmp_path / "home")
     monkeypatch.setattr(setup_router, "AUTOSTART_ROOT", tmp_path / "app")
+    # The user's Claude Code settings (an operator's own status line): never the real one.
+    monkeypatch.setattr(setup_router, "CLAUDE_USER_SETTINGS", tmp_path / "claude-home" / "settings.json")

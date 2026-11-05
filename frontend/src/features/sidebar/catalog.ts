@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   CalendarDays,
   BookOpenText, Clapperboard, Cog, DatabaseBackup, KanbanSquare,
-  LayoutDashboard, MessagesSquare, PlugZap, Search, SlidersHorizontal, Users, Star, Activity, SquareTerminal, BarChart3, Timer,
+  LayoutDashboard, MessagesSquare, PlugZap, Search, SlidersHorizontal, Users, Star, Activity, SquareTerminal, BarChart3, Timer, Gauge, Megaphone,
 } from 'lucide-react'
 
 import { LENS_HEAD_LIST } from '../../lenses/heads'
@@ -44,6 +44,7 @@ export const CATALOG: NavEntry[] = [
   { key: '/important', label: t('Important'), icon: Star, home: 'views', blurb: t('the messages, agents and tasks you starred') },
   { key: '/stats', label: t('Statistics'), icon: BarChart3, home: 'views', blurb: t('what each finished task took') },
   { key: '/time', label: t('Timer'), icon: Timer, home: 'views', blurb: t('project timers and time spent') },
+  { key: '/publish', label: t('Publish'), icon: Megaphone, home: 'views', blurb: t('the #publish cards and the documents made from them') },
   // The chats page moved to /chats on 2026-09-24. The key is what saved
   // layouts hold, so it stays /sessions and only the link changes.
   ...LENS_HEAD_LIST.map((l) => ({
@@ -58,6 +59,7 @@ export const CATALOG: NavEntry[] = [
   { key: '/internals', label: t('Internals'), icon: Cog, home: 'system', blurb: t('how chats are recorded') },
   { key: '/terminal', label: t('Terminal'), icon: SquareTerminal, home: 'system', blurb: t('shells and agents, on this computer') },
   { key: '/monitor', label: t('Monitor'), icon: Activity, home: 'system', blurb: t('this computer\'s load, the server\'s state and log') },
+  { key: '/usage', label: t('Usage'), icon: Gauge, home: 'system', blurb: t('tokens your agents used, and how much of each plan is used') },
   { key: '/backups', label: t('Backups'), icon: DatabaseBackup, home: 'system', blurb: t('copies of the data folder') },
   { key: '/setup', label: t('Setup'), icon: PlugZap, home: 'system', blurb: t('connect projects') },
   { key: '/settings', label: t('Settings'), icon: SlidersHorizontal, home: 'system', blurb: t('all settings') },

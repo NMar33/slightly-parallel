@@ -9,8 +9,9 @@ import { persistPref, readPref } from '../../lib/uiPrefs'
  * them on the agent page, where there is no gear; the chats page hands them
  * down and hides its buttons.
  *
- * The three the reader also keeps are written to the reader's own keys as
- * well, so a size set here is the size the agent page opens with.
+ * The four the reader also keeps are written to the reader's own keys as
+ * well, so a size set here is the size the agent page opens with. Usage goes
+ * both ways: the reader's switch writes it back here (storeUsagePref).
  */
 
 /** How the width is split between the list of chats and the chat. */
@@ -32,16 +33,19 @@ export interface ChatsPrefs {
   md: boolean
   /** Show the commits and files a turn made. */
   work: boolean
+  /** Show a turn's tokens on its meta row. On by default: the viewer is
+   *  where one looks on purpose. Tokens are recorded either way. */
+  usage: boolean
 }
 
 const CHATS_PREFS_KEY = 'sp-chats'
 
 const DEFAULT_CHATS_PREFS: ChatsPrefs = {
-  width: 'even', list: 12, chat: 12, order: 'oldest', md: true, work: true,
+  width: 'even', list: 12, chat: 12, order: 'oldest', md: true, work: true, usage: true,
 }
 
 /** The reader's own keys, kept in step so both surfaces read alike. */
-const READER_KEYS = { size: 'sp-chat-size', md: 'sp-chat-md', order: 'sp-chat-order' }
+const READER_KEYS = { size: 'sp-chat-size', md: 'sp-chat-md', order: 'sp-chat-order', usage: 'sp-chat-usage' }
 
 function size(v: unknown, fallback: TextSize): TextSize {
   const n = Number(v)
@@ -61,8 +65,31 @@ export function readChatsPrefs(): ChatsPrefs {
     order: p.order === 'newest' ? 'newest' : 'oldest',
     md: p.md !== false,
     work: p.work !== false,
+    // One truth for both surfaces: the reader's key, which the agent page's
+    // switch writes too; the saved field only when that key was never set.
+    usage: usageFrom(readPref(READER_KEYS.usage), p.usage),
   }
 }
+
+function usageFrom(reader: string | null, saved: unknown): boolean {
+  if (reader === 'on') return true
+  if (reader === 'off') return false
+  return saved !== false
+}
+
+/**
+ * The agent page's reader changed "usage": the chats page's saved prefs
+ * follow, so the two never disagree (the reader's key is written by the caller).
+ */
+export function storeUsagePref(on: boolean): void {
+  persistPref(READER_KEYS.usage, on ? 'on' : 'off')
+  let raw: unknown
+  try { raw = JSON.parse(readPref(CHATS_PREFS_KEY) ?? 'null') } catch { raw = null }
+  if (raw && typeof raw === 'object') persistPref(CHATS_PREFS_KEY, JSON.stringify({ ...(raw as object), usage: on }))
+}
+
+/** The key the usage pref lives under, for listeners of `sp:pref`. */
+export const USAGE_PREF_KEY = READER_KEYS.usage
 
 /** First visit: start from whatever the reader was already set to. */
 function readerFallback(d: ChatsPrefs): ChatsPrefs {
@@ -71,6 +98,7 @@ function readerFallback(d: ChatsPrefs): ChatsPrefs {
     chat: size(readPref(READER_KEYS.size), d.chat),
     md: readPref(READER_KEYS.md) !== 'off',
     order: readPref(READER_KEYS.order) === 'reverse' ? 'newest' : 'oldest',
+    usage: readPref(READER_KEYS.usage) !== 'off',
   }
 }
 
@@ -80,6 +108,7 @@ export function storeChatsPrefs(p: ChatsPrefs): void {
   persistPref(READER_KEYS.size, String(p.chat))
   persistPref(READER_KEYS.md, p.md ? 'on' : 'off')
   persistPref(READER_KEYS.order, p.order === 'newest' ? 'reverse' : 'normal')
+  persistPref(READER_KEYS.usage, p.usage ? 'on' : 'off')
 }
 
 /** The grid the two panes sit in. Narrow is a rail to pick from; even

@@ -209,3 +209,18 @@ def test_one_file_too_large_to_keep_is_read_but_not_kept(tmp_path, monkeypatch) 
     monkeypatch.setattr(tt, "POINTS_KEPT", 8)
     monkeypatch.setattr(tt, "_points_cache", {})
     assert len(tt.points_of(f)) == 8 and tt._points_cache == {}
+
+
+def test_two_hook_stamps_for_one_turn_add_up(tmp_path: Path) -> None:
+    """The reply after the tool woke the agent itself (a helper's report)
+    is a second stamp for the same turn: the turn's stretches add up and
+    its end is the later one; the last stamp used to replace the first."""
+    folder = _chat(tmp_path, [
+        {"turn": 1, "start": "2026-11-04T15:36:41", "end": "2026-11-04T15:40:09", "source": "hook",
+         "busy": [["2026-11-04T15:36:41", "2026-11-04T15:40:09"]], "active_sec": 200, "helper_sec": 0},
+        {"turn": 1, "start": "2026-11-04T15:40:09", "end": "2026-11-04T18:40:00", "source": "hook",
+         "busy": [["2026-11-04T18:30:00", "2026-11-04T18:40:00"]], "active_sec": 600, "helper_sec": 1000},
+    ])
+    got = turntimes.times(folder)[1]
+    assert got.end.isoformat() == "2026-11-04T18:40:00"
+    assert len(got.busy or []) == 2 and got.active_sec == 800 and got.helper_sec == 1000

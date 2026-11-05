@@ -88,6 +88,53 @@ export default function InternalsPage() {
   )
 }
 
+interface SignedAnswer {
+  days: number
+  projects: Array<{ project: string; total: number; signed: number; linked: number; agents: Array<{ agent_id: string; commits: number; signed: number }> }>
+}
+
+/** How many commits say which task they are for: a `Task:` line, or linked
+ *  afterwards with task_commits. Low here means the tasks' commits are
+ *  still counted from the chats' stretches, which can take another agent's. */
+function SignedCommits() {
+  const q = useQuery({
+    queryKey: ['commits', 'signed', 7],
+    queryFn: ({ signal }) => getJson<SignedAnswer>('/api/commits/signed?days=7', signal),
+  })
+  const rows = q.data?.projects ?? []
+  return (
+    <section aria-label={t('Commits that name their task')} className="flex flex-col gap-10">
+      <div className="flex items-baseline gap-10 flex-wrap">
+        <h2 className="text-14 font-semibold text-primary m-0">{t('Commits that name their task')}</h2>
+        <span className="text-12 text-tertiary">{t('The last 7 days. An agent ends each commit with Task: tk_… or links it later; the rest are counted from the chat they happened in.')}</span>
+      </div>
+      {q.isError && <p className="text-12 text-tertiary m-0">{t('Could not read the commits.')}</p>}
+      {!q.isError && q.data && rows.length === 0 && <p className="text-12 text-tertiary m-0">{t('No commits in the last 7 days.')}</p>}
+      {rows.map((r) => {
+        const said = r.signed + r.linked
+        const share = r.total ? Math.round((100 * said) / r.total) : 0
+        return (
+          <div key={r.project} className="flex flex-col gap-6 rounded-card border border-border-subtle bg-surface px-14 py-10">
+            <div className="flex items-center gap-12 flex-wrap">
+              <span className="text-13 font-medium text-primary">{r.project}</span>
+              <span className="text-12 text-secondary">{t('{said} of {total} commits name their task ({share}%)', { said, total: r.total, share })}</span>
+              {r.linked > 0 && <span className="text-11 font-mono text-tertiary">{tn(r.linked, '{n} linked later', '{n} linked later')}</span>}
+              <span className="ml-auto block w-[160px] h-[6px] rounded-pill bg-elevated overflow-hidden" aria-hidden="true">
+                <i className="block h-full bg-brand" style={{ width: `${share}%` }} />
+              </span>
+            </div>
+            <div className="flex gap-14 flex-wrap text-11 font-mono text-tertiary">
+              {r.agents.slice(0, 6).map((a) => (
+                <span key={a.agent_id || '-'}>{a.agent_id || t('no Agent line')} · {a.signed}/{a.commits}</span>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </section>
+  )
+}
+
 /* ---------------------------------------------------------------------------
  * Shared building blocks
  * ------------------------------------------------------------------------- */
@@ -167,6 +214,8 @@ function CaptureTab({ adapters }: { adapters?: AdapterFlags }) {
             {t('Timestamps group turns into chats. Lanes, hours and heatmaps are counted from them.')}</Bullet>
         </ul>
       </ShortCard>
+
+      <SignedCommits />
 
       <Deep title={t('The mechanics, one level deeper')}>
         <p>

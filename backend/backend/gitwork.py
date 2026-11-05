@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 GIT_TIMEOUT = 5
 
@@ -73,7 +73,13 @@ TAIL = timedelta(minutes=45)
 HORIZON_DAYS = 120
 
 _RS, _US = "\x1e", "\x1f"
-_FORMAT = f"{_RS}%H{_US}%aI{_US}%an{_US}%s{_US}%(trailers:key=Claude-Session,valueonly)"
+# The trailers a commit carries: the Claude-Session one, and the two the
+# contract asks agents to write — ``Task: tk_…`` (one line per task) and
+# ``Agent: <agent_id>``. Each comes out on one line, comma-separated.
+# The subject comes last: whatever it holds cannot move the other fields.
+_FORMAT = (f"{_RS}%H{_US}%aI{_US}%cI{_US}%an{_US}%(trailers:key=Claude-Session,valueonly,separator=%x2C)"
+           f"{_US}%(trailers:key=Task,valueonly,separator=%x2C){_US}%(trailers:key=Agent,valueonly,separator=%x2C){_US}%s")
+TASK_ID_RE = _re.compile(r"\btk_[a-z0-9][a-z0-9_-]{2,40}\b")
 
 
 @dataclass
@@ -84,6 +90,12 @@ class Commit:
     subject: str
     session: str                      # the Claude-Session trailer, if any
     files: list[tuple[str, int, int]] = field(default_factory=list)  # path, +, −
+    tasks: list[str] = field(default_factory=list)   # its ``Task:`` lines: the agent's word on what it is for
+    agent: str = ""                                   # its ``Agent:`` line: the chat that made it
+
+    # When the commit object was made (the committer date): a cherry-pick,
+    # rebase or amend keeps the old author date in ``at``.
+    made: datetime | None = None
 
     @property
     def add(self) -> int:
@@ -99,6 +111,7 @@ class Commit:
             "author": self.author, "subject": self.subject,
             "files": [{"path": p, "add": a, "del": d} for p, a, d in self.files],
             "files_n": len(self.files), "add": self.add, "del": self.dele,
+            "tasks": list(self.tasks), "agent": self.agent,
         }
 
 
@@ -235,14 +248,20 @@ def _parse_log(raw: str) -> list[Commit]:
             continue
         head, _, body = rec.partition("\n")
         parts = head.split(_US)
-        if len(parts) < 4:
+        if len(parts) < 8:
             continue
-        sha, at_iso, author, subject = parts[0], parts[1], parts[2], parts[3]
-        session = parts[4].strip() if len(parts) > 4 else ""
+        sha, at_iso, made_iso, author, session = parts[0], parts[1], parts[2], parts[3], parts[4].strip()
+        tasks = list(dict.fromkeys(TASK_ID_RE.findall(parts[5])))
+        agent = parts[6].split(",")[0].strip()[:64]
+        subject = _US.join(parts[7:])
         try:
             at = datetime.fromisoformat(at_iso).astimezone().replace(tzinfo=None)
         except ValueError:
             continue
+        try:
+            made = datetime.fromisoformat(made_iso).astimezone().replace(tzinfo=None)
+        except ValueError:
+            made = at
         files: list[tuple[str, int, int]] = []
         for line in body.splitlines():
             cols = line.split("\t")
@@ -251,7 +270,7 @@ def _parse_log(raw: str) -> list[Commit]:
             a, d, path = cols
             files.append((numstat_path(path), int(a) if a.isdigit() else 0, int(d) if d.isdigit() else 0))
         out.append(Commit(sha=sha, at=at, author=author, subject=subject.strip(),
-                          session=session, files=files))
+                          session=session, files=files, tasks=tasks, agent=agent, made=made))
     return out
 
 
@@ -353,57 +372,167 @@ def _path_matches(commit_path: str, touched: str) -> bool:
     return bool(t) and (commit_path == t or commit_path.endswith("/" + t))
 
 
-_owners_cache: dict[str, tuple[tuple, dict[str, list[tuple[str, str, list[str] | None]]]]] = {}
+class Claim(NamedTuple):
+    """One chat's stamp that lists a commit: the chat, when the turn began and
+    ended, the files its tools touched (None: not recorded), and its shell
+    calls that may make a commit (None: the tool cannot tell)."""
+    folder: str
+    started: str
+    at: str
+    touched: list[str] | None
+    calls: list[list[str]] | None
 
 
-def _stamped_by(chat_path: Path) -> dict[str, list[tuple[str, str, list[str] | None]]]:
-    """sha → every chat of the same project whose stamps list it:
-    (chat folder, the stamp's time, the files that turn's tools touched or
-    None for a stamp from before tools were recorded). Read once per change
-    of any work.jsonl in the project."""
+_owners_cache: dict[str, tuple[tuple, dict[str, list[Claim]]]] = {}
+_owners_checked: dict[str, float] = {}
+OWNERS_RECHECK_S = 2.0
+# A commit made by a call: its time between the call's start and end, give or
+# take this (the commit's time is whole seconds, the call's is not).
+CALL_SLACK_S = 2
+# A commit in a turn: between its start (a little earlier: the prompt hook
+# runs after the agent may already have started) and its end.
+TURN_SLACK_BEFORE_S = 60
+TURN_SLACK_AFTER_S = 5
+
+
+def _turn_starts(chat: Path) -> dict[int, str]:
+    """Turn → when it began, from turns.jsonl (stamps written before they
+    carried ``started``)."""
+    out: dict[int, str] = {}
+    try:
+        with open(chat / "turns.jsonl", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(r, dict) and isinstance(r.get("turn"), int) and r.get("start"):
+                    # The first stamp of a turn is its start; a later one is
+                    # the reply after the tool woke the agent (a continuation).
+                    out.setdefault(r["turn"], str(r["start"]))
+    except OSError:
+        pass
+    return out
+
+
+def _stamped_by(chat_path: Path) -> dict[str, list[Claim]]:
+    """sha → every chat of the same project whose stamps list it. Read once
+    per change of any work.jsonl in the project."""
     chats = chat_path.parent.parent
+    # One pass over a task's sessions asks for every commit: the folder is
+    # listed again only after OWNERS_RECHECK_S, not once per commit (a
+    # thousand listings of a hundred chats made the cores' timeline slow).
+    hit = _owners_cache.get(str(chats))
+    now = time.monotonic()
+    if hit is not None and now - _owners_checked.get(str(chats), 0.0) < OWNERS_RECHECK_S:
+        return hit[1]
+    _owners_checked[str(chats)] = now
     files = sorted(chats.glob("*/work.jsonl"))
     try:
         key = tuple((str(f), f.stat().st_mtime_ns, f.stat().st_size) for f in files)
     except OSError:
         key = ()
-    hit = _owners_cache.get(str(chats))
     if hit is not None and hit[0] == key:
         return hit[1]
-    out: dict[str, list[tuple[str, str, list[str] | None]]] = {}
+    out: dict[str, list[Claim]] = {}
     for f in files:
-        for st in read_stamps(f.parent / "chat.md").values():
+        starts: dict[int, str] | None = None
+        for turn, st in read_stamps(f.parent / "chat.md").items():
+            listed = [sha for sha in st.get("commits") or [] if isinstance(sha, str) and sha]
+            if not listed:
+                continue
+            started = str(st.get("started") or "")
+            if not started:
+                if starts is None:
+                    starts = _turn_starts(f.parent)
+                started = starts.get(int(turn), "")
             touched = st.get("touched")
-            for sha in st.get("commits") or []:
-                if isinstance(sha, str) and sha:
-                    out.setdefault(sha, []).append((f.parent.name, str(st.get("at") or ""), touched if isinstance(touched, list) else None))
+            calls = st.get("commit_calls")
+            claim = Claim(f.parent.name, started, str(st.get("at") or ""),
+                          touched if isinstance(touched, list) else None,
+                          calls if isinstance(calls, list) else None)
+            for sha in listed:
+                out.setdefault(sha, []).append(claim)
     _owners_cache[str(chats)] = (key, out)
     return out
+
+
+def _secs(stamp: str) -> float | None:
+    try:
+        return datetime.fromisoformat(str(stamp)[:19]).timestamp()
+    except ValueError:
+        return None
+
+
+def maker_of(commit: "Commit", claims: list[Claim]) -> str | None:
+    """The chat that made a commit several chats saw appear, or None when the
+    evidence does not tell. Each test narrows the chats still in question;
+    the first that leaves one decides:
+
+    1. its shell call that may make a commit was running when the commit was
+       made (Claude Code, Codex and OpenCode report these);
+    2. its tools touched one of the commit's files;
+    3. its turn was running when the commit was made.
+
+    Measured on the operator's data (429 commits several chats saw): the
+    call matched in every case it could be read; the files agreed with it
+    38 times out of 38, the turn 222 times out of 232. The chat that stamped
+    first, the rule before this one, was wrong in 60 of 375; it stays only
+    for stamps from before the calls were recorded.
+    """
+    folders = list(dict.fromkeys(c.folder for c in claims))
+    if len(folders) <= 1:
+        return folders[0] if folders else None
+    made = (commit.made or commit.at).timestamp()
+    paths = [p for p, _a, _d in commit.files]
+
+    def by_call(c: Claim) -> bool:
+        for call in c.calls or []:
+            a, b = (_secs(call[0]), _secs(call[1])) if len(call) == 2 else (None, None)
+            if a is not None and b is not None and a - CALL_SLACK_S <= made <= b + CALL_SLACK_S:
+                return True
+        return False
+
+    def by_files(c: Claim) -> bool:
+        return bool(c.touched) and any(_path_matches(p, t) for p in paths for t in c.touched or [])
+
+    def by_turn(c: Claim) -> bool:
+        a, b = _secs(c.started), _secs(c.at)
+        return a is not None and b is not None and a - TURN_SLACK_BEFORE_S <= made <= b + TURN_SLACK_AFTER_S
+
+    left = folders
+    for test in (by_call, by_files, by_turn):
+        hits = [f for f in left if any(test(c) for c in claims if c.folder == f)]
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
+            left = hits
+    # Stamps written before the calls were recorded cannot tell: the chat
+    # still in question that stamped it first keeps it, as it always did (a
+    # change of rule must not take history's commits away). A commit the
+    # calls could have told about stays nobody's.
+    if not any(c.calls is not None for c in claims):
+        return min((c for c in claims if c.folder in left), key=lambda c: c.at or "9999").folder
+    return None
 
 
 def owns_commit(chat_path: Path, commit: "Commit", stamp: dict[str, Any]) -> bool:
     """Whether a commit listed in this chat's stamp was made by this chat.
 
     A stamp lists every commit HEAD gained during the turn, another agent's
-    in the same repository too. The commit is this chat's when its files
-    include one this turn's tools touched; when no chat's tools touched its
-    files (a commit from a shell command), it goes to the chat that stamped
-    it first. A stamp from before tools were recorded keeps every commit it
-    lists: there is nothing to tell them apart by.
+    in the same repository too. A commit only this chat saw is its own. One
+    several chats saw goes to the chat maker_of names; when the evidence
+    does not tell, to none of them: the commit is then linked by hand
+    (task_commits), never guessed.
     """
-    if not isinstance(stamp.get("touched"), list):
-        return True
-    paths = [p for p, _a, _d in commit.files]
     me = chat_path.parent.name
-    if any(_path_matches(p, t) for p in paths for t in stamp["touched"]):
-        return True
+    # Signed by its agent: the line says whose it is, nothing to guess.
+    if commit.agent:
+        return commit.agent == me
     claims = _stamped_by(chat_path).get(commit.sha, [])
-    if any(t and any(_path_matches(p, x) for p in paths for x in t) for folder, _at, t in claims if folder != me):
-        return False          # another chat's tools touched its files
     if not claims:
         return True
-    first = min(claims, key=lambda c: c[1] or "9999")
-    return first[0] == me
+    return maker_of(commit, claims) == me
 
 
 def session_work(
@@ -442,7 +571,13 @@ def session_work(
         listed = [by_sha[sha] for sha in st.get("commits") or [] if sha in by_sha]
         exact[i] = [c for c in listed if owns_commit(chat_path, c, st)]
         claimed.update(c.sha for c in listed)   # another chat's are not offered to the clock either
-    per = attribute([c for c in log if c.sha not in claimed], turn_clock, end)
+    # The clock places what no stamp of this chat listed — never a commit
+    # signed by another agent, nor one another chat's stamp listed: those
+    # are known to be someone else's (two agents in one repository).
+    me = chat_path.parent.name
+    elsewhere = {sha for sha, owners in _stamped_by(chat_path).items() if any(c.folder != me for c in owners)}
+    per = attribute([c for c in log if c.sha not in claimed and c.sha not in elsewhere and not (c.agent and c.agent != me)],
+                    turn_clock, end)
     for i, cs in exact.items():
         # The stamp is written when the answer ends and lists the commits
         # since the previous stamp. A commit no stamp claimed — made after

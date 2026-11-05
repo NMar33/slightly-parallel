@@ -117,7 +117,8 @@ def test_a_header_behind_an_odd_separator_is_not_a_turn(tmp_path: Path) -> None:
 def test_a_failed_log_is_not_kept_as_the_answer(tmp_path: Path, monkeypatch) -> None:
     gitwork.forget()
     monkeypatch.setattr(gitwork, "head", lambda repo: "abc")
-    raw = f"{gitwork._RS}{'a' * 40}{gitwork._US}2026-09-01T10:00:00+00:00{gitwork._US}me{gitwork._US}one{gitwork._US}\n"
+    # sha · date · author · session · task · agent · subject (the subject last)
+    raw = f"{gitwork._RS}{'a' * 40}{gitwork._US}2026-09-01T10:00:00+00:00{gitwork._US}2026-09-01T10:00:00+00:00{gitwork._US}me{gitwork._US * 4}one\n"
     answers = [None, raw]
     monkeypatch.setattr(gitwork, "git", lambda repo, *a, **k: answers.pop(0))
     assert gitwork.commits(tmp_path) == []            # the timeout

@@ -104,6 +104,10 @@ FILTERS: dict[str, tuple[FilterSpec, ...]] = {
         _f("search", "(LOWER(l1) LIKE ? OR LOWER(category) LIKE ?)",
            like=True, lower=True, repeat=2),
     ),
+    "publish": _COMMON + (
+        _TAG,
+        _f("search", "LOWER(l1) LIKE ?", like=True, lower=True),
+    ),
     "entrypoint": _COMMON + (
         _TAG,
         _f("status", "status = ?"),

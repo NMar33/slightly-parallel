@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from '../../../../components/primitives'
 import { laneOf, laneUpdate as laneWrite } from '../model'
 import type { TaskRow } from '../model'
+import { posOf } from './drops'
 import { ARCHIVE } from './model'
 import type { Patch } from './writes'
 import { t, tn } from '../../../../i18n/scope/project'
@@ -72,7 +73,6 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
    */
   const moveSelection = async (targetStatus: string, targetLane?: string, beforeTaskId?: string | null) => {
     if (selectedTasks.length === 0) return
-    const pos = (t: TaskRow) => Number(t.position) || 0
     if (targetStatus === ARCHIVE) {
       const ids = selectedTasks.filter((t) => !t.archived_at).map((t) => t.id)
       setSelection([])
@@ -81,23 +81,28 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     }
     const moving = selectedTasks
     const ids = new Set(moving.map((t) => t.id))
+    // Column-mates by position, a card without one last (as the server sorts).
     const inTarget = tasks
       .filter((t) => !ids.has(t.id) && columnKeyOf(t) === targetStatus)
       .filter((t) => !targetLane || laneOf(t) === targetLane)
-      .sort((a, b) => pos(a) - pos(b))
+      .sort((a, b) => posOf(a) - posOf(b))
     // Where the set lands: before the card dropped on, else after the last.
-    const idx = beforeTaskId ? inTarget.findIndex((t) => t.id === beforeTaskId) : -1
-    const lower = idx > 0 ? pos(inTarget[idx - 1]!) : idx === 0 ? pos(inTarget[0]!) - moving.length - 1 : (inTarget.length ? pos(inTarget[inTarget.length - 1]!) : 0)
-    const upper = idx >= 0 ? pos(inTarget[idx]!) : lower + moving.length + 1
-    const step = (upper - lower) / (moving.length + 1)
+    // The column is numbered again in tens, in the order it shows: the
+    // server keeps positions as whole numbers, so fractions tied with their
+    // neighbours and the order shown was lost (the same rule as one card).
+    const slot = beforeTaskId ? inTarget.findIndex((t) => t.id === beforeTaskId) : -1
+    const idx = slot === -1 ? inTarget.length : slot
+    const order = [...inTarget.slice(0, idx), ...moving, ...inTarget.slice(idx)]
     const laneUpdate = laneWrite(targetLane)
     const before = moving.map((t) => ({ id: t.id, patch: {
-      status: String(t.status || ''), position: String(pos(t)),
+      status: String(t.status || ''), position: t.position == null ? '' : String(t.position),
       assignee: String(t.assignee || ''), lane: String(t.lane || ''),
     } }))
-    const writes = moving.map((t, i) => ({ id: t.id, patch: {
-      status: targetStatus, position: String(lower + step * (i + 1)), ...laneUpdate,
-    } as Record<string, string> }))
+    const writes: Patch[] = order.flatMap((t, i) => {
+      const position = String((i + 1) * 10)
+      if (ids.has(t.id)) return [{ id: t.id, patch: { status: targetStatus, position, ...laneUpdate } as Record<string, string> }]
+      return posOf(t) === (i + 1) * 10 ? [] : [{ id: t.id, patch: { position } }]
+    })
     const n = moving.length
     setSelection([])
     if (await patchMany(writes)) return

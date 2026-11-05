@@ -69,7 +69,7 @@ MAX_TEXT = 20_000
 
 #: Longer bodies, by what they hold.
 MAX_PAGE_CHARS = 40_000        # the architecture page, one version
-MAX_TASK_DESCRIPTION = 50_000  # a task's text, every round of it
+MAX_TASK_DESCRIPTION = 50_000  # a task's text as written onto the board (round 1 with its comments); the server's own #now card keeps the operator's message whole
 MAX_STORY_BODY = 60_000        # one story note
 MAX_STORY_PART = 80_000        # a story preset (focus, brief, style)
 MAX_DOCUMENT_CHARS = 200_000   # an artifact's document, as served for reading

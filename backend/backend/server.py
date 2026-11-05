@@ -94,7 +94,10 @@ from .routers import (
     time_tracking,
     evidence,
     calendar,
+    cores,
+    publish,
     story_release,
+    usage,
 )
 from .turns import migrate_task_docs
 from .watcher import Watcher
@@ -186,6 +189,19 @@ def _backfill_turn_times(root: Path) -> None:
             log.info("turn times: %d answers timed from the transcripts", n)
     except Exception:  # noqa: BLE001 — a missing time is shown as an estimate
         log.exception("turn times not backfilled")
+
+
+def _backfill_usage(root: Path) -> None:
+    from .usagebackfill import run_once
+    run_once(root)
+
+
+def _backfill_from_logs(root: Path) -> None:
+    """The start's backfills from the tools' own logs, one after the other
+    in one thread: the answers' ends, then the tokens of the chats recorded
+    before the hooks kept them (usagebackfill.py)."""
+    _backfill_turn_times(root)
+    _backfill_usage(root)
 
 
 def _start_watchers(root: Path, store: ViewStore) -> list[Watcher]:
@@ -299,7 +315,8 @@ from .mcp import TOOLS as _MCP_TOOLS  # noqa: E402 — the one tool list
 
 _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "task_evidence",
                 "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
-                "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore")
+                "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
+                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "usage_prices_write")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
 MCP_REFUSAL = (
     f"agents write through the Slightly Parallel MCP tools ({', '.join(_WRITE_TOOLS)}), not by HTTP. "
@@ -325,11 +342,15 @@ _MCP_WRITE_PATHS = (
     r"/api/artifacts/[^/]+/write",
     r"/api/docs/[^/]+/versions",
     r"/api/skills/[^/]+/draft",
-    r"/api/tasks/[^/]+/(update|report|evidence|story)",
+    r"/api/tasks/[^/]+/(update|report|evidence|story|commits)",
     r"/api/standups/(claim|postpone)",
     r"/api/architecture/page",
     r"/api/map",
     r"/api/undo/(propose|apply|restore)",
+    r"/api/cores",
+    r"/api/cores/[^/]+/(notes|links|off)",
+    r"/api/publishing/cards/[^/]+/attach",
+    r"/api/usage/prices",
 )
 MCP_PATH_REFUSAL = (
     "the Slightly Parallel MCP tools do not write here, so an agent cannot either. "
@@ -700,8 +721,18 @@ def create_app(
                 from . import timeauto
                 timeauto.of(app).start()
                 # Old Claude Code chats get their answers' ends from the
-                # transcripts, once, off the request path (turntimes.py).
-                threading.Thread(target=_backfill_turn_times, args=(app.state.settings.data_root,), daemon=True).start()
+                # transcripts, once, off the request path (turntimes.py);
+                # then old chats their tokens, once each (usagebackfill.py).
+                threading.Thread(target=_backfill_from_logs, args=(app.state.settings.data_root,), daemon=True).start()
+                # A folder connected before the status line existed gets it
+                # now, beside its hooks: Claude Code's plan limits need it.
+                from .routers.setup import ensure_statuslines
+                threading.Thread(target=ensure_statuslines, args=(app.state.settings.data_root,), daemon=True).start()
+                # Codex's plan limits, read on a schedule through codex
+                # app-server (no chat, no tokens): the Usage page's Codex row.
+                from .codexlimits import Poller
+                app.state.codex_poller = Poller(app.state.settings.data_root)
+                app.state.codex_poller.start()
         try:
             yield
         finally:
@@ -710,6 +741,9 @@ def create_app(
             mon = getattr(app.state, "monitor", None)
             if mon is not None:
                 mon.stop()
+            poller = getattr(app.state, "codex_poller", None)
+            if poller is not None:
+                poller.stop()
             timer = getattr(app.state, "timer", None)
             if timer is not None:
                 timer.stop()
@@ -975,6 +1009,9 @@ def create_app(
     app.include_router(story.router)
     app.include_router(story_release.router)
     app.include_router(calendar.router)
+    app.include_router(cores.router)
+    app.include_router(publish.router)
+    app.include_router(usage.router)
     app.include_router(snippets_extra.router)
     app.include_router(tasks_extra.detail_router)
     app.include_router(keep.router)

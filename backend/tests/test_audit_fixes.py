@@ -38,10 +38,11 @@ def test_an_agent_cannot_replace_a_later_round(client: TestClient) -> None:
     assert r.status_code == 200, r.text
 
 
-def test_two_identical_edits_in_one_second_are_two_events(client: TestClient) -> None:
+def test_two_edits_in_one_second_are_two_events(client: TestClient) -> None:
+    # Two edits of the text (an unchanged text sent again is no edit).
     tid = make_task(client, "t")
-    for _ in range(2):
-        assert client.post(f"/api/tasks/{tid}/update", json={"description": "same"}).status_code == 200
+    for text in ("one", "two"):
+        assert client.post(f"/api/tasks/{tid}/update", json={"description": text}).status_code == 200
     events = [e for e in client.get(f"/api/tasks/{tid}/events").json()["events"] if e["field"] == "description"]
     assert len(events) == 2 and len({e["event_id"] for e in events}) == 2
 

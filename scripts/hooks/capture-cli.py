@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture import TurnCapture, format_signals, record_failure  # noqa: E402
+from capture import TurnCapture, format_signals, record_failure, shared  # noqa: E402
 
 
 def _write_breadcrumb(data_root: str, project: str, agent_id: str, session: str, cwd: str, tool: str) -> None:
@@ -33,6 +33,12 @@ def _write_breadcrumb(data_root: str, project: str, agent_id: str, session: str,
     mod.write_breadcrumb(data_root, project, session, cwd, tool=tool, agent_id=agent_id)
 
 
+def _local(ms: float) -> str:
+    """Epoch milliseconds as local, naive ``YYYY-MM-DDTHH:MM:SS``."""
+    from datetime import datetime
+    return datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--phase", choices=("open", "complete", "full"), required=True)
@@ -45,8 +51,10 @@ def main() -> int:
     # paste failed to start the process and was lost. --text stays for the
     # plugins Setup wrote before this.
     ap.add_argument("--text-stdin", action="store_true")
-    # Or one JSON object on stdin: {text, times?, touched?}. The times of a
-    # long session as an argument passed the same limit as the paste did.
+    # Or one JSON object on stdin: {text, times?, touched?, commit_calls?,
+    # usage?}. The times of a long session as an argument passed the same
+    # limit as the paste did. ``usage``: the turn's API messages with their
+    # tokens (hookshared.usage_records_opencode reads them).
     ap.add_argument("--json-stdin", action="store_true")
     ap.add_argument("--agent-text", default="")
     # Origin (optional): lets the dashboard print a resume command.
@@ -78,6 +86,12 @@ def main() -> int:
                 args.times = json.dumps(given["times"])
             if "touched" in given:
                 args.touched = json.dumps(given["touched"])
+            # [[start, end] epoch ms] of the turn's shell calls that may commit.
+            args.usage = shared.usage_records_opencode(given.get("usage"))
+            calls = given.get("commit_calls")
+            args.commit_calls = [[_local(a), _local(b)] for a, b in calls
+                                 if isinstance(a, (int, float)) and isinstance(b, (int, float))] \
+                if isinstance(calls, list) and all(isinstance(c, list) and len(c) == 2 for c in calls) else None
         elif args.text_stdin:
             args.text = sys.stdin.read()
         cap = TurnCapture(args.data_root, args.project, args.agent)
@@ -104,9 +118,13 @@ def main() -> int:
                 touched = json.loads(args.touched) if args.touched else None
             except ValueError:
                 touched = None
+            # The turn's tokens, before it closes (the turn is the pending one).
+            if getattr(args, "usage", None):
+                cap.record_usage(args.usage)
             cap.complete_turn(args.text, close_if_missing=args.close_if_missing,
                               times=times if isinstance(times, dict) else None,
-                              touched=[str(t) for t in touched] if isinstance(touched, list) else None)
+                              touched=[str(t) for t in touched] if isinstance(touched, list) else None,
+                              commit_calls=getattr(args, "commit_calls", None))
         else:
             cap.full_turn(args.text, args.agent_text)
     except Exception as exc:  # noqa: BLE001 — capture must never break the host tool

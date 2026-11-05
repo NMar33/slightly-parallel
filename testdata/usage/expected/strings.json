@@ -1,0 +1,123 @@
+{
+ "now": "2026-11-01T14:48:00",
+ "today": {
+  "tiles": {
+   "new_output": "100k",
+   "cache": "466k",
+   "share": "84%",
+   "turns": "9",
+   "chats": "2 chats",
+   "helpers": "33k"
+  },
+  "usual": {
+   "shows_ratio": true,
+   "new_output_ratio": "9.6",
+   "cache_ratio": "14.8",
+   "share": "86%"
+  },
+  "limits": {
+   "claude-code": {
+    "read_at_text": "14:40",
+    "stale": false,
+    "five_hour": {
+     "pct": "62%",
+     "in": "1 h 52 min",
+     "resets_text": "16:40",
+     "expired_text": ""
+    },
+    "seven_day": {
+     "pct": "31%",
+     "in": "3 d 18 h",
+     "resets_text": "Thu 09:00",
+     "expired_text": ""
+    }
+   },
+   "codex": {
+    "read_at_text": "13:48",
+    "stale": true,
+    "five_hour": {
+     "pct": "9%",
+     "in": "",
+     "resets_text": "14:10",
+     "expired_text": "Reset at 14:10. No reading since."
+    },
+    "seven_day": {
+     "pct": "81%",
+     "in": "1 d 15 h",
+     "resets_text": "Tue 06:00",
+     "expired_text": ""
+    }
+   }
+  },
+  "chats": [
+   {
+    "agent_id": "cc-golden",
+    "new_output": "89k",
+    "cache": "420k",
+    "share": "84%",
+    "helpers": "33k"
+   },
+   {
+    "agent_id": "cx-golden",
+    "new_output": "11k",
+    "cache": "46k",
+    "share": "84%",
+    "helpers": "0"
+   }
+  ],
+  "tasks": [
+   {
+    "id": "tk_gold_a",
+    "new_output": "82k",
+    "helpers": "0",
+    "status": "doing"
+   },
+   {
+    "id": "tk_side_c",
+    "new_output": "11k",
+    "helpers": "0",
+    "status": "todo"
+   },
+   {
+    "id": "tk_gold_b",
+    "new_output": "7.7k",
+    "helpers": "33k",
+    "status": "done"
+   }
+  ],
+  "coverage": [
+   "Claude Code: 1 line in 1 chat could not be read",
+   "Claude Code: 1 line in 1 chat without a time, on no day",
+   "plan limits: 1 line could not be read"
+  ]
+ },
+ "lines": {
+  "cc-golden": {
+   "1": "→ 14k ↑ 2k ↓ (92k)",
+   "2": "→ 57k ↑ 1k ↓ (56k) · cache expired",
+   "3": "→ 400 ↑ 120 ↓ (57k)",
+   "4": "→ 1.5k ↑ 2.4k ↓ (57k)",
+   "5": "→ 1.5k ↑ 1.8k ↓ (118k) + helpers 33k",
+   "6": "→ 300 ↑ 150 ↓ (61k)",
+   "7": "→ 19k ↑ 1.3k ↓ (18k) · context compacted · 5-hour 62%"
+  },
+  "cx-golden": {
+   "1": "→ 6k ↑ 800 ↓ (20k)",
+   "2": "→ 3k ↑ 1.2k ↓ (26k)"
+  },
+  "cc-older": {
+   "0": "→ 900k ↑ 100k ↓ (0)",
+   "1": "→ 5.2k ↑ 5.2k ↓ (31k)",
+   "2": "→ 4.7k ↑ 4.7k ↓ (28k)",
+   "3": "→ 7k ↑ 7k ↓ (42k)",
+   "4": "→ 4k ↑ 4k ↓ (24k)",
+   "5": "→ 6k ↑ 6k ↓ (36k)",
+   "6": "→ 5k ↑ 5k ↓ (30k)",
+   "7": "→ 6.5k ↑ 6.5k ↓ (39k)",
+   "8": "→ 3.5k ↑ 3.5k ↓ (21k)",
+   "9": "→ 5.5k ↑ 5.5k ↓ (33k)",
+   "10": "→ 0 ↑ 0 ↓ (30k)",
+   "11": "→ 4.5k ↑ 4.5k ↓ (27k)"
+  }
+ }
+}

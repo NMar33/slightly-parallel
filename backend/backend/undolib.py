@@ -58,12 +58,12 @@ UNDO_TAG_RE = re.compile(r"(?<![\w#])#undo(-yes)?(?![\w-])", re.IGNORECASE)
 # prefix: an id is an artifact only when the artifacts ledger holds it.
 KINDS: dict[str, str] = {
     "vs_": "vision", "rl_": "rule", "pb_": "problem", "ep_": "entrypoint",
-    "sk_": "skill", "ar_": "artifact", "pm_": "prompt", "tk_": "task",
+    "sk_": "skill", "ar_": "artifact", "pm_": "prompt", "tk_": "task", "pu_": "publish",
 }
 # Kinds whose own status has an archived value, shown and restored on their page.
 STATUS_ARCHIVED = ("rule", "skill", "artifact", "prompt")
 # Kinds hidden by archived_at alone: the list reads leave them out.
-HIDDEN_BY_DATE = ("vision", "problem", "entrypoint")
+HIDDEN_BY_DATE = ("vision", "problem", "entrypoint", "publish")
 
 CONFIRM = "#undo-yes"
 MAX_CANDIDATES = 30
@@ -197,7 +197,7 @@ def candidates(store: ViewStore, agent_id: str) -> dict[str, Any]:
     promptlib.adopt(store)
     project = req.get("project") or ""
     found: list[dict[str, Any]] = []
-    for kind in ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "prompt", "task"):
+    for kind in ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "publish", "prompt", "task"):
         ent = ENTITIES[kind]
         rows = store.query(
             f"SELECT * FROM {ent.view} WHERE project = ? AND (agent_id = ? OR created_date >= ?) "

@@ -1,0 +1,10 @@
+{
+ "agent_id": "cc-older",
+ "agent_name": "cc-older",
+ "project": "GOLD",
+ "tool": "claude-code",
+ "session_ref": "sess-older",
+ "chat_title": "Older work",
+ "created_date": "22610-02",
+ "last_active": "2026-10-31T11:00:00"
+}

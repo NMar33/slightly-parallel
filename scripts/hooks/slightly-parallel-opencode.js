@@ -14,7 +14,8 @@
  *
  * At the end of a turn it also hands over the times in the session's
  * messages and in its child sessions (the helpers a task tool starts), so
- * Slightly Parallel can tell the agent's working time from its wait on you.
+ * Slightly Parallel can tell the agent's working time from its wait on you,
+ * and each message's tokens (Usage).
  *
  * When OpenCode starts (`config`), the standup and map helpers become
  * subagents, sp-standup and sp-map, on the models Settings give.
@@ -106,9 +107,52 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
     }
     return out
   }
+  // The shell calls since the last user message that may make a commit
+  // (commit, merge, cherry-pick, revert, rebase, am, pull), as [start, end]
+  // in epoch ms: Slightly Parallel gives a commit several chats saw to the one
+  // whose call was running when it was made.
+  const MAKES_COMMIT = /\bgit\b[^;&|\n]*?\s(?:commit|merge|cherry-pick|revert|rebase|am|pull)\b/
+  const commitCallsOf = (list, sinceMs, out) => {
+    for (const m of list || []) {
+      const info = (m && (m.info || m)) || {}
+      const at = info.time && typeof info.time.created === 'number' ? info.time.created : 0
+      if (at && at < sinceMs) continue
+      for (const p of m.parts || info.parts || []) {
+        if (!p || p.type !== 'tool' || String(p.tool || '') !== 'bash') continue
+        const input = (p.state && p.state.input) || {}
+        const time = (p.state && p.state.time) || {}
+        if (!MAKES_COMMIT.test(String(input.command || ''))) continue
+        if (typeof time.start === 'number') out.push([time.start, typeof time.end === 'number' ? time.end : Date.now()])
+      }
+    }
+    return out
+  }
+  // The tokens of each assistant message since the last user message, as
+  // OpenCode reports them (info.tokens): Slightly Parallel's usage of the
+  // turn, per message, the helpers' (child sessions) named apart.
+  const num = (x) => (typeof x === 'number' && isFinite(x) && x > 0 ? Math.round(x) : 0)
+  const usageOf = (list, sinceMs, helper, out) => {
+    for (const m of list || []) {
+      const info = (m && (m.info || m)) || {}
+      const t = info.tokens
+      if (info.role !== 'assistant' || !t || typeof t !== 'object' || !info.id) continue
+      const time = info.time || {}
+      const at = typeof time.created === 'number' ? time.created : 0
+      if (at && at < sinceMs) continue
+      const cache = (t.cache && typeof t.cache === 'object') ? t.cache : {}
+      out.push({
+        id: String(info.id), at: typeof time.completed === 'number' ? time.completed : at,
+        model: String(info.modelID || (info.model && info.model.modelID) || ''),
+        input: num(t.input), output: num(t.output), reasoning: num(t.reasoning),
+        cache_read: num(cache.read), cache_write: num(cache.write), helper,
+      })
+    }
+    return out
+  }
   const listOf = (res) => (Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []))
   const sessionTimes = async (sessionID) => {
-    const times = { points: [], helpers: [], touched: [] }
+    const times = { points: [], helpers: [], touched: [], usage: [] }
+    const calls = []
     try {
       const own = listOf(await client.session.messages({ path: { id: sessionID } }))
       times.points = timesOf(own)
@@ -118,6 +162,8 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         if (info.role === 'user' && info.time && typeof info.time.created === 'number') since = Math.max(since, info.time.created)
       }
       touchedOf(own, since, times.touched)
+      commitCallsOf(own, since, calls)
+      usageOf(own, since, '', times.usage)
       const children = listOf(await client.session.children({ path: { id: sessionID } }))
       for (const c of children) {
         const id = c && (c.id || (c.info && c.info.id))
@@ -125,7 +171,11 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         const theirs = listOf(await client.session.messages({ path: { id } }))
         times.helpers.push(timesOf(theirs))
         touchedOf(theirs, since, times.touched)
+        commitCallsOf(theirs, since, calls)
+        usageOf(theirs, since, String(id), times.usage)
       }
+      // Only when the session was read: an empty list says "no commit call".
+      times.commit_calls = calls
     } catch {
       /* an older OpenCode without these calls: the turn keeps start and end */
     }
@@ -215,8 +265,12 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         seen.add(key)
         const times = await sessionTimes(sessionID)
         const touched = times.touched
+        const commit_calls = times.commit_calls
+        const usage = times.usage
         delete times.touched
-        await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing'], { times, touched })
+        delete times.commit_calls
+        delete times.usage
+        await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing'], commit_calls ? { times, touched, commit_calls, usage } : { times, touched, usage })
       } catch {
         /* never throw into the host */
       }

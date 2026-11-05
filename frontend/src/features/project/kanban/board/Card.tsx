@@ -17,6 +17,8 @@ import { CopyButton } from '../parts'
 import { DEFAULT_MODAL_PREFS, SELECTION, ageBucket, isQuickWin, normalizeStatus, taskText } from '../model'
 import type { Axis, Glow, LinkInfo, MentionSummary, TaskRow } from '../model'
 import { useEvidenceAsk } from './evidenceAsk'
+import { useCoreTaskIndex } from '../../../architecture/cores/data'
+import { TypeDot } from '../../../architecture/cores/parts'
 import { t, tn } from '../../../../i18n/scope/project'
 
 /**
@@ -73,6 +75,9 @@ export const TaskCard = memo(function TaskCard({
   onRelease?: (t: TaskRow) => void
 }) {
   const evidenceAsk = useEvidenceAsk()
+  // The cores this task belongs to: one read per project, shared by every card.
+  const coreIndex = useCoreTaskIndex(String(task.project || ''))
+  const cores = coreIndex.data?.tasks?.[task.id] ?? []
   // Distinguish click from drag — when a drag actually happened, suppress the click.
   const dragOccurredRef = useRef(false)
   const priority = String(task.priority || '').toLowerCase()
@@ -81,7 +86,8 @@ export const TaskCard = memo(function TaskCard({
     priority === 'med'  ? 'border-l-status-amber' :
     priority === 'low'  ? 'border-l-tertiary' : ''
   const done = normalizeStatus(task.status) === 'done'
-  const tagsList = String(task.tags || '').split(/[,\s]+/).filter(Boolean)
+  // Comma-separated, as the window's field says: a tag with a space in it stays one tag.
+  const tagsList = String(task.tags || '').split(',').map((x) => x.trim()).filter(Boolean)
   const due = task.due_date || ''
   const blocked = (link?.blockedBy ?? []).some((b) => b.open)
   // Just returned: the special color for two days after a scheduled comeback.
@@ -201,6 +207,14 @@ export const TaskCard = memo(function TaskCard({
             <span key={t} className="bg-elevated px-6 py-1 rounded-input">#{t}</span>
           ))}
           {due && <span className="text-status-amber">{t('due')} {due}</span>}
+          {cores.length > 0 && (
+            <span className="inline-flex items-center gap-4 bg-elevated px-6 py-1 rounded-input text-secondary max-w-[160px]"
+              title={t('Core: {names}', { names: cores.map((c) => c.name).join(', ') })}>
+              <TypeDot type={cores[0]!.type} size={7} />
+              <span className="truncate">{cores[0]!.name}</span>
+              {cores.length > 1 && <span className="text-tertiary">+{cores.length - 1}</span>}
+            </span>
+          )}
         </div>
       )}
       {compact && due && (
@@ -443,8 +457,14 @@ function ValueChips({
  * the card shows the one an agent would be given now, marked with where
  * it sits in the thread. The whole thread is in the editor.
  */
+/** What a card shows of a text: the start. A 90 000-character paste went into
+ *  the page and the tooltip whole, once per card; the window has it all. */
+export const CARD_TEXT_CHARS = 600
+export const cardText = (text: string): string => (text.length > CARD_TEXT_CHARS ? `${text.slice(0, CARD_TEXT_CHARS).trimEnd()}…` : text)
+
 function CardDesc({ last, turnsN, compact }: { last: Turn | null; turnsN: number; compact?: boolean }) {
   if (!last || !last.text) return null
+  const shown = cardText(last.text)
   return (
     <div className="flex flex-col gap-2 min-w-0">
       {turnsN > 1 && (
@@ -461,9 +481,9 @@ function CardDesc({ last, turnsN, compact }: { last: Turn | null; turnsN: number
           WebkitBoxOrient: 'vertical',
           WebkitLineClamp: compact ? 3 : 6,
         }}
-        title={last.text}
+        title={shown}
       >
-        {last.text}
+        {shown}
       </div>
     </div>
   )

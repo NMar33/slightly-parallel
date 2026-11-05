@@ -1,0 +1,4 @@
+id,created_date,created_time,project,agent_id,title,status,priority,assignee,due_date,lane,tags,position,impact,effort,tokens,novelty,projects,sprint_id,archived_at,resurface_on,resurface_to,resurface_every_days,resurfaced_at,remember,today_on,stack_id,stack_head_at,md_ref
+tk_gold_a,2610-30,09:00,GOLD,operator,Golden auth,doing,high,,,,,10,,,,,GOLD,,,,,,,,,,,
+tk_gold_b,2611-01,10:00,GOLD,cc-golden,Build the export,done,med,,,,,20,,,,,GOLD,,,,,,,,,,,
+tk_side_c,2610-30,09:00,SIDE,operator,Side job,todo,med,,,,,10,,,,,SIDE,,,,,,,,,,,

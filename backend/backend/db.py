@@ -437,6 +437,9 @@ class ViewStore:
             if pf.chats_dir is None:
                 continue
             for f in sorted(pf.chats_dir.glob("*/*")):
+                # Not usage.jsonl: no session is derived from it, and the hook
+                # appends to it every turn (it moves view_mtime through
+                # _collect_stamps, which is all the turns' usage needs).
                 if f.name not in ("meta.json", "chat.md", "skills.jsonl", "work.jsonl", "turns.jsonl"):
                     continue
                 try:
@@ -497,7 +500,8 @@ class ViewStore:
             if pf.chats_dir is not None:
                 # skills.jsonl and work.jsonl are appended by the hook after
                 # meta.json is written; each feeds a table of its own.
-                for name in ("*/meta.json", "*/skills.jsonl", "*/work.jsonl"):
+                # usage.jsonl too: the chat viewer's turns carry it.
+                for name in ("*/meta.json", "*/skills.jsonl", "*/work.jsonl", "*/usage.jsonl"):
                     for f in pf.chats_dir.glob(name):
                         note(f)
             # The architecture page: markdown versions under the project,

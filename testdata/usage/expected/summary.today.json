@@ -1,0 +1,566 @@
+{
+ "range": "today",
+ "project": "all",
+ "days": [
+  "2611-01"
+ ],
+ "limits": {
+  "claude-code": {
+   "five_hour": {
+    "used": 62.5,
+    "resets_at": "2026-11-01T16:40:00",
+    "in": "1 h 52 min",
+    "expired": false,
+    "span_s": 18000,
+    "resets_text": "16:40",
+    "expired_text": ""
+   },
+   "seven_day": {
+    "used": 31.0,
+    "resets_at": "2026-11-05T09:00:00",
+    "in": "3 d 18 h",
+    "expired": false,
+    "span_s": 604800,
+    "resets_text": "Thu 09:00",
+    "expired_text": ""
+   },
+   "read_at": "2026-11-01T14:40:00",
+   "read_at_text": "14:40",
+   "age_min": 8,
+   "stale": false,
+   "expired": false,
+   "plan": "",
+   "source": "statusline",
+   "series": [
+    {
+     "account": "2403ec81aa11",
+     "model": "claude-opus-4-5",
+     "five_hour": {
+      "used": 62.5,
+      "resets_at": "2026-11-01T16:40:00",
+      "in": "1 h 52 min",
+      "expired": false,
+      "span_s": 18000,
+      "resets_text": "16:40",
+      "expired_text": ""
+     },
+     "seven_day": {
+      "used": 31.0,
+      "resets_at": "2026-11-05T09:00:00",
+      "in": "3 d 18 h",
+      "expired": false,
+      "span_s": 604800,
+      "resets_text": "Thu 09:00",
+      "expired_text": ""
+     },
+     "read_at": "2026-11-01T14:40:00",
+     "read_at_text": "14:40",
+     "age_min": 8,
+     "stale": false,
+     "expired": false,
+     "plan": "",
+     "source": "statusline",
+     "session": "sess-gol"
+    }
+   ],
+   "accounts_n": 1,
+   "models_n": 2
+  },
+  "codex": {
+   "five_hour": {
+    "used": 9.0,
+    "resets_at": "2026-11-01T14:10:00",
+    "in": "",
+    "expired": true,
+    "span_s": 18000,
+    "resets_text": "14:10",
+    "expired_text": "Reset at 14:10. No reading since."
+   },
+   "seven_day": {
+    "used": 81.0,
+    "resets_at": "2026-11-03T06:00:00",
+    "in": "1 d 15 h",
+    "expired": false,
+    "span_s": 604800,
+    "resets_text": "Tue 06:00",
+    "expired_text": ""
+   },
+   "read_at": "2026-11-01T13:48:00",
+   "read_at_text": "13:48",
+   "age_min": 60,
+   "stale": true,
+   "expired": true,
+   "plan": "plus",
+   "source": "rollout",
+   "series": [
+    {
+     "account": "",
+     "model": "",
+     "five_hour": {
+      "used": 9.0,
+      "resets_at": "2026-11-01T14:10:00",
+      "in": "",
+      "expired": true,
+      "span_s": 18000,
+      "resets_text": "14:10",
+      "expired_text": "Reset at 14:10. No reading since."
+     },
+     "seven_day": {
+      "used": 81.0,
+      "resets_at": "2026-11-03T06:00:00",
+      "in": "1 d 15 h",
+      "expired": false,
+      "span_s": 604800,
+      "resets_text": "Tue 06:00",
+      "expired_text": ""
+     },
+     "read_at": "2026-11-01T13:48:00",
+     "read_at_text": "13:48",
+     "age_min": 60,
+     "stale": true,
+     "expired": true,
+     "plan": "plus",
+     "source": "rollout",
+     "session": ""
+    }
+   ],
+   "accounts_n": 1,
+   "models_n": 0
+  }
+ },
+ "usual": {
+  "new_output": 10500,
+  "cache": 31500,
+  "share": 0.8565,
+  "days_used": 11
+ },
+ "totals": {
+  "new": 90400,
+  "output": 9920,
+  "cache": 466000,
+  "cache_write": 77700,
+  "thinking": 1600,
+  "rebuilt": 53500,
+  "new_output": 100320,
+  "share": 0.8375,
+  "turns": 9,
+  "cost_usd": 0.0,
+  "cost": {
+   "new": 0.0,
+   "rebuilt": 0.0,
+   "warm": 0.0,
+   "output": 0.0,
+   "helpers": 0.0
+  },
+  "unpriced": 607620,
+  "chats": 2,
+  "helpers": {
+   "n": 2,
+   "new_output": 33300,
+   "cache": 8000
+  }
+ },
+ "by_tool": [
+  {
+   "new": 81400,
+   "output": 7920,
+   "cache": 420000,
+   "cache_write": 77700,
+   "thinking": 800,
+   "rebuilt": 53500,
+   "rebuilds": 1,
+   "new_output": 89320,
+   "share": 0.8377,
+   "turns": 7,
+   "helpers": {
+    "n": 2,
+    "new_output": 33300,
+    "cache": 8000
+   },
+   "cost": {
+    "new": 0.0,
+    "rebuilt": 0.0,
+    "warm": 0.0,
+    "output": 0.0,
+    "helpers": 0.0
+   },
+   "cost_usd": 0.0,
+   "unpriced": 550620,
+   "tool": "claude-code",
+   "models": [
+    {
+     "new": 81400,
+     "output": 7920,
+     "cache": 420000,
+     "cache_write": 77700,
+     "thinking": 800,
+     "rebuilt": 53500,
+     "rebuilds": 0,
+     "new_output": 89320,
+     "share": 0.8377,
+     "turns": 7,
+     "helpers": {
+      "n": 0,
+      "new_output": 0,
+      "cache": 0
+     },
+     "cost": {
+      "new": 0.0,
+      "rebuilt": 0.0,
+      "warm": 0.0,
+      "output": 0.0,
+      "helpers": 0.0
+     },
+     "cost_usd": 0.0,
+     "unpriced": 509320,
+     "model": "claude-opus-4-5"
+    },
+    {
+     "new": 0,
+     "output": 0,
+     "cache": 0,
+     "cache_write": 0,
+     "thinking": 0,
+     "rebuilt": 0,
+     "rebuilds": 0,
+     "new_output": 0,
+     "share": null,
+     "turns": 1,
+     "helpers": {
+      "n": 1,
+      "new_output": 23000,
+      "cache": 0
+     },
+     "cost": {
+      "new": 0.0,
+      "rebuilt": 0.0,
+      "warm": 0.0,
+      "output": 0.0,
+      "helpers": 0.0
+     },
+     "cost_usd": 0.0,
+     "unpriced": 23000,
+     "model": "claude-sonnet-4-5"
+    },
+    {
+     "new": 0,
+     "output": 0,
+     "cache": 0,
+     "cache_write": 0,
+     "thinking": 0,
+     "rebuilt": 0,
+     "rebuilds": 0,
+     "new_output": 0,
+     "share": null,
+     "turns": 1,
+     "helpers": {
+      "n": 1,
+      "new_output": 10300,
+      "cache": 8000
+     },
+     "cost": {
+      "new": 0.0,
+      "rebuilt": 0.0,
+      "warm": 0.0,
+      "output": 0.0,
+      "helpers": 0.0
+     },
+     "cost_usd": 0.0,
+     "unpriced": 18300,
+     "model": "claude-haiku-4-5"
+    }
+   ]
+  },
+  {
+   "new": 9000,
+   "output": 2000,
+   "cache": 46000,
+   "cache_write": 0,
+   "thinking": 800,
+   "rebuilt": 0,
+   "rebuilds": 0,
+   "new_output": 11000,
+   "share": 0.8364,
+   "turns": 2,
+   "helpers": {
+    "n": 0,
+    "new_output": 0,
+    "cache": 0
+   },
+   "cost": {
+    "new": 0.0,
+    "rebuilt": 0.0,
+    "warm": 0.0,
+    "output": 0.0,
+    "helpers": 0.0
+   },
+   "cost_usd": 0.0,
+   "unpriced": 57000,
+   "tool": "codex",
+   "models": [
+    {
+     "new": 9000,
+     "output": 2000,
+     "cache": 46000,
+     "cache_write": 0,
+     "thinking": 800,
+     "rebuilt": 0,
+     "rebuilds": 0,
+     "new_output": 11000,
+     "share": 0.8364,
+     "turns": 2,
+     "helpers": {
+      "n": 0,
+      "new_output": 0,
+      "cache": 0
+     },
+     "cost": {
+      "new": 0.0,
+      "rebuilt": 0.0,
+      "warm": 0.0,
+      "output": 0.0,
+      "helpers": 0.0
+     },
+     "cost_usd": 0.0,
+     "unpriced": 57000,
+     "model": "gpt-5-codex"
+    }
+   ]
+  }
+ ],
+ "by_cause": [
+  {
+   "cause": "expired",
+   "rebuilt": 53500,
+   "cost_usd": 0.0,
+   "events": 1,
+   "chats": 1
+  }
+ ],
+ "api_prices": {
+  "as_of": "2026-11-05",
+  "sources": [
+   "https://platform.claude.com/docs/en/about-claude/pricing",
+   "https://developers.openai.com/api/docs/pricing"
+  ],
+  "models": [],
+  "missing": [
+   "claude-haiku-4-5",
+   "claude-opus-4-5",
+   "claude-sonnet-4-5",
+   "gpt-5-codex"
+  ]
+ },
+ "chats": [
+  {
+   "new": 81400,
+   "output": 7920,
+   "cache": 420000,
+   "cache_write": 77700,
+   "thinking": 800,
+   "rebuilt": 53500,
+   "rebuilds": 1,
+   "new_output": 89320,
+   "share": 0.8377,
+   "turns": 7,
+   "helpers": {
+    "n": 2,
+    "new_output": 33300,
+    "cache": 8000
+   },
+   "cost": {
+    "new": 0.0,
+    "rebuilt": 0.0,
+    "warm": 0.0,
+    "output": 0.0,
+    "helpers": 0.0
+   },
+   "cost_usd": 0.0,
+   "unpriced": 550620,
+   "agent_id": "cc-golden",
+   "project": "GOLD",
+   "title": "Golden export",
+   "tool": "claude-code",
+   "model": "claude-opus-4-5",
+   "models": [
+    "claude-haiku-4-5",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5"
+   ],
+   "tools": [
+    "claude-code"
+   ],
+   "helpers_n": 2,
+   "task_id": "tk_gold_a"
+  },
+  {
+   "new": 9000,
+   "output": 2000,
+   "cache": 46000,
+   "cache_write": 0,
+   "thinking": 800,
+   "rebuilt": 0,
+   "rebuilds": 0,
+   "new_output": 11000,
+   "share": 0.8364,
+   "turns": 2,
+   "helpers": {
+    "n": 0,
+    "new_output": 0,
+    "cache": 0
+   },
+   "cost": {
+    "new": 0.0,
+    "rebuilt": 0.0,
+    "warm": 0.0,
+    "output": 0.0,
+    "helpers": 0.0
+   },
+   "cost_usd": 0.0,
+   "unpriced": 57000,
+   "agent_id": "cx-golden",
+   "project": "SIDE",
+   "title": "Side job",
+   "tool": "codex",
+   "model": "gpt-5-codex",
+   "models": [
+    "gpt-5-codex"
+   ],
+   "tools": [
+    "codex"
+   ],
+   "helpers_n": 0,
+   "task_id": "tk_side_c"
+  }
+ ],
+ "chats_total": 2,
+ "tasks": [
+  {
+   "new": 78100,
+   "output": 3520,
+   "cache": 183000,
+   "cache_write": 75100,
+   "thinking": 0,
+   "rebuilt": 53500,
+   "rebuilds": 1,
+   "new_output": 81620,
+   "share": 0.7009,
+   "turns": 4,
+   "helpers": {
+    "n": 0,
+    "new_output": 0,
+    "cache": 0
+   },
+   "cost": {
+    "new": 0.0,
+    "rebuilt": 0.0,
+    "warm": 0.0,
+    "output": 0.0,
+    "helpers": 0.0
+   },
+   "cost_usd": 0.0,
+   "unpriced": 264620,
+   "id": "tk_gold_a",
+   "title": "Golden auth",
+   "project": "GOLD",
+   "status": "doing",
+   "done_at": "2026-11-01T09:10:00",
+   "chats": 1,
+   "models": [
+    "claude-opus-4-5"
+   ],
+   "tools": [
+    "claude-code"
+   ]
+  },
+  {
+   "new": 9000,
+   "output": 2000,
+   "cache": 46000,
+   "cache_write": 0,
+   "thinking": 800,
+   "rebuilt": 0,
+   "rebuilds": 0,
+   "new_output": 11000,
+   "share": 0.8364,
+   "turns": 2,
+   "helpers": {
+    "n": 0,
+    "new_output": 0,
+    "cache": 0
+   },
+   "cost": {
+    "new": 0.0,
+    "rebuilt": 0.0,
+    "warm": 0.0,
+    "output": 0.0,
+    "helpers": 0.0
+   },
+   "cost_usd": 0.0,
+   "unpriced": 57000,
+   "id": "tk_side_c",
+   "title": "Side job",
+   "project": "SIDE",
+   "status": "todo",
+   "done_at": "",
+   "chats": 1,
+   "models": [
+    "gpt-5-codex"
+   ],
+   "tools": [
+    "codex"
+   ]
+  },
+  {
+   "new": 3300,
+   "output": 4400,
+   "cache": 237000,
+   "cache_write": 2600,
+   "thinking": 800,
+   "rebuilt": 0,
+   "rebuilds": 0,
+   "new_output": 7700,
+   "share": 0.9863,
+   "turns": 3,
+   "helpers": {
+    "n": 2,
+    "new_output": 33300,
+    "cache": 8000
+   },
+   "cost": {
+    "new": 0.0,
+    "rebuilt": 0.0,
+    "warm": 0.0,
+    "output": 0.0,
+    "helpers": 0.0
+   },
+   "cost_usd": 0.0,
+   "unpriced": 286000,
+   "id": "tk_gold_b",
+   "title": "Build the export",
+   "project": "GOLD",
+   "status": "done",
+   "done_at": "2026-11-01T14:30:00",
+   "chats": 1,
+   "models": [
+    "claude-haiku-4-5",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5"
+   ],
+   "tools": [
+    "claude-code"
+   ]
+  }
+ ],
+ "tasks_total": 3,
+ "coverage": {
+  "chats_recorded": 2,
+  "chats_without_usage": 1,
+  "chats_from_log": 0,
+  "unreadable": [
+   "Claude Code: 1 line in 1 chat could not be read",
+   "Claude Code: 1 line in 1 chat without a time, on no day",
+   "plan limits: 1 line could not be read"
+  ]
+ }
+}

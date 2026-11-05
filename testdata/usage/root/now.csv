@@ -1,0 +1,2 @@
+id,task_id,project,agent_id,session_id,turn,at,applied_at,column
+nw_g1,tk_gold_b,GOLD,cc-golden,,4,2026-11-01T10:00:00,2026-11-01T10:00:50,doing

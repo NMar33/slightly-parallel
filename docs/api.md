@@ -211,7 +211,11 @@ The board, its blocks, and everything hung off a task.
   `status`, `turn` (which round to rewrite), plus the mutable columns
   (`assignee`, `priority`, `lane`, `sprint_id`, `remember`, `today_on`,
   `stack_id`, `resurface_on`, `resurface_to`, `resurface_every_days`, …).
-  Status is the operator's; an agent that sets it is refused. `comment`
+  Status is the operator's; an agent that sets it is refused, unless the
+  task has auto-manage on, or the agent drops its own card from the agent
+  column (`done-archived`). Lane, assignee, impact, effort, position,
+  projects, priority, due date and the switches are the operator's too;
+  an agent's tags are `ag_*`. `comment`
   adds a note after the task's text, under `--- comment from agent:` (an
   agent's) — each call adds one; on a #now card an agent's `description` is
   refused, since its text is the operator's message.
@@ -219,12 +223,29 @@ The board, its blocks, and everything hung off a task.
   `text`, `actor`, `created_date`, `created_time`. Answers: `task`, `turn`,
   `turns`, `description`, `ref`.
 - `GET /api/tasks/{task_id}/events` — every field change appended by
-  `/update`, oldest first.
-- `GET /api/tasks/{task_id}/work` — what the repository saw in the turns
-  that named this task. Answers: `task_id`, `work`.
+  `/update`, newest first.
+- `GET /api/tasks/{task_id}/work` — the task's commits and files: the ones
+  signed (`Task:`) or linked to it, then what the repository saw in its
+  stretch of a chat. The operator opens a stretch — a message that names the
+  task, or the `#now` that started it — and closes it by naming another task;
+  an agent naming a task in its answer opens and closes nothing (the turn
+  still shows under the task's mentions). After a pause the stretch goes on
+  only into a session that names the task again. A commit several chats saw
+  appear is the chat's whose `git commit` call was running when it was made
+  (the hook records these calls for Claude Code, Codex and OpenCode), else
+  whose tools touched its files, else whose turn was running; when nothing
+  tells, it is nobody's until linked (stamps from before the calls were
+  recorded keep the chat that stamped it first). Answers: `task_id`, `work`.
+- `POST /api/tasks/{task_id}/commits` — `{shas: [sha …]}` (7–40 hex): the
+  agent (MCP `task_commits`) or the operator links commits that carry no
+  `Task:` line to this task. Answers `linked` (the new ones) and the task's
+  `work`. A commit's own `Task: tk_…` line does the same without a call.
+- `GET /api/commits/signed?project=&days=7` — per project with a repository:
+  commits in the last `days` days, how many carry a `Task:` line (`signed`),
+  how many were linked later (`linked`), and the same by the `Agent:` line.
 - `GET /api/tasks/{task_id}/mentions` — every captured turn naming this
   task, newest first. Copying a task puts its id in the text (`tk_… · Title`)
-  and the chat reading scans every turn for `tk_[0-9a-f]{8}`, so
+  and the chat reading scans every turn for task ids (`tk_…`, readable ids too), so
   mentions cost nothing extra and need no ledger. `?full=1` adds the task's
   thread: `turns`, each once, with `why` (`mention`; `done` — inside a
   stretch a #done closed; `next` — after a mention no #done closed, up to
@@ -358,8 +379,8 @@ An agent reports; the operator judges. The report is never the verdict.
 
 ## Kept messages and skills
 
-A message tagged `#vision`, `#rule`, `#problem`, `#entrypoint`, `#skill` or `#artifact` is
-adopted into its ledger on the way past the next list or detail read. The
+A message tagged `#vision`, `#rule`, `#problem`, `#entrypoint`, `#skill`, `#artifact` or
+`#publish` is adopted into its ledger on the way past the next list or detail read. The
 kept text stays verbatim; the *interpretation* is what an agent or the
 operator writes about it, as a new version under `kept_versions/`.
 
@@ -377,6 +398,30 @@ operator writes about it, as a new version under `kept_versions/`.
   ids: `present`, `removed`, `all`.
 - `POST /api/examples/remove` — take the examples out. Answers: `removed`.
 - `POST /api/examples/restore` — put them back. Answers: `added`.
+
+**Publish** (`#publish`, the operator's: what shipped, worth telling): the
+cards are the kept kind `publish` (`GET /api/publish`, `GET /api/publish/{id}`,
+`POST /api/publish/{id}/update` — `tags`; `POST /api/publish/{id}/interpretation` is
+the operator's edit of the text, the same as the page's `text` route); nothing is asked of the agent, and
+an agent's write is refused. The Publish page reads and writes under
+`/api/publishing` (docs/publish.md): `GET /api/publishing?project=` (the
+cards with their text versions, tasks, cores, commits, images and
+placements; the documents with their versions and items) ·
+`GET /api/publishing/cards/{card_id}` (with `history`) ·
+`POST /api/publishing/cards` (`project`, `text`: a card written by hand on the page) ·
+`POST /api/publishing/cards/{card_id}/text` (`text`, `note?`) ·
+`POST /api/publishing/docs` (`project`, `name`; the same name answers the
+existing document) · `POST /api/publishing/docs/{doc_id}/update` (`name?`,
+`archived?`) · `POST /api/publishing/docs/{doc_id}/versions` (`note?`; the
+current items copied) · `POST /api/publishing/docs/{doc_id}/items`
+(`card_id`, `text?`, `before?`) · `GET /api/publishing/docs/{doc_id}/markdown`
+(`n?`) · `POST /api/publishing/items/{item_id}/update` (`text?`, `before?`) ·
+`POST /api/publishing/items/{item_id}/remove` ·
+`POST /api/publishing/cards/{card_id}/attach` (`images[]` with `title`, `ext`,
+`data_base64`; `links[]` with `title`, `url` — the operator on the page, or
+the agent with MCP `publish_attach`; the same image again is the existing
+attachment) · `GET /api/publishing/attachments/{attachment_id}/file` ·
+`POST /api/publishing/attachments/{attachment_id}/remove` (the operator's).
 - `GET /api/example` — the example project: `enabled`, `present`, `building`
   and the last error.
 - `GET /api/example/source?agent_id=&date=&time=&kind=` — the chat message
@@ -712,7 +757,7 @@ Every command of the contract gets a `[slightly-parallel] #<command> — …` no
 the capture hook, naming the skill and the first tool: the kept tags,
 `#evidence` with its task, and `_COMMANDS` for the rest (`#scan`, `#page`,
 `#map`, `#architecture`, `#task`, `#now`, `#decision`, `#standup`, `#prompt`,
-`#problem solved`). The hook also keeps small copies of server facts — the
+`#problem solved`, `#core-new`, `#core-note`, `#core`, `#core-off`, `#mute`). The hook also keeps small copies of server facts — the
 task id pattern, the standup claim time, setting defaults, kept-tag routes,
 whether a standup is owed. `tests/test_hook_parity.py` holds each copy equal
 to its original, so a contract that gains a command the hook does not know
@@ -933,6 +978,218 @@ block, and kept current.
   counts after all), `resume`, `stop`, `dismiss`.
 - The entries themselves are the `time-entries` lens (see **Entries**).
 
+### Cores
+
+The program's core elements the operator keeps in view (`corelib.py`,
+`routers/cores.py`): a capability, a feature, a store, a part of the interface, each with
+its story. Three ledgers at the data root: `cores.csv`, `core_notes.csv`,
+`core_links.csv`. Who writes: anyone makes a core and adds a note (the
+operator's `#core-new` and `#core-note` run through the agent); an agent's
+`auto` note needs tracking on; approving, tracking, changing and ordering
+are the operator's.
+
+- `GET /api/cores?project=` — every core of the project, in view first,
+  tracked first, by position: `name`, `type`, `reason`, `status` (view |
+  off), `tracking {on, until, days_left, expired}`, `notes_n`, `pending_n`
+  (notes awaiting approval), `last_note`, `tasks_n`, `open_n`, `anchors`,
+  `grid` (30 days: `{day, story, nearby}`). Also `types`.
+- `GET /api/cores/timeline?project=&days=` — the cores over the last `days`
+  days (7–120, default 30), one lane each: per ISO day the `notes` (yours and
+  agents', with `approved`), the linked tasks `made` and `done`, the `commits`
+  of those tasks and the `nearby` commits in the core's files that no linked
+  task made; `tracking_spans`; `totals`. Above them `standups` by day and the
+  project's release tags (`v…`) as `releases`.
+- `GET /api/cores/tasks?project=` — task id → the cores in view it belongs to
+  (`id`, `name`, `type`), for the board's cards.
+- `GET /api/cores/map?project=` — the current map's rows, each with the cores
+  that claim it and how: `linked` (a map link you set), `files` (an anchor of
+  the core under the row's path), `tasks` (two or more linked tasks changed
+  files under it); the cores with their row counts; `unclaimed`.
+- `GET /api/tasks/{task_id}/cores` — the cores the task belongs to.
+- `POST /api/tasks/{task_id}/cores` — operator only: `{cores: [id …]}` sets
+  them; links missing are added, the others removed.
+- `POST /api/cores` — body: `project`, `name` (≤ 60), `type` (capability ·
+  feature · interface · store · integration · internals · workflow · experiment),
+  `reason?`, `text` (the operator's message, kept as the founding note),
+  `comment?`, `anchors?` (file or `file:symbol` paths), `task_id?`,
+  `actor|agent_id`. The same name in view answers 200 with `existing: true`.
+  Answers: `core`.
+- `GET /api/cores/{core_id}` — the core with `notes` (oldest first, each with
+  `author`, `kind` founding | note | auto, `text`, `comment`, `approved`),
+  `links`, `tasks` (with status), `files` and `commits_n` of the linked
+  tasks, `events` (created, tracking on and off, out of view and back), `commits` (every commit
+  of the linked tasks: `how` signed · linked · chat, `agent`, `tasks`, `files`), `agents`
+  (who worked on it: `tasks`, `commits`, `notes`, `turns`, `sessions`, `last_at`), `nearby` (commits that touched an anchor's file — by path, not by
+  sense), `grid`.
+- `POST /api/cores/{core_id}/notes` — body: `text?`, `comment?`, `kind?`
+  (note | auto), `task_id?`, `actor|agent_id`. The operator's note is
+  approved as written; an agent's waits. `auto` from an agent with tracking
+  off is refused (422). A task named is linked. Answers: `note`, `core`.
+- `POST /api/cores/{core_id}/notes/{note_id}/approve` — operator only: the
+  author and the words stay, `approved_at` and `approved_by` are set.
+- `POST /api/cores/{core_id}/links` — body: `kind` (task · anchor · map ·
+  release · vision · decision · message), `target`, `note?`; or `{remove:
+  link_id}` (operator). A target twice is one link (`existing: true`).
+- `POST /api/cores/{core_id}/update` — operator only: any of `name`, `type`,
+  `reason`, `position`, `status` (view | off).
+- `POST /api/cores/{core_id}/tracking` — operator only: `{on, span?: day |
+  week, until?: YYYY-MM-DD}`; on with neither is tracking with no end.
+  Answers: `core`, `tracking`.
+- `POST /api/cores/{core_id}/off` — out of view (`#core-off`, run by the
+  agent once the operator confirmed); the story and the links stay.
+
+### Usage
+
+The tokens agents used and how much of each plan is used (`usagelib.py`,
+`routers/usage.py`). Read only; the hooks write the files, the server reads
+them. Per chat `projects/<p>/chats/<agent>/usage.jsonl`, one line per API
+message: `turn`, `at`, `id`, `tool`, `model`, `new` (read for the first
+time, cache writes included), `cache_write`, `cache` (read again from
+cache), `output` (thinking included), `thinking`, `ttl`, `helper` (the
+helper agent's id, or ""), `limit?`, `compacted?` (on the turn's first
+line after a context compaction); the last line of an id wins. Account
+wide `.usage/limits.jsonl` (one line per limits reading: `at`, `tool`,
+`account` (12 hex characters naming the tool's config folder:
+`CLAUDE_CONFIG_DIR` of the status line, else `~/.claude`; Codex's
+`CODEX_HOME`, else `~/.codex`), `model` (the status line's `model.id`;
+Codex: the rollout's current model, else ""), `session` (the session's
+first 8 characters, Codex's last 8; for diagnosis), `five_hour` and
+`seven_day` as `{used, resets_at, window_minutes?}`, `plan`, `source`;
+read incrementally, only the bytes appended since). The limits are the
+account's, whatever the model: the readings of one (tool, account) are a
+series, and `model` and `session` are data. A line is written for its
+series when a window's `resets_at` is later than any written, when a
+window's `used` is higher than the highest written for that `resets_at`,
+when the plan changed, or when the series' last line is older than 5
+minutes (a heartbeat); an equal or lower reading of the same reset is
+skipped (an idle session's status line sends its last reading again).
+Lines written before `account` existed read as `""`, one series of their
+tool, given way to by any newer named one. And
+`.usage/sessions/<tool>-<session>.json`: an open chat's context and prompt
+cache, from Claude Code's status line. No money anywhere.
+
+One meaning of the numbers: `new_output` is the MAIN agent's new + output
+everywhere (totals, tools, models, chats, tasks, the line); helper agents
+count into the turn that started them and are kept apart on every row as
+`helpers {n, new_output, cache}`. Each message counts on its own day. A
+model the tool did not name is `""`. A percentage is the nearest whole
+number, a tie down; the ratio to the usual day is in tenths, a tie down; a
+duration is floored (`1 h 5 min`, `1 d 13 h`). The cases are in
+`testdata/usage/format-table.json`, which the Python and TypeScript tests
+both read.
+
+Test switch: with `SP_NOW=2026-11-01T14:48:00` (a local ISO moment) in the
+server's environment every clock read of the usage code — the routes, the
+turns of the sessions, the #usage block, the ETags' minute — uses that
+moment. The golden root `testdata/usage/root` and its snapshots
+`testdata/usage/expected/*` are read under it.
+
+- `GET /api/usage?project=<code|all>&range=today|7d|30d` — the Usage page:
+  `range`, `project`, `days` (YYMM-DD, oldest first), `limits` (as below),
+  `usual` (`new_output`, `cache`, `share`, `days_used`: the median over
+  the active days of the last 90 calendar days before today, at most the
+  30 most recent; an even count takes the mean of the two middle days; the
+  page and the block show "× your usual day" only from 3 days),
+  `totals` (`new`, `output`, `cache`, `cache_write`, `thinking`,
+  `rebuilt`, `new_output`, `share`, `turns`, `cost_usd`, `cost`,
+  `unpriced`, `chats`, `helpers {n, new_output, cache}`; `new` holds
+  `rebuilt`: an estimate of old context written to the cache again;
+  `cost_usd` the row at API prices with the helpers, `cost {new, rebuilt,
+  warm, output, helpers}` the same by kind, `unpriced` the tokens of
+  models with no price), `by_cause` (`cause` expired | model | other,
+  `rebuilt`, `cost_usd`, `events`: rebuilds over 20k tokens, `chats`),
+  `api_prices` (`as_of`, `sources`, `models`: the newest price of the
+  models in the range, dollars per million tokens, `missing`: models with
+  none; a message is priced as of its own day), `by_tool` (`tool`, the same sums, `share`, `turns`, `helpers`
+  and `models` with the same keys and `model`), `chats` (top 40:
+  `agent_id`, `project`, `title`, `tool`, `model` (the last the main agent
+  used), `models` and `tools` (every one seen, helpers' included), the
+  sums, `new_output`, `share`, `turns`, `helpers`, `helpers_n`,
+  `task_id`), `chats_total` (before the cut), `tasks` (top 20: `id`,
+  `title`, `project`, `status`, `done_at`, the sums, `new_output`,
+  `share`, `helpers`, `chats`, `turns`, `models`, `tools`), `tasks_total`,
+  `coverage` (`chats_recorded`; `chats_without_usage`: chats with an
+  operator's turn in the range and nothing recorded; `chats_from_log`: of
+  the chats recorded, those whose earlier turns were filled afterwards
+  from the tool's own log (usagebackfill.py, meta.json `usage_backfill`);
+  `unreadable`: notes —
+  a file that could not be read, lines that were not JSON, lines without a
+  time, bad limits lines). A turn belongs to one task at most: the task the
+  operator named in that turn (a #now card first), else the #done stretch
+  that holds it, else the task named last before it until a #done closes
+  it; so the tasks never add up to more than the chats. ETag; the tag also
+  follows the minute and the limits file.
+- `GET /api/usage/limits` — `{limits: {tool: {five_hour, seven_day,
+  read_at, read_at_text, age_min, stale, expired, plan, source, series,
+  accounts_n, models_n}}, codex_poll: {found, exe, home, enabled,
+  every_hours, last_attempt, last_success, next_attempt, cause,
+  failures}}`. `codex_poll` is the background reading of Codex's limits
+  (`codex app-server`, no chat, no tokens; settings `usage.codex_poll`,
+  `usage.codex_poll_hours`): whether Codex is on this machine, when it
+  was last read, and the cause when it could not be. Such a reading's
+  `source` is `app-server`. `series` holds what each account holds,
+  newest first: `[{account, model, five_hour, seven_day, read_at,
+  read_at_text, age_min, stale, expired, plan, source, session}]` (`model`
+  and `session` of the reading it was read at); the tool's own fields are
+  the newest series entry's (what one reading answered before);
+  `accounts_n` counts the accounts, `models_n` the models the series'
+  lines named (information only). A series other than the newest whose
+  every window passed its reset is left out. Within one window — the same series, window and
+  `resets_at` — the percentage never goes down (an idle session's status
+  line sends its last, older reading again), so a window holds its highest
+  reading of its newest `resets_at`, and `read_at` is when the 5-hour value
+  (else the weekly one) was read. A turn's `limit` is what the series of
+  the newest reading from 30 minutes before the turn to a minute after
+  held then, by the same rule. With several accounts the #usage block
+  prints one part per account and the page one group per account, newest
+  first, named `Claude Code · account 2403ec81`; with one account only the
+  tool's name. A window is `{used,
+  resets_at, in, expired, span_s, resets_text, expired_text}` or null when
+  the tool did not give it: `used` is null when the reading had no number;
+  `span_s` the window's length (Codex's `window_minutes`, else 18000 and
+  604800); `in` the time to the reset (`1 h 52 min`, "" once passed);
+  `resets_text` `16:40`, or `Thu 09:00` on another day and always for the
+  weekly window; `expired`: the reset passed with no reading since, so the
+  percentage no longer holds, and `expired_text` says so (`Reset at
+  14:10. No reading since.`); `read_at_text` `14:40` (a weekday on another
+  day); `stale`: older than 15 minutes. The page shows these strings as
+  given.
+- `POST /api/usage/limits/refresh` — the operator's page asks for
+  Codex's limits now. `{refreshed: true}` at once, the reading runs in the
+  background (the page reads the limits again a few seconds later);
+  `{refreshed: false, why: "fresh"}` when the newest reading is younger
+  than 15 minutes, `why: "absent"` when Codex is not on this machine. An
+  agent's request is refused.
+- `GET /api/usage/prices/material` — `{models_used, prices_now, as_of,
+  pages, instructions}`: what an update of the API prices is written from
+  (MCP `usage_prices_material`, the command #usage-price).
+- `POST /api/usage/prices` — `{models: {model: {input, write_5m, write_1h,
+  read, output, over_tokens?, over?}}, sources: [https url], note?}`: one
+  update, appended to `.usage/api-prices.jsonl`. Answers `{at, changed,
+  new_models, unchanged, warnings}`; a price outside 0–1000 is refused
+  (MCP `usage_prices_write`).
+- `GET /api/usage/chat/{agent_id}?block=` — one chat: `agent_id`,
+  `project`, `show` (the line after each reply is shown: the chat's
+  `#usage-on`/`#usage-off`, else the setting `agent.usage_show`), `turns`
+  (turn number → `{turn, at, tool, new, output, cache, cache_write,
+  thinking, model, models, messages, ttl, helpers {n, new_output, cache},
+  context_tokens, share, rebuild {cause, kind} | null, limit {five_hour?,
+  seven_day?} | null, compacted, line}`). `line` is `→ 1.9k ↑ 512 ↓ (108k)`
+  (new up, output down, cache in brackets) with its event words; `· 5-hour
+  70%` when the 5-hour percentage as shown passed a ten. A rebuild is a
+  turn whose first read of the cache fell below 20% of what the turn
+  before left cached (its last message's cache + cache_write) while that
+  was over 20k; the cause is Claude Code's own (within 2 minutes), else
+  `cache expired: N min since the last turn` when the gap (rounded up)
+  passed the last cache lifetime the chat asked for, else a model change,
+  else `context compacted`, else `cause not recorded`. With `block=true`
+  also `block`, the text `#usage` prints. 404 for an unknown chat or one
+  with no chat folder. The tag follows the chat's usage, meta and
+  status-line files, the limits and the settings. The turns of `GET
+  /api/sessions/turns` and `GET /api/sessions/{id}` carry the same record
+  as `usage`; their ETags follow the same files (`/api/sessions/turns` has
+  one now, and reads each chat's usage once per request).
+
 ### The tour
 
 - `GET /api/tour/scripts` — every saved script, in the operator's order.
@@ -1025,7 +1282,9 @@ the operator's pages call. By purpose:
   (and `standup_postpone`), `architecture_material`, `map_material`,
   `task_evidence_ask`
 - the architecture: `architecture_status`, `architecture_page`, `map_write`
-- readers: `search`, `project`, `deck`, `doctor`
+- readers: `search`, `project`, `deck`, `doctor`, `usage` (the `#usage`
+  text for this chat and the Usage page's numbers; from a chat the hook
+  never saw, `block` is "" and the summary is the project asked, else all)
 
 It also serves the contract, the schema, active rules and health as MCP
 resources, and every command of the contract as an MCP prompt, built from
@@ -1079,7 +1338,7 @@ An older data root loads without conversion.
 
 ---
 
-Checked against /openapi.json on 2026-10-09: 270 routes, 0 missing, 0 stale.
-Re-run it with `backend/.venv/bin/python scripts/check_api_doc.py`. The 270
+Checked against /openapi.json on 2026-11-01: 304 routes, 0 missing, 0 stale.
+Re-run it with `backend/.venv/bin/python scripts/check_api_doc.py`. The 304
 is route shapes: `/api/tasks/{item_id}` and `/api/tasks/{task_id}` are one
 shape, as are `/api/prompts/{item_id}` and `/api/prompts/{key}`.

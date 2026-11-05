@@ -23,6 +23,15 @@ def lock_path(csv_path: Path) -> Path:
     return csv_path.with_name(csv_path.name + ".lock")
 
 
+def as_int(value: Any, default: int = 0) -> int:
+    """A ledger cell as a whole number; ``default`` for an empty or damaged
+    one (a hand-edited row never takes a whole reader down)."""
+    try:
+        return int(str(value or "").strip() or default)
+    except (TypeError, ValueError):
+        return default
+
+
 def csv_escape(value: Any) -> str:
     """RFC-4180 minimal-quoting single-field encoder."""
     if value is None:

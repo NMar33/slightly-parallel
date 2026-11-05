@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { openTaskRow } from '../calendar/tasks'
 import { SprintStrip } from './SprintStrip'
 import { Storyboard } from './Storyboard'
 import { useMarkToggle } from '../../lib/marks'
@@ -390,8 +391,10 @@ export function TasksKanban({
           }}
           onLinksChanged={() => void reloadLinks()}
           onOpenOther={(id) => {
+            // A linked task of another project is not on this board: read it.
             const t = tasks.find((x) => x.id === id)
             if (t) { setAddingStatus(null); setEditingTask(t) }
+            else void openTaskRow(id, (row) => { setAddingStatus(null); setEditingTask(row) })
           }}
           onRelease={(t) => {
             // One window at a time: the release window takes the editor's place.

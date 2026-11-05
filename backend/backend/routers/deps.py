@@ -177,7 +177,16 @@ def adopt_when_changed(store: ViewStore, name: str, adopt: Callable[[ViewStore],
     key = (store.view_mtime, tuple(sorted(store.stamps.items())))
     if seen.get(name) == key:
         return []
-    added = adopt(store)
+    try:
+        added = adopt(store)
+    except Exception:
+        # A write on the way past never fails the read it rides on: the
+        # list answers from what is there, and the log says what was refused.
+        # Remembered as seen, so it is tried again on the next change to the
+        # data, not on every read of the same data.
+        log.warning("adoption %r failed; the list answers without it", name, exc_info=True)
+        seen[name] = key
+        return []
     if not added:
         seen[name] = key
     return added

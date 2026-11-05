@@ -297,7 +297,7 @@ def test_the_structured_kinds_have_closed_vocabularies(client: TestClient) -> No
 def test_task_work_is_empty_without_captured_turns(client: TestClient) -> None:
     tid = _mk_task(client, "No chat named me")
     work = client.get(f"/api/tasks/{tid}/work").json()["work"]
-    assert work == {"files": [], "commits": 0, "add": 0, "del": 0, "sessions": 0}
+    assert work == {"files": [], "commits": 0, "add": 0, "del": 0, "sessions": 0, "commit_list": [], "signed": 0, "chat": 0}
 
 
 def test_the_repositorys_account_sits_beside_the_agents(client: TestClient, data_root) -> None:

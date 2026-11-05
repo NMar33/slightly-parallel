@@ -30,6 +30,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from .csvio import append_row, read_rows
 from .date_utils import as_local, now_iso
 from .db import ViewStore
@@ -54,6 +56,40 @@ _lock = threading.Lock()
 # refusal read), so without this they were looked at again on every read.
 # In memory: after a restart each is checked once more.
 _settled: dict[str, set[str]] = {}
+#: The settled tags, kept across restarts (now_settled.json): a card the agent
+#: wrote and the operator then deleted would otherwise come back as the
+#: server's card, since nothing else remembers the agent wrote it.
+SETTLED = "now_settled.json"
+#: (agent, turn) of the #now cards whose write failed on the last pass and
+#: will be tried again: a #done after one of them waits for the card
+#: (donelib), or it would record "unnamed" for good.
+_pending: dict[str, set[tuple[str, int]]] = {}
+
+
+def pending(data_root: Path, agent: str) -> set[int]:
+    """The turns of this chat's #now cards not written yet (a failed write)."""
+    return {t for a, t in _pending.get(str(data_root), set()) if a == agent}
+
+
+def _settled_for(data_root: Path) -> set[str]:
+    key = str(data_root)
+    if key not in _settled:
+        try:
+            got = json.loads((data_root / SETTLED).read_text(encoding="utf-8-sig"))
+            _settled[key] = {str(x) for x in got} if isinstance(got, list) else set()
+        except FileNotFoundError:
+            _settled[key] = set()
+        except (OSError, ValueError) as exc:
+            log.warning("%s unreadable (%s); settled tags are checked again", SETTLED, exc)
+            _settled[key] = set()
+    return _settled[key]
+
+
+def _keep_settled(data_root: Path, settled: set[str]) -> None:
+    try:
+        atomic_write_json(data_root / SETTLED, sorted(settled), indent=0)
+    except OSError as exc:
+        log.warning("%s not written (%s); settled tags are checked again after a restart", SETTLED, exc)
 
 def since_stamp(path: Path, what: str) -> str | None:
     """The moment a chat command became one here (``{"since": …}`` in
@@ -62,7 +98,7 @@ def since_stamp(path: Path, what: str) -> str | None:
     a moment that is "now" again on every call and so passes every tag by.
     #now and #done each keep one (now.json, done.json)."""
     try:
-        got = json.loads(path.read_text(encoding="utf-8"))
+        got = json.loads(path.read_text(encoding="utf-8-sig"))
         value = str(got.get("since") or "") if isinstance(got, dict) else ""
         if as_local(value) is not None:
             return value
@@ -70,7 +106,11 @@ def since_stamp(path: Path, what: str) -> str | None:
     except FileNotFoundError:
         pass
     except (OSError, ValueError) as exc:
-        log.warning("%s: %s unreadable (%s); starting it again", what, path.name, exc)
+        # A file that is there but cannot be read is not a missing one: a new
+        # moment would pass every tag typed before it by. Nothing is applied
+        # until the file reads again (or is removed).
+        log.warning("%s not applied: %s unreadable (%s)", what, path.name, exc)
+        return None
     now = now_iso()
     try:
         atomic_write_json(path, {"since": now}, indent=0)
@@ -92,7 +132,8 @@ def _id(agent_id: str, turn: int) -> str:
     return "nw_" + hashlib.sha256(f"{agent_id}|{turn}".encode()).hexdigest()[:8]
 
 
-_PASTE_RE = re.compile(r"<pasted_content\b[^>]*>(.*?)</pasted_content>", re.DOTALL | re.IGNORECASE)
+# The closing tag carries the same id as the opening one in Claude Code's pastes.
+_PASTE_RE = re.compile(r"<pasted_content\b[^>]*>(.*?)</pasted_content\b[^>]*>", re.DOTALL | re.IGNORECASE)
 _PASTE_TAG_RE = re.compile(r"</?pasted_content\b[^>]*>", re.IGNORECASE)
 # Any tag as typed — #now, ###now-todo, #skill — with a {lane} after it.
 _ANY_TAG_RE = re.compile(r"(?<![\w#])#{1,3}[A-Za-z][\w-]*(?:[ \t]*\{[^}\n]{1,80}\})?")
@@ -136,10 +177,12 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         "SELECT project, agent_id, session_id, turn, at_ts, column_, lane, answered, body "
         "FROM now_tags WHERE at_ts >= ? ORDER BY agent_id, turn", (start,))
     if not tags:
+        _pending.pop(str(store.data_root), None)
         return []
     path = store.data_root / NOW_CSV
-    settled = _settled.setdefault(str(store.data_root), set())
+    settled = _settled_for(store.data_root)
     known = {r.get("id") for r in read_rows(path)} | settled
+    settled_before = set(settled)
     # The agent's chance is over once it answered this turn or a later one.
     open_ = [t for t in tags if str(t["answered"] or "")
              and _id(str(t["agent_id"] or ""), int(t["turn"] or 0)) not in known]
@@ -148,6 +191,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     written = {(a, n) for a, n, _ in card_turns(store, {str(t["agent_id"] or "") for t in open_}, skip_server=True)}
     tasks = {str(r["id"]) for r in store.query("SELECT id FROM tasks_mutual")}
     added: list[dict[str, str]] = []
+    failed: set[tuple[str, int]] = set()
     for tag in open_:
         agent, turn = str(tag["agent_id"] or ""), int(tag["turn"] or 0)
         rid = _id(agent, turn)
@@ -159,15 +203,33 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         if any(m.group(1) in tasks for m in _TASK_ID_RE.finditer(str(tag["body"] or ""))):
             settled.add(rid)
             continue
-        task_id = _write_card(store, tag)
-        if not task_id:
+        try:
+            task_id = _write_card(store, tag)
+            if task_id:
+                append_row(path, NOW_COLUMNS, {
+                    "id": rid, "task_id": task_id, "project": str(tag["project"] or ""), "agent_id": agent,
+                    "session_id": str(tag["session_id"] or ""), "turn": str(turn), "at": str(tag["at_ts"] or ""),
+                    "applied_at": now_iso(), "column": str(tag["column_"] or "")})
+        except HTTPException as exc:
+            # Refused for good (the lane, the title, the project): looked at
+            # once. The chat keeps the message; the lists this runs under answer.
+            log.warning("#now card for %s#%s refused: %s", agent, turn, exc.detail)
+            settled.add(rid)
             continue
-        row = {"id": rid, "task_id": task_id, "project": str(tag["project"] or ""), "agent_id": agent,
-               "session_id": str(tag["session_id"] or ""), "turn": str(turn), "at": str(tag["at_ts"] or ""),
-               "applied_at": now_iso(), "column": str(tag["column_"] or "")}
-        append_row(path, NOW_COLUMNS, row)
+        except Exception:
+            # A write that failed (a lock held, a disk, a replace on Windows)
+            # is tried again on the next change, so the card still arrives.
+            log.warning("#now card for %s#%s not written this time", agent, turn, exc_info=True)
+            failed.add((agent, turn))
+            continue
+        if not task_id:
+            settled.add(rid)             # the agent asks the operator which lane
+            continue
         known.add(rid)
-        added.append(row)
+        added.append({"id": rid, "task_id": task_id, "agent_id": agent, "turn": str(turn)})
+    _pending[str(store.data_root)] = failed
+    if settled != settled_before:
+        _keep_settled(store.data_root, settled)
     if added:
         store.rebuild()
     return added
@@ -175,11 +237,9 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
 
 def _write_card(store: ViewStore, tag: dict) -> str:
     """The card the agent would have written; "" when the lane is not on the board."""
-    from fastapi import HTTPException
-
     from .csvio import rewrite_rows
     from .entities import ENTITIES
-    from .tasklib import _lane_for, create_task
+    from .tasklib import DESCRIPTION_MAX, _lane_for, create_task
     from .taskevents import append_events
 
     project, agent = str(tag["project"] or ""), str(tag["agent_id"] or "")
@@ -189,31 +249,39 @@ def _write_card(store: ViewStore, tag: dict) -> str:
     except HTTPException:
         return ""                        # the agent asks the operator which lane
     at = as_local(str(tag["at_ts"])) or datetime.now()
+    message = str(tag["body"] or "")
     body = {
         "project": project, "title": title_of(str(tag["body"] or "")), "status": column,
         "created_date": at.strftime("%y%m-%d"), "created_time": at.strftime("%H:%M"),
-        "description": str(tag["body"] or ""),
+        "description": message,
     }
     if lane:
         body["lane"] = body["assignee"] = lane
     if column == "doing":
         body["today_on"] = at.date().isoformat()
-    out = create_task(store, body)
+    # The operator's message is kept whole: the limit is for text written onto
+    # the board, and this text is already in the chat. The card says it is long.
+    out = create_task(store, body, text_max=None)
     task_id = str((out.get("metadata") or {}).get("id") or "")
     if not task_id:
         return ""
     # The card is the chat's: its agent can retitle it, and the chat's page lists it.
     rewrite_rows(store.data_root / ENTITIES["task"].csv, ENTITIES["task"].columns,
                  lambda rs: _own(rs, task_id, agent))
+    verb, tagname = ("started", "#now") if column == "doing" else ("filed", f"#now-{column}")
     if out.get("existing"):
         # The id comes from the message: a retry after a write that stopped
-        # half way finds the same card, which already has its history.
-        return task_id
-    verb, tagname = ("started", "#now") if column == "doing" else ("filed", f"#now-{column}")
+        # half way finds the same card. Its history is there unless the
+        # stop came between the card and the history; then it is written now
+        # (the "#now" line is what keeps agents off the operator's text).
+        if store.query_one("SELECT task_id FROM task_events_mutual WHERE task_id = ? AND field IN ('started', 'filed') "
+                           "AND new_value LIKE '%#now%'", (task_id,)):
+            return task_id
     append_events(store, task_id, "operator", [
         (verb, "", f"in the chat, with {tagname} ({agent}#{tag['turn']}); "
                    "the agent wrote no card, so the server did, titled with the message's start"),
-    ])
+    ] + ([("note", "", f"the message is {len(message):,} characters, over the board's usual {DESCRIPTION_MAX:,}; "
+                      "kept whole")] if len(message) > DESCRIPTION_MAX else []))
     return task_id
 
 

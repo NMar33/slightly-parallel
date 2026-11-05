@@ -203,6 +203,21 @@ ENTITIES: dict[str, Entity] = {
             mutable=("category", "impact", "effort", "tags"),
         ),
         _e(
+            # A publish card: a message the operator tagged #publish — what
+            # shipped and is worth telling. Kept as typed; the operator's
+            # edits of its text are its versions (keeplib). The Publish page
+            # (publishlib.py) places cards into documents.
+            "publish", "publish.csv", "publish_details", "pu_",
+            (
+                "id", "created_date", "created_time", "project", "agent_id",
+                "l1", "md_ref", "source", "session_id", "source_turn", "versions_n",
+                "tags", "archived_at",
+            ),
+            ints=("source_turn", "versions_n"),
+            mutable=("tags",),
+            list_key="publish",
+        ),
+        _e(
             # An entry point: the way into a topic — what it is, where its
             # files and links are, how to run it, where the work stopped,
             # what comes next. Kept from a #entrypoint message; the agent
@@ -530,10 +545,60 @@ MILESTONE_COLUMNS: tuple[str, ...] = (
 MILESTONE_STATUSES: tuple[str, ...] = ("planned", "active", "reached", "dropped")
 MILESTONE_TASK_COLUMNS: tuple[str, ...] = ("id", "milestone_id", "task_id", "created_at", "actor")
 
+# Cores (corelib.py): the program's core elements, named by the operator,
+# each with its story (notes) and what is attached to it (links).
+CORE_COLUMNS: tuple[str, ...] = (
+    "id", "project", "name", "type", "reason", "status", "position",
+    "tracking_on", "tracking_until", "created_at", "updated_at", "actor", "off_at",
+)
+CORE_TYPES: tuple[str, ...] = (
+    "capability", "feature", "interface", "store", "integration", "internals", "workflow", "experiment",
+)
+CORE_STATUSES: tuple[str, ...] = ("view", "off")
+# A note: the operator's text as typed (text) and the agent's comment; who
+# wrote it; kind founding (the #core-new message) · note (#core-note) ·
+# auto (an agent's one line on finishing work, tracking on); approval.
+CORE_NOTE_COLUMNS: tuple[str, ...] = (
+    "id", "core_id", "at", "author", "kind", "text", "comment",
+    "task_id", "session_id", "turn", "approved_at", "approved_by",
+)
+# A link: task · anchor (file or file:symbol) · map (a map row's name) ·
+# release · vision · decision · message (agent_id#turn).
+CORE_LINK_COLUMNS: tuple[str, ...] = ("id", "core_id", "kind", "target", "note", "at", "actor")
+# What happened to a core itself, for its history: created · tracking_on
+# (value: the end date, or empty for none) · tracking_off · off · view.
+CORE_EVENT_COLUMNS: tuple[str, ...] = ("id", "core_id", "at", "kind", "value", "actor")
+
+# A commit linked to a task after the fact (MCP task_commits): the agent's
+# word, the same as a ``Task:`` line in the commit, for one it did not sign.
+COMMIT_LINK_COLUMNS: tuple[str, ...] = ("id", "sha", "task_id", "agent_id", "at", "actor")
+
+# The Publish page (publishlib.py): the operator's documents (a release
+# note, a post …), each in numbered versions, and the cards placed into a
+# version with the text as placed (edited there or not).
+PUBLISH_DOC_COLUMNS: tuple[str, ...] = ("id", "project", "name", "created_at", "actor", "archived_at")
+PUBLISH_VERSION_COLUMNS: tuple[str, ...] = ("id", "doc_id", "n", "at", "actor", "note")
+PUBLISH_ITEM_COLUMNS: tuple[str, ...] = (
+    "id", "doc_id", "version_n", "card_id", "text", "position", "at", "actor", "removed_at",
+)
+# What is attached to a card beyond what the server finds itself: an image
+# (target: its file under publish_images/) or a link (target: the URL),
+# by the operator on the page or by the agent (MCP publish_attach).
+PUBLISH_ATTACHMENT_COLUMNS: tuple[str, ...] = ("id", "card_id", "kind", "title", "target", "at", "actor", "removed_at")
+
 # Every append-only ledger that is not a full Entity but still needs a
 # typed view: (view name, csv file, columns).
 LEDGERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("publish_docs_mutual", "publish_docs.csv", PUBLISH_DOC_COLUMNS),
+    ("publish_versions_mutual", "publish_versions.csv", PUBLISH_VERSION_COLUMNS),
+    ("publish_items_mutual", "publish_items.csv", PUBLISH_ITEM_COLUMNS),
+    ("publish_attachments_mutual", "publish_attachments.csv", PUBLISH_ATTACHMENT_COLUMNS),
+    ("cores_mutual", "cores.csv", CORE_COLUMNS),
+    ("core_notes_mutual", "core_notes.csv", CORE_NOTE_COLUMNS),
+    ("core_links_mutual", "core_links.csv", CORE_LINK_COLUMNS),
+    ("core_events_mutual", "core_events.csv", CORE_EVENT_COLUMNS),
     ("task_events_mutual", "task_events.csv", TASK_EVENT_COLUMNS),
+    ("commit_links_mutual", "commit_links.csv", COMMIT_LINK_COLUMNS),
     ("task_links_mutual", "task_links.csv", TASK_LINK_COLUMNS),
     ("agent_links_mutual", "agent_links.csv", AGENT_LINK_COLUMNS),
     ("task_notes_mutual", "task_notes.csv", TASK_NOTE_COLUMNS),

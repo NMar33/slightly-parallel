@@ -19,8 +19,10 @@ which is exactly what /api/whoami needs.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import pathlib
 import re
 import sys
 import urllib.error
@@ -52,6 +54,7 @@ TOOLS: dict[str, str] = {
     "tasks": "The open board of a project.",
     "task_update": "Edit a task. Status is the operator's.",
     "task_report": "Say a task is done, in your opinion.",
+    "task_commits": "Link commits that have no Task: line to the task they were made for.",
     "task_done": "After #done: what the operator's #done moved, and each task's stretch of the chat.",
     "undo_find": "After #undo: the operator's request and the entries it could mean, numbered.",
     "undo_propose": "Send the entries the operator chose to archive; answers the confirmation to show.",
@@ -61,6 +64,12 @@ TOOLS: dict[str, str] = {
     "task_evidence": "Attach evidence to a task.",
     "task_work": "The files the repository saw this task touch.",
     "task_story": "Post a piece on a task, under a request id the operator gave.",
+    "cores": "The project's cores: the core elements the operator keeps in view, with each one's latest note.",
+    "core_new": "After #core-new: a new core — a short name, a type, the files you know; the message is its first note.",
+    "core_note": "After #core-note, or when finished work changes a tracked core: one note on a core.",
+    "core_attach": "After #core: attach this message, and this chat's task, to the matching core.",
+    "core_off": "After #core-off, confirmed by the operator: remove a core from view; its notes and links are kept.",
+    "publish_attach": "After the operator's #publish: attach screenshots and links to the card; its text is the operator's.",
     "architecture_status": "After #architecture: which of the form, the page and the map are out of date, and why.",
     "architecture_material": "What the architecture page is written from: computed facts, the current page, instructions.",
     "architecture_page": "Write the next version of the project's architecture page.",
@@ -78,6 +87,9 @@ TOOLS: dict[str, str] = {
     "project": "One project's facts.",
     "doctor": "Check the data for damage.",
     "checkup": "After #sp: is Slightly Parallel working for this chat and folder — each check ok, note, concern or unknown.",
+    "usage": "This chat's tokens, the plan limits and the project's day: the #usage text, and the numbers behind it.",
+    "usage_prices_material": "After #usage-price: the models the chats used, the API prices now, the pages to read, instructions.",
+    "usage_prices_write": "After #usage-price: one update of the API prices, read from the providers' own pages.",
 }
 
 
@@ -132,6 +144,19 @@ class Api:
 
     def post(self, path: str, body: dict) -> Any:
         return self._call("POST", path, body)
+
+
+def _list(args: dict, key: str) -> list[str]:
+    """A list argument as a list of strings: one string is a one-item list
+    (a bare "abc1234" was posted as seven one-letter hashes)."""
+    raw = args.get(key)
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if not isinstance(raw, list):
+        raise ApiError(f"{key} is a list of strings")
+    return [str(x) for x in raw]
 
 
 def _id(args: dict) -> str:
@@ -354,6 +379,20 @@ class Translator:
                  },
                  "required": ["id", "summary"],
              }},
+            {"name": "task_commits",
+             "description": (
+                 "Link commits to the task they were made for, when their message has no "
+                 "`Task: tk_…` line (the contract asks for that line in every commit made for a "
+                 "task). The same as the line: the commit then counts for this task and for no "
+                 "other task's stretch of the chat. Only commits you made."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string", "description": "the task"},
+                     "shas": {"type": "array", "items": {"type": "string"}, "description": "commit hashes, 7 to 40 hex"},
+                 },
+                 "required": ["id", "shas"],
+             }},
             {"name": "task_done",
              "description": (
                  "The operator typed #done: the server moves the task to done as the operator's "
@@ -389,6 +428,63 @@ class Translator:
              "description": "Bring back one entry archived with #undo, with the status it had.",
              "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
                              "required": ["id"]}},
+            {"name": "cores",
+             "description": (
+                 "The project's cores (Architecture › cores): id, name, type, reason, tracking, "
+                 "the latest note. Read it before core_note, core_attach and core_off to choose "
+                 "the matching core; if two match, ask the operator to choose by number."),
+             "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}}},
+            {"name": "core_new",
+             "description": (
+                 "After the operator's #core-new: a new core. `name` is short (at most 60 "
+                 "characters), in the operator's words; `type` is one of capability, feature, "
+                 "interface, store, integration, internals, workflow, experiment; `reason` one line "
+                 "on why it is kept in view when the message says; `anchors` the files or "
+                 "file:symbol paths this core is in, as far as you know; `text` the operator's "
+                 "message as typed (its first note). The same name again answers with the existing core."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "name": {"type": "string"}, "type": {"type": "string"},
+                     "reason": {"type": "string"}, "text": {"type": "string"},
+                     "comment": {"type": "string", "description": "your one line under the operator's text"},
+                     "anchors": {"type": "array", "items": {"type": "string"}},
+                     "task_id": {"type": "string"},
+                 },
+                 "required": ["name", "type", "text"],
+             }},
+            {"name": "core_note",
+             "description": (
+                 "One note on a core. After #core-note: `text` is the operator's message "
+                 "as typed and `comment` your one line (what you did with it, or what it means). "
+                 "When finished work changes a core the operator tracks (the hook's notice "
+                 "names them): `kind: \"auto\"`, `comment` only — one line on what changed, "
+                 "with the task. The operator's notes count as approved; yours wait for approval."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string"}, "text": {"type": "string"}, "comment": {"type": "string"},
+                     "kind": {"type": "string", "enum": ["note", "auto"]}, "task_id": {"type": "string"},
+                 },
+                 "required": ["id"],
+             }},
+            {"name": "core_attach",
+             "description": (
+                 "After #core in a message: attach that message to the matching core "
+                 "(`turn`: the message's turn number), and this chat's task when it has one "
+                 "(`task_id`). A thing attached twice is attached once."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {"id": {"type": "string"}, "turn": {"type": "integer"},
+                                "task_id": {"type": "string"}, "note": {"type": "string"}},
+                 "required": ["id"],
+             }},
+            {"name": "core_off",
+             "description": (
+                 "After #core-off, once the operator confirmed which core with a number: "
+                 "remove it from view. Its notes and links are kept; the operator can restore it "
+                 "on its page."),
+             "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
             {"name": "architecture_status",
              "description": (
                  "The operator typed #architecture: which of the three parts are out of "
@@ -476,6 +572,31 @@ class Translator:
                  "Follow them, then call task_evidence."),
              "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
                              "required": ["id"]}},
+            {"name": "publish_attach",
+             "description": (
+                 "After the operator's #publish (the hook names the card, pu_…): attach what the "
+                 "operator may need to tell about it — 1–3 screenshots of what it is about "
+                 "(png/jpg/webp/gif: give the file's `path` on this machine, or `data_base64`; "
+                 "each with a one-line title) and links. The card's "
+                 "text is the operator's; you attach, you do not write. The same image again is "
+                 "the existing attachment."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string"},
+                     "images": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"title": {"type": "string"},
+                                        "path": {"type": "string", "description": "the image file on this machine; read by the tool"},
+                                        "ext": {"type": "string", "enum": ["png", "jpg", "jpeg", "webp", "gif"]},
+                                        "data_base64": {"type": "string"}},
+                         "required": []}},
+                     "links": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
+                         "required": ["url"]}},
+                 },
+                 "required": ["id"]}},
             {"name": "task_evidence",
              "description": (
                  "Attach evidence to a task. Follow the operator's instructions: "
@@ -658,6 +779,29 @@ class Translator:
                             "the server's memory and errors. Each finding: ok, note, concern or unknown, with its "
                             "evidence and next step. Reads only.",
              "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "usage",
+             "description": (
+                 "The tokens this chat used, the plan limits and the project's day. `block` is the text "
+                 "#usage prints: give it as it is, in a code block, and add nothing but one line when "
+                 "something stands out (a cache rebuild, a limit over 80%). `summary` holds the numbers "
+                 "of the Usage page for `project` (this chat's project, or all) over `range` (today, "
+                 "7d or 30d). Reads only."),
+             "inputSchema": {"type": "object", "properties": {
+                 "project": {"type": "string", "description": "a project code, or all"},
+                 "range": {"type": "string", "enum": ["today", "7d", "30d"]}}}},
+            {"name": "usage_prices_material",
+             "description": ("Only after the operator's #usage-price: the models the chats used, the API prices "
+                             "now, the pages to read and the instructions. Then usage_prices_write."),
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "usage_prices_write",
+             "description": ("Only after the operator's #usage-price: one update of the API prices, dollars per "
+                             "million tokens, read from the providers' own pages. The days before keep their "
+                             "prices. Answers what changed, and warnings."),
+             "inputSchema": {"type": "object", "properties": {
+                 "models": {"type": "object", "description": "{model: {input, write_5m, write_1h, read, output, over_tokens?, over?}}; write_5m and write_1h may be null"},
+                 "sources": {"type": "array", "items": {"type": "string"}, "description": "the https pages the prices were read from"},
+                 "note": {"type": "string", "description": "one line: what you left out, and why"}},
+                 "required": ["models", "sources"]}},
         ]
 
     def call(self, name: str, args: dict) -> Any:
@@ -700,6 +844,8 @@ class Translator:
             if spec is None:
                 allowed = sorted(n for n, l in self.lenses.items() if l.get("agent_write", True))
                 raise ApiError(f"unknown lens {lens!r} — one of: {', '.join(allowed)}")
+            if args.get("fields") is not None and not isinstance(args.get("fields"), dict):
+                raise ApiError("fields is an object: the entry's fields by name")
             # Identity last, over anything of the same name in `fields`.
             payload = {**(args.get("fields") or {}), **self._stamp()}
             # Fields by name only: the numbered storage slots (l1…l4) are not
@@ -751,7 +897,7 @@ class Translator:
             if name == "undo_find":
                 return self.api.get(f"/api/undo/candidates?agent_id={urllib.parse.quote(str(who))}")
             if name == "undo_propose":
-                return self.api.post("/api/undo/propose", {"agent_id": who, "ids": list(args.get("ids") or [])})
+                return self.api.post("/api/undo/propose", {"agent_id": who, "ids": _list(args, "ids")})
             if name == "undo_apply":
                 return self.api.post("/api/undo/apply", {"agent_id": who})
             return self.api.post("/api/undo/restore", {"agent_id": who, "id": _id(args)})
@@ -804,6 +950,29 @@ class Translator:
                 {"agent_id": self.identity()["agent_id"],
                  "items": args.get("items") or []},
             )
+        if name == "publish_attach":
+            # An image given by `path` is read here, on the agent's machine:
+            # base64 through a tool call is tens of thousands of characters.
+            images = []
+            for i, item in enumerate(args.get("images") or [], 1):
+                if not isinstance(item, dict):
+                    raise ApiError(f"image {i}: an object with title and path (or data_base64)")
+                if item.get("path") and not item.get("data_base64"):
+                    p = pathlib.Path(str(item["path"])).expanduser()
+                    if not p.is_file():
+                        raise ApiError(f"image {i}: {p} is not a file")
+                    if p.stat().st_size > 12 * 1024 * 1024:
+                        raise ApiError(f"image {i}: {p.name} is over 12MB")
+                    item = {**item, "data_base64": base64.b64encode(p.read_bytes()).decode("ascii"),
+                            "ext": str(item.get("ext") or p.suffix.lstrip(".").lower() or "png"),
+                            "title": str(item.get("title") or p.stem)}
+                    item.pop("path", None)
+                images.append(item)
+            return self.api.post(
+                f"/api/publishing/cards/{_id(args)}/attach",
+                {"agent_id": self.identity()["agent_id"],
+                 "images": images, "links": args.get("links") or []},
+            )
         if name == "task_story":
             return self.api.post(
                 f"/api/tasks/{_id(args)}/story",
@@ -811,6 +980,46 @@ class Translator:
                  "request_id": str(args.get("request_id") or ""),
                  "body": str(args.get("body") or ""),
                  "images": args.get("images") or []},
+            )
+        if name == "cores":
+            code = args.get("project") or self.identity()["project"]
+            return self.api.get(f"/api/cores?project={urllib.parse.quote(str(code))}")
+        if name == "core_new":
+            who = self.identity()
+            return self.api.post("/api/cores", {
+                "project": who["project"], "agent_id": who["agent_id"],
+                "name": str(args.get("name") or ""), "type": str(args.get("type") or ""),
+                "reason": str(args.get("reason") or ""), "text": str(args.get("text") or ""),
+                "comment": str(args.get("comment") or ""),
+                "anchors": [a for a in _list(args, "anchors") if a.strip()],
+                "task_id": str(args.get("task_id") or ""),
+            })
+        if name == "core_note":
+            return self.api.post(f"/api/cores/{_id(args)}/notes", {
+                "agent_id": self.identity()["agent_id"],
+                "text": str(args.get("text") or ""), "comment": str(args.get("comment") or ""),
+                "kind": str(args.get("kind") or "note"), "task_id": str(args.get("task_id") or ""),
+            })
+        if name == "core_attach":
+            who = self.identity()
+            out: dict[str, Any] = {"attached": []}
+            if args.get("turn") is not None:
+                out["attached"].append(self.api.post(f"/api/cores/{_id(args)}/links", {
+                    "agent_id": who["agent_id"], "kind": "message",
+                    "target": f"{who['agent_id']}#{int(args['turn'])}", "note": str(args.get("note") or "")}))
+            if args.get("task_id"):
+                out["attached"].append(self.api.post(f"/api/cores/{_id(args)}/links", {
+                    "agent_id": who["agent_id"], "kind": "task", "target": str(args["task_id"]),
+                    "note": str(args.get("note") or "")}))
+            if not out["attached"]:
+                raise ApiError("core_attach needs the message's turn, a task_id, or both")
+            return out
+        if name == "core_off":
+            return self.api.post(f"/api/cores/{_id(args)}/off", {"agent_id": self.identity()["agent_id"]})
+        if name == "task_commits":
+            return self.api.post(
+                f"/api/tasks/{_id(args)}/commits",
+                {"agent_id": self.identity()["agent_id"], "shas": _list(args, "shas")},
             )
         if name == "task_report":
             return self.api.post(
@@ -844,6 +1053,33 @@ class Translator:
             q = urllib.parse.urlencode({"cwd": self.cwd, "agent_id": str(who.get("agent_id") or ""),
                                         "identity": str(who.get("identity_source") or "")})
             return self.api.get(f"/api/checkup?{q}")
+        if name == "usage_prices_material":
+            return self.api.get("/api/usage/prices/material")
+        if name == "usage_prices_write":
+            who = self.identity()
+            return self.api.post("/api/usage/prices", {
+                "agent_id": who["agent_id"], "models": args.get("models") if isinstance(args.get("models"), dict) else {},
+                "sources": _list(args, "sources"), "note": args.get("note") or ""})
+        if name == "usage":
+            rng = str(args.get("range") or "today")
+            if rng not in ("today", "7d", "30d"):
+                raise ApiError("range must be today, 7d or 30d")
+            # A chat the hook never saw has no block of its own: the summary
+            # still answers (for the project asked, else all).
+            try:
+                who = self.identity()
+            except ApiError:
+                who = {}
+            block = ""
+            if who.get("agent_id"):
+                try:
+                    chat = self.api.get(f"/api/usage/chat/{urllib.parse.quote(str(who['agent_id']))}?block=true")
+                    block = str(chat.get("block") or "")
+                except ApiError:
+                    block = ""
+            q = urllib.parse.urlencode({"project": str(args.get("project") or who.get("project") or "all"),
+                                        "range": rng})
+            return {"block": block, "summary": self.api.get(f"/api/usage?{q}")}
         raise ApiError(f"unknown tool: {name}")
 
     # -- resources ---------------------------------------------------------
@@ -968,6 +1204,8 @@ def handle(tr: Translator, msg: dict) -> dict | None:
         name = str(params.get("name") or "")
         args = params.get("arguments") or {}
         try:
+            if not isinstance(args, dict):
+                raise ApiError("arguments is an object")
             out = tr._by_name(tr.call(name, args))
             return _result(msg_id, {"content": [
                 {"type": "text", "text": json.dumps(out, ensure_ascii=False, indent=1)}
@@ -975,6 +1213,12 @@ def handle(tr: Translator, msg: dict) -> dict | None:
         except ApiError as exc:
             return _result(msg_id, {"content": [
                 {"type": "text", "text": str(exc)}
+            ], "isError": True})
+        except (TypeError, ValueError, AttributeError, KeyError) as exc:
+            # An argument of the wrong shape (a number for a text, a text for a
+            # list) is the tool's answer, not a protocol error that ends the call.
+            return _result(msg_id, {"content": [
+                {"type": "text", "text": f"{name}: an argument has the wrong shape ({exc}); see the tool's schema"}
             ], "isError": True})
     if method == "resources/list":
         return _result(msg_id, {"resources": tr.resource_defs()})

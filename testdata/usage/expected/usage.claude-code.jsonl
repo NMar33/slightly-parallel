@@ -1,0 +1,12 @@
+{"turn": 1, "at": "2026-10-31T23:40:03", "id": "msg_01", "tool": "claude-code", "model": "claude-opus-4-5", "new": 2003, "cache_write": 2000, "cache": 10000, "output": 300, "thinking": 0, "ttl": "1h", "helper": ""}
+{"turn": 1, "at": "2026-10-31T23:41:00", "id": "msg_sc1", "tool": "claude-code", "model": "claude-opus-4-5", "new": 5, "cache_write": 0, "cache": 3000, "output": 40, "thinking": 0, "ttl": "", "helper": "side7"}
+{"turn": 1, "at": "2026-10-31T23:45:05", "id": "msg_02", "tool": "claude-code", "model": "claude-opus-4-5", "new": 301, "cache_write": 300, "cache": 12000, "output": 120, "thinking": 0, "ttl": "5m", "helper": ""}
+{"turn": 1, "at": "2026-10-31T23:40:10", "id": "hmsg_1", "tool": "claude-code", "model": "claude-sonnet-4-5", "new": 4010, "cache_write": 4000, "cache": 0, "output": 200, "thinking": 0, "ttl": "1h", "helper": "h1"}
+{"turn": 1, "at": "2026-10-31T23:42:00", "id": "hmsg_2", "tool": "claude-code", "model": "claude-sonnet-4-5", "new": 1, "cache_write": 0, "cache": 4000, "output": 30, "thinking": 0, "ttl": "", "helper": "h1"}
+{"turn": 1, "at": "2026-10-31T23:43:00", "id": "nmsg_1", "tool": "claude-code", "model": "claude-haiku-4-5", "new": 907, "cache_write": 900, "cache": 0, "output": 15, "thinking": 0, "ttl": "1h", "helper": "n1"}
+{"turn": 2, "at": "2026-10-31T23:50:04", "id": "msg_03", "tool": "claude-code", "model": "claude-opus-4-5", "new": 104, "cache_write": 100, "cache": 12300, "output": 50, "thinking": 0, "ttl": "1h", "helper": ""}
+{"turn": 3, "at": "2026-10-31T23:58:05", "id": "msg_04", "tool": "claude-code", "model": "claude-opus-4-5", "new": 52, "cache_write": 50, "cache": 12400, "output": 70, "thinking": 0, "ttl": "1h", "helper": ""}
+{"turn": 3, "at": "2026-11-01T00:00:30", "id": "msg_05", "tool": "claude-code", "model": "claude-opus-4-5", "new": 8006, "cache_write": 8000, "cache": 0, "output": 90, "thinking": 0, "ttl": "1h", "helper": "", "compacted": true}
+{"turn": 3, "at": "2026-11-01T00:00:40", "id": "msg_06", "tool": "claude-code", "model": "claude-opus-4-5", "new": 0, "cache_write": 0, "cache": 500, "output": 0, "thinking": 0, "ttl": "", "helper": ""}
+{"turn": 1, "at": "2026-10-31T23:52:00", "id": "hmsg_3", "tool": "claude-code", "model": "claude-sonnet-4-5", "new": 1, "cache_write": 0, "cache": 4100, "output": 10, "thinking": 0, "ttl": "", "helper": "h1"}
+{"turn": 1, "at": "2026-10-31T23:59:00", "id": "nmsg_2", "tool": "claude-code", "model": "claude-haiku-4-5", "new": 1, "cache_write": 0, "cache": 900, "output": 5, "thinking": 0, "ttl": "", "helper": "n1"}

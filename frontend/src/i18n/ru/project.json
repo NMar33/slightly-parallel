@@ -957,5 +957,11 @@
   "before the next task": "до следующей задачи",
   "Could not save the order": "Не удалось сохранить порядок",
   "{n} card did not save.": "{n} карточка не сохранилась.",
-  "{n} cards did not save.": "{n} карточек не сохранились."
+  "{n} cards did not save.": "{n} карточек не сохранились.",
+  "Core: {names}": "Ядро: {names}",
+  "The core of the program this task is about": "Ядро программы, к которому относится задача",
+  "Core": "Ядро",
+  "Remove {core}": "Убрать {core}",
+  "Add a core": "Добавить ядро",
+  "The task is saved. Its core was not. Open the task and pick the core again.": "Задача сохранена, а ядро — нет. Откройте задачу и выберите ядро снова."
 }

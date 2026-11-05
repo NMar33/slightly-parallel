@@ -159,6 +159,10 @@ def test_now_with_a_lane_and_the_lane_from_settings(tmp_path: Path) -> None:
     c = _board(root, "#now {kanban board} the cards do not sort")
     assert _post(c, description="")["metadata"]["lane"] == "Kanban Board"
     c.__exit__(None, None, None)
+    # A second board (the first chat's turn 1 already has its card: a chat
+    # rewritten in place would read the new #now as written).
+    root = tmp_path / "data2"
+    root.mkdir()
     app_settings.save(root, {"tasks.now_lane": "Chat"})
     c = _board(root, "#now fix the login timeout", lanes=())
     assert _post(c, created_time="21:12", description="")["metadata"]["lane"] == "Chat"

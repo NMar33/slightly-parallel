@@ -112,6 +112,9 @@ _SETTING_DEFAULTS = {
     "decision_hint_enabled": True,
     "files_due_enabled": True,
     "architecture_due_enabled": True,
+    # Show each reply's tokens after it (recording is always on); a chat's
+    # #usage-on / #usage-off outranks it (meta.json usage_show).
+    "usage_show": False,
 }
 
 # What a turn's Agent line says when the tool never handed us the reply.
@@ -127,11 +130,11 @@ _DECISION_RE = re.compile(
 # hook names the id the moment the message arrives, so the agent can write
 # its interpretation in the same turn. ``#problem solved <id>`` is a command.
 _KEEP_TAG_RE = re.compile(
-    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact)(?:\([^)\n]{1,80}\))?(?![\w-])(?!\s+solved\b)",
+    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact|publish)(?:\([^)\n]{1,80}\))?(?![\w-])(?!\s+solved\b)",
     re.IGNORECASE,
 )
 _ANY_TAG_RE = re.compile(
-    r"(?<![\w#])#(?:prompt|vision|rule|problem|entrypoint|skill|artifact)(?:\([^)\n]{1,80}\))?(?![\w-])",
+    r"(?<![\w#])#(?:prompt|vision|rule|problem|entrypoint|skill|artifact|publish)(?:\([^)\n]{1,80}\))?(?![\w-])",
     re.IGNORECASE,
 )
 # ``#evidence`` is a command, not a kept message: nothing is stored for it.
@@ -177,6 +180,23 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "undo-yes": ("undo-a-mistake", "MCP tool undo_apply"),
     # Is it working: the server's checks for this chat and folder (backend checkup.py).
     "sp": ("sp-checkup", "MCP tool checkup; report in the skill's shape, change nothing without a yes"),
+    # Cores: the program's core elements the operator keeps in view (backend corelib.py).
+    "core-new": ("keep-a-core", "MCP tool core_new with a short name, a type and the files you know; "
+                 "the server saves this message as the first note"),
+    "core-note": ("keep-a-core", "MCP tool cores, choose the matching core, then core_note with this message as text "
+                  "and your one-line comment; if two match, ask the operator to choose by number first"),
+    "core": ("keep-a-core", "MCP tool core_attach: this message, and this chat's task when it has one, to the matching "
+             "core; if two match, ask the operator to choose by number first"),
+    "core-off": ("keep-a-core", "MCP tool cores, choose the matching core, ask the operator to confirm its number, "
+                 "then core_off"),
+    # The operator silenced the message: every other tag in it is text (hookshared.command_text).
+    "mute": ("", "nothing to do: #mute turned every other command in this message off; its tags are plain text"),
+    # Usage: the hook answers these itself (TurnCapture.usage_answer); on
+    # Claude Code a message of only these never reaches the model.
+    **{k: ("", "nothing to do: the hook answered") for k in ("usage", "usage-on", "usage-off")},
+    # The API prices the Usage page counts dollars with: a helper reads the providers' pages.
+    "usage-price": ("update-usage-prices", "say in one line which pages you are going to, then a helper agent (Claude "
+                    "Code: on opus; with no helpers, you) calls MCP tool usage_prices_material, then usage_prices_write"),
     # A star: the server marks it from the chat log (backend marklib.py).
     **{k: ("", "nothing to write: the server stars it") for k in (
         "important", "important-agent", "important-task", "important-message")},
@@ -198,6 +218,68 @@ _TASK_ID_RE = re.compile(r"\b(tk_[a-z0-9][a-z0-9_-]{2,40})(?:\.\d{1,3})?\b")
 # server's pattern (backend/backend/sessions.py TASK_CMD_RE); the parity
 # test holds the two equal.
 _TASK_CMD_RE = re.compile(r"(?<![\w#])#(task|now(?:-(?:to-?do|next|backlog|doing|review|parked|done))?)(?![\w-])(?:[ \t]*\{([^}\n]{1,80})\})?", re.IGNORECASE)
+
+
+#: The commands the hook answers itself (format_signals, usage_answer).
+_USAGE_COMMANDS = ("usage", "usage-on", "usage-off")
+
+
+def usage_only(text: str) -> list[str]:
+    """The usage commands of a message that holds nothing else (no other
+    command, no other text): Claude Code's hook answers it without the
+    model. Empty when the message says anything more."""
+    said = shared.command_text(text or "")
+    found = [" ".join(m.group(1).lower().split()) for m in _COMMAND_RE.finditer(said)]
+    if not found or any(c not in _USAGE_COMMANDS for c in found):
+        return []
+    if _COMMAND_RE.sub("", said).strip():
+        return []
+    return list(dict.fromkeys(found))
+
+
+def server_url() -> str:
+    """Where the operator's own pages are: the port the server takes
+    (backend/backend/config.py reads SP_PORT, 8123 by default)."""
+    port = (os.environ.get("SP_PORT") or "8123").strip()
+    return f"http://127.0.0.1:{port if port.isdigit() else '8123'}"
+
+
+def _round_half_down(n: int, unit: int, decimals: int) -> tuple[int, int]:
+    """n / unit to ``decimals`` places as (whole, tenths), half rounded down."""
+    scale = 10 ** decimals
+    q, rem = divmod(n * scale, unit)
+    if rem * 2 > unit:
+        q += 1
+    return divmod(q, scale) if decimals else (q, 0)
+
+
+def format_tokens(n: int) -> str:
+    """A token count as the Usage page writes it: 512 · 2.4k · 108k · 4.1M ·
+    41M; a value that would round up into the next step is cut instead
+    (999 950 is 999k). The backend's usagelib.format_tokens is the rule;
+    this copy answers when that module cannot be loaded."""
+    n = max(0, int(n or 0))
+    if n < 1000:
+        return str(n)
+    for unit, decimals, cap, suffix in ((1000, 1, 10, "k"), (1000, 0, 1000, "k"),
+                                        (1_000_000, 1, 10, "M"), (1_000_000, 0, None, "M")):
+        if cap is not None and n >= cap * unit:
+            continue
+        whole, tenth = _round_half_down(n, unit, decimals)
+        if cap is not None and whole >= cap:
+            # Down at the boundary: the shown value never reaches the next step.
+            whole, tenth = divmod(n * 10 ** decimals // unit, 10) if decimals else (n // unit, 0)
+        return f"{whole}.{tenth}{suffix}" if decimals and tenth else f"{whole}{suffix}"
+    return f"{n // 1_000_000}M"  # pragma: no cover — the last step has no cap
+
+
+def _usagelib():
+    """The backend's usagelib (zone of the server), loaded by path; None when
+    it is not there or does not load."""
+    try:
+        return _backend_module("usagelib")
+    except Exception:  # noqa: BLE001 — a missing module is an answer
+        return None
 
 
 def _task_lane(data_root: Path, project: str, user_text: str) -> dict | None:
@@ -238,6 +320,7 @@ _KEEP_ROUTES = {
     "entrypoint": ("ep_", "entrypoints"),
     "skill": ("sk_", "skills"),
     "artifact": ("ar_", "artifacts"),
+    "publish": ("pu_", "publish"),
 }
 
 
@@ -273,7 +356,8 @@ def _kept(text: str, project: str, agent_id: str, turn: int) -> list[dict]:
 
 
 def now_iso() -> str:
-    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    # SP_NOW fixes the clock for tests (hookshared.now_dt).
+    return shared.now_dt().strftime("%Y-%m-%dT%H:%M:%S")
 
 
 # One escape for the chat format, shared with the server's import (hookshared.py).
@@ -329,6 +413,9 @@ class TurnCapture:
         )
         self.chat_path = self.folder / "chat.md"
         self.meta_path = self.folder / "meta.json"
+        # Set by record_usage: the usage of the last call was not kept (the
+        # caller then keeps its read positions, so the next one reads again).
+        self.usage_failed = False
 
     def _lost(self, what: str, exc: BaseException) -> None:
         """A part of the turn not kept: the turn goes on, and the failure
@@ -410,16 +497,22 @@ class TurnCapture:
     # -- public API ---------------------------------------------------------
 
     @_with_meta_lock
-    def open_turn(self, user_text: str) -> dict:
+    def open_turn(self, user_text: str, *, quiet: bool = False) -> dict:
         """Record the user's message; the answer arrives via complete_turn.
 
         Returns the signals dict so context-capable adapters can surface it.
+        ``quiet``: a turn the hook answers itself (#usage on Claude Code):
+        the model never sees it, so nothing that is told once (the standup,
+        a scan's reminders, the commits with no task) is spent on it.
         """
+        # A lone surrogate (half of an emoji pasted from a terminal) is no
+        # UTF-8: meta.json and chat.md both refused it, and the turn was lost.
+        user_text = (user_text or "").encode("utf-8", "replace").decode("utf-8")
         meta = self._load_meta()
         # The same message delivered twice while the previous turn is still
         # unanswered (interrupt + resend, or a retried hook event) is one
         # turn, not two — answered before any ledger is read for it.
-        text_key = (user_text or "").strip()
+        text_key = user_text.strip()
         if (
             meta.get("pending_turn") is not None
             and meta.get("pending_user_text") == text_key
@@ -434,7 +527,13 @@ class TurnCapture:
                 "kept": [],
                 "identity": None,
             }
+        # A #usage answered while the turn before was still open is written
+        # now, after it (answer_usage).
+        self._flush_deferred(meta)
         settings = _load_settings(self.data_root)
+        if quiet:
+            settings = {**settings, "standup_enabled": False, "decision_hint_enabled": False,
+                        "contract_refresh_turns": 0, "files_due_enabled": False, "architecture_due_enabled": False}
 
         # Once per agent per day, on its first message — a new chat included:
         # the standup is the project's, so the first agent to show up is told.
@@ -488,11 +587,31 @@ class TurnCapture:
             tid = named[0] if named else str(meta.get("last_task") or "")
             evidence_for = {"id": tid, "title": _task_title(self.data_root, tid) if tid else ""}
 
+        # Commits of the last turn that said no task: told once, here.
+        unsigned = None if quiet else meta.pop("unsigned_commits", None)
+        unsigned_sure = False if quiet else bool(meta.pop("unsigned_sure", False))
+        # #usage-on / #usage-off: this chat shows each reply's tokens, or not.
+        commands = list(dict.fromkeys(" ".join(m.group(1).lower().split()) for m in _COMMAND_RE.finditer(said)))
+        usage_cmds = [c for c in commands if c in _USAGE_COMMANDS]
+        for c in usage_cmds:
+            if c != "usage":
+                meta["usage_show"] = c == "usage-on"
+        # The identity line goes to the model once, on the first turn it
+        # sees: a chat whose first message the hook answered itself (#usage)
+        # would otherwise never show it, and AGENTS.md reads that as
+        # "capture is not active".
+        tell_identity = (not quiet and not meta.get("identity_told")) or refresh_due
+        if tell_identity:
+            meta["identity_told"] = True
         meta["message_count"] = turn
         meta["last_active"] = now_iso()
         meta["pending_turn"] = turn
         meta["pending_user_text"] = text_key
         meta["pending_started"] = started
+        # When each turn began (epoch, UTC): the tokens of an interrupted turn,
+        # read at a later Stop, go to the turn whose window holds them, and
+        # never to one the hook answered itself (quiet).
+        self._note_turn(meta, turn, shared.now_epoch(), quiet)
         if files_due:
             # One notice per scan per agent — the response warning and the
             # contract carry the rest; nagging every turn would be noise.
@@ -513,8 +632,10 @@ class TurnCapture:
             "files_due": files_due,
             "architecture_due": architecture_due,
             "evidence_for": evidence_for,
-            "commands": (commands := list(dict.fromkeys(
-                " ".join(m.group(1).lower().split()) for m in _COMMAND_RE.finditer(said)))),
+            "unsigned_commits": {"commits": unsigned, "sure": unsigned_sure} if unsigned else None,
+            "commands": commands,
+            # The hook's own answer to #usage, #usage-on and #usage-off.
+            "usage_answer": self.usage_answer(usage_cmds, str(meta.get("tool") or "")) if usage_cmds else None,
             # #map costs a helper run: its notice asks the operator, naming
             # the model Settings give, the way the standup's does.
             "map_model": _map_model(self.data_root) if "map" in commands else None,
@@ -539,17 +660,29 @@ class TurnCapture:
                 {"agent_id": self.agent_name, "project": self.project,
                  "date": _yymm_dd(datetime.now()),
                  "time": datetime.now().strftime("%H:%M")}
-                if turn == 1 or refresh_due else None
+                if tell_identity else None
             ),
+            # The cores the operator tracks right now: the agent may write a
+            # one-line note when work it finishes changes one (corelib.py).
+            "cores_tracking": shared.tracked_cores(self.data_root, self.project)
+            if tell_identity else None,
         }
 
     def complete_turn(self, agent_text: str, *, close_if_missing: bool = False,
                       transcript: str | None = None, times: dict | None = None,
-                      points: list | None = None, touched: list[str] | None = None) -> None:
+                      points: list | None = None, touched: list[str] | None = None,
+                      committed: bool | None = None, commit_calls: list | None = None,
+                      turn_started: str | None = None, continuation: bool = False) -> None:
         """Attach the assistant's final answer to the pending turn.
 
         Without a pending turn (the prompt event was skipped or lost) the
         answer is dropped — a phantom user-less turn is worse than a gap.
+        Except with ``continuation``: the tool woke the agent itself (a
+        helper's report, a background task's notice; no prompt event comes
+        for those) and the reply goes on the operator's last turn, after
+        the answer already there. A whole run of autonomous work — three
+        hours of helpers and commits — used to leave only the agent's first
+        reply in chat.md; the report at the end was dropped.
         With ``close_if_missing`` an empty answer still closes the turn,
         marked as a gap: the reply was not in the transcript, and the next
         turn must not inherit whatever is. ``transcript`` — Claude Code's or
@@ -560,9 +693,14 @@ class TurnCapture:
         them already: the file is then not read again. ``touched`` — the
         files this turn's tools changed, by path, from the transcript: the
         work stamp carries them, so a scan knows what moved even where git
-        does not.
+        does not. ``commit_calls`` — the turn's shell calls that may make a
+        commit, [start, end] in local time, from a tool that can tell (None
+        when it cannot): the server gives a commit several chats saw to the
+        one whose call was running when it was made. ``turn_started`` — when
+        the turn really began, from a tool that reports the turn only at its
+        end (Codex): its stamp then carries the true window.
         """
-        closed = self._close_turn(agent_text, close_if_missing=close_if_missing)
+        closed = self._close_turn(agent_text, close_if_missing=close_if_missing, continuation=continuation)
         if closed is None:
             return
         # The stamps read a transcript and ask git — seconds, on a long chat
@@ -570,10 +708,48 @@ class TurnCapture:
         # rename waits on it, and gives up after five seconds.
         turn, started, ended, cwd = closed
         self._stamp_time(turn, started, ended, transcript, times, points)
-        self._stamp_work(turn, cwd, touched, started)
+        commits = self._stamp_work(turn, cwd, touched, started, commit_calls, turn_started)
+        # A tool that tells (Claude Code) said whether this turn ran a git
+        # commit; without that word every new commit is checked, and the
+        # notice says "if you made it".
+        if commits and committed is not False:
+            self._note_unsigned(cwd, commits, sure=committed is True)
+
+    def _note_unsigned(self, cwd: str, commits: list[str], *, sure: bool) -> None:
+        """The turn's commits that say no task (no ``Task:`` line) and no
+        other agent: kept in meta, for one notice on the next turn."""
+        try:
+            raw = _git(cwd, "log", "--no-walk=unsorted",
+                       "--format=%H%x1f%(trailers:key=Task,valueonly,separator=%x2C)%x1f%(trailers:key=Agent,valueonly,separator=%x2C)%x1f%s",
+                       *commits[-10:])
+        except Exception as exc:  # noqa: BLE001 — capture must never break the tool
+            self._lost("commit lines not read", exc)
+            return
+        unsigned = []
+        for line in (raw or "").splitlines():
+            parts = line.split("\x1f")
+            if len(parts) < 4:
+                continue
+            sha, task, agent, subject = parts[0], parts[1], parts[2].strip(), parts[3]
+            if "tk_" in task or (agent and agent != self.agent_name):
+                continue
+            unsigned.append({"sha": sha[:7], "subject": subject[:80]})
+        if unsigned:
+            self._keep_unsigned(unsigned, sure)
 
     @_with_meta_lock
-    def _close_turn(self, agent_text: str, *, close_if_missing: bool) -> tuple[int, str | None, str, str] | None:
+    def _keep_unsigned(self, unsigned: list[dict], sure: bool) -> None:
+        meta = self._load_meta()
+        kept = [u for u in (meta.get("unsigned_commits") or []) if isinstance(u, dict)]
+        seen = {u.get("sha") for u in kept}
+        kept += [u for u in unsigned if u["sha"] not in seen]
+        meta["unsigned_commits"] = kept[-10:]
+        meta["unsigned_sure"] = bool(meta.get("unsigned_sure")) or sure
+        _atomic_write_json(self.meta_path, meta)
+
+    @_with_meta_lock
+    def _close_turn(self, agent_text: str, *, close_if_missing: bool,
+                    continuation: bool = False) -> tuple[int, str | None, str, str] | None:
         """The answer into chat.md and the turn out of meta.json, under the
         lock. Answers what the stamps need, or None when nothing closed."""
         if not agent_text.strip():
@@ -583,14 +759,33 @@ class TurnCapture:
         meta = self._load_meta()
         turn = meta.pop("pending_turn", None)
         if turn is None:
-            return None
+            return self._continue_turn(agent_text, meta) if continuation and agent_text != REPLY_MISSING else None
         meta.pop("pending_user_text", None)
         started = meta.pop("pending_started", None)
         self._append(f"**Agent**: {escape_content(agent_text.rstrip())}\n")
+        self._flush_deferred(meta)
         ended = now_iso()
         meta["last_active"] = ended
         _atomic_write_json(self.meta_path, meta)
         return int(turn), started, ended, str(meta.get("cwd") or "")
+
+    def _continue_turn(self, agent_text: str, meta: dict) -> tuple[int, str | None, str, str] | None:
+        """The reply after the tool woke the agent (no prompt, no pending
+        turn): appended to the last turn's answer in chat.md, once per text
+        (a Stop that comes again for the same reply adds nothing)."""
+        turn = int(meta.get("message_count") or 0)
+        if turn <= 0 or not self.chat_path.exists():
+            return None
+        fp = hashlib.sha256(agent_text.strip().encode("utf-8", "replace")).hexdigest()[:16]
+        if meta.get("continued_fp") == fp:
+            return None
+        started = str(meta.get("last_active") or "") or None
+        self._append(f"\n{escape_content(agent_text.rstrip())}\n")
+        ended = now_iso()
+        meta["continued_fp"] = fp
+        meta["last_active"] = ended
+        _atomic_write_json(self.meta_path, meta)
+        return turn, started, ended, str(meta.get("cwd") or "")
 
     @_with_meta_lock
     def record_skills(self, uses: list[dict]) -> None:
@@ -660,7 +855,8 @@ class TurnCapture:
         return str(shared.last_json(self.folder / "turns.jsonl", "end") or "")
 
     def _stamp_work(self, turn: int, cwd: str, touched: list[str] | None = None,
-                    started: str | None = None) -> None:
+                    started: str | None = None, commit_calls: list | None = None,
+                    turn_started: str | None = None) -> list[str]:
         """Append one line to ``work.jsonl``: HEAD, the commits since the
         previous stamp, the uncommitted change in the working tree, and the
         files the turn's tools touched. Without git the line still goes in
@@ -694,16 +890,23 @@ class TurnCapture:
                         self._lost("changed files not found", exc)
                         changed, capped = [], False
             elif not files:
-                return
+                return []
             stamp = {"head": "", "commits": [], "dirty": None, "changed": changed}
             if capped:
                 stamp["changed_capped"] = True
         stamp = {"turn": turn, "at": now_iso(), **stamp, "touched": files}
+        # The turn's window and its commit calls: which chat made a commit
+        # several chats saw (backend gitwork.owns_commit).
+        if turn_started or started:
+            stamp["started"] = str(turn_started or started)
+        if commit_calls is not None:
+            stamp["commit_calls"] = [[str(a), str(b)] for a, b in commit_calls]
         try:
             with open(self.folder / "work.jsonl", "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(stamp, ensure_ascii=False) + "\n")
         except OSError as exc:
             self._lost("work stamp not kept", exc)
+        return [str(c) for c in stamp.get("commits") or []]
 
     def _last_stamp_at(self) -> str:
         """The previous stamp's time, from the end of work.jsonl ("" if none)."""
@@ -788,15 +991,308 @@ class TurnCapture:
         meta["chat_title"] = title
         _atomic_write_json(self.meta_path, meta)
 
-    def full_turn(self, user_text: str, agent_text: str) -> dict:
+    def full_turn(self, user_text: str, agent_text: str, *, turn_started: str | None = None,
+                  commit_calls: list | None = None, quiet: bool = False,
+                  usage: list[dict] | None = None) -> dict:
         """One-shot capture for end-of-turn-only tools (e.g. Codex notify).
 
         The turn is closed even when the reply came empty (marked as a gap):
         left open, the next message wrote a second user line under it, and
-        the same message again ("continue") was taken for this one."""
-        signals = self.open_turn(user_text)
-        self.complete_turn(agent_text, close_if_missing=True)
+        the same message again ("continue") was taken for this one.
+        ``usage``: the turn's usage lines (record_usage), kept before the
+        turn closes. ``quiet``: see open_turn."""
+        signals = self.open_turn(user_text, quiet=quiet)
+        if usage:
+            # Opened at its end: every line given is this turn's.
+            self.record_usage(usage, this_turn=True)
+        self.complete_turn(agent_text, close_if_missing=True, turn_started=turn_started, commit_calls=commit_calls)
         return signals
+
+    # -- usage: tokens per API message (usage.jsonl), shown on demand --------
+
+    @staticmethod
+    def _note_turn(meta: dict, turn: int, started: float, quiet: bool = False) -> None:
+        """Add a turn to the history in meta.json (``turns``: [turn, started
+        epoch, quiet], the last TURN_HISTORY of them)."""
+        hist = [h for h in (meta.get("turns") or []) if isinstance(h, list) and len(h) >= 2]
+        hist = [h for h in hist if h[0] != turn]
+        hist.append([int(turn), round(float(started), 3), bool(quiet)])
+        meta["turns"] = hist[-shared.TURN_HISTORY:]
+
+    @staticmethod
+    def _history(meta: dict) -> list:
+        """The turn history to give usage its turns. A chat whose meta.json
+        predates it has its pending turn alone; the turn before stands in
+        front of the first one known (an interrupted turn's tokens go to it,
+        as they always did)."""
+        hist = [h for h in (meta.get("turns") or []) if isinstance(h, list) and len(h) >= 2]
+        if not hist:
+            pend = meta.get("pending_turn")
+            start = _epoch(meta.get("pending_started"))
+            if pend is not None and start:
+                hist = [[int(pend), start, False]]
+            elif int(meta.get("message_count") or 0) > 0:
+                hist = [[int(meta["message_count"]), 0.0, False]]
+        if hist and int(hist[0][0]) > 1:
+            hist = [[int(hist[0][0]) - 1, 0.0, False], *hist]
+        return hist
+
+    def _flush_deferred(self, meta: dict) -> None:
+        """Write the #usage exchanges answered while a turn was open, each as
+        a quiet turn of its own (the caller holds the lock and saves meta)."""
+        for d in meta.pop("usage_deferred", None) or []:
+            if not isinstance(d, dict):
+                continue
+            n = int(meta.get("message_count") or 0) + 1
+            self._append(f"\n## Turn {n} · {d.get('at') or now_iso()}\n"
+                         f"**User**: {escape_content(str(d.get('user') or '').rstrip())}\n"
+                         f"**Agent**: {escape_content(str(d.get('answer') or REPLY_MISSING).rstrip())}\n")
+            meta["message_count"] = n
+            self._note_turn(meta, n, float(d.get("t") or shared.now_epoch()), quiet=True)
+
+    def answer_usage(self, user_text: str) -> str:
+        """A message of only #usage commands, answered by the hook: the turn
+        is recorded with the answer as the reply, and nothing else is told.
+        While a turn is still open (interrupted, or the agent still working)
+        no turn is opened or closed: the exchange is written after it."""
+        commands = usage_only(user_text)
+        tool = self._defer_usage(commands)
+        if tool is None:
+            answer = str(self.open_turn(user_text, quiet=True).get("usage_answer") or "")
+            self.complete_turn(answer, close_if_missing=True)
+            return answer
+        answer = self.usage_answer(commands, tool)
+        self._keep_deferred(user_text, answer)
+        return answer
+
+    @_with_meta_lock
+    def _defer_usage(self, commands: list[str]) -> str | None:
+        """With a turn open: apply #usage-on / #usage-off and answer the tool
+        name; None when no turn is open (the exchange is a turn of its own)."""
+        if not self.meta_path.exists():
+            return None
+        meta = self._load_meta()
+        if meta.get("pending_turn") is None:
+            return None
+        for c in commands:
+            if c != "usage":
+                meta["usage_show"] = c == "usage-on"
+        _atomic_write_json(self.meta_path, meta)
+        return str(meta.get("tool") or "")
+
+    @_with_meta_lock
+    def _keep_deferred(self, user_text: str, answer: str) -> None:
+        meta = self._load_meta()
+        kept = [d for d in meta.get("usage_deferred") or [] if isinstance(d, dict)]
+        kept.append({"user": user_text, "answer": answer, "at": now_iso(), "t": round(shared.now_epoch(), 3)})
+        meta["usage_deferred"] = kept[-10:]
+        if meta.get("pending_turn") is None:
+            self._flush_deferred(meta)     # the turn closed meanwhile
+        _atomic_write_json(self.meta_path, meta)
+
+    def usage_answer(self, commands: list[str], tool: str = "") -> str:
+        """The hook's answer to #usage, #usage-on and #usage-off, in order."""
+        url = server_url()
+        parts: list[str] = []
+        for c in commands:
+            if c == "usage-on":
+                shows = ("each reply shows: → new tokens ↑ output tokens ↓ (cache tokens)." if tool in ("", "claude-code")
+                         else "the chat viewer shows each reply: → new tokens ↑ output tokens ↓ (cache tokens). "
+                              f"{'Codex' if tool == 'codex' else 'OpenCode' if tool == 'opencode' else tool} "
+                              "does not show them in the terminal.")
+                parts.append(
+                    "[slightly-parallel] Usage is on.\n"
+                    f"From now on, {shows}\n"
+                    "Tokens are recorded for every reply in any case. This setting only shows them.\n"
+                    "Type #usage-off to hide them. Type #usage for this chat and your plan limits.\n"
+                    f"Usage page: {url}/usage")
+            elif c == "usage-off":
+                parts.append("[slightly-parallel] Usage is off. Tokens are still recorded. Type #usage-on to show them.")
+            else:
+                parts.append(self._usage_block(url))
+        return "\n\n".join(parts)
+
+    def _usage_block(self, url: str) -> str:
+        """The #usage block, from the server's usagelib; when it cannot be
+        loaded or fails, the line that says so."""
+        lib = _usagelib()
+        if lib is not None:
+            try:
+                return str(lib.usage_block(self.data_root, self.project, self.agent_name, url))
+            except Exception as exc:  # noqa: BLE001 — the turn goes on without the block
+                self._lost("usage block not built", exc)
+        return f"[slightly-parallel] #usage — the server's module is not available; open {url}/usage."
+
+    def usage_shown(self) -> bool:
+        """Whether this chat shows each reply's tokens: its #usage-on /
+        #usage-off, else the setting (agent.usage_show)."""
+        try:
+            own = json.loads(self.meta_path.read_text(encoding="utf-8")).get("usage_show")
+        except (OSError, ValueError, AttributeError):
+            own = None
+        return own if isinstance(own, bool) else bool(_load_settings(self.data_root)["usage_show"])
+
+    @_with_meta_lock
+    def line_due(self, turn: int) -> bool:
+        """Whether the line after this turn's reply is still to be shown: a
+        Stop that comes again for the same turn (``stop_hook_active``, a
+        retried event) shows it once."""
+        if turn < 1 or not self.meta_path.exists():
+            return False
+        meta = self._load_meta()
+        if meta.get("usage_line_turn") == turn:
+            return False
+        meta["usage_line_turn"] = turn
+        _atomic_write_json(self.meta_path, meta)
+        return True
+
+    def codex_read_at(self) -> float | None:
+        """Up to when (epoch) the Codex session file's calls are kept; None
+        before the first Stop that kept any."""
+        try:
+            got = json.loads(self.meta_path.read_text(encoding="utf-8")).get("codex_read_t")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return float(got) if isinstance(got, (int, float)) and not isinstance(got, bool) else None
+
+    @_with_meta_lock
+    def note_codex_read(self, lines: list[dict]) -> None:
+        """Move the Codex mark to the newest call kept (after it is kept)."""
+        times = [x["_t"] for x in lines if isinstance(x.get("_t"), (int, float))]
+        if not times or not self.meta_path.exists():
+            return
+        meta = self._load_meta()
+        prev = meta.get("codex_read_t")
+        meta["codex_read_t"] = max(max(times), prev) if isinstance(prev, (int, float)) else max(times)
+        _atomic_write_json(self.meta_path, meta)
+
+    def record_usage(self, lines: list[dict], starts: dict | None = None,
+                     *, this_turn: bool = False, compacts: list[float] | None = None,
+                     whole: bool = False) -> tuple[int, list[dict]]:
+        """Append the API messages read at a turn's end to ``usage.jsonl``.
+
+        ``lines``: hookshared usage lines (``at``, ``id``, ``_t`` …); a helper's
+        carry ``helper`` and ``tool_use`` (the Agent call that started it).
+        ``starts``: {Agent call id: {"t": epoch, "parent": call}} seen in this
+        read, kept in meta.json (``helper_turns``) so a helper's tokens go to
+        the turn that started it, at whatever Stop they are read. Each line
+        goes to the turn whose window holds its time (hookshared.assign_turns,
+        with the history in meta.json): an interrupted turn has no Stop of
+        its own. What was written more than a minute before the chat's first
+        recorded prompt (``usage_from_t``) is history, not this chat's: a
+        transcript read from its first byte (a resumed or branched session,
+        hooks installed mid-session) holds it. ``compacts``: the times of the
+        compactions read (the first line after each is marked). ``whole``:
+        the log was read again from its start — the ids already kept are
+        looked for in all of usage.jsonl. ``this_turn``: every line is the
+        pending turn's (a tool that reports a turn only at its end).
+        Answers (the turn, the lines written); ``usage_failed`` says whether
+        they were kept. Never raises."""
+        self.usage_failed = False
+        try:
+            turn, out = self._usage_turns(lines, starts or {}, this_turn, compacts or [])
+            if not out:
+                return turn, []
+            return turn, shared.usage_append(self.folder / "usage.jsonl", out, whole=whole)
+        except Exception as exc:  # noqa: BLE001 — usage must never cost the turn
+            self.usage_failed = True
+            self._lost("usage not kept", exc)
+            return 0, []
+
+    @_with_meta_lock
+    def _usage_turns(self, lines: list[dict], starts: dict, this_turn: bool = False,
+                     compacts: list[float] | None = None) -> tuple[int, list[dict]]:
+        if not self.meta_path.exists():
+            return 0, []      # no chat here: a Stop with no turn behind it leaves no trace
+        meta = self._load_meta()
+        pending = meta.get("pending_turn")
+        turn = int(pending or meta.get("message_count") or 0)
+        if turn < 1:
+            return 0, []
+        if this_turn:
+            return turn, [{"turn": turn, **{k: v for k, v in ln.items() if k not in ("_t", "tool_use", "turn")}}
+                          for ln in lines]
+        history = self._history(meta)
+        cutoff = meta.get("usage_from_t") if isinstance(meta.get("usage_from_t"), (int, float)) else None
+        if cutoff is None and meta.get("usage_from"):
+            cutoff = _epoch(str(meta["usage_from"])) or None     # written by an older hook, local time
+        first = False
+        if cutoff is None and pending is not None:
+            # The chat's first prompt on record (not the pending one: an
+            # interrupted first turn is this chat's too).
+            begun = [h[1] for h in history if isinstance(h[1], (int, float)) and h[1] > 0]
+            if begun:
+                cutoff, first = float(min(begun)) - shared.HISTORY_SLACK_S, True
+        got = meta.get("helper_turns")
+        calls: dict[str, int] = {str(k): v for k, v in got.items() if isinstance(v, int)} if isinstance(got, dict) else {}
+        before = dict(calls)
+        waiting = [c for c in meta.get("usage_compacts") or [] if isinstance(c, (int, float))]
+        given = sorted({*waiting, *(c for c in compacts or [] if isinstance(c, (int, float)))})
+        out, left = shared.assign_turns(lines, history, calls=calls, starts=starts, compacts=given,
+                                        cutoff=cutoff, default=turn)
+        changed = first
+        if calls != before:
+            meta["helper_turns"] = dict(list(calls.items())[-shared.TURN_HISTORY:])
+            changed = True
+        if first:
+            meta["usage_from_t"] = cutoff
+        if left != waiting:
+            if left:
+                meta["usage_compacts"] = left[-20:]
+            else:
+                meta.pop("usage_compacts", None)
+            changed = True
+        if changed:
+            _atomic_write_json(self.meta_path, meta)
+        return turn, out
+
+    def usage_line(self, turn: int) -> str:
+        """The line shown after a reply: ``→ new ↑ output ↓ (cache)``, with the
+        helpers' share apart. From the server's usagelib (which adds the
+        event words); a sum of usage.jsonl when it cannot be loaded, by the
+        server's rules: the last line of an id wins, and the leading number
+        is the main agent's alone."""
+        if turn < 1:
+            return ""
+        lib = _usagelib()
+        if lib is not None:
+            try:
+                turns = lib.chat_turns(self.data_root, self.project, self.agent_name)
+                tu = turns.get(turn) if isinstance(turns, dict) else None
+                if not tu:
+                    return ""
+                # The server's own line, with its event words (it compares
+                # the limit with the last turn that had a reading).
+                if tu.get("line"):
+                    return str(tu["line"])
+                earlier = [k for k in turns if isinstance(k, int) and k < turn]
+                return str(lib.turn_line(tu, turns[max(earlier)] if earlier else None) or "")
+            except Exception as exc:  # noqa: BLE001 — fall back to the plain sum
+                self._lost("usage line not built", exc)
+        last: dict[str, dict] = {}
+        for raw in shared.tail_lines(self.folder / "usage.jsonl"):
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("id"):
+                last[str(rec["id"])] = rec
+        new = out = cache = helpers = 0
+        found = False
+        for rec in last.values():
+            if rec.get("turn") != turn:
+                continue
+            found = True
+            if rec.get("helper"):
+                helpers += shared._n(rec.get("new")) + shared._n(rec.get("output"))
+            else:
+                new += shared._n(rec.get("new"))
+                out += shared._n(rec.get("output"))
+                cache += shared._n(rec.get("cache"))
+        if not found:
+            return ""
+        line = f"→ {format_tokens(new)} ↑ {format_tokens(out)} ↓ ({format_tokens(cache)})"
+        return line + (f" + helpers {format_tokens(helpers)}" if helpers else "")
 
 
 _GIT_TIMEOUT = 3.0
@@ -1178,8 +1674,17 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"{ident['agent_id']} · now {ident['date']} {ident['time']}. The "
             "MCP tools stamp these for you; they are here for reference."
         )
+    usage_told = False
     for name in signals.get("commands") or []:
         skill, start = _COMMANDS[name]
+        if name in _USAGE_COMMANDS:
+            # The hook answered: the agent shows the answer as it is.
+            if not usage_told and signals.get("usage_answer"):
+                usage_told = True
+                notes.append(
+                    f"[slightly-parallel] #{name} — the hook's answer is below; show it to the user as it is "
+                    "and add nothing to it.\n" + str(signals["usage_answer"]))
+            continue
         if name == "map":
             on, other = offer("map", signals.get("map_model") or "opus")
             notes.append(
@@ -1259,6 +1764,25 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             "[slightly-parallel] refresh — long chat: re-read SLIGHTLY-PARALLEL.md and the rules in "
             "this project's AGENTS.md."
         )
+    unsigned = signals.get("unsigned_commits")
+    if unsigned and unsigned.get("commits"):
+        listed = ", ".join(f"{c['sha']} \"{c['subject']}\"" for c in unsigned["commits"][:5])
+        more = len(unsigned["commits"]) - 5
+        notes.append(
+            f"[slightly-parallel] commits — {listed}{f' and {more} more' if more > 0 else ''} "
+            f"{'have' if len(unsigned['commits']) > 1 else 'has'} no `Task:` line. "
+            + ("" if unsigned.get("sure") else "If you made them: ")
+            + "link each to its task with MCP tool task_commits {id, shas}; a commit for no task needs nothing. "
+            "In the next commits, end the message with `Task: tk_…` and `Agent: <your agent_id>`."
+        )
+    tracked = signals.get("cores_tracking")
+    if tracked:
+        named = ", ".join(f"{c['name']} ({c['id']}{', until ' + c['until'] if c.get('until') else ''})" for c in tracked)
+        notes.append(
+            f"[slightly-parallel] cores tracked in this project: {named}. When finished work changes one, "
+            "call MCP tool core_note {id, comment, kind: \"auto\", task_id} with one line on what changed. "
+            "Only finished work; at most one note per task."
+        )
     if signals.get("files_due"):
         notes.append(
             f"[slightly-parallel] #scan — scan {signals['files_due']} has no file entry. MCP tool "
@@ -1276,6 +1800,15 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             "holds), each group in `checked` or with its changes. See SLIGHTLY-PARALLEL.md §4."
         )
     for k in signals.get("kept") or []:
+        if k["kind"] == "publish":
+            notes.append(
+                f"[slightly-parallel] #publish — the server keeps this message as {k['id']} on the "
+                "Publish page (what shipped, worth telling). The text is the operator's: write nothing. "
+                "Attach what they may need to tell about it: 1–3 screenshots of what it is about (the "
+                "page or the product, as you can render it) and the links, with MCP tool "
+                f"publish_attach {{id: \"{k['id']}\", images, links}}."
+            )
+            continue
         if k["kind"] == "skill":
             notes.append(
                 f"[slightly-parallel] #skill — the server keeps this message as {k['id']}. "

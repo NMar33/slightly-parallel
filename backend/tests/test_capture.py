@@ -994,3 +994,52 @@ def test_a_first_turn_commit_counts_even_when_the_noted_head_came_after_it(root:
     hook({"hook_event_name": "Stop", "last_assistant_message": "built and committed"})
     first = json.loads((chat / "work.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert first["commits"] == [made]
+
+
+def test_a_reply_after_the_tools_own_wake_up_continues_the_turn(root: Path, tmp_path: Path) -> None:
+    """A helper's report or a background task's notice wakes the agent with
+    no prompt event; the reply after it was dropped (no pending turn). A run
+    of autonomous work left only the agent's first reply in chat.md. Now it
+    goes on the operator's last turn, once per reply; a stray reply after a
+    real prompt that had no prompt event is still dropped."""
+    cc = _load("sp_cc_cont", "claude-code-capture.py")
+    cc._STOP_RETRIES = 1
+    cc._STOP_RETRY_S = 0.01
+    script = _HOOKS / "claude-code-capture.py"
+    t = tmp_path / "t.jsonl"
+    lines = [
+        _rec("user", "#now audit the task code"),
+        _rec("assistant", _text("Started three helpers; waiting for their reports.")),
+    ]
+    t.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def run(payload: dict) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(script), "--project", "alpha", "--data-root", str(root)],
+            input=json.dumps(payload), capture_output=True, text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+    chat_path = root / "projects/alpha/chats/cc-cont1234/chat.md"
+    run({"hook_event_name": "UserPromptSubmit", "session_id": "cont12345", "prompt": "#now audit the task code"})
+    run({"hook_event_name": "Stop", "session_id": "cont12345", "transcript_path": str(t)})
+    lines += [
+        _rec("user", "<task-notification>\n<task-id>abc</task-id>\n<summary>Agent finished</summary>\n</task-notification>"),
+        _rec("assistant", _text("The audit is done: 41 fixes in 7 commits.")),
+    ]
+    t.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    run({"hook_event_name": "Stop", "session_id": "cont12345", "transcript_path": str(t)})
+    run({"hook_event_name": "Stop", "session_id": "cont12345", "transcript_path": str(t)})   # the same Stop again
+    chat = chat_path.read_text(encoding="utf-8")
+    assert chat.count("## Turn ") == 1 and chat.count("**Agent**: ") == 1
+    assert "waiting for their reports." in chat and chat.count("The audit is done") == 1
+    from backend.sessions import parse_chat
+    turns, _ = parse_chat(chat_path)
+    assert len(turns) == 1 and "The audit is done: 41 fixes" in turns[0].agent_summary
+    meta = json.loads((root / "projects/alpha/chats/cc-cont1234/meta.json").read_text(encoding="utf-8"))
+    assert "pending_turn" not in meta
+    # A real prompt whose prompt event was lost: the reply is not glued on.
+    lines += [_rec("user", "and the docs?"), _rec("assistant", _text("Written too."))]
+    t.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    run({"hook_event_name": "Stop", "session_id": "cont12345", "transcript_path": str(t)})
+    assert "Written too." not in chat_path.read_text(encoding="utf-8")

@@ -58,6 +58,9 @@ it. The identity notice is the one exception: it opens with the project.
   skill with the steps and the tool to start with.
 - **evidence notice** — the user typed `#evidence`: it names the task
   (section 4, Finishing a task).
+- **commits notice** — commits of your last turn have no `Task:` line:
+  link each to its task with `task_commits {id, shas}`; a commit for no
+  task needs nothing (section 4, Agent task, Commits).
 - **capture-failure notice** — the hook could not write the turn: tell the
   user, and write nothing as an agent until it is fixed.
 
@@ -71,7 +74,8 @@ server does with a write that goes around them).
 Vocabulary the tools and the server enforce (a wrong value is refused with
 the allowed list, never a silent loss): task `status` ∈ unclassified ·
 backlog · next · agent · todo · parked · doing · review · review-later ·
-done · done-archived (`agent` is the only status you may create with —
+done · done-archived (`agent` is the status `#task` creates with, and the
+column the operator's `#now` names is the other one —
 section 4, `#task`); problem `status` ∈ open · resolved; architecture `op`
 ∈ add · change · remove over a closed set of entity types, with per-type
 required fields and path checks (section 4). A decision requires its
@@ -100,16 +104,26 @@ silenced, and the notice names only that one.
 | `#standup` | Write the standup for yesterday now (also offered on the first message of a day) |
 | `#rule <text>` | Nothing to write — the server keeps the message as a rule; write its interpretation (Kept messages, section 4) |
 | `#vision` | Nothing to write — the server keeps the message as a vision; write its interpretation (Kept messages, section 4) |
+| `#publish <text>` | Nothing to write — the server keeps the message as a card on the Publish page (what shipped, worth telling) |
 | `#prompt` | Nothing to write — the server keeps the message in the operator's prompt library |
 | `#important` | Nothing to write — the server stars the message, its agent and the tasks it names; `#important-agent`, `-task` or `-message` stars one of them |
 | `#skill` | Write the skill from what was done in this chat (Skill, section 4) |
 | `#artifact <what>` | Write the folder under the project's artifacts/, then make its record with artifact_write (Artifact, section 4) |
 | `#help` | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it) |
+| `#mute` | No command in the message runs, `###` ones too: every tag in it is plain text. Do nothing for its tags |
 | `#done` | MCP tool task_done: the server has moved the task; say what moved, then your task_report line (the skill finish-a-task) |
 | `#entrypoint` | Nothing to write — the server keeps the message as an entry point; write its text (Kept messages, section 4): What, Where, How, State, Next |
 | `#undo <what was the mistake>` | MCP tool undo_find, list the candidates by number, then undo_propose with the operator's numbers and show its confirm text (the skill undo-a-mistake) |
 | `#undo-yes` | The operator confirmed: MCP tool undo_apply. The server archives only on this reply right after your proposal |
 | `#sp <what worries you>` | MCP tool checkup: say what works and what is a concern, in the fixed shape; with text, look into that too. Read freely; change nothing without the operator's yes (the skill sp-checkup) |
+| `#core-new <text>` | A new core of the program, the thing the text names: give it a short name, a type and the files you know; the server saves the message as its first note (MCP tool core_new; the skill keep-a-core) |
+| `#core-note <text>` | A note on a core: read `cores`, choose the matching core, add the message as typed with your one-line comment (core_note); if two match, ask the operator to choose by number first |
+| `#core` | Attach this message, and this chat's task when it has one, to the matching core (core_attach); if two match, ask the operator to choose by number first |
+| `#core-off <words>` | Remove a core from view: choose the matching core, ask the operator to confirm its number, then core_off; the notes and links are kept |
+| `#usage` | The hook answers: it prints this chat's tokens, the plan limits and the project's day, and the message does not reach you. Add nothing. In Codex and OpenCode the notice carries the text: give it as it is, in a code block |
+| `#usage-on` | The hook answers: each reply in this chat shows its tokens from now on. Add nothing |
+| `#usage-off` | The hook answers: the replies in this chat no longer show their tokens; they are still recorded. Add nothing |
+| `#usage-price` | Update the API prices the Usage page counts dollars with: say which pages you are going to, a helper agent reads them, then usage_prices_write (the skill update-usage-prices) |
 
 **Resolving `<id or text>`**: if it looks like an id (`sp_…`, `pb_…`), use it.
 Otherwise read the lens (`search`, or `GET /api/<lens>?project=…`), match
@@ -226,7 +240,9 @@ Before you send it, read each sentence as the lead: is it clear with no chat his
 **Architecture** (`#architecture`). Keeps three things current, each only when out of date: the form for the last scan (`write_entry {lens: "architecture"}`, with the scan's id as `trigger_id`: eight groups, each checked or with its changes; written after every scan), the architecture page, and the map of the program. Call `architecture_status`: it says which are needed and why. The skill `update-the-architecture` holds the steps. `#page` and `#map` still do their one part.
 
 **Finishing a task — `task_report {id, summary}`.** Task status belongs to
-the operator: never change a task's `status` yourself. When you believe a
+the operator: never change a task's `status` yourself (the two exceptions:
+a task the operator switched auto-manage on for, and dropping a card you
+made in the agent column with `done-archived`). When you believe a
 task is done, report it — `summary` is one line: what shipped. The server
 records your opinion (the operator sees a badge), moves the card to
 *review* only if the operator switched auto-manage on for that task, and
@@ -265,7 +281,7 @@ final in the pack's shape, then post the whole text with
 this version changed. Each post is the next version; the operator reads
 and compares them on the Storyboard. An unknown id is refused.
 
-**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
+**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
 
 **Architecture page** (part of `#architecture`, and at the end of a `#scan`; `#page` still asks for it alone). One page per project: what it is, what it does now, what it is made of and what is owed, as claims with their evidence, for a team lead who was not in the chat. Call `architecture_material`: it returns the computed facts, the current page and the instructions. Write the next version with `architecture_page {text, note}`. The skill `keep-the-architecture-page` holds the steps.
 
@@ -303,6 +319,14 @@ minted and no notice appears — ask the user what to keep. The hook names the i
 is the interpretation, written in the same turn:
 `interpret {lens: "vision" | "rule" | "problem" | "entrypoint", id, text}` (`text` is
 markdown; `note` is one optional line on what changed).
+
+`#publish` is kept the same way, as a card on the Publish page (what
+shipped, worth telling). Its text is the operator's: no interpretation, no
+entry. What you add is what they may need to tell about it: 1–3
+screenshots of what it is about (the page or the product, as you can
+render it), each in its original size, never shrunk or recompressed, given
+by its file `path`, and the links, with `publish_attach {id, images,
+links}` in the same turn. The notice names the card.
 
 The interpretation is the message read with the conversation around it:
 what the user means, in plain words, with what the context settles —
@@ -378,6 +402,10 @@ where things are and where the work stopped.
 **Undo** (`#undo`). The operator archives entries made by mistake. List the candidates from `undo_find` by number; send their numbers' ids to `undo_propose` and show its confirm text; on `#undo-yes`, call `undo_apply`. Never archive without both. The skill `undo-a-mistake` holds the steps.
 
 **Is it working** (`#sp`). Call `checkup` and report it in the fixed shape: the verdict, each concern as what · why it matters · the next step, then one line of what is fine. What could not be checked is said, never called fine. With text after the tag, look into that worry too. Read and investigate freely; restart, re-integrate or change nothing without the operator's yes. The skill `sp-checkup` holds the steps.
+
+**Cores** (`#core-new <text>`, `#core-note <text>`, `#core`, `#core-off`). The program's core elements the operator keeps in view — a capability, a feature, a store, a part of the interface — each with its notes, tasks and commits. `#core-new` makes one: a short name, a type (capability · feature · interface · store · integration · internals · workflow · experiment), the files you know, the message as its first note (`core_new`). `#core-note` adds the message, as typed, with your one line (`core_note`); `#core` attaches the message and this chat's task (`core_attach`); `#core-off` removes one from view after the operator confirms (`core_off`). Read `cores` first and choose the matching core; if two match, ask the operator to choose by number. When the hook's notice names a tracked core and finished work changes it, add one line with `core_note {kind: "auto"}`. The skill `keep-a-core` holds the steps.
+
+**Usage prices** (`#usage-price`). The operator asks; you say in one line which pages you are going to, a helper agent reads the providers' own pricing pages (`usage_prices_material`) and writes the prices (`usage_prices_write`), and you say what changed. Never on your own. **Usage** (`#usage`, `#usage-on`, `#usage-off`). The hook answers these itself; in Claude Code the message does not reach you. Add nothing. When it does reach you, the notice says so: in Codex and OpenCode it carries the #usage text, which you give as it is, in a code block; in a message with other text, the hook printed the text already and you add nothing about it. Tokens are recorded for every reply in any case; `#usage-on` and `#usage-off` only show or hide the line after each reply (`→ 1.9k ↑ 512 ↓ (108k)`: new input, output, cache in brackets). Asked about tokens or limits in words, call `usage {}` and give its `block` the same way. The Usage page is `/usage` on the server.
 
 ## 5. Reading
 

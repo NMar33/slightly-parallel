@@ -59,3 +59,13 @@ describe('a dropped card lands where it was put, in whole positions', () => {
     expect(Object.values(positions).every(Number.isInteger)).toBe(true)
   })
 })
+
+describe('what a card shows of its text', () => {
+  it('is the start of a long one; the window has it all', async () => {
+    const { cardText, CARD_TEXT_CHARS } = await import('./Card')
+    expect(cardText('short')).toBe('short')
+    const long = 'x'.repeat(90_000)
+    expect(cardText(long).length).toBe(CARD_TEXT_CHARS + 1)
+    expect(cardText(long).endsWith('…')).toBe(true)
+  })
+})

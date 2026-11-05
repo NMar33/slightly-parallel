@@ -37,10 +37,11 @@ import os
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture import TurnCapture, _turntimes, format_signals, record_failure, shared  # noqa: E402
+from capture import TurnCapture, _turntimes, format_signals, record_failure, shared, usage_only  # noqa: E402
 
 
 _PREFIX = {"claude-code": "cc", "codex": "codex"}
@@ -79,6 +80,12 @@ class Segment:
     ``Skill`` calls after the last human prompt, and a ``/skill`` the person
     typed as that prompt. ``points`` — when each message and tool result was
     written (given ``tt``, the backend's turntimes.py), for the turn's times.
+    ``usage`` — the API messages of the stretch, one per message id (the
+    last record wins), from every prompt in it: an interrupted turn's
+    tokens are read at the next Stop. ``starts`` — the Agent calls in it,
+    by id, with their time: a helper's tokens go to the turn that started it.
+    ``compacts`` — when the context was compacted (epoch seconds).
+    ``from_top`` — this read began at the file's first byte.
 
     The stretch starts at ``pos`` bytes — where the previous Stop stopped
     (TurnCapture.transcript_pos) — so a long chat's transcript, tens of
@@ -93,7 +100,23 @@ class Segment:
         self.title = ""
         self.skills: list[dict] = []
         self.touched: list[str] = []
+        self.committed = False
         self.points: list = []
+        # The turn's shell calls that may make a commit, with their times.
+        self.calls = shared.CommitCalls()
+        self.session_id = ""
+        self.usage: dict[str, dict] = {}
+        self.starts: dict[str, dict] = {}
+        self.compacts: list[float] = []
+        self.from_top = self.end == 0
+        # The last prompt in the stretch was the tool's own — a helper's
+        # report, a background task's notification — not the operator's: the
+        # reply after it continues the operator's last turn (no
+        # UserPromptSubmit came for it, so no turn is pending).
+        self.woken = False
+
+    def usage_lines(self) -> list[dict]:
+        return list(self.usage.values())
 
     def read(self) -> "Segment":
         try:
@@ -105,6 +128,8 @@ class Segment:
                     fh.seek(self.end - 1)
                     if fh.read(1) != b"\n":
                         self.end = 0    # not where a line begins: trust nothing
+                if self.end == 0:
+                    self.from_top = True
                 fh.seek(self.end)
                 for raw in fh:
                     # A last line with no newline yet may still be written:
@@ -116,7 +141,10 @@ class Segment:
                     except ValueError:
                         continue
                     if isinstance(rec, dict):
-                        self._take(rec)
+                        try:
+                            self._take(rec)
+                        except Exception:  # noqa: BLE001 — a record of an unknown shape is skipped, never the turn
+                            continue
         except OSError:
             pass
         return self
@@ -130,9 +158,31 @@ class Segment:
         if kind == "custom-title":
             self.title = str(rec.get("customTitle") or "") or self.title
             return
+        if kind == "assistant":
+            # Usage is not reset at a prompt: records before it belong to an
+            # earlier turn, and record_usage gives them that turn. A record it
+            # cannot read costs its tokens, never the turn.
+            try:
+                line = shared.usage_line_claude(rec, self.session_id)
+                if line is not None:
+                    self.usage[line["id"]] = line
+                for call in shared.helper_starts(rec):
+                    self.starts.setdefault(call, {"t": shared.epoch_of(rec.get("timestamp")), "parent": ""})
+            except Exception:  # noqa: BLE001
+                pass
+        elif shared.is_compact(rec):
+            at = shared.epoch_of(rec.get("timestamp"))
+            if at is not None and at not in self.compacts:
+                self.compacts.append(at)
         if _is_human_prompt(rec):
             # Everything before this prompt belongs to an earlier turn.
             self.text, self.skills, self.touched = "", [], []
+            self.committed = False
+            self.calls = shared.CommitCalls()
+            content = (rec.get("message") or {}).get("content")
+            said = content if isinstance(content, str) else "\n".join(
+                p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+            self.woken = is_system_payload(said)
         elif kind == "assistant":
             content = (rec.get("message") or {}).get("content") or []
             parts = [
@@ -146,6 +196,9 @@ class Segment:
         for path in shared.touched_files(rec):
             if path not in self.touched:
                 self.touched.append(path)
+        if shared.ran_commit(rec):
+            self.committed = True
+        self.calls.take(rec)
         uses = shared.skill_uses(rec)
         if uses:
             at = _local_iso(rec.get("timestamp") or "")
@@ -156,52 +209,76 @@ _HELPERS_POS = "helpers.json"
 _HELPERS_FRESH_S = 30 * 60
 
 
-def helper_touched(transcript_path: str, folder: Path) -> list[str]:
-    """The files this session's helper agents changed since the last look.
+class Helpers:
+    """What this session's helper agents did since the last look.
 
     Claude Code writes each helper's transcript beside the session's, under
     ``<session>/subagents/`` (nested for workflows); its Edit and Write
     calls never reach the main transcript. Each file is read on from where
     the previous Stop left it (``helpers.json`` in the chat folder), so a
-    helper still running at one Stop is counted at the next. Never raises.
+    helper still running at one Stop is counted at the next. ``save`` keeps
+    the new positions — only after the usage read is kept, so a failed write
+    is read again. Never raises.
+
+    ``touched`` — the files they changed; ``usage`` — their API messages,
+    each with ``helper`` (its id) and ``tool_use`` (the Agent call that
+    started it, from ``<agent>.meta.json`` beside its transcript);
+    ``starts`` — the Agent calls made inside a helper, with that helper's
+    call as ``parent``; ``replay`` — a file was read again from its start
+    (no positions kept, a file that shrank): its ids are looked for in all
+    of usage.jsonl.
     """
-    if not transcript_path:
-        return []
-    base = Path(transcript_path).with_suffix("") / "subagents"
-    if not base.is_dir():
-        return []
-    pos_path = folder / _HELPERS_POS
-    try:
-        pos = json.loads(pos_path.read_text(encoding="utf-8"))
-        if not isinstance(pos, dict):
-            pos = {}
-        first = False
-    except (OSError, ValueError):
-        pos, first = {}, True
-    out: list[str] = []
-    try:
-        files = sorted(base.rglob("*.jsonl"))
-    except OSError:
-        return []
-    for f in files:
+
+    def __init__(self, transcript_path: str, folder: Path, session_id: str = "") -> None:
+        self.touched: list[str] = []
+        self.usage: list[dict] = []
+        self.starts: dict[str, dict] = {}
+        self.replay = False
+        self._pos_path = folder / _HELPERS_POS
+        self._pos: dict | None = None
+        if not transcript_path:
+            return
+        base = Path(transcript_path).with_suffix("") / "subagents"
+        if not base.is_dir():
+            return
+        try:
+            pos = json.loads(self._pos_path.read_text(encoding="utf-8"))
+            if not isinstance(pos, dict):
+                pos = {}
+            first = False
+        except (OSError, ValueError):
+            pos, first = {}, True
+        try:
+            files = sorted(base.rglob("*.jsonl"))
+        except OSError:
+            return
+        for f in files:
+            self._read(f, pos, first, session_id)
+        self._pos = pos
+
+    def _read(self, f: Path, pos: dict, first: bool, session_id: str) -> None:
         key = str(f)
-        start = int(pos.get(key) or 0)
+        start = int(pos.get(key) or 0) if isinstance(pos.get(key), int) else 0
+        # The first look at a session already running: a helper finished long
+        # before is not this turn's work — its edits are not counted. Its
+        # tokens are read (the cutoff in record_usage keeps out what is older
+        # than the chat), so none is lost.
+        stale = False
         if first and key not in pos:
-            # The first look at a session already running: a helper finished
-            # long before is not this turn's work.
             try:
-                if time.time() - f.stat().st_mtime > _HELPERS_FRESH_S:
-                    pos[key] = f.stat().st_size
-                    continue
+                stale = time.time() - f.stat().st_mtime > _HELPERS_FRESH_S
             except OSError:
-                continue
+                return
         try:
             with open(f, "rb") as fh:
                 size = fh.seek(0, 2)
                 if start > size:
-                    start = 0
+                    start = 0        # another file under the old name
+                if start == 0:
+                    self.replay = self.replay or first or key in pos
                 fh.seek(start)
                 end = start
+                recs: list[dict] = []
                 for raw in fh:
                     if not raw.endswith(b"\n"):
                         break        # a line still being written: read it next time
@@ -210,20 +287,61 @@ def helper_touched(transcript_path: str, folder: Path) -> list[str]:
                         rec = json.loads(raw.decode("utf-8", errors="replace"))
                     except ValueError:
                         continue
-                    if isinstance(rec, dict):
-                        for path in shared.touched_files(rec):
-                            if path not in out:
-                                out.append(path)
+                    if not isinstance(rec, dict):
+                        continue
+                    if not stale:
+                        try:
+                            for path in shared.touched_files(rec):
+                                if path not in self.touched:
+                                    self.touched.append(path)
+                        except Exception:  # noqa: BLE001 — a record of an unknown shape
+                            pass
+                    if rec.get("type") == "assistant":
+                        recs.append(rec)
                 pos[key] = end
         except OSError:
-            continue
-    try:
-        tmp = pos_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(pos), encoding="utf-8")
-        os.replace(tmp, pos_path)
-    except OSError:
-        pass
-    return out
+            return
+        if recs:
+            self._take(f, recs, session_id)
+
+    def _take(self, path: Path, recs: list[dict], session_id: str) -> None:
+        """A helper transcript's usage lines, each naming the helper and the
+        Agent call that started it; the calls it made itself."""
+        helper = path.stem.removeprefix("agent-") or path.stem
+        try:
+            call = str(json.loads(path.with_name(path.stem + ".meta.json").read_text(encoding="utf-8")).get("toolUseId") or "")
+        except (OSError, ValueError, AttributeError):
+            call = ""
+        self.usage.extend({**line, "tool_use": call}
+                          for line in shared.usage_records_claude(recs, session_id, helper=helper))
+        for rec in recs:
+            try:
+                for inner in shared.helper_starts(rec):
+                    self.starts.setdefault(inner, {"t": shared.epoch_of(rec.get("timestamp")), "parent": call})
+            except Exception:  # noqa: BLE001
+                continue
+
+    def save(self) -> None:
+        if self._pos is None:
+            return
+        try:
+            tmp = self._pos_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._pos), encoding="utf-8")
+            os.replace(tmp, self._pos_path)
+        except OSError:
+            pass
+
+
+def helper_touched(transcript_path: str, folder: Path, usage: list[dict] | None = None,
+                   session_id: str = "") -> list[str]:
+    """The files this session's helper agents changed since the last look
+    (Helpers, its positions kept at once); ``usage`` receives their API
+    messages."""
+    got = Helpers(transcript_path, folder, session_id)
+    got.save()
+    if usage is not None:
+        usage.extend(got.usage)
+    return got.touched
 
 
 def read_transcript(transcript_path: str) -> tuple[str, str]:
@@ -305,6 +423,31 @@ def write_breadcrumb(data_root: str, project: str, session_id: str, cwd: str,
         pass
 
 
+def codex_usage(payload: dict, session_id: str, since: float | None = None) -> tuple[list[dict], dict | None]:
+    """The usage lines and the plan-limits reading of the Codex turn a Stop
+    ends, from the session file (rollout-…-<thread>.jsonl): the payload's
+    transcript when it names one, else found by the thread id. ``since``:
+    the newest call already kept (TurnCapture.codex_read_at) — every call
+    written after it is read, of whatever turn, so one written after its
+    turn's Stop is kept at the next. Without it (the chat's first Stop),
+    the turn and the one before it."""
+    given = str(payload.get("transcript_path") or "")
+    rollout = Path(given) if given and Path(given).name.startswith("rollout-") and Path(given).is_file() \
+        else shared.codex_rollout(session_id)
+    if rollout is None:
+        return [], None
+    if since is not None:
+        return shared.codex_turn_usage(rollout, since=since)
+    return shared.codex_turn_usage(rollout, str(payload.get("turn_id") or ""), back=1)
+
+
+#: Events that only record the tokens read so far: the session ended, or the
+#: turn ended on an API error (Stop does not come then). No turn closes, no
+#: read position moves: the next Stop reads the same records, and the ids
+#: already kept are skipped.
+_USAGE_ONLY_EVENTS = ("SessionEnd", "StopFailure")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--project", required=True)
@@ -349,11 +492,22 @@ def main() -> int:
             cwd = str(payload.get("cwd") or "")
             cap.note_origin(args.tool, session_id, cwd)
             write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
+            if args.tool == "claude-code" and usage_only(prompt):
+                # #usage, #usage-on, #usage-off alone: answered here, shown to
+                # the user only, and the prompt never reaches the model
+                # (UserPromptSubmit decision "block": its reason is shown to
+                # the user and not added to context). The exchange is a turn
+                # of the chat, so the chat viewer has it too.
+                answer = cap.answer_usage(prompt)
+                print(json.dumps({"decision": "block", "reason": answer,
+                                  "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                         "suppressOriginalPrompt": True}}, ensure_ascii=False))
+                return 0
             signals = cap.open_turn(prompt)
             notice = format_signals(signals, args.tool)
             if notice:
                 tell(notice)
-        elif event == "Stop":
+        elif event == "Stop" or event in _USAGE_ONLY_EVENTS:
             # The payload carries the reply itself; the transcript is not
             # guaranteed to hold the final message at Stop time (the docs say
             # so, and 2.1.251 dropped the text record of three replies in one
@@ -361,27 +515,61 @@ def main() -> int:
             # for builds that predate the field, and the source of the title,
             # the skills and the times — all from one read of what was
             # written since the previous Stop.
-            given = str(payload.get("last_assistant_message") or "").strip()
+            stop = event == "Stop"
+            given = str(payload.get("last_assistant_message") or "").strip() if stop else ""
             transcript_path = str(payload.get("transcript_path") or "")
-            seg = Segment(transcript_path, cap.transcript_pos(transcript_path), _turntimes())
+            seg = Segment(transcript_path, cap.transcript_pos(transcript_path), _turntimes() if stop else None)
+            seg.session_id = session_id
             if transcript_path:
                 seg.read()
                 tries = 0
-                while not given and not seg.text and tries < _STOP_RETRIES:
+                while stop and not given and not seg.text and tries < _STOP_RETRIES:
                     time.sleep(_STOP_RETRY_S)
                     seg.read()
                     tries += 1
+            helpers = Helpers(transcript_path, cap.folder, session_id) if transcript_path and args.tool != "codex" else None
+            # Tokens of the API messages since the last Stop (usage.jsonl),
+            # first: the turn number is the pending one, and no read position
+            # moves until they are kept.
+            if args.tool == "codex":
+                lines, limits = codex_usage(payload, session_id, cap.codex_read_at())
+                shared.limits_append(args.data_root, limits)
+                turn, _ = cap.record_usage(lines)
+                if not cap.usage_failed:
+                    cap.note_codex_read(lines)
+            else:
+                turn, _ = cap.record_usage(
+                    seg.usage_lines() + (helpers.usage if helpers else []),
+                    {**seg.starts, **(helpers.starts if helpers else {})}, compacts=seg.compacts,
+                    whole=bool(transcript_path) and (seg.from_top or bool(helpers and helpers.replay)))
+            if not stop:
+                return 0
+            kept = not cap.usage_failed
+            if helpers is not None and kept:
+                helpers.save()
             text = given or seg.text
             # What this build hands us on Stop — keys only, never values — so
             # a gap can be diagnosed from meta.json instead of guessed at.
             cap.note_stop(sorted(str(k) for k in payload), found_text=bool(text),
-                          transcript=(transcript_path, seg.end) if transcript_path else None)
+                          transcript=(transcript_path, seg.end) if transcript_path and kept else None)
             cap.record_skills(seg.skills)
+            helper_paths = helpers.touched if helpers else []
             cap.complete_turn(text, close_if_missing=True, transcript=transcript_path or None,
+                              continuation=seg.woken,
                               points=seg.points if transcript_path else None,
-                              touched=(seg.touched + [p for p in helper_touched(transcript_path, cap.folder)
-                                                      if p not in seg.touched]) if transcript_path else None)
+                              touched=(seg.touched + [p for p in helper_paths if p not in seg.touched])
+                              if transcript_path else None,
+                              committed=seg.committed if transcript_path else None,
+                              commit_calls=seg.calls.finish(shared.local_iso(datetime.now().astimezone().isoformat()))
+                              if transcript_path else None)
             cap.note_chat_title(seg.title)
+            if args.tool == "claude-code" and cap.usage_shown():
+                # The line under the reply: Stop's JSON systemMessage is shown
+                # to the user (stdout carries nothing else on Stop). A Stop
+                # that comes again for the turn (stop_hook_active) shows it once.
+                line = cap.usage_line(turn)
+                if line and cap.line_due(turn):
+                    print(json.dumps({"systemMessage": line}, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001 — capture must never take down the session it observes
         # Exit 0 keeps the session alive; the notice goes where it is shown
         # (stdout on a prompt, stderr on Stop), so the loss is named instead
