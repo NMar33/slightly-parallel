@@ -69,7 +69,8 @@ for raw in sys.stdin:
         else:
             print(json.dumps({"id": i, "result": limits}))
     elif m == "account/usage/read":
-        print(json.dumps({"id": i, "result": usage}))
+        if mode != "nousage":
+            print(json.dumps({"id": i, "result": usage}))
     sys.stdout.flush()
 '''
 
@@ -128,17 +129,24 @@ def test_read_names_its_causes(tmp_path: Path) -> None:
     assert codexlimits.read(timeout=10, exe=fake_codex(tmp_path / "neterr", mode="neterr"))["cause"] == "failed to fetch usage: dns error for <address>"
     (tmp_path / "silent").mkdir()
     t0 = time.monotonic()
-    assert codexlimits.read(timeout=1.5, exe=fake_codex(tmp_path / "silent", mode="silent"))["cause"] == "no answer in 1 s"
+    assert codexlimits.read(timeout=1.5, exe=fake_codex(tmp_path / "silent", mode="silent"))["cause"] == "no answer in 1.5 s"
     assert time.monotonic() - t0 < 10   # the process was killed, not waited for
+
+
+def test_a_hung_usage_read_keeps_the_limits(tmp_path: Path) -> None:
+    got = codexlimits.read(timeout=3, exe=fake_codex(tmp_path, mode="nousage"))
+    assert got["ok"] and got["limits_line"]["five_hour"]["used"] == 37.0 and got["usage"] is None
 
 
 def test_a_read_that_times_out_ends_what_the_wrapper_started(tmp_path: Path) -> None:
     psutil = pytest.importorskip("psutil")
-    # Long enough for the stand-in to start its child with the whole suite running.
     assert codexlimits.read(timeout=8, exe=fake_codex(tmp_path, mode="tree"))["cause"] == "no answer in 8 s"
     child = int((tmp_path / "child.pid").read_text())
     for _ in range(50):
-        if not psutil.pid_exists(child) or psutil.Process(child).status() == psutil.STATUS_ZOMBIE:
+        try:
+            if psutil.Process(child).status() == psutil.STATUS_ZOMBIE:
+                return
+        except psutil.NoSuchProcess:   # gone, also between two looks
             return
         time.sleep(0.1)
     raise AssertionError("the program the wrapper started is still running")

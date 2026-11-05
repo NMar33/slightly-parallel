@@ -179,8 +179,9 @@ def _rpc(exe: str, timeout: float) -> dict[int, Any]:
                 pipe.close()
             except (OSError, ValueError):
                 pass
-    if not finished and not want <= answers.keys():
-        raise TimeoutError(f"no answer in {int(timeout)} s")
+    # The limits are what matters: a hung usage read does not lose them.
+    if not finished and 3 not in answers:
+        raise TimeoutError(f"no answer in {timeout:g} s")
     return answers
 
 

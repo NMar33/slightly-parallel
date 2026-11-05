@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import os
 import time
 from pathlib import Path
@@ -196,6 +197,18 @@ def test_typed_text_keeps_its_semicolons_and_dashes(env) -> None:
     assert c.post(f"/api/terminal/sessions/{sid}/type", json={"text": "x"}).status_code == 404
 
 
+def _pane_state(root: Path, sid: str, log: Path) -> str:
+    """What a failure on a machine we can only reach through CI has to say:
+    the shell's pid (a new one: the shell was replaced), the size, the history
+    (grown: tmux moved the text), the cursor, all the text, the shell's bytes."""
+    target = termlib.PREFIX + sid
+    fmt = "pid=#{pane_pid} h=#{window_height} w=#{window_width} hist=#{history_size} cy=#{cursor_y} tmux=#{version}"
+    state = termlib.tmux(root, "list-panes", "-t", target, "-F", fmt).stdout.strip()
+    text = termlib.tmux(root, "capture-pane", "-p", "-S", "-", "-t", target).stdout
+    raw = log.read_bytes() if log.exists() else b""
+    return f"{state}\ntext: {text!r}\nbytes: {raw!r}"
+
+
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
 def test_lines_are_cut_out_by_their_absolute_ids(env) -> None:
     c, root, _ = env
@@ -203,30 +216,27 @@ def test_lines_are_cut_out_by_their_absolute_ids(env) -> None:
     sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
     termlib.wait_for_prompt(root, sid)
     tok = c.get("/api/terminal/state").json()["token"]
+    log = root / "pane-bytes.log"
+    termlib.tmux(root, "pipe-pane", "-t", termlib.PREFIX + sid, f"cat >> {shlex.quote(str(log))}")
     # Typed over the socket, as the page types: the Enter stamps the history.
     with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}") as ws:
         ws.send_text(json.dumps({"type": "input", "data": "printf 'A%s\\n' 1 2 3 4 5\r"}))
-        deadline = time.time() + 20
+        deadline = time.time() + 5
         while time.time() < deadline and "A5" not in termlib.capture(root, sid)["text"]:
             time.sleep(0.1)
-    # The screen and its position are two reads, and the shell may still be
-    # drawing its prompt on a slow machine: the same screen and position twice.
-    screen, pos = None, None
-    while time.time() < deadline:
-        now = termlib.capture(root, sid), c.get(f"/api/terminal/sessions/{sid}/pos").json()
-        if now == (screen, pos):
-            break
-        screen, pos = now
-        time.sleep(0.2)
-    assert screen is not None and pos is not None
-    assert screen["lines"] >= 5 and "A5" in screen["text"]
+        inside = _pane_state(root, sid, log)
+    screen = termlib.capture(root, sid)
+    after = _pane_state(root, sid, log)
+    assert screen["lines"] >= 5 and "A5" in screen["text"], f"INSIDE THE SOCKET\n{inside}\nAFTER IT\n{after}"
 
     # The row that shows A2, anchored to an absolute id, survives arithmetic.
+    pos = c.get(f"/api/terminal/sessions/{sid}/pos").json()
     rows = screen["text"].split("\n")
     idx = next(i for i, l in enumerate(rows) if l.strip() == "A2")
     a = pos["history"] - pos["scroll"] + idx
     got = c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "range", "from": a, "to": a + 2}).json()
-    assert got["text"].split("\n") == ["A2", "A3", "A4"] and got["truncated"] is False
+    assert got["text"].split("\n") == ["A2", "A3", "A4"] and got["truncated"] is False, (
+        f"INSIDE THE SOCKET\n{inside}\nAFTER IT\n{after}\nNOW\n{_pane_state(root, sid, log)}\npos {pos} a {a} idx {idx}")
 
     # "last": everything since that Enter — the output, not the command line.
     last = c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "last"}).json()

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import time
@@ -473,7 +474,7 @@ def test_setup_without_a_status_line_installs_ours_alone(env) -> None:
     out = _integrate(client, project_dir)
     cmd = _local(project_dir)["statusLine"]["command"]
     data_root = _data_root(client)
-    assert cmd.startswith(('python3 "', 'py -3 "')) and f'--data-root "{Path(data_root).as_posix()}" --then-key ' in cmd and "--then " not in cmd
+    assert cmd.startswith('py -3 "' if os.name == "nt" else 'python3 "') and f'--data-root "{Path(data_root).as_posix()}" --then-key ' in cmd and "--then " not in cmd
     assert _side(client, project_dir) == {"from": "user", "command": "", "folder": str(project_dir),
                                           "user_settings": str(env[2])}
     assert _run_status(client, project_dir, {"rate_limits": {"five_hour": {"used_percentage": 62.5}}}) == "SP · 5-hour 62%\n"
