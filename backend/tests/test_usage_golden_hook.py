@@ -206,7 +206,11 @@ def test_the_codex_hook_writes_the_golden_usage_and_limits(utc, root: Path, tmp_
         ("31600", 2, 0, 0, 0, "gpt-5.1-codex"),
     ]
     limits = (root / ".usage" / "limits.jsonl").read_text(encoding="utf-8")
-    assert limits == _golden("limits.codex.jsonl", limits)
+    want = _golden("limits.codex.jsonl", limits)
+    if os.name == "nt":
+        # The account is a key of CODEX_HOME's full path, and there the path gains a drive.
+        limits = limits.replace(_jsonl(limits)[0]["account"], _jsonl(want)[0]["account"])
+    assert limits == want
     assert [json.loads(x)["five_hour"]["used"] for x in limits.splitlines()] == [10.0, 12.5]
     imported = sessionimport.codex_usage(_LOGS / "codex" / _ROLLOUT, _THREAD)
     assert _last_wins(imported) == _last_wins(lines)

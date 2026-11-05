@@ -210,6 +210,33 @@ def _pane_state(root: Path, sid: str, log: Path) -> str:
 
 
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_a_wrapped_line_above_does_not_shift_the_lines_cut_out(env) -> None:
+    """What the page copies goes by the screen's rows. A command wider than the
+    pane takes two of them; on CI's macOS a long machine name in the prompt did
+    this now and then, and only then did the test above fail."""
+    c, root, _ = env
+    _on(c)
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    termlib.wait_for_prompt(root, sid)
+    tok = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}") as ws:
+        ws.send_text(json.dumps({"type": "input", "data": f"printf 'A%s\\n' 1 2 3 4 5 # {'x' * 240}\r"}))
+        deadline = time.time() + 5
+        while time.time() < deadline and "A5" not in termlib.capture(root, sid)["text"]:
+            time.sleep(0.1)
+    target = termlib.PREFIX + sid
+    rows = termlib.tmux(root, "capture-pane", "-p", "-t", target).stdout.split("\n")
+    joined = termlib.capture(root, sid)["text"].split("\n")
+    row = next(i for i, l in enumerate(rows) if l.strip() == "A2")
+    assert row > next(i for i, l in enumerate(joined) if l.strip() == "A2")      # it does take more rows
+    pos = c.get(f"/api/terminal/sessions/{sid}/pos").json()
+    a = pos["history"] - pos["scroll"] + row
+    got = c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "range", "from": a, "to": a + 2}).json()
+    assert got["text"].split("\n") == ["A2", "A3", "A4"]
+    c.post(f"/api/terminal/sessions/{sid}/close", json={})
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
 def test_lines_are_cut_out_by_their_absolute_ids(env) -> None:
     c, root, _ = env
     _on(c)
@@ -231,7 +258,9 @@ def test_lines_are_cut_out_by_their_absolute_ids(env) -> None:
 
     # The row that shows A2, anchored to an absolute id, survives arithmetic.
     pos = c.get(f"/api/terminal/sessions/{sid}/pos").json()
-    rows = screen["text"].split("\n")
+    # Counted on the screen's own rows, as the page counts them: the screen's
+    # text joins a wrapped line, so its lines can sit a row above the screen's.
+    rows = termlib.tmux(root, "capture-pane", "-p", "-t", termlib.PREFIX + sid).stdout.split("\n")
     idx = next(i for i, l in enumerate(rows) if l.strip() == "A2")
     a = pos["history"] - pos["scroll"] + idx
     got = c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "range", "from": a, "to": a + 2}).json()
