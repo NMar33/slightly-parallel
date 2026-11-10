@@ -984,6 +984,8 @@
   "no Agent line": "без строки Agent",
   "{n} linked later": "{n} привязано позже",
   "Show usage after each reply": "Показывать расход после каждого ответа",
+  "Usage warnings in the chat": "Предупреждения о расходе в чате",
+  "Under a Claude Code reply, a warning when the chat is about to be compacted or costs much of the 5-hour limit: its context is 70k tokens short of the context window, where Claude Code compacts it; its context passed 300k, 500k or 800k tokens; a reply read the whole chat again after a break of more than an hour; the chat used more than 25% of the current 5-hour limit. Each is shown once. #usage-warnings-on and #usage-warnings-off in a chat change this for that chat.": "Под ответом Claude Code — предупреждение, когда чат скоро будет сжат или тратит много от 5-часового лимита: его контексту осталось 70k токенов до размера окна, где Claude Code сжимает чат; его контекст превысил 300k, 500k или 800k токенов; ответ заново прочитал весь чат после перерыва больше часа; чат израсходовал больше 25% текущего 5-часового лимита. Каждое показывается один раз. #usage-warnings-on и #usage-warnings-off в чате меняют это для этого чата.",
   "Read Codex's plan limits in the background": "Читать лимиты тарифа Codex в фоне",
   "Read Codex's limits every": "Читать лимиты Codex каждые",
   "When Codex is on this machine, its plan limits are read through codex app-server on a schedule, without a chat and without tokens. Off: they come only from Codex chats in integrated folders.": "Если Codex есть на этой машине, его лимиты тарифа читаются через codex app-server по расписанию, без чата и без токенов. Выкл.: они приходят только из чатов Codex в подключённых папках.",

@@ -62,6 +62,8 @@ rest; you see the result on the page named.
 | `#usage` | Shows this chat's tokens, the plan limits of Claude Code and Codex, and the project's day against your usual one. The hook answers; the agent adds nothing. | The terminal · Usage |
 | `#usage-on` | Shows the tokens after each reply in this chat: → new ↑ output ↓ (cache). Tokens are recorded in any case. | The terminal · the chat viewer |
 | `#usage-off` | Hides the tokens after each reply in this chat. They are still recorded. | The terminal |
+| `#usage-warnings-on` | Shows the usage warnings under the replies of this chat again: a chat about to be compacted, a long chat, a reply that read the whole chat again after a break, a chat that used more than 25% of the 5-hour limit. Claude Code only. | The terminal |
+| `#usage-warnings-off` | Turns the usage warnings off in this chat. Tokens are still recorded. Claude Code only. | The terminal |
 | `#usage-price` | Updates the API prices the Usage page counts dollars with: a helper agent reads the providers' pricing pages. The days before keep their prices. | Usage |
 
 **Mark**

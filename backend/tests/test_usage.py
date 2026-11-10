@@ -1039,6 +1039,8 @@ def test_a_price_for_long_prompts_counts_as_a_change(tmp_path: Path) -> None:
     ({"sources": ["https://x"], "models": {"m": {"input": 0, "read": 1, "output": 1}}}, "input"),
     ({"sources": ["https://x"], "models": {"m": {"input": 1, "read": 1, "output": 1, "cost": 3}}}, "cost"),
     ({"sources": ["https://x"], "models": {"m": {"input": 1, "read": 1, "output": 1, "over_tokens": 5}}}, "over"),
+    ({"sources": ["https://x"], "models": {"m": {"input": 1, "read": 1, "output": 1, "over_tokens": 5,
+                                                "over": 2}}}, "over is an object"),
 ])
 def test_an_update_of_the_prices_that_cannot_be_right_is_refused(tmp_path: Path, body: dict[str, Any], word: str) -> None:
     with pytest.raises(usagelib.PricesRefused, match=word):

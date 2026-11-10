@@ -116,7 +116,9 @@ describe('the Usage page on the golden data', () => {
     const firsts = screen.getAllByRole('row').map((r) => r.firstElementChild?.textContent ?? '')
     expect(firsts.slice(1, 7)).toEqual(['Claude Code', 'claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'Total Claude Code', 'Codex'])
     for (const c of S.today.chats) {
-      const link = screen.getByRole('link', { name: new RegExp(SUMMARY.chats.find((x) => x.agent_id === c.agent_id)!.title) })
+      // The chat list's link: the analysis at the end of the page links the same chats.
+      const link = screen.getAllByRole('link', { name: new RegExp(SUMMARY.chats.find((x) => x.agent_id === c.agent_id)!.title) })
+        .find((a) => !a.closest('[data-testid="usage-analysis"]'))!
       expect(link.getAttribute('href')).toBe(`/agent/${c.agent_id}`)
       const cells = link.closest('tr')!.querySelectorAll('td')
       expect([cells[1]!.textContent, cells[2]!.textContent]).toEqual([c.new_output, c.cache])
@@ -133,7 +135,8 @@ describe('the Usage page on the golden data', () => {
     render(wrap(<UsagePage />))
     await screen.findByText(S.today.tiles.new_output!)
     fireEvent.click(screen.getByRole('button', { name: 'Codex' }))
-    expect(screen.getAllByRole('link', { name: /./ }).filter((a) => a.getAttribute('href')?.startsWith('/agent/'))).toHaveLength(1)
+    expect(screen.getAllByRole('link', { name: /./ })
+      .filter((a) => a.getAttribute('href')?.startsWith('/agent/') && !a.closest('[data-testid="usage-analysis"]'))).toHaveLength(1)
     expect(screen.getAllByTestId('task-state')).toHaveLength(1)
   })
 })

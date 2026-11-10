@@ -6,6 +6,10 @@ Routes:
   POST /api/usage/limits/refresh                         the operator's page asks for Codex's limits now (codexlimits.py)
   GET /api/usage/prices/material                         what an update of the API prices is written from
   POST /api/usage/prices                                 one update of the API prices (MCP usage_prices_write)
+  GET /api/usage/insights                                the feed of insights (writes the day's messages first)
+  POST /api/usage/insights/{id}/pin                      {pinned}: pin a message or unpin it
+  POST /api/usage/insights/{id}/hide                     hide a message
+  POST /api/usage/insights/clear                         hide every message that is not pinned
   GET /api/usage/chat/{agent_id}?block=                  one chat, turn by turn (and the #usage text)
 
 Read only but the two posts. The answers also depend on the clock (a reading goes stale, a
@@ -22,7 +26,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
-from .. import app_settings, codexlimits, usagelib
+from .. import app_settings, codexlimits, usageinsights, usagelib
 from ..actors import identity_of, refuse_agent
 from ..db import ViewStore
 from .deps import etag_for, get_store, json_response, known_project, maybe_304, not_found
@@ -113,6 +117,52 @@ def usage_prices_write(body: dict = Body(...), store: ViewStore = Depends(get_st
         return usagelib.write_prices(store.data_root, body, identity_of(body) or "operator")
     except usagelib.PricesRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+def _operator(body: dict) -> None:
+    if identity_of(body) not in ("", "operator"):
+        refuse_agent("the feed of insights is the operator's", "nothing is written for it")
+
+
+def _unreadable(exc: usageinsights.Unreadable) -> HTTPException:
+    return HTTPException(409, f"The feed of insights cannot be read, so nothing was changed: {exc}")
+
+
+@router.get("/api/usage/insights")
+def usage_insights(store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    """``{items: [{id, at, kind, key, params, pinned}], hidden}``: pinned first, then newest first."""
+    return usageinsights.feed(store)
+
+
+@router.post("/api/usage/insights/clear")
+def usage_insights_clear(body: dict = Body(default={}), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    _operator(body)
+    try:
+        return {"hidden": usageinsights.clear(store)}
+    except usageinsights.Unreadable as exc:
+        raise _unreadable(exc)
+
+
+@router.post("/api/usage/insights/{item_id}/pin")
+def usage_insight_pin(item_id: str, body: dict = Body(default={}), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    _operator(body)
+    try:
+        return {"item": usageinsights.change(store, item_id, pinned=bool(body.get("pinned", True)))}
+    except LookupError:
+        raise not_found("insight", item_id)
+    except usageinsights.Unreadable as exc:
+        raise _unreadable(exc)
+
+
+@router.post("/api/usage/insights/{item_id}/hide")
+def usage_insight_hide(item_id: str, body: dict = Body(default={}), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    _operator(body)
+    try:
+        return {"item": usageinsights.change(store, item_id, hide=True)}
+    except LookupError:
+        raise not_found("insight", item_id)
+    except usageinsights.Unreadable as exc:
+        raise _unreadable(exc)
 
 
 def _chat(store: ViewStore, agent_id: str) -> dict[str, Any]:

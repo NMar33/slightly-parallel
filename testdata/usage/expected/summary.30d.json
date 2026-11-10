@@ -357,6 +357,130 @@
    ]
   }
  ],
+ "analysis": {
+  "mix": {
+   "total_pct": 0.0,
+   "windows": 0.0,
+   "parts": [
+    {
+     "key": "helpers",
+     "pct": 0.0
+    },
+    {
+     "key": "resumes",
+     "pct": 0.0
+    },
+    {
+     "key": "rebuilds",
+     "pct": 0.0
+    },
+    {
+     "key": "over_500k",
+     "pct": 0.0
+    },
+    {
+     "key": "200k_500k",
+     "pct": 0.0
+    },
+    {
+     "key": "under_200k",
+     "pct": 0.0
+    }
+   ],
+   "helpers_n": 2
+  },
+  "prices": [
+   {
+    "key": "resume",
+    "each_pct": 0.0,
+    "times": 1,
+    "total_pct": 0.0
+   },
+   {
+    "key": "reply_under_100k",
+    "each_pct": 0.0,
+    "times": 21,
+    "total_pct": 0.0
+   }
+  ],
+  "history": [
+   {
+    "start": "2026-11-01T11:40:00",
+    "resets_at": "2026-11-01T16:40:00",
+    "peak": 62.5,
+    "capped": false,
+    "usd": 0.0,
+    "model": "",
+    "model_share": 0
+   }
+  ],
+  "chats": [],
+  "window_now": {
+   "used": 62.5,
+   "resets_at": "2026-11-01T16:40:00",
+   "read_at": "2026-11-01T14:40:00",
+   "pace_per_hour": 43.3,
+   "runs_out_at": "2026-11-01T15:31:57",
+   "lasts": false,
+   "spent_usd": 0.0
+  },
+  "units": {
+   "models": [],
+   "windows": 0,
+   "mixed": 0,
+   "days": 30,
+   "fallback": null
+  },
+  "resumes": {
+   "events": 1,
+   "cost_usd": 0.0,
+   "avg_context": 56000,
+   "avg_usd": 0.0,
+   "window_pct": 0.0,
+   "after_s": 3600,
+   "chats": [
+    {
+     "agent_id": "cc-golden",
+     "title": "Golden export",
+     "events": 1,
+     "cost_usd": 0.0
+    }
+   ]
+  },
+  "context": {
+   "replies": 21,
+   "bands": [
+    {
+     "band": "up to 100k",
+     "replies": 21,
+     "share": 1.0,
+     "cost_usd": 0.0,
+     "usd_per_reply": 0.0
+    },
+    {
+     "band": "up to 200k",
+     "replies": 0,
+     "share": 0.0,
+     "cost_usd": 0.0,
+     "usd_per_reply": 0
+    },
+    {
+     "band": "up to 500k",
+     "replies": 0,
+     "share": 0.0,
+     "cost_usd": 0.0,
+     "usd_per_reply": 0
+    },
+    {
+     "band": "over 500k",
+     "replies": 0,
+     "share": 0.0,
+     "cost_usd": 0.0,
+     "usd_per_reply": 0
+    }
+   ]
+  }
+ },
  "by_cause": [
   {
    "cause": "expired",

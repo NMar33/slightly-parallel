@@ -50,7 +50,7 @@ scans list the commits and count the lines.
 
 Every new chat in that folder, in any tool, reads the contract
 from the section. The contract covers the commands (`#scan`, `#architecture`,
-`#map`, `#task`, `#now` (and `#now-todo` …), `#decision`, `#standup`, `#evidence`, `#done`, `#core-new` (and `#core-note`, `#core`, `#core-off`), `#usage` (and `#usage-on`, `#usage-off`), `#help` and the kept tags),
+`#map`, `#task`, `#now` (and `#now-todo` …), `#decision`, `#standup`, `#evidence`, `#done`, `#core-new` (and `#core-note`, `#core`, `#core-off`), `#usage` (and `#usage-on`, `#usage-off`, `#usage-warnings-on`, `#usage-warnings-off`), `#help` and the kept tags),
 when to write which entry, and what each entry holds. Procedures live in
 built-in skills: `make-a-scan`, `keep-the-architecture-page`,
 `map-the-program`, `update-the-architecture`, `daily-standup`,
@@ -65,7 +65,7 @@ Codex's from its log, and — when Codex is on this machine — through
 `codex app-server` on a schedule, every 6 hours by default, with no chat
 and no tokens spent; Settings › Agent signals has the switch and the
 hours); the **Usage** page (`/usage`) shows them, and `#usage`
-in a chat prints them in the terminal. For Claude Code, Setup also installs the
+in a chat prints them in the terminal. Under a Claude Code reply the hook warns once when the chat's context comes within 70k tokens of the context window (Claude Code then compacts the chat; the window is the status line's, else 1M for a chat past 200k and 200k otherwise), when it passes 300k, 500k or 800k tokens, when a reply read the whole chat again after a break of over an hour, or when the chat used more than 25% of the 5-hour limit (the percent from the units the Usage page measures, kept in `<data root>/.usage/units.json`); Settings › "Usage warnings in the chat" and `#usage-warnings-off` in a chat turn them off. For Claude Code, Setup also installs the
 `SessionEnd` and `StopFailure` hooks (they only record tokens, so an interrupted
 last turn is not lost) and a status line beside the hooks. The status line keeps
 the operator's own: its command is stored in

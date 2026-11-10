@@ -18,7 +18,10 @@ What this module writes, all under ``<data root>/.usage/``:
   (``account/usage/read``), kept as given for a later look at what the
   hooks did not record.
 - ``codex-poll.json`` — the poll's state: last attempt, last success, next
-  attempt, the cause of the last failure, how many failures in a row. Kept
+  attempt (local time for the page, and ``next_epoch``, the same moment in
+  epoch seconds, which ``due`` reads: in the hour the clocks go back a local
+  time names two moments), the cause of the last failure, how many failures
+  in a row. Kept
   apart from the readings so a failing poll keeps its backoff instead of
   retrying every minute.
 
@@ -38,12 +41,10 @@ import shutil
 import signal
 import subprocess
 import threading
-import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import app_settings, hookshared
+from . import app_settings, file_safety, hookshared
 
 log = logging.getLogger("backend.codexlimits")
 
@@ -308,10 +309,7 @@ def _read_state(data_root: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=1), encoding="utf-8")
-    hookshared.replace_file(tmp, path)
+    file_safety.atomic_write(path, json.dumps(value, ensure_ascii=False, indent=1))
 
 
 def interval_s(values: dict[str, Any] | None = None) -> int:
@@ -346,14 +344,16 @@ def poll(data_root: Path, values: dict[str, Any] | None = None, now: float | Non
             written = hookshared.limits_append(data_root, got["limits_line"], now=at)
             if got.get("usage"):
                 _write_json(Path(data_root) / USAGE_DIR / ACCOUNT_FILE, got["usage"])
+            nxt = at + interval_s(values)
             state.update({"last_success": stamp, "cause": "", "failures": 0,
-                          "next_attempt": hookshared.epoch_local(at + interval_s(values))})
+                          "next_attempt": hookshared.epoch_local(nxt), "next_epoch": round(nxt, 3)})
         else:
             cause = str(got.get("cause") or "unreadable answer")
             # Another cause is another trouble: its backoff starts over.
             n = int(state.get("failures") or 0) + 1 if cause == state.get("cause") else 1
             wait = min(BACKOFF_S[min(n, len(BACKOFF_S)) - 1], interval_s(values))
-            state.update({"cause": cause, "failures": n, "next_attempt": hookshared.epoch_local(at + wait)})
+            state.update({"cause": cause, "failures": n, "next_attempt": hookshared.epoch_local(at + wait),
+                          "next_epoch": round(at + wait, 3)})
             if cause not in _logged_causes:
                 _logged_causes.add(cause)
                 log.warning("codex limits not read: %s (next try in %d min)", cause, wait // 60)
@@ -380,13 +380,16 @@ def due(data_root: Path, values: dict[str, Any], now: float | None = None) -> bo
     state's ``next_attempt`` passed (or none yet)."""
     if not enabled(values) or not detect()["found"]:
         return False
-    nxt = _read_state(data_root).get("next_attempt")
-    if not nxt:
+    st = _read_state(data_root)
+    # Epoch seconds on both sides: in the hour the clocks go back a local
+    # time names two moments. ``next_epoch`` is the moment itself; a state
+    # written before it has the local time only.
+    nxt = st.get("next_epoch")
+    if isinstance(nxt, bool) or not isinstance(nxt, (int, float)):
+        nxt = hookshared.epoch_of(st.get("next_attempt"))
+    if nxt is None:
         return True
-    try:
-        return datetime.fromisoformat(str(nxt)) <= datetime.fromtimestamp(now if now is not None else time.time())
-    except ValueError:
-        return True
+    return nxt <= (now if now is not None else hookshared.now_epoch())
 
 
 def newest_reading_age_s(data_root: Path, now: float | None = None) -> float | None:
@@ -396,12 +399,10 @@ def newest_reading_age_s(data_root: Path, now: float | None = None) -> float | N
     lines = rows.get("codex") or []
     if not lines:
         return None
-    try:
-        read_at = datetime.fromisoformat(str(lines[-1]["at"]))
-    except (KeyError, ValueError):
+    read_at = hookshared.epoch_of(lines[-1].get("at"))
+    if read_at is None:
         return None
-    ref = datetime.fromtimestamp(now if now is not None else time.time())
-    return max(0.0, (ref - read_at).total_seconds())
+    return max(0.0, (now if now is not None else hookshared.now_epoch()) - read_at)
 
 
 def refresh_wanted(data_root: Path, now: float | None = None) -> bool:
@@ -447,17 +448,23 @@ class Poller:
         if self._stop.wait(5):
             return
         while not self._stop.is_set():
-            try:
-                values = app_settings.load(self.data_root)
-                wall = time.time()
-                if self._settled(wall) and wall >= self._not_before and due(self.data_root, values):
-                    poll(self.data_root, values)
-            except Exception as exc:  # noqa: BLE001 — the poll must never end the thread
-                # Its state may not have been written (a file held open): no new try each minute.
-                self._not_before = time.time() + BACKOFF_S[0]
-                log.warning("codex limits poll failed: %s", exc)
+            self.tick()
             if self._stop.wait(WAKE_S):
                 return
+
+    def tick(self) -> bool:
+        """One wake: poll when settled and due; whether it polled. Never raises."""
+        try:
+            values = app_settings.load(self.data_root)
+            wall = hookshared.now_epoch()
+            if self._settled(wall) and wall >= self._not_before and due(self.data_root, values):
+                poll(self.data_root, values)
+                return True
+        except Exception as exc:  # noqa: BLE001 — the poll must never end the thread
+            # Its state may not have been written (a file held open): no new try each minute.
+            self._not_before = hookshared.now_epoch() + BACKOFF_S[0]
+            log.warning("codex limits poll failed: %s", exc)
+        return False
 
 
 __all__ = ["Poller", "detect", "due", "limits_line", "poll", "read", "refresh_wanted", "state"]

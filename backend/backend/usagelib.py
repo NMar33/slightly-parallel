@@ -465,6 +465,9 @@ def _clean_price(model: str, price: Any) -> dict[str, Any]:
     if (price.get("over_tokens") is None) != (price.get("over") is None):
         raise PricesRefused(f"{model}: over_tokens and over go together")
     if price.get("over") is not None:
+        if not isinstance(price["over"], dict):
+            raise PricesRefused(f"{model}: over is an object with {', '.join(PRICE_FIELDS)}, "
+                                "the prices above over_tokens")
         limit = _finite(price["over_tokens"])
         if limit is None or limit <= 0:
             raise PricesRefused(f"{model}: over_tokens is the prompt's length in tokens")
@@ -580,6 +583,25 @@ def _priced(r: dict[str, Any]) -> None:
     r["cost_output"] = round(r["output"] * float(price.get("output") or 0))
 
 
+#: A break after which coming back to a chat is counted as a resume (the
+#: 1-hour cache has gone by then).
+RESUME_GAP_S = 3600
+#: The context bands of the analysis: up to 100k, 200k, 500k, and above.
+CONTEXT_BANDS = (100_000, 200_000, 500_000)
+
+
+def _band_of(tokens: int) -> int:
+    for i, top in enumerate(CONTEXT_BANDS):
+        if tokens <= top:
+            return i
+    return len(CONTEXT_BANDS)
+
+
+def _gap_s(a: Any, b: str) -> float | None:
+    x, y = _moment(a), _moment(b)
+    return (y - x).total_seconds() if x is not None and y is not None else None
+
+
 def _rebuild_kind(last: dict[str, Any], r: dict[str, Any]) -> str:
     """Why old context was written again: the cache's lifetime passed since
     the message before, the model changed, or not known."""
@@ -630,6 +652,7 @@ def _parse_usage(data: bytes) -> dict[str, Any]:
     no_time = 0
     # What each agent of the chat (the main one, each helper) left cached.
     left: dict[str, dict[str, Any]] = {}
+    slots: dict[tuple[str, str], int] = {}
     for _pos, r in merged:
         n = r["turn"]
         # Rebuilt: the part of what the message before left cached that this
@@ -638,9 +661,15 @@ def _parse_usage(data: bytes) -> dict[str, Any]:
         last = left.get(r["helper"]) or {"held": 0}
         r["rebuilt"] = 0 if r["compacted"] else min(r["cache_write"], max(0, last["held"] - r["cache"]))
         kind = _rebuild_kind(last, r) if r["rebuilt"] else ""
+        gap_s = _gap_s(last.get("at"), r["at"])
         left[r["helper"]] = {"held": r["cache"] + r["cache_write"], "at": r["at"], "model": r["model"],
                              "ttl": r["ttl"] or last.get("ttl") or ""}
         _priced(r)
+        cost = sum(r[k] for k in _COSTS)
+        if r["at"] and cost and r["tool"] == "claude-code":
+            # Ten-minute slots of dollars by model: what the plan limits' readings are set against.
+            slot = (r["at"][:15] + "0", r["model"])
+            slots[slot] = slots.get(slot, 0) + cost
         t = turns.get(n)
         if t is None:
             t = turns[n] = {"main": _sums(), "messages": 0, "models": [], "model": "", "at": "",
@@ -688,7 +717,24 @@ def _parse_usage(data: bytes) -> dict[str, Any]:
         b = buckets.get(key)
         if b is None:
             b = buckets[key] = {"main": _sums(), "helpers": _sums(), "helper_ids": set(),
-                                "models": {}, "model": "", "model_at": "", "causes": {}}
+                                "models": {}, "model": "", "model_at": "", "causes": {}, "ctx": {},
+                                "resumes": {"events": 0, "cost": 0, "context": 0, "by_model": {}}}
+        if not r["helper"] and r["tool"] == "claude-code":
+            # Claude Code's main agent's replies by the size of the context
+            # they read: the 5-hour window is Claude Code's, other tools'
+            # replies have limits of their own.
+            band = b["ctx"].setdefault(_band_of(r["new"] + r["cache"]), [0, 0, {}])
+            band[0] += 1
+            reply = cost - r["cost_rebuilt"]      # the reply itself; a rebuild is counted apart
+            band[1] += reply
+            band[2][r["model"]] = band[2].get(r["model"], 0) + reply
+            if gap_s is not None and gap_s > RESUME_GAP_S and r["rebuilt"] >= REBUILD_FLOOR:
+                # Back to the chat after a long break: the context written again.
+                rs = b["resumes"]
+                rs["events"] += 1
+                rs["cost"] += r["cost_rebuilt"]
+                rs["context"] += r["new"] + r["cache"]
+                rs["by_model"][r["model"]] = rs["by_model"].get(r["model"], 0) + r["cost_rebuilt"]
         if kind and not r["helper"]:
             c = b["causes"].setdefault(kind, {"rebuilt": 0, "cost": 0, "events": 0})
             c["rebuilt"] += r["rebuilt"]
@@ -705,11 +751,11 @@ def _parse_usage(data: bytes) -> dict[str, Any]:
         elif r["model"] and r["at"] >= b["model_at"]:
             b["model"], b["model_at"] = r["model"], r["at"]
     return {"turns": turns, "buckets": buckets, "tools": tools, "bad": bad, "no_time": no_time,
-            "unreadable": False}
+            "unreadable": False, "slots": slots}
 
 
 _EMPTY_USAGE: dict[str, Any] = {"turns": {}, "buckets": {}, "tools": [], "bad": 0, "no_time": 0,
-                                "unreadable": False, "sig": None}
+                                "unreadable": False, "sig": None, "slots": {}}
 
 # path → (sig, parsed): a usage file is parsed again only when it moved.
 _usage: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
@@ -1685,6 +1731,18 @@ def _usd(micro: int) -> float:
     return round(micro / 1_000_000, 2)
 
 
+def _analysis(store: Any, ref: datetime, bands: dict[int, list[Any]], resumes: dict[str, Any],
+              resume_chats: dict[str, list[int]], agent_rows: dict[str, dict[str, Any]],
+              tools: list[dict[str, Any]], totals: dict[str, Any], chats: list[dict[str, Any]],
+              chat_costs: dict[str, dict[tuple[str, str], int]]) -> dict[str, Any]:
+    from . import usageanalysis, usagewarn
+    got = usageanalysis.build(store, ref, bands, resumes, resume_chats, agent_rows, tools, totals, chats,
+                              chat_costs)
+    # The hook reads the units for the warnings under a reply (usagewarn.py).
+    usagewarn.write_units(Path(store.data_root), got.get("units"))
+    return got
+
+
 def _prices_shown(book: dict[str, Any], tools: list[dict[str, Any]]) -> dict[str, Any]:
     """The newest price of each model in the range; a model with none is named apart."""
     seen = sorted({x["model"] for tl in tools for x in tl["models"] if x["model"]})
@@ -1726,6 +1784,9 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
     days = range_days(rng, ref.date())
     book = use_prices(Path(store.data_root))
     causes: dict[str, dict[str, Any]] = {}
+    bands: dict[int, list[Any]] = {}
+    resumes: dict[str, Any] = {"events": 0, "cost": 0, "context": 0, "by_model": {}}
+    resume_chats: dict[str, list[int]] = {}
     wanted = set(days)
     data_root = Path(store.data_root)
     scope = [a for a in store.agents() if project in (None, "", "all") or str(a.get("project") or "") == project]
@@ -1736,6 +1797,9 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
     per_chat: dict[str, _Row] = {}
     chat_model: dict[str, tuple[str, str]] = {}
     chat_tool: dict[str, str] = {}
+    # Each chat's dollars (helpers included) by (tool, model): the analysis
+    # prices a chat's share of the 5-hour window model by model.
+    chat_costs: dict[str, dict[tuple[str, str], int]] = {}
     per_turn: dict[tuple[str, int], _Row] = {}
     every: list[dict[str, Any]] = []
     notes_bad: dict[str, list[int]] = {}
@@ -1779,6 +1843,22 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
                 row.helper_ids |= {(aid, h) for h in b["helper_ids"]}
                 row.tools.add(tool)
                 row.rebuilds += sum(c["events"] for c in b["causes"].values())
+            for band, (n_msgs, c_micro, c_models) in b["ctx"].items():
+                got_b = bands.setdefault(band, [0, 0, {}])
+                got_b[0] += n_msgs
+                got_b[1] += c_micro
+                for model, c_m in c_models.items():
+                    got_b[2][model] = got_b[2].get(model, 0) + c_m
+            rs = b["resumes"]
+            if rs["events"]:
+                resumes["events"] += rs["events"]
+                resumes["cost"] += rs["cost"]
+                resumes["context"] += rs["context"]
+                for model, c_micro in rs["by_model"].items():
+                    resumes["by_model"][model] = resumes["by_model"].get(model, 0) + c_micro
+                chat_r = resume_chats.setdefault(aid, [0, 0])
+                chat_r[0] += rs["events"]
+                chat_r[1] += rs["cost"]
             for kind, c in b["causes"].items():
                 got = causes.setdefault(kind, {"rebuilt": 0, "cost": 0, "events": 0, "chats": set()})
                 got["rebuilt"] += c["rebuilt"]
@@ -1786,6 +1866,8 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
                 got["events"] += c["events"]
                 got["chats"].add(aid)
             for (model, is_helper), ms in b["models"].items():
+                cc = chat_costs.setdefault(aid, {})
+                cc[(tool, model)] = cc.get((tool, model), 0) + sum(ms[k] for k in _COSTS)
                 mr = by_model.setdefault((tool, model), _Row())
                 mr.turns.add(key)
                 if is_helper:
@@ -1903,6 +1985,7 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
                                         "new_output", "share", "turns", "cost_usd", "cost", "unpriced")},
                    "chats": len(seen), "helpers": t["helpers"]},
         "by_tool": tools,
+        "analysis": _analysis(store, ref, bands, resumes, resume_chats, agent_rows, tools, t, chats, chat_costs),
         "by_cause": sorted(({"cause": k, "rebuilt": c["rebuilt"], "cost_usd": _usd(c["cost"]),
                              "events": c["events"], "chats": len(c["chats"])} for k, c in causes.items()),
                            key=lambda x: (-x["rebuilt"], x["cause"])),

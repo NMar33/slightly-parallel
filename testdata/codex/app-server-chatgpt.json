@@ -1,0 +1,81 @@
+{
+ "_note": "Codex app-server answers to account/read (id 2) and account/rateLimits/read (id 3) from a ChatGPT (Plus) login, recorded 2026-11-10 with codex-cli 0.163.0; the account id and email are replaced.",
+ "account_read": {
+  "id": 2,
+  "result": {
+   "account": {
+    "type": "chatgpt",
+    "email": "user@example.com",
+    "planType": "plus"
+   },
+   "requiresOpenaiAuth": true,
+   "workspaceRouting": {
+    "chatgptAccountId": "00000000-0000-0000-0000-000000000000",
+    "backendOrigin": "https://chatgpt.com",
+    "accountRoutingOverride": "NO_CONSTRAINT"
+   }
+  }
+ },
+ "rate_limits_read": {
+  "id": 3,
+  "result": {
+   "ordinaryUsageAllowed": true,
+   "rateLimits": {
+    "limitId": "codex",
+    "limitName": null,
+    "normalModelSlug": null,
+    "primary": {
+     "usedPercent": 1,
+     "windowDurationMins": 300,
+     "resetsAt": 1794306054
+    },
+    "secondary": {
+     "usedPercent": 64,
+     "windowDurationMins": 10080,
+     "resetsAt": 1794399898
+    },
+    "credits": {
+     "hasCredits": false,
+     "unlimited": false,
+     "balance": "0"
+    },
+    "individualLimit": null,
+    "spendControlReached": false,
+    "planType": "plus",
+    "rateLimitReachedType": null
+   },
+   "rateLimitsByLimitId": {
+    "codex": {
+     "limitId": "codex",
+     "limitName": null,
+     "normalModelSlug": null,
+     "primary": {
+      "usedPercent": 1,
+      "windowDurationMins": 300,
+      "resetsAt": 1794306054
+     },
+     "secondary": {
+      "usedPercent": 64,
+      "windowDurationMins": 10080,
+      "resetsAt": 1794399898
+     },
+     "credits": {
+      "hasCredits": false,
+      "unlimited": false,
+      "balance": "0"
+     },
+     "individualLimit": null,
+     "spendControlReached": false,
+     "planType": "plus",
+     "rateLimitReachedType": null
+    }
+   },
+   "rateLimitResetCredits": {
+    "availableCount": 2,
+    "credits": null
+   },
+   "accountId": "00000000-0000-0000-0000-000000000000",
+   "rateLimitUpsell": null
+  }
+ }
+}

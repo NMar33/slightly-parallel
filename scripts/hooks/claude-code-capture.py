@@ -65,6 +65,102 @@ def is_system_payload(prompt: str) -> bool:
 _is_human_prompt = shared.is_human_prompt
 
 
+#: The tools whose results facts.jsonl counts apart; ``mcp__*`` is ``MCP``,
+#: the rest ``other``. ``Task`` is the Agent tool's older name.
+_FACT_TOOLS = ("Read", "Bash", "Grep", "Glob", "Edit", "Write", "Agent", "WebFetch", "WebSearch")
+
+
+def _chars(content) -> tuple[int, int]:
+    """(characters, images) of a message content: text, or a list of blocks."""
+    if isinstance(content, str):
+        return len(content), 0
+    n = images = 0
+    for p in content if isinstance(content, list) else ():
+        if not isinstance(p, dict):
+            continue
+        if p.get("type") == "image":
+            images += 1
+        elif isinstance(p.get("text"), str):
+            n += len(p["text"])
+        elif isinstance(p.get("content"), (str, list)):
+            more, pics = _chars(p["content"])
+            n, images = n + more, images + pics
+    return n, images
+
+
+class Facts:
+    """What a stretch of the transcript added to the chat, for facts.jsonl:
+    characters by kind (``operator``, ``notices``, ``agent_text``,
+    ``agent_tool_calls``, ``thinking``, ``result_<tool>``), ``images``
+    counted, and the tool calls by name. Counted while Segment reads, so the
+    transcript is read once; never reset at a prompt."""
+
+    def __init__(self) -> None:
+        self.appended: dict[str, int] = {}
+        self.tools: dict[str, int] = {}
+        self._calls: dict[str, str] = {}    # tool_use id → the bucket of its result
+
+    def _add(self, kind: str, n: int) -> None:
+        if n:
+            self.appended[kind] = self.appended.get(kind, 0) + n
+
+    @staticmethod
+    def _bucket(name: str) -> str:
+        if name.startswith("mcp__"):
+            return "MCP"
+        if name == "Task":
+            return "Agent"
+        return name if name in _FACT_TOOLS else "other"
+
+    def take(self, rec: dict) -> None:
+        kind = rec.get("type")
+        if kind == "attachment":
+            # What the model reads of an attachment is its rendered text
+            # (system reminders, a prompt hook's output); a Stop hook's
+            # message has none.
+            for r in rec.get("rendered") or []:
+                if isinstance(r, dict):
+                    n, pics = _chars(r.get("content"))
+                    self._add("notices", n)
+                    self._add("images", pics)
+            return
+        content = (rec.get("message") or {}).get("content")
+        if kind == "assistant":
+            for p in content if isinstance(content, list) else ():
+                if not isinstance(p, dict):
+                    continue
+                t = p.get("type")
+                if t == "text":
+                    self._add("agent_text", len(str(p.get("text") or "")))
+                elif t == "thinking":
+                    self._add("thinking", len(str(p.get("thinking") or "")))
+                elif t == "tool_use":
+                    name = str(p.get("name") or "")
+                    self.tools[name] = self.tools.get(name, 0) + 1
+                    self._calls[str(p.get("id") or "")] = self._bucket(name)
+                    self._add("agent_tool_calls", len(json.dumps(p.get("input"), ensure_ascii=False)))
+            return
+        if kind != "user":
+            return
+        aside = bool(rec.get("isMeta") or rec.get("isCompactSummary"))
+        if isinstance(content, str):
+            self._add("notices" if aside or is_system_payload(content) else "operator", len(content))
+            return
+        for p in content if isinstance(content, list) else ():
+            if not isinstance(p, dict):
+                continue
+            t = p.get("type")
+            if t == "tool_result":
+                n, pics = _chars(p.get("content"))
+                self._add("result_" + self._calls.get(str(p.get("tool_use_id") or ""), "other"), n)
+                self._add("images", pics)
+            elif t == "image":
+                self._add("images", 1)
+            elif t == "text":
+                text = str(p.get("text") or "")
+                self._add("notices" if aside or is_system_payload(text) else "operator", len(text))
+
+
 class Segment:
     """What a stretch of the tool's JSONL transcript says, read once.
 
@@ -109,6 +205,7 @@ class Segment:
         self.starts: dict[str, dict] = {}
         self.compacts: list[float] = []
         self.from_top = self.end == 0
+        self.facts = Facts()
         # The last prompt in the stretch was the tool's own — a helper's
         # report, a background task's notification — not the operator's: the
         # reply after it continues the operator's last turn (no
@@ -150,6 +247,10 @@ class Segment:
         return self
 
     def _take(self, rec: dict) -> None:
+        try:
+            self.facts.take(rec)
+        except Exception:  # noqa: BLE001 — a count never costs the turn
+            pass
         kind = rec.get("type")
         if self.tt is not None and kind in self.tt._ACTIVITY:
             at = self.tt._parse(rec.get("timestamp"))
@@ -563,13 +664,24 @@ def main() -> int:
                               commit_calls=seg.calls.finish(shared.local_iso(datetime.now().astimezone().isoformat()))
                               if transcript_path else None)
             cap.note_chat_title(seg.title)
-            if args.tool == "claude-code" and cap.usage_shown():
-                # The line under the reply: Stop's JSON systemMessage is shown
-                # to the user (stdout carries nothing else on Stop). A Stop
-                # that comes again for the turn (stop_hook_active) shows it once.
-                line = cap.usage_line(turn)
-                if line and cap.line_due(turn):
-                    print(json.dumps({"systemMessage": line}, ensure_ascii=False))
+            if args.tool == "claude-code":
+                # The line under the reply, then a usage warning on its own
+                # line: Stop's JSON systemMessage is shown to the user (stdout
+                # carries nothing else on Stop). A Stop that comes again for
+                # the turn (stop_hook_active) shows each once.
+                parts = []
+                if cap.usage_shown():
+                    line = cap.usage_line(turn)
+                    if line and cap.line_due(turn):
+                        parts.append(line)
+                warned = cap.usage_warning(turn) if cap.usage_warned() else None
+                if warned:
+                    parts.append(warned[1])
+                if parts:
+                    print(json.dumps({"systemMessage": "\n".join(parts)}, ensure_ascii=False))
+                facts = seg.facts
+                if transcript_path and (facts.appended or facts.tools or warned):
+                    cap.record_facts(turn, facts.appended, facts.tools, [warned[0]] if warned else [])
     except Exception as exc:  # noqa: BLE001 — capture must never take down the session it observes
         # Exit 0 keeps the session alive; the notice goes where it is shown
         # (stdout on a prompt, stderr on Stop), so the loss is named instead

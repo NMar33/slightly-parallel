@@ -1098,7 +1098,41 @@ moment. The golden root `testdata/usage/root` and its snapshots
   warm, output, helpers}` the same by kind, `unpriced` the tokens of
   models with no price), `by_cause` (`cause` expired | model | other,
   `rebuilt`, `cost_usd`, `events`: rebuilds over 20k tokens, `chats`),
-  `api_prices` (`as_of`, `sources`, `models`: the newest price of the
+  `analysis` (backend usageanalysis.py; Claude Code's own replies only,
+  since the 5-hour window is Claude Code's: other tools' replies, an
+  OpenCode chat on a Claude model included, are left out of every part;
+  a percent is of one 5-hour window, and null where no rate was measured.
+  `window_now` — the 5-hour window open now: `used`, `resets_at`,
+  `read_at`, `pace_per_hour` over the last hour of readings, `runs_out_at`
+  at that pace or `lasts`, `spent_usd` in the window so far; the page reads
+  `used`, `resets_at`, `runs_out_at`, `lasts`. `units` — percent of the
+  window per dollar at API prices, per model, measured over the last 30
+  days in windows where one model made 85% of the dollars: `{models:
+  [{model, pct_per_usd, low, high, windows, window_usd}], windows, mixed,
+  days, fallback}`; `fallback` is the median over every window, used for
+  a model with no window of its own (null with none); the server keeps
+  `models` and `fallback` in `.usage/units.json` for the Stop hook's
+  warnings. `mix` — where the range's use of the window went: `{total_pct,
+  windows, helpers_n, parts: [{key, pct}]}`, `key` one of `helpers`,
+  `resumes`, `rebuilds`, `over_500k`, `200k_500k`, `under_200k`, and
+  `other` for a rest over 0.5; the parts do not overlap and each model is
+  counted at its own rate. `prices` — what one occurrence of a pattern
+  takes of the window, dearest first: `[{key, model?, each_pct, times,
+  total_pct}]`, `key` one of `resume`, `helper`, `message` (per model,
+  from 3 replies), `reply_over_500k`, `reply_200k_500k`,
+  `reply_100k_200k`, `reply_under_100k`. `history` — the past 5-hour
+  windows of the last 14 days, oldest first: `[{start, resets_at, peak,
+  capped, usd, model, model_share}]` (`capped`: it reached 99%; `model` the
+  one that made most of the dollars). `chats` — the 8 chats that took the
+  most of the window, each model of a chat at its own rate, helpers
+  included: `[{agent_id, title, model, pct, helpers_share, rebuilt_share,
+  rebuilds, turns}]`. `resumes` — replies after a break over an hour that
+  wrote the context again: `events, cost_usd, avg_context, avg_usd,
+  window_pct, after_s, chats`. `context` — the main agent's replies by the
+  size of the context they read: `{replies, bands: [{band, replies, share,
+  cost_usd, usd_per_reply}]}`. The page reads `window_now`, `units`, `mix`
+  and `prices`; the feed of insights reads `history`, `chats`, `resumes`
+  and `prices`; the MCP `usage` tool gives all of it),   `api_prices` (`as_of`, `sources`, `models`: the newest price of the
   models in the range, dollars per million tokens, `missing`: models with
   none; a message is priced as of its own day), `by_tool` (`tool`, the same sums, `share`, `turns`, `helpers`
   and `models` with the same keys and `model`), `chats` (top 40:
@@ -1160,14 +1194,26 @@ moment. The golden root `testdata/usage/root` and its snapshots
   `{refreshed: false, why: "fresh"}` when the newest reading is younger
   than 15 minutes, `why: "absent"` when Codex is not on this machine. An
   agent's request is refused.
+- `GET /api/usage/insights` — the feed of insights: `{items: [{id, at,
+  kind, key, params, pinned, hidden_at}], hidden}`, pinned first, then
+  newest first. Writes the day's messages first when the day has none: one
+  ordinary message a day (`model`, `context`, `resume`, `helpers`, `chat`,
+  `cheap`; the heaviest kind not shown in the last 7 days) and one `cap`
+  for each 5-hour window that ran out in the last 3 days, at most two a day.
+  Kept in `.usage/insights.json`; the texts are the page's. A file that
+  cannot be read is never written over: the feed answers no items.
+- `POST /api/usage/insights/{id}/pin` — `{pinned}`. `POST
+  /api/usage/insights/{id}/hide` hides one. `POST /api/usage/insights/clear`
+  hides every message that is not pinned. An agent's request is refused;
+  409 when `.usage/insights.json` cannot be read (nothing is changed).
 - `GET /api/usage/prices/material` — `{models_used, prices_now, as_of,
   pages, instructions}`: what an update of the API prices is written from
   (MCP `usage_prices_material`, the command #usage-price).
 - `POST /api/usage/prices` — `{models: {model: {input, write_5m, write_1h,
   read, output, over_tokens?, over?}}, sources: [https url], note?}`: one
   update, appended to `.usage/api-prices.jsonl`. Answers `{at, changed,
-  new_models, unchanged, warnings}`; a price outside 0–1000 is refused
-  (MCP `usage_prices_write`).
+  new_models, unchanged, warnings}`; a price outside 0–1000 is refused,
+  and so is an `over` that is not an object (MCP `usage_prices_write`).
 - `GET /api/usage/chat/{agent_id}?block=` — one chat: `agent_id`,
   `project`, `show` (the line after each reply is shown: the chat's
   `#usage-on`/`#usage-off`, else the setting `agent.usage_show`), `turns`

@@ -59,6 +59,78 @@ once:
 Thresholds live in Settings (the Agent signals and Chats groups) and persist
 in `settings.json` at the data root, which the capture core reads directly.
 
+## Facts for analysis
+
+For Claude Code, the `Stop` hook adds one line per turn to `facts.jsonl` in the
+chat's folder, beside `chat.md`: what the chat's context grew by since the last
+`Stop`, so a month of them shows where the tokens go.
+
+```json
+{"turn": 12, "at": "2026-11-10T15:31:40",
+ "appended": {"operator": 210, "notices": 1840, "agent_text": 960, "agent_tool_calls": 3100,
+              "thinking": 0, "result_Read": 41200, "result_Bash": 5300, "result_MCP": 800, "images": 1},
+ "tools": {"Read": 6, "Bash": 3, "mcp__slightly-parallel__tasks": 1},
+ "warnings": ["context"]}
+```
+
+- `appended` — characters by kind; a kind with nothing is left out.
+  `operator` is what the person typed; `notices` what the tool added for the
+  model (system reminders, a prompt hook's output, a helper's report, a
+  compaction summary); `agent_text`, `agent_tool_calls` (each call's input as
+  JSON) and `thinking` are the agent's (Claude Code often keeps thinking empty
+  in its log, so it is mostly 0); `result_<tool>` are tool results, by the tool
+  that asked: `Read`, `Bash`, `Grep`, `Glob`, `Edit`, `Write`, `Agent`,
+  `WebFetch`, `WebSearch`, `MCP` (every `mcp__*` tool) and `other`. `images`
+  is a count, not characters.
+- `tools` — the tool calls by their full name.
+- `warnings` — the usage warnings shown under the reply (`compact`,
+  `context`, `rebuild`, `window`; [`usagewarn.py`](../backend/backend/usagewarn.py)).
+
+The hook counts while it reads the transcript from where the previous `Stop`
+stopped, so the transcript is never read whole. A `Stop` that adds nothing
+writes no line. The file is never pruned: a line is about 300 bytes, a few
+hundred kilobytes for a long chat.
+
+## Usage files at the data root
+
+Besides each chat's `usage.jsonl`, the server and the hooks keep these in
+`<data root>/.usage/`:
+
+- `units.json` — what one dollar at API prices takes of Claude Code's
+  5-hour limit, per model, as the Usage page measured it over the last 30
+  days ([`usageanalysis.py`](../backend/backend/usageanalysis.py)):
+
+  ```json
+  {"at": "2026-11-10T15:31:40", "days": 30,
+   "models": {"claude-opus-5-5": 0.62, "claude-fable-5-1": 2.4}, "fallback": 0.7}
+  ```
+
+  `fallback` is the rate of every window, for a model with none of its own
+  (null when nothing was measured). The server writes it each time it builds
+  the page's analysis, only when it changed, through a temp file it deletes
+  on a failure; Claude Code's `Stop` hook reads it for the percent in its
+  warnings. Without it the warnings name tokens only.
+- `insights.json` — the Usage page's feed of insights
+  ([`usageinsights.py`](../backend/backend/usageinsights.py)):
+
+  ```json
+  {"day": "2026-11-10",
+   "items": [{"id": "in_1a2b3c4d", "at": "2026-11-10T09:00:00", "kind": "resume", "key": "",
+              "params": {"each": 3.9, "n": 16, "total": 63, "ctx": 450000},
+              "pinned": false, "hidden_at": ""}]}
+  ```
+
+  `day` is the day the last messages were written; a message keeps the
+  numbers it was written with, the page holds the words. Hidden messages
+  stay in the file with `hidden_at`. The server writes it under a file lock
+  through a temp file; a file it cannot read is never written over (the
+  feed shows nothing until it is fixed or removed). It is never pruned.
+- `api-prices.jsonl` (the price updates, appended), `limits.jsonl` (the plan
+  limits' readings), `codex-poll.json` and `codex-account.json` (the
+  background reading of Codex's limits) and `sessions/` (each open Claude
+  Code chat's status line) are described with their routes in
+  [api.md](api.md).
+
 ## Guarantees
 
 - **The tool keeps working** — every adapter catches every error. When

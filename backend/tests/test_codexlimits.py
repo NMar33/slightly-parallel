@@ -284,3 +284,40 @@ def test_limits_append_keeps_the_series_with_rollout_lines(tmp_path: Path) -> No
 def test_no_tmp_files_left(tmp_path: Path) -> None:
     codexlimits.poll(tmp_path, _values(), now=time.time(), reader=lambda: {"ok": False, "cause": "x"})
     assert not [p for p in (tmp_path / ".usage").iterdir() if p.suffix == ".tmp"]
+
+
+def test_the_poll_reads_one_clock_sp_now(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``due`` and the reading's age follow SP_NOW like ``poll`` does (one clock)."""
+    monkeypatch.setattr(codexlimits, "detect", lambda: {"found": True})
+    monkeypatch.setenv("SP_NOW", "2026-11-05T01:00:00")
+    codexlimits.poll(tmp_path, _values(), reader=lambda: {"ok": False, "cause": "x"})
+    assert codexlimits._read_state(tmp_path)["next_attempt"] == "2026-11-05T01:15:00"
+    assert not codexlimits.due(tmp_path, _values())
+    monkeypatch.setenv("SP_NOW", "2026-11-05T01:16:00")
+    assert codexlimits.due(tmp_path, _values())
+    line = {"at": "2026-11-05T01:00:00", "tool": "codex", "account": "a", "five_hour": {"used": 3.0}}
+    hookshared.limits_append(tmp_path, line, now=datetime(2026, 11, 5, 1, 0).timestamp())
+    assert codexlimits.newest_reading_age_s(tmp_path) == 16 * 60
+
+
+RECORDED = json.loads((Path(__file__).resolve().parents[2] / "testdata" / "codex" / "app-server-chatgpt.json")
+                      .read_text(encoding="utf-8"))
+
+
+def test_a_recorded_answer_from_a_chatgpt_login_is_read() -> None:
+    """Codex's own answer to account/rateLimits/read with a Plus plan
+    (credits, reset credits and the rest kept as they came)."""
+    result = RECORDED["rate_limits_read"]["result"]
+    line = codexlimits.limits_line(result, "2026-11-10T16:20:00")
+    assert line is not None and line["plan"] == "plus" and line["source"] == "app-server"
+    assert line["five_hour"] == {"used": 1.0, "resets_at": hookshared.epoch_local(1794306054), "span_s": 300 * 60}
+    assert line["seven_day"] == {"used": 64.0, "resets_at": hookshared.epoch_local(1794399898), "span_s": 10080 * 60}
+    assert line["account_id"] == "00000000-0000-0000-0000-000000000000"
+    assert "@" not in json.dumps(RECORDED).replace("user@example.com", "")
+
+
+def test_read_takes_the_recorded_answer_through_the_protocol(tmp_path: Path) -> None:
+    got = codexlimits.read(timeout=10, exe=fake_codex(tmp_path, limits=RECORDED["rate_limits_read"]["result"]),
+                           at="2026-11-10T16:20:00")
+    assert got["ok"], got
+    assert got["limits_line"]["seven_day"]["used"] == 64.0 and got["limits_line"]["plan"] == "plus"

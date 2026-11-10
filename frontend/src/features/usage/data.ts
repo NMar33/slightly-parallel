@@ -129,6 +129,18 @@ export interface UsageCounts {
 
 export interface ApiPrice { model: string; input: number; write_5m: number | null; write_1h: number | null; read: number; output: number; over_tokens?: number | null }
 export interface ApiPrices { as_of: string; sources?: string[]; models: ApiPrice[]; missing?: string[] }
+/** The part of the server's analysis (usageanalysis.py) this page reads. The
+ *  answer holds more (history, chats, resumes, context; see docs/api.md):
+ *  the feed of insights and the MCP usage tool read those on the server. */
+export interface UsageAnalysis {
+  window_now: { used: number; resets_at: string; runs_out_at: string | null; lasts: boolean } | null
+  units: { models: { model: string; pct_per_usd: number }[] }
+  /** Where the range's use of the window went, in percent of one window. */
+  mix?: { total_pct: number; windows: number; parts: { key: string; pct: number }[]; helpers_n: number }
+  /** What one occurrence of each pattern takes of the window, dearest first. */
+  prices?: { key: string; model?: string; each_pct: number; times: number; total_pct: number }[]
+}
+
 /** Why old context was written to the cache again, summed over the range. */
 export interface CauseUsage { cause: string; rebuilt: number; cost_usd: number; events: number; chats: number }
 
@@ -171,6 +183,7 @@ export interface TaskUsage extends Partial<UsageCounts> {
 export interface UsageSummary {
   api_prices?: ApiPrices
   by_cause?: CauseUsage[]
+  analysis?: UsageAnalysis
   range: UsageRange
   project?: string
   days: string[]

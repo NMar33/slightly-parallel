@@ -52,6 +52,9 @@ jobs:
         run: python -m pyright
       - name: "Run tests (-rs: a skipped test is named, never silent)"
         run: python -m pytest -q -rs tests
+      - name: "macOS: a server started at login finds Codex in /opt/homebrew/bin (a short PATH)"
+        if: runner.os == 'macOS'
+        run: env -i HOME="$HOME" PATH=/usr/bin:/bin "$(python -c 'import sys; print(sys.executable)')" ../scripts/ci/codex_path_check.py
       - name: API reference names every route
         if: runner.os == 'Linux'
         run: python ../scripts/check_api_doc.py
@@ -112,7 +115,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python -m pip install -q -r backend/requirements.txt
-          npm install -g @openai/codex
+          # Pinned to what npm installed on 2026-11-10: a new Codex changes the answer
+          # codexlimits reads, so it is moved on purpose, with this check green.
+          npm install -g @openai/codex@0.167.0
           printenv OPENAI_API_KEY | codex login --with-api-key
       - name: One read of the limits from the real program
         if: steps.key.outputs.ok

@@ -106,6 +106,21 @@ SPECS: tuple[SettingSpec, ...] = (
         type="bool", default=False, group="Agent signals",
     ),
     SettingSpec(
+        key="usage.warnings",
+        label="Usage warnings in the chat",
+        description=(
+            "Under a Claude Code reply, a warning when the chat is about to be "
+            "compacted or costs much of the 5-hour limit: its context is 70k tokens "
+            "short of the context window, where Claude Code compacts it; its "
+            "context passed 300k, 500k or 800k tokens; a reply "
+            "read the whole chat again after a break of more than an hour; the "
+            "chat used more than 25% of the current 5-hour limit. Each is shown "
+            "once. #usage-warnings-on and #usage-warnings-off in a chat change "
+            "this for that chat."
+        ),
+        type="bool", default=True, group="Agent signals",
+    ),
+    SettingSpec(
         key="usage.codex_poll",
         label="Read Codex's plan limits in the background",
         description=(

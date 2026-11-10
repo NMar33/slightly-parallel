@@ -116,6 +116,12 @@ _SETTING_DEFAULTS = {
     # #usage-on / #usage-off outranks it (meta.json usage_show).
     "usage_show": False,
 }
+# The settings of the ``usage`` section the hook reads (app_settings.py too):
+# warnings under a reply when a chat costs much of the 5-hour limit; a chat's
+# #usage-warnings-on / #usage-warnings-off outranks it (meta.json usage_warn).
+_USAGE_SETTING_DEFAULTS = {
+    "warnings": True,
+}
 
 # What a turn's Agent line says when the tool never handed us the reply.
 REPLY_MISSING = "(reply not in transcript)"
@@ -193,7 +199,8 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "mute": ("", "nothing to do: #mute turned every other command in this message off; its tags are plain text"),
     # Usage: the hook answers these itself (TurnCapture.usage_answer); on
     # Claude Code a message of only these never reaches the model.
-    **{k: ("", "nothing to do: the hook answered") for k in ("usage", "usage-on", "usage-off")},
+    **{k: ("", "nothing to do: the hook answered") for k in (
+        "usage", "usage-on", "usage-off", "usage-warnings-on", "usage-warnings-off")},
     # The API prices the Usage page counts dollars with: a helper reads the providers' pages.
     "usage-price": ("update-usage-prices", "say in one line which pages you are going to, then a helper agent (Claude "
                     "Code: on opus; with no helpers, you) calls MCP tool usage_prices_material, then usage_prices_write"),
@@ -221,7 +228,17 @@ _TASK_CMD_RE = re.compile(r"(?<![\w#])#(task|now(?:-(?:to-?do|next|backlog|doing
 
 
 #: The commands the hook answers itself (format_signals, usage_answer).
-_USAGE_COMMANDS = ("usage", "usage-on", "usage-off")
+_USAGE_COMMANDS = ("usage", "usage-on", "usage-off", "usage-warnings-on", "usage-warnings-off")
+
+
+def _apply_usage(meta: dict, commands: list[str]) -> None:
+    """#usage-on / #usage-off show the line after each reply or not;
+    #usage-warnings-on / #usage-warnings-off the warnings (meta.json)."""
+    for c in commands:
+        if c in ("usage-on", "usage-off"):
+            meta["usage_show"] = c == "usage-on"
+        elif c in ("usage-warnings-on", "usage-warnings-off"):
+            meta["usage_warn"] = c == "usage-warnings-on"
 
 
 def usage_only(text: str) -> list[str]:
@@ -383,6 +400,17 @@ def _load_settings(data_root: Path) -> dict:
                 else default
             )
     return values
+
+
+def _usage_setting(data_root: Path, key: str):
+    """A setting of the ``usage`` section (``_USAGE_SETTING_DEFAULTS``)."""
+    default = _USAGE_SETTING_DEFAULTS[key]
+    try:
+        stored = json.loads((data_root / "settings.json").read_text(encoding="utf-8")).get("usage", {})
+        v = stored.get(key, default)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return default
+    return v if isinstance(v, type(default)) else default
 
 
 def _atomic_write_json(path: Path, obj: dict) -> None:
@@ -593,9 +621,7 @@ class TurnCapture:
         # #usage-on / #usage-off: this chat shows each reply's tokens, or not.
         commands = list(dict.fromkeys(" ".join(m.group(1).lower().split()) for m in _COMMAND_RE.finditer(said)))
         usage_cmds = [c for c in commands if c in _USAGE_COMMANDS]
-        for c in usage_cmds:
-            if c != "usage":
-                meta["usage_show"] = c == "usage-on"
+        _apply_usage(meta, usage_cmds)
         # The identity line goes to the model once, on the first turn it
         # sees: a chat whose first message the hook answered itself (#usage)
         # would otherwise never show it, and AGENTS.md reads that as
@@ -1074,9 +1100,7 @@ class TurnCapture:
         meta = self._load_meta()
         if meta.get("pending_turn") is None:
             return None
-        for c in commands:
-            if c != "usage":
-                meta["usage_show"] = c == "usage-on"
+        _apply_usage(meta, commands)
         _atomic_write_json(self.meta_path, meta)
         return str(meta.get("tool") or "")
 
@@ -1091,15 +1115,20 @@ class TurnCapture:
         _atomic_write_json(self.meta_path, meta)
 
     def usage_answer(self, commands: list[str], tool: str = "") -> str:
-        """The hook's answer to #usage, #usage-on and #usage-off, in order."""
+        """The hook's answer to #usage, #usage-on, #usage-off,
+        #usage-warnings-on and #usage-warnings-off, in order."""
         url = server_url()
         parts: list[str] = []
+        name = "Codex" if tool == "codex" else "OpenCode" if tool == "opencode" else tool
         for c in commands:
-            if c == "usage-on":
+            if c in ("usage-warnings-on", "usage-warnings-off") and tool not in ("", "claude-code"):
+                # The warnings and the facts log are made by Claude Code's Stop hook only.
+                parts.append("[slightly-parallel] Usage warnings are shown in Claude Code only. "
+                             f"{name} does not show them, so this command changes nothing in this chat.")
+            elif c == "usage-on":
                 shows = ("each reply shows: → new tokens ↑ output tokens ↓ (cache tokens)." if tool in ("", "claude-code")
                          else "the chat viewer shows each reply: → new tokens ↑ output tokens ↓ (cache tokens). "
-                              f"{'Codex' if tool == 'codex' else 'OpenCode' if tool == 'opencode' else tool} "
-                              "does not show them in the terminal.")
+                              f"{name} does not show them in the terminal.")
                 parts.append(
                     "[slightly-parallel] Usage is on.\n"
                     f"From now on, {shows}\n"
@@ -1108,6 +1137,10 @@ class TurnCapture:
                     f"Usage page: {url}/usage")
             elif c == "usage-off":
                 parts.append("[slightly-parallel] Usage is off. Tokens are still recorded. Type #usage-on to show them.")
+            elif c == "usage-warnings-on":
+                parts.append("[slightly-parallel] Usage warnings are on in this chat.")
+            elif c == "usage-warnings-off":
+                parts.append("[slightly-parallel] Usage warnings are off in this chat. Tokens are still recorded.")
             else:
                 parts.append(self._usage_block(url))
         return "\n\n".join(parts)
@@ -1145,6 +1178,60 @@ class TurnCapture:
         meta["usage_line_turn"] = turn
         _atomic_write_json(self.meta_path, meta)
         return True
+
+    def usage_warned(self) -> bool:
+        """Whether this chat shows the usage warnings: its #usage-warnings-on /
+        #usage-warnings-off, else the setting (usage.warnings)."""
+        try:
+            own = json.loads(self.meta_path.read_text(encoding="utf-8")).get("usage_warn")
+        except (OSError, ValueError, AttributeError):
+            own = None
+        return own if isinstance(own, bool) else bool(_usage_setting(self.data_root, "warnings"))
+
+    @_with_meta_lock
+    def usage_warning(self, turn: int) -> tuple[str, str] | None:
+        """(kind, text) of the warning under this turn's reply, or None: at
+        most one per reply, each shown once (backend usagewarn.py; what was
+        shown is kept in meta.json ``usage_warned``). Never raises."""
+        if turn < 1 or not self.meta_path.exists():
+            return None
+        lib = _usagelib()
+        try:
+            warn = _backend_module("usagewarn")
+        except Exception as exc:  # noqa: BLE001
+            self._lost("usage warning module not loaded", exc)
+            return None
+        if lib is None:
+            return None
+        meta = self._load_meta()
+        raw = meta.get("usage_warned")
+        state: dict = dict(raw) if isinstance(raw, dict) else {}
+        if state.get("turn") == turn:
+            return None          # a Stop again for the same turn: one warning per reply
+        try:
+            got = warn.due(lib, self.data_root, self.folder, turn, state)
+        except Exception as exc:  # noqa: BLE001 — a warning never costs the turn
+            self._lost("usage warning not built", exc)
+            return None
+        if got is None:
+            return None
+        state["turn"] = turn
+        meta["usage_warned"] = state
+        _atomic_write_json(self.meta_path, meta)
+        return got
+
+    def record_facts(self, turn: int, appended: dict, tools: dict, warnings: list[str]) -> None:
+        """One line per turn in ``facts.jsonl``: what was added to the chat's
+        context since the last Stop, by kind (characters; images counted),
+        the tool calls by name, and the warnings shown. Never raises."""
+        if turn < 1 or not self.folder.is_dir():
+            return
+        line = {"turn": int(turn), "at": now_iso(), "appended": appended, "tools": tools, "warnings": warnings}
+        try:
+            with open(self.folder / "facts.jsonl", "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            self._lost("facts not kept", exc)
 
     def codex_read_at(self) -> float | None:
         """Up to when (epoch) the Codex session file's calls are kept; None

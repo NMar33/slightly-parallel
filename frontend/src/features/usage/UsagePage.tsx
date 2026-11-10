@@ -17,6 +17,7 @@ import { Segmented } from '../../components/Segmented'
 import { StatTile, StatTiles } from '../../components/StatTile'
 import { EmptyState, ErrorBanner, LoadingSkeleton } from '../../components/states'
 import { Button } from '../../components/primitives'
+import { LimitsAnalysis } from './LimitsAnalysis'
 import { TH } from '../../components/ui'
 import { useTaskOpener } from '../agents/parts'
 import { useProjectCodes } from '../calendar/data'
@@ -309,6 +310,7 @@ function Body({ data, project, now }: { data: UsageSummary; project: string; now
         <TaskList tasks={tasks} project={project} total={filter ? tasks.length : Math.max(data.tasks_total ?? 0, data.tasks.length)} />
       </div>
       <Coverage data={data} />
+      {data.analysis && <LimitsAnalysis a={data.analysis} range={RANGE_WORD()[data.range] ?? ''} />}
     </>
   )
 }
@@ -375,9 +377,10 @@ function Totals({ data, now }: { data: UsageSummary; now: Date }) {
 
 /* -------------------------------------------------------------- by tool */
 
+const RANGE_WORD = (): Record<string, string> => ({ today: t('today'), '7d': t('in the last 7 days'), '30d': t('in the last 30 days') })
 const UNIT_KEY = 'sp-usage-unit'
 const SLICE_KEY = 'sp-usage-slice'
-const UNITS = (): Array<readonly [Unit, string]> => [['tokens', t('tokens')], ['money', t('≈ $')]]
+const UNITS = (): Array<readonly [Unit, string]> => [['tokens', t('tokens')], ['money', t('dollars')]]
 const SLICES = (): Array<readonly [Slice, string]> => [
   ['tool', t('tool and model')], ['task', t('task')], ['chat', t('chat')], ['cause', t('rebuild cause')],
 ]
@@ -391,13 +394,13 @@ function ByToolNotes({ data, slice }: { data: UsageSummary; slice: Slice }) {
     [t('new'), t('Tokens the model read for the first time: your messages, files, command results.')],
     [t('rebuilt'), t('Tokens the model had already read and wrote to the cache again, because the cache expired or the model changed. This number is an estimate.')],
     [t('warm'), t('Tokens the model read from the cache. They are the cheapest.')],
-    [t('input total'), t('new + rebuilt + warm.')],
+    [t('input total'), t('The sum of new, rebuilt and warm.')],
     [t('output'), t('Tokens the model wrote, thinking included.')],
     [t('share'), t('The part of the input read from the cache.')],
     [t('turns'), t('Your messages that used tokens in this row.')],
     [t('helpers'), t('The new and output tokens of helper agents. The other token columns count only the main agent.')],
-    [t('rebuilds'), t('How many times more than 20k tokens were written again at once. Shown for tasks, chats and causes.')],
-    [t('≈ $'), t('This view shows each column in dollars at API prices. helpers shows what the helper agents cost, and total holds the whole row. It is not what a plan charges, and it is not the part of a limit they used.')],
+    [t('rebuilds'), t('The number of messages that wrote more than 20k tokens to the cache again. This column is shown for tasks, chats and causes.')],
+    [t('dollars'), t('This view shows each column in dollars at API prices. helpers shows what the helper agents cost, and total holds the whole row. It is not what a plan charges, and it is not the part of a limit they used.')],
   ]
   const prices = data.api_prices
   const written = data.by_tool.slice().sort((a, b) => order(a.tool) - order(b.tool)).filter((x) => (x.cache_write ?? 0) > 0)
@@ -437,7 +440,7 @@ function ByToolNotes({ data, slice }: { data: UsageSummary; slice: Slice }) {
               </tbody>
             </table>
           </div>
-          <p className="text-11 text-secondary">{t('Main agents only. The first message after a compaction is not counted.')}</p>
+          <p className="text-11 text-secondary">{t('These numbers count the main agents only, and leave out the first message after a compaction.')}</p>
         </div>
       )}
       {prices && (prices.models.length > 0 || (prices.missing ?? []).length > 0) && (
@@ -471,8 +474,8 @@ function ByToolNotes({ data, slice }: { data: UsageSummary; slice: Slice }) {
           </div>
           <p className="text-11 text-secondary">
             {t('Prices as of {date}. Claude Code writes almost all it reads to the cache, so its new and rebuilt tokens cost the cache write price. A dash means no price: the tool records no cache writes, or the model has no price yet. Each message is counted at the price of its own day.', { date: prices.as_of })}
-            {prices.models.some((m) => m.over_tokens) ? ` ${t('Some models cost more for long prompts; the dollars count that.')}` : ''}
-            {(prices.missing ?? []).length > 0 ? ` ${t('No price for: {models}.', { models: prices.missing!.join(', ') })}` : ''}
+            {prices.models.some((m) => m.over_tokens) ? ` ${t('Some models cost more for long prompts, and the dollars use that higher price.')}` : ''}
+            {(prices.missing ?? []).length > 0 ? ` ${t('These models have no price yet, so their tokens are not in the dollars: {models}.', { models: prices.missing!.join(', ') })}` : ''}
             {` ${t('To update the prices, type #usage-price in a chat.')}`}
           </p>
         </div>
@@ -488,7 +491,7 @@ function ByToolNotes({ data, slice }: { data: UsageSummary; slice: Slice }) {
                   <th className="text-right px-10 py-6">{t('written')}</th>
                   <th className="text-right px-10 py-6">{t('new')}</th>
                   <th className="text-right px-10 py-6">{t('rebuilt')}</th>
-                  <th className="text-right px-10 py-6">{t('rebuilt, part of written')}</th>
+                  <th className="text-right px-10 py-6">{t('share of written that was rebuilt')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -508,7 +511,7 @@ function ByToolNotes({ data, slice }: { data: UsageSummary; slice: Slice }) {
               </tbody>
             </table>
           </div>
-          <p className="text-11 text-secondary">{t('Rebuilt tokens were read before, so a large number here means the cache was lost often. Main agents only.')}</p>
+          <p className="text-11 text-secondary">{t('Rebuilt tokens were read before, so a large number here means the cache was lost often. This table counts the main agents only.')}</p>
         </div>
       )}
     </section>
