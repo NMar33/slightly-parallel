@@ -15,6 +15,9 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
+#: A key a new user has in their environment, as many do: the server's
+#: report must never show it (stages.server_report).
+PLANTED_KEY = "sk-proj-freshPlanted7f3a91c0e5b24d68aa"
 
 
 @dataclass
@@ -83,6 +86,7 @@ class Space:
         # Codex finds its home through the system on Windows, not USERPROFILE:
         # CODEX_HOME is what both the server under test and Codex read.
         env["CODEX_HOME"] = str(self.home / ".codex")
+        env["FRESH_PLANTED_API_KEY"] = PLANTED_KEY
         env.update(HOME=str(self.home), SP_PORT=str(self.port), SHELL="/bin/sh",
                    # git in the sample project and in the clone needs an author
                    GIT_AUTHOR_NAME="Fresh User", GIT_AUTHOR_EMAIL="fresh@example.com",
@@ -123,6 +127,13 @@ def http(url: str, body: dict | None = None, timeout: float = 30) -> Any:
         return json.loads(raw)
     except ValueError:
         return raw.decode("utf-8", "replace")
+
+
+def fetch_bytes(url: str, timeout: float = 120) -> bytes:
+    """A file the page downloads (a backup), as it comes."""
+    req = urllib.request.Request(url, headers={"Cookie": _operator_cookie(url)})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
 
 
 def get(space: Space, path: str) -> Any:

@@ -38,9 +38,11 @@ Everything happens in one temporary folder, on a free port:
 | **wiring** | no agent: the hook is run with a message and a reply and the chat appears; the MCP server is started from `.mcp.json`, lists its tools and writes a decision; a write that skips MCP is refused. |
 | **agent** | a real agent, headless, in `sample/`. After each message the result is read through the API; at the end a browser looks for the work on the pages. |
 | **parallel** | agents at the same time: one in each of two projects, then two in one folder. |
+| **backup** | Back up now through the API; the archive downloaded and restored into a new data folder: the projects, chats and tasks are the same, the data check finds nothing damaged. The server then goes back to the folder Setup chose. |
+| **report** | Monitor › Server's report, after a chat that holds a key and a marked sentence, a search for the sentence, and a key in the server's environment: none of them is in it, and paths in the home folder start from `~`. |
 | **terminal** | Slightly Parallel's own terminal: a shell runs a command; Resume opens in the folder the chat started in, with the chat's own tool and session; Start on a task carries the task. The commands are typed and not run, so nothing is spent. |
 | **failures** | what a new user can get wrong or lack, each ending in words that say what to do: a port in use, no Node, no tmux, a project folder that does not exist / is relative / is a file, a bad project code, a data folder that is missing or read-only. And names with spaces and non-Latin letters, from the data folder to a written entry. |
-| **disconnect** | Setup's Disconnect in a browser: the project's folder is as it was before Setup, and its data is kept. |
+| **disconnect** | Setup's Disconnect in a browser: the project's folder is as it was before Setup, and its data is kept. Then, through the API, a folder that had its own AGENTS.md, CLAUDE.md, hooks and MCP server: after Disconnect every file is the same byte for byte and `git status` is clean. |
 | **restart** | stop, start again: the chosen data folder, the projects and the agents are all there. |
 | **background** | `sp up`, `status`, `down`: it starts, a second `up` refuses, `down` leaves nothing on the port. |
 | **volume** | a month of work on three projects (the demo builder), one chat of 1,500 turns and 400 more tasks: the server starts, a write does not slow down as the data grows, the main reads answer within 2 s, every page opens, and the heavy pages show their content within 6 s. |

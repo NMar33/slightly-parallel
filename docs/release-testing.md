@@ -50,6 +50,16 @@ written.
       own hooks and AGENTS.md text are kept.
 - [ ] Windows: the terminal says it needs macOS or Linux, and nothing else
       breaks without it.
+- [ ] Codex logged in through ChatGPT (Windows and macOS): run
+      `python scripts/ci/check_codex_limits.py`; it prints the plan, the
+      5-hour and the weekly percentages. Usage › Limits shows the same.
+- [ ] Windows, Codex installed with `npm install -g @openai/codex`: open
+      Usage and press "Read now" on the Codex row. The row shows the limits;
+      Task Manager shows no codex or node process left over; the data folder's
+      `.usage` has no `.units.json.*` or other temporary file.
+- [ ] macOS, a real sleep of over an hour with the server running: after
+      waking, the Codex row is read again within a few minutes, and Monitor ›
+      Server shows no error for the poll.
 
 ## Built
 

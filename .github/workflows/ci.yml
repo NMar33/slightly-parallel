@@ -122,6 +122,9 @@ jobs:
       - name: One read of the limits from the real program
         if: steps.key.outputs.ok
         run: python scripts/ci/check_codex_limits.py
+      - name: "Read now through the real server: the row answers, no codex or node left, no temporary file in .usage"
+        if: steps.key.outputs.ok
+        run: python scripts/ci/codex_server_check.py
 
   frontend:
     name: Frontend (Node ${{ matrix.node }})
@@ -248,6 +251,12 @@ jobs:
           if-no-files-found: ignore
       - name: "#sp's checks and the report, from the running server"
         run: python scripts/ci/checkup_check.py up
+      - name: "Network off by the firewall (127.0.0.1 kept): the pages answer in time, Monitor says No connection"
+        timeout-minutes: 10
+        run: python scripts/ci/offline_check.py
+      - name: Network on again (also when the check above failed or was stopped)
+        if: always()
+        run: python scripts/ci/offline_check.py on
       - name: Stop
         run: python sp.py down
       - name: "sp.py check with the server down looks from outside"

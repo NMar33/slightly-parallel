@@ -34,9 +34,9 @@ import stages  # noqa: E402
 from agents import tools  # noqa: E402
 from common import REPO, Report, Space, free_port, http  # noqa: E402
 
-FREE = ["install", "pages", "setup", "wiring", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
+FREE = ["install", "pages", "setup", "wiring", "backup", "report", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
 PAID = ["agent", "parallel"]
-ALL = ["install", "pages", "setup", "wiring", "agent", "parallel", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
+ALL = ["install", "pages", "setup", "wiring", "agent", "parallel", "backup", "report", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
 OUT = REPO / ".sp" / "fresh-user"
 
 
@@ -136,6 +136,12 @@ def main(argv: list[str] | None = None) -> int:
         if on("parallel") and not report.failed():
             print(f"\nparallel · {names[0]}", flush=True)
             scenario.parallel(space, report, (code, space.sample), (second, second_folder), names[0], args.model, Path.home(), args.turn_seconds)
+        if on("backup"):
+            print("\nbackup", flush=True)
+            stages.backup_restore(space, report, code)
+        if on("report"):
+            print("\nreport", flush=True)
+            stages.server_report(space, report, second)
         if on("terminal"):
             print("\nterminal", flush=True)
             st = states[0] if states else None
@@ -147,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         if on("disconnect"):
             print("\ndisconnect", flush=True)
             stages.disconnect(space, report, second)
+            stages.disconnect_own(space, report)
         if on("restart"):
             print("\nrestart", flush=True)
             proc = stages.restart(space, report, proc, [code])
