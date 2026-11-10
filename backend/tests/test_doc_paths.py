@@ -121,3 +121,16 @@ def test_deleting_evidence_removes_only_a_file_in_the_evidence_folder(client: Te
     client.app.state.store.rebuild()
     assert client.post(f"/api/tasks/evidence/{img['id']}/delete", json={"actor": "operator"}).status_code == 200
     assert (data_root / ENTITIES["task"].csv).is_file()
+
+
+def test_a_detail_name_holds_no_character_windows_refuses(client: TestClient, data_root: Path) -> None:
+    """A colon in the project, the agent or the date went into the detail
+    file's name; Windows refused the write and the create was a 500 (found by
+    the write fuzzer on Windows, 2026-11-10)."""
+    from backend.docs_md import safe_ref_part
+    assert safe_ref_part("cc:abc") == "cc-abc" and safe_ref_part("{'a': 1}") == "a-1"
+    r = client.post("/api/ideas", json={"created_date": "2611-10", "created_time": "10:00", "project": "alpha",
+                                        "agent_id": "cc:colon", "text": "an idea from an agent named with a colon"})
+    assert r.status_code in (200, 201), r.text
+    ref = r.json()["metadata"]["md_ref"]
+    assert not set(ref) & set('<>:"|?*\\') and (data_root / ref).is_file(), ref

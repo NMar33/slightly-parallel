@@ -2,14 +2,18 @@ name: Weekly
 
 # The checks too slow for every push on every system, once a week on all
 # three, by hand (Actions → Weekly → Run workflow, once this file is on the
-# default branch), and on a push that changes this file. Each push runs the
+# default branch), and on a push that changes this file or one of its tests. Each push runs the
 # heavy tests on Linux only (ci.yml). Free: GitHub's standard runners, no tokens.
 on:
   schedule:
     - cron: "17 3 * * 1"   # Monday 03:17 UTC
   workflow_dispatch:
   push:
-    paths: [.github/workflows/weekly.yml]
+    paths:
+      - .github/workflows/weekly.yml
+      - backend/tests/test_write_fuzzer.py
+      - backend/tests/test_hook_concurrency.py
+      - backend/tests/test_parser_properties.py
 
 jobs:
   heavy:
