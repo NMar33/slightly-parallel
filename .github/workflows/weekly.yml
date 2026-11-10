@@ -1,12 +1,15 @@
 name: Weekly
 
 # The checks too slow for every push on every system, once a week on all
-# three, and by hand (Actions → Weekly → Run workflow). Each push runs them
-# on Linux only (ci.yml). Free: GitHub's standard runners, no tokens.
+# three, by hand (Actions → Weekly → Run workflow, once this file is on the
+# default branch), and on a push that changes this file. Each push runs the
+# heavy tests on Linux only (ci.yml). Free: GitHub's standard runners, no tokens.
 on:
   schedule:
     - cron: "17 3 * * 1"   # Monday 03:17 UTC
   workflow_dispatch:
+  push:
+    paths: [.github/workflows/weekly.yml]
 
 jobs:
   heavy:

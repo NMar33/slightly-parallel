@@ -56,7 +56,7 @@ def _fill(path: str, known: dict[str, str], value: str | None = None) -> str:
     url = path
     for n in PARAM.findall(path):
         v = value if value is not None else (known.get(n) or "x")
-        url = re.sub(r"{" + n + r"(?::\w+)?}", v, url, count=1)
+        url = re.sub(r"{" + n + r"(?::\w+)?}", lambda _m, v=v: v, url, count=1)  # a Windows path is no template
     return url
 
 
@@ -187,7 +187,7 @@ def test_the_file_routes_serve_nothing_outside_their_folder(tmp_path: Path) -> N
                 for n in names:     # one parameter at a time takes the payload, the rest a real id
                     url = path
                     for m in names:
-                        url = re.sub(r"{" + m + r"(?::\w+)?}", value if m == n else (known.get(m) or "x"), url, count=1)
+                        url = re.sub(r"{" + m + r"(?::\w+)?}", lambda _m, v=(value if m == n else (known.get(m) or "x")): v, url, count=1)
                     urls.append(url)
                 for q in pathish:
                     urls.append(_fill(path, known) + f"?{q}={urllib.parse.quote(value, safe='')}")
