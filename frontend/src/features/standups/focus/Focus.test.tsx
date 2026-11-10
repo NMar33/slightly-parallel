@@ -132,7 +132,9 @@ describe('standup focus', () => {
     expect(await screen.findByRole('heading', { name: '6 October' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '5 October' })).toBeInTheDocument()
     expect(screen.getByText('The oldest standup ends here.')).toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem('sp-standup-focus') ?? 'null')).toBeNull() // written a moment later
+    // The choice is kept for the next visit (written a moment later: waited
+    // for, not assumed absent, which a slow machine had already passed).
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('sp-standup-focus') ?? 'null')?.scope).toBe('all'))
     fireEvent.keyDown(window, { key: 'c' })
     expect(screen.queryByRole('list', { name: 'Days with a standup' })).toBeNull()
   })

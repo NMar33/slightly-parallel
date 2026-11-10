@@ -133,7 +133,7 @@ test.describe('core flows', () => {
     await expect(win.getByLabel('Priority')).toHaveValue('med')
     await win.getByLabel('Priority').selectOption('high')
     await win.getByLabel('Title').fill(renamed)
-    await win.getByLabel('Title').press('Control+Enter')
+    await win.getByLabel('Title').press('ControlOrMeta+Enter')
     await expect(win).toBeHidden()
 
     await expect(card(page, renamed)).toBeVisible()
@@ -167,15 +167,15 @@ test.describe('core flows', () => {
     expect((await taskByTitle(request, title))?.status).toBe('doing')
 
     // Drag: Doing → To do, dropped on the column's header (the column zone
-    // takes it; a card's top half would take it as a reorder instead).
-    // Under parallel load a drag now and then comes to nothing (about 1 in
-    // 20 at 4 workers, other tests writing to the same board: the drop
-    // never lands, likely a redraw mid-drag); the drag is retried, the
-    // move itself is asserted.
-    await expect(async () => {
-      await card(page, title).dragTo(page.getByRole('button', { name: 'Add task to To do', exact: true }))
-      await expect(column(page, 'To do').getByRole('button', { name: `Edit task: ${title}`, exact: true })).toBeVisible({ timeout: 2_000 })
-    }).toPass({ timeout: 12_000 })
+    // takes it; a card's top half would take it as a reorder instead). Both
+    // on screen first: dragTo scrolls the target into view after the button
+    // is pressed, and that scroll cancels the drag before it starts (the
+    // drop that "now and then came to nothing" here, once retried).
+    const header = page.getByRole('button', { name: 'Add task to To do', exact: true })
+    await header.scrollIntoViewIfNeeded()
+    await expect(card(page, title)).toBeInViewport()
+    await card(page, title).dragTo(header)
+    await expect(column(page, 'To do').getByRole('button', { name: `Edit task: ${title}`, exact: true })).toBeVisible()
     await expect(column(page, 'Doing').getByRole('button', { name: `Edit task: ${title}`, exact: true })).toHaveCount(0)
     await expect.poll(async () => (await taskByTitle(request, title))?.status).toBe('todo')
   })
@@ -187,7 +187,7 @@ test.describe('core flows', () => {
 
     const win = await openTask(page, title)
     await win.getByRole('button', { name: 'Done', exact: true }).click()
-    await win.getByLabel('Title').press('Control+Enter')
+    await win.getByLabel('Title').press('ControlOrMeta+Enter')
     await expect(win).toBeHidden()
 
     await expect(column(page, 'Done').getByRole('button', { name: `Edit task: ${title}`, exact: true })).toBeVisible()
@@ -267,6 +267,31 @@ test.describe('core flows', () => {
     await expect(field).toHaveCount(0)
   })
 
+  test('calendar: a task dragged onto a day is due that day, on the page and on the server', async ({ page, request }) => {
+    // A month far ahead: no demo task shares its days, so the card is never
+    // hidden under "+ more", and today's date does not matter.
+    const title = unique('Flow due')
+    const made = await request.post('/api/tasks', {
+      data: { project: PROJECT, title, status: 'todo', due_date: '3103-10', actor: 'operator' },
+    })
+    expect(made.ok(), await made.text()).toBeTruthy()
+    await page.goto('/calendar#month=2031-03')
+    const from = page.getByRole('button', { name: /^2031-03-10(,|$)/ })
+    const to = page.getByRole('button', { name: /^2031-03-20(,|$)/ })
+    const pill = from.getByTitle(new RegExp(`^${escape(title)} · due`))
+    await expect(pill).toBeVisible()
+    // Both days on screen first: dragTo scrolls the target into view after
+    // the button is pressed, and a scroll then cancels the drag before it
+    // starts (no dragstart). A person sees both days before dragging.
+    await to.scrollIntoViewIfNeeded()
+    await expect(pill).toBeInViewport()
+    await pill.dragTo(to)
+    await expect(page.getByText(/^Due /).first()).toBeVisible()
+    await expect(to.getByTitle(new RegExp(`^${escape(title)} · due`))).toBeVisible()
+    await expect(from.getByTitle(new RegExp(`^${escape(title)} · due`))).toHaveCount(0)
+    await expect.poll(async () => (await taskByTitle(request, title))?.due_date).toBe('3103-20')
+  })
+
   test('terminal: a shell runs a command and "Copy the last output" copies it', async ({ page, context, request }) => {
     let tmux = true
     try { execFileSync('tmux', ['-V'], { stdio: 'ignore' }) } catch { tmux = false }
@@ -333,5 +358,41 @@ test.describe('core flows', () => {
       await request.post('/api/settings', { data: { values: { 'terminal.enabled': false } } }).catch(() => {})
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+  test('restore: a backup is restored after its name is typed, and the data is as it was then', async ({ page, request }) => {
+    // Restore replaces the whole data folder under the running server: it
+    // runs alone, after every other flow (playwright.config.ts).
+    const before = unique('Flow before the backup')
+    const after = unique('Flow after the backup')
+    const add = async (title: string) => {
+      const r = await request.post('/api/tasks', { data: { project: PROJECT, title, status: 'todo', actor: 'operator' } })
+      expect(r.ok(), await r.text()).toBeTruthy()
+    }
+    await add(before)
+    const run = await request.post('/api/backup/run', { data: { label: 'the restore flow' } })
+    expect(run.ok(), await run.text()).toBeTruthy()
+    const name = (await run.json() as { archive: { name: string } }).archive.name
+    await add(after)
+
+    await page.goto('/backups')
+    const row = page.getByRole('group', { name, exact: true })
+    await expect(row).toBeVisible()
+    await row.getByRole('button', { name: 'Restore', exact: true }).click()
+    const go = row.getByRole('button', { name: 'Restore this backup', exact: true })
+    await expect(go).toBeDisabled()
+    const typed = row.getByLabel('Type the backup name to confirm')
+    await typed.fill(name.slice(0, -1))
+    await expect(go).toBeDisabled()               // a name not quite typed restores nothing
+    await typed.fill(name)
+    await expect(go).toBeEnabled()
+    await go.click()
+    await expect(page.getByText(/^Restored \d+ files\. The state you replaced is saved as /)).toBeVisible({ timeout: 30_000 })
+
+    // On the server: the task written before the backup is there, the one
+    // after it is gone, and the replaced state was kept as a backup.
+    await expect.poll(async () => Boolean(await taskByTitle(request, before))).toBe(true)
+    expect(await taskByTitle(request, after)).toBeUndefined()
+    const state = await request.get('/api/backup').then((r) => r.json()) as { archives: Array<{ name: string }> }
+    expect(state.archives.length).toBeGreaterThanOrEqual(2)
   })
 })

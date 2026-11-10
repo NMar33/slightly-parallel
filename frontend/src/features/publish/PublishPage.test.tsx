@@ -190,7 +190,10 @@ describe('PublishPage', () => {
     const name = await screen.findByPlaceholderText(/Name on the tab/)
     fireEvent.change(name, { target: { value: 'Video script' } })
     fireEvent.click(screen.getByRole('button', { name: 'Make the document' }))
-    await waitFor(() => expect(posts).toHaveLength(1))
-    expect(posts[0]).toMatchObject({ path: '/api/publishing/docs', body: { project: 'alpha', name: 'Video script' } })
+    // The page also saves its preferences (a POST to /api/prefs a moment
+    // later, which a slow machine sent first): the document's own POST is
+    // waited for by its path, and made once.
+    await waitFor(() => expect(posts.filter((p) => p.path === '/api/publishing/docs')).toHaveLength(1))
+    expect(posts.find((p) => p.path === '/api/publishing/docs')).toMatchObject({ body: { project: 'alpha', name: 'Video script' } })
   })
 })

@@ -191,6 +191,18 @@ def test_the_end_of_a_long_file_is_read_not_the_file(tmp_path: Path) -> None:
     assert shared.tail_lines(tmp_path / "missing.jsonl") == [] and shared.last_json(tmp_path / "missing.jsonl", "end") is None
 
 
+def test_a_line_holding_a_line_separator_character_is_one_line(tmp_path: Path) -> None:
+    """json.dumps(ensure_ascii=False) leaves U+2028, U+0085 and \x1e in the
+    text; str.splitlines split the line there and the last commit's head was
+    lost (found by tests/test_parser_properties.py, 2026-11-10)."""
+    shared = capture.shared
+    f = tmp_path / "work.jsonl"
+    heads = ["first", "pasted\u2028from a page", "next\x85line", "group\x1erecord"]
+    f.write_bytes(b"".join(json.dumps({"head": h}, ensure_ascii=False).encode("utf-8") + b"\r\n" for h in heads))
+    assert [json.loads(x)["head"] for x in shared.tail_lines(f)] == heads
+    assert shared.last_json(f, "head") == "group\x1erecord"
+
+
 def test_the_previous_end_and_head_come_from_the_last_lines(root: Path) -> None:
     cap = capture.TurnCapture(root, "alpha", "cc-tail0001")
     cap.open_turn("one")

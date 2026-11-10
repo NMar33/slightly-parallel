@@ -6,7 +6,8 @@
 #   scripts/release-ready.sh ci-windows v0.3.3
 #
 # Green means the last run of the CI workflow (ci.yml) for the branch's head
-# commit finished with success; a run for an earlier commit does not count.
+# commit finished with success on its first attempt; a run for an earlier
+# commit, or one that passed only when re-run, does not count.
 # On green it prints the merge and tag commands; it runs none of them.
 set -euo pipefail
 branch=${1:-ci-windows}
@@ -33,7 +34,14 @@ if [[ $conclusion != success ]]; then
   echo "CI run $id for ${sha:0:7} ended: $conclusion — see gh run view $id --repo $repo" >&2; exit 1
 fi
 
-echo "$branch ${sha:0:7}: CI run $id passed. To release:"
+# A run that passed only on a re-run ("Re-run failed jobs") hides a failure:
+# a flaky test or a flaky system. It does not count; push again for a clean run.
+attempt=$(gh api "repos/$repo/actions/runs/$id" --jq .run_attempt)
+if [[ $attempt != 1 ]]; then
+  echo "CI run $id for ${sha:0:7} passed on attempt $attempt: a re-run does not count. Find what failed the first attempt (gh run view $id --attempt 1 --repo $repo), fix it, and push again" >&2; exit 1
+fi
+
+echo "$branch ${sha:0:7}: CI run $id passed on its first attempt. To release:"
 cat <<EOF
 cd "$publish"
 git checkout master

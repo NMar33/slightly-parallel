@@ -872,30 +872,32 @@ def test_the_mcp_tool_answers_without_a_captured_chat(client: TestClient, data_r
 
 
 def test_a_long_chat_beside_a_long_limits_history_reads_fast(tmp_path: Path) -> None:
-    import time as _time
-    lines = []
-    for n in range(1, 501):
-        at = T0 + timedelta(minutes=2 * n)
-        lines.append(_rec(n, at, f"m{n}a", new=900, cache=60_000 + n, output=200))
-        lines.append(_rec(n, at + timedelta(seconds=20), f"m{n}b", new=100, cache=60_900 + n, output=300))
-    folder = _chat(tmp_path, lines)
-    _write(tmp_path / ".usage" / "limits.jsonl", [
-        {"at": (T0 + timedelta(seconds=6 * i)).strftime("%Y-%m-%dT%H:%M:%S"), "tool": "claude-code",
-         "five_hour": {"used": i / 200, "resets_at": "2026-10-03T00:00:00"}} for i in range(10_000)])
-    usagelib.turns_in(folder, tmp_path)          # the files read once
-    import gc
-    took = 1.0
-    gc.disable()
-    try:
-        for _ in range(5):                       # the best of five: a busy machine is not the code
-            usagelib._derived.clear()
-            t = _time.perf_counter()
-            got = usagelib.turns_in(folder, tmp_path)
-            took = min(took, _time.perf_counter() - t)
-    finally:
-        gc.enable()
-    assert len(got) == 500 and got[500]["limit"] is not None
-    assert took < 0.02, f"{took * 1000:.1f} ms"
+    """A turn finds its limits by bisect, never by a walk through the history:
+    the lines usagelib runs for 500 turns are the same beside 1 000 readings
+    and beside 10 000 (counted, not timed: a busy runner is not the code)."""
+    from tests.conftest import lines_run
+
+    def run(root: Path, readings: int) -> int:
+        lines = []
+        for n in range(1, 501):
+            at = T0 + timedelta(minutes=2 * n)
+            lines.append(_rec(n, at, f"m{n}a", new=900, cache=60_000 + n, output=200))
+            lines.append(_rec(n, at + timedelta(seconds=20), f"m{n}b", new=100, cache=60_900 + n, output=300))
+        folder = _chat(root, lines)
+        step = 60_000 // readings
+        _write(root / ".usage" / "limits.jsonl", [
+            {"at": (T0 + timedelta(seconds=step * i)).strftime("%Y-%m-%dT%H:%M:%S"), "tool": "claude-code",
+             "five_hour": {"used": i / (readings / 50), "resets_at": "2026-10-03T00:00:00"}} for i in range(readings)])
+        usagelib.turns_in(folder, root)          # the files read once
+        usagelib._derived.clear()
+        got: dict = {}
+        n = lines_run(lambda: got.update(usagelib.turns_in(folder, root)), usagelib.__file__)
+        assert len(got) == 500 and got[500]["limit"] is not None
+        return n
+
+    small = run(tmp_path / "a", 1_000)
+    big = run(tmp_path / "b", 10_000)
+    assert big <= small * 1.01, f"{small} lines beside 1 000 readings, {big} beside 10 000"
 
 
 def test_a_limits_file_rewritten_in_place_is_read_again(tmp_path: Path) -> None:

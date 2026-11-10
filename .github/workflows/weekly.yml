@@ -1,0 +1,111 @@
+name: Weekly
+
+# The checks too slow for every push on every system, once a week on all
+# three, and by hand (Actions → Weekly → Run workflow). Each push runs them
+# on Linux only (ci.yml). Free: GitHub's standard runners, no tokens.
+on:
+  schedule:
+    - cron: "17 3 * * 1"   # Monday 03:17 UTC
+  workflow_dispatch:
+
+jobs:
+  heavy:
+    # The write fuzzer and the hooks at once (marker "heavy"), on each system.
+    name: Heavy tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Git identity (tests make commits in temporary repositories)
+        run: git config --global user.email ci@example.com && git config --global user.name CI
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r requirements.lock -r requirements-dev.txt
+      - name: "The heavy tests (-rs: a skipped test is named)"
+        run: python -m pytest -q -rs tests -m heavy
+
+  properties:
+    # The transcript and JSONL readers' property tests with many more
+    # examples than a push tries, from a new seed each week.
+    name: Property tests, deep (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r requirements.lock -r requirements-dev.txt
+      - name: "3 000 examples each (SP_HYPOTHESIS=deep); a failure prints the example to replay"
+        env:
+          SP_HYPOTHESIS: deep
+        run: python -m pytest -q -rs tests/test_parser_properties.py -o addopts=""
+
+  codex-latest:
+    # The newest Codex, not the pinned one (ci.yml pins 0.167.0): a release
+    # that changes the answer codexlimits reads shows here before users meet
+    # it. Logged in with the API key, as in ci.yml; it spends no tokens.
+    name: Newest Codex (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: The key
+        id: key
+        shell: bash
+        env:
+          KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else echo "No key (a fork): skipped."; fi
+      - uses: actions/checkout@v7
+        if: steps.key.outputs.ok
+      - uses: actions/setup-python@v7
+        if: steps.key.outputs.ok
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        if: steps.key.outputs.ok
+        with:
+          node-version: 22
+      - name: Install the backend and the newest Codex, logged in with the key
+        if: steps.key.outputs.ok
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python -m pip install -q -r backend/requirements.txt
+          npm install -g @openai/codex@latest
+          echo "Codex $(codex --version) (ci.yml pins 0.167.0)"
+          printenv OPENAI_API_KEY | codex login --with-api-key
+      - name: One read of the limits from the newest program
+        if: steps.key.outputs.ok
+        run: python scripts/ci/check_codex_limits.py
+      - name: "Read now through the real server: the row answers, no codex or node left, no temporary file in .usage"
+        if: steps.key.outputs.ok
+        run: python scripts/ci/codex_server_check.py

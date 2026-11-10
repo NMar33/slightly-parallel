@@ -34,7 +34,11 @@ function dataRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-e2e-'))
   fs.cpSync(path.join(REPO, 'fixtures'), root, { recursive: true })
   addUsageGolden(root)
-  process.on('exit', () => { try { fs.rmSync(root, { recursive: true, force: true }) } catch { /* the OS cleans tmp */ } })
+  process.on('exit', () => {
+    for (const dir of [root, `${root}-backups`]) {
+      try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* the OS cleans tmp */ }
+    }
+  })
   return root
 }
 /**
@@ -71,7 +75,11 @@ export default defineConfig({
   expect: { timeout: 5_000 },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
+  // In CI a failing test is tried twice more, so its traces show whether it
+  // fails every time; a test that passes only on a retry still fails the run
+  // (flaky: a timing assert or a clock that moved, never a fix by retry).
   retries: process.env.CI ? 2 : 0,
+  failOnFlakyTests: !!process.env.CI,
   workers: process.env.CI ? 2 : undefined,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   use: {
@@ -86,8 +94,10 @@ export default defineConfig({
   projects: [
     // The terminal flow turns the global terminal.enabled setting on while it
     // runs, which the other flows must not see: it runs by itself, after them.
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, grepInvert: /terminal:/ },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, grepInvert: /terminal:|restore:/ },
     { name: 'terminal', use: { ...devices['Desktop Chrome'] }, grep: /terminal:/, dependencies: ['chromium'] },
+    // The restore flow replaces the whole data folder: alone, after all others.
+    { name: 'restore', use: { ...devices['Desktop Chrome'] }, grep: /restore:/, dependencies: ['terminal'] },
   ],
   webServer: process.env.SP_E2E_URL
     ? undefined
@@ -97,6 +107,8 @@ export default defineConfig({
         env: {
           ...process.env,
           SP_DATA_ROOT: DATA_ROOT,
+          // Beside the copy, removed with it (the restore flow takes backups).
+          ...(DATA_ROOT ? { SP_BACKUP_ROOT: `${DATA_ROOT}-backups` } : {}),
           SP_PORT: String(E2E_PORT),
           // No skills into the home folder, no monitor writing into the fixtures.
           SP_SANDBOX: '1',

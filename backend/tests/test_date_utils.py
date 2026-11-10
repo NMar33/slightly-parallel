@@ -257,16 +257,18 @@ def test_today_yymm_dd():
 
 
 def test_parse_hot_path_smoke():
-    """~10k parses complete in well under 100ms; the bound is wide for a
-    loaded CI runner."""
-    import time
+    """One parse is a compiled regex and one ``date()``: a few lines of
+    date_utils, the same for every shape, so 10k parses (the heatmap) cost
+    10k times that. Counted, not timed: a loaded runner is not the code."""
+    import backend.date_utils as du
+    from tests.conftest import lines_run
 
+    per = {s: lines_run(lambda s=s: parse_yymm_dd(s), du.__file__)
+           for s in ["2608-06", "2607-01T14:30:00", "2601-15T14:30:00+03:00", "2412-31 14:30:00"]}
+    assert max(per.values()) <= 20, per
     dates = ["2608-06", "2607-01", "2601-15", "2412-31"] * 2500  # 10k
-    t0 = time.perf_counter()
-    for s in dates:
-        parse_yymm_dd(s)
-    elapsed = time.perf_counter() - t0
-    assert elapsed < 5.0, f"10k parses took {elapsed:.3f}s"
+    total = lines_run(lambda: [parse_yymm_dd(s) for s in dates], du.__file__)
+    assert total <= max(per.values()) * 10_000, total
 
 
 def test_as_local_converts_a_zoned_moment_instead_of_cutting_the_zone():

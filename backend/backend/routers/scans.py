@@ -229,6 +229,18 @@ def scans_update(
             status_code=404, detail=_SCAN_NOT_FOUND.format(scan_id=scan_id)
         )
     entry_fields.to_slots("scan", body, _SCAN_COLUMNS)
+    # The deltas are lines: a list of them, or text with one a line. Checked
+    # before anything is written; a number here was a 500 after scans.csv
+    # had already changed, and a string was split into its letters.
+    if "l3" in body:
+        deltas = body["l3"]
+        if isinstance(deltas, str):
+            body["l3"] = [ln.strip() for ln in deltas.splitlines() if ln.strip()]
+        elif deltas is None:
+            body["l3"] = []
+        elif not isinstance(deltas, list) or not all(isinstance(x, str) for x in deltas):
+            raise HTTPException(status_code=422, detail=(
+                "deltas must be a list of lines, or text with one change a line"))
     text_keys = [k for k in ("l1", "l2", "l3", "l4") if k in body]
     counters = {k: body[k] for k in SCAN_MUTABLE if k in body}
     if not text_keys and not counters:

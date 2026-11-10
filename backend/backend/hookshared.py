@@ -442,7 +442,13 @@ def tail_lines(path: Any, max_bytes: int = 256 * 1024) -> list[str]:
                 break
     except OSError:
         return []
-    return data.decode("utf-8", errors="replace").splitlines()
+    # Split at the newline only: str.splitlines also splits at U+2028, U+0085
+    # and \x1c-\x1e, which json.dumps(ensure_ascii=False) leaves in a line's
+    # text, so a line holding one came back as two pieces that are not JSON.
+    lines = data.decode("utf-8", errors="replace").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [ln.removesuffix("\r") for ln in lines]
 
 
 def last_json(path: Any, key: str) -> Any:

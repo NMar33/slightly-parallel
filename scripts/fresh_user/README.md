@@ -105,7 +105,7 @@ ends in one line that says what is missing.
 
 ## What is not tested
 
-- Windows (`sp.cmd`): the runner uses the shell scripts.
+- Windows (`sp.cmd`): the run starts it with `sp.cmd run` and `sp.cmd up`; the terminal stage is skipped there (the terminal needs macOS or Linux).
 - Cloning from a remote URL: the clone is of this folder's last commit.
 - The map helper of the standup (answer 1); `#map` itself is tested.
 - Two chats in one folder on Windows: they are told apart by their

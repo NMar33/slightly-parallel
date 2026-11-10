@@ -101,6 +101,30 @@ def make_task(client: TestClient, title: str, status: str = "todo", **more: str)
     return r.json()["metadata"]["id"]
 
 
+def lines_run(fn, module_file: str) -> int:
+    """How many lines of one module a call runs (sys.settrace), the same on
+    every machine: a test of "this stays fast" counts work, not seconds a
+    busy runner stretches."""
+    import sys
+    count = 0
+
+    def tracer(frame, event, _arg):
+        nonlocal count
+        if frame.f_code.co_filename != module_file:
+            return None
+        if event == "line":
+            count += 1
+        return tracer
+
+    old = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        fn()
+    finally:
+        sys.settrace(old)
+    return count
+
+
 def _git_home() -> str:
     """One empty home for every git the run starts (it was one folder per
     call, never removed: thousands under /tmp), gone when the run ends."""

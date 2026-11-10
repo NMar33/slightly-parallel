@@ -288,6 +288,17 @@ def test_a_scan_can_be_corrected_after_the_fact(client) -> None:
     assert client.post(f"/api/scans/{sid}/update", json={"summary": "x"}).json()["metadata"]["l1"] == "x"
     assert client.post(f"/api/scans/{sid}/update", json={}).status_code == 422
     assert client.post("/api/scans/sn_nope/update", json={"proof": "x"}).status_code == 404
+    # The deltas of the wrong shape are refused before anything is written
+    # (a number was a 500 after scans.csv had changed); text is one a line.
+    before = client.get(f"/api/scans/{sid}").json()
+    for bad in (5, {"a": 1}, ["one", 2], True):
+        for name in ("deltas", "l3"):
+            r = client.post(f"/api/scans/{sid}/update", json={name: bad, "summary": "not written"})
+            assert r.status_code == 422, (name, bad, r.text)
+            assert "deltas must be a list of lines" in r.json()["detail"]
+    assert client.get(f"/api/scans/{sid}").json()["metadata"]["l1"] == before["metadata"]["l1"]
+    lines = client.post(f"/api/scans/{sid}/update", json={"l3": "first\nsecond"})
+    assert lines.json()["text"]["deltas"] == ["first", "second"]
     # The translator offers update_entry for scans, standups and file entries now.
     schema = client.get("/api/schema").json()
     offered = {l["name"] for l in schema["lenses"] if l.get("mutable")}

@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from ..db import ViewStore
+from ..docs_md import resolve_under
 from ..file_safety import edit_json, safe_read_json
 from .deps import etag_for, get_store, json_response, maybe_304, not_found
 
@@ -159,8 +160,9 @@ def tour_shot(name: str, store: ViewStore = Depends(get_store)) -> FileResponse:
             status_code=422,
             detail="name must be a .png file name (letters, digits, dots, dashes, underscores)",
         )
-    path = store.data_root / SHOTS_DIR / name
-    if not path.is_file():
+    # Resolved: a symlink in the folder that points out of it is not a shot.
+    path = resolve_under(store.data_root / SHOTS_DIR, name)
+    if path is None or not path.is_file():
         raise not_found("shot", name)
     # A re-shot beat keeps its file name. Without this the browser shows the
     # old picture from its cache for hours (heuristic freshness from

@@ -36,6 +36,7 @@ filterwarnings = [
 ]
 markers = [
     "slow: builds or plays something real (about a minute); deselect with -m \"not slow\"",
+    "heavy: thousands of requests or many processes (the write fuzzer, the hooks at once); CI runs them on Linux per push and on every system weekly",
 ]
 
 [tool.ruff]
