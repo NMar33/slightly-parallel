@@ -284,3 +284,21 @@ def test_write_in_place_keeps_a_crlf_file_crlf(tmp_path) -> None:
     g.write_bytes(b"x\n")
     write_in_place(g, "x\ny\n")
     assert g.read_bytes() == b"x\ny\n"
+
+
+def test_safe_read_json_tries_again_when_windows_refuses_the_open(tmp_path, monkeypatch) -> None:
+    """Windows refuses an open while another process replaces the file: the
+    reader thread of the concurrency test died of it on CI (round 5)."""
+    import builtins
+    from backend.file_safety import safe_read_json
+    p = tmp_path / "state.json"
+    p.write_text('{"agent": "a"}', encoding="utf-8")
+    real, refused = builtins.open, []
+
+    def once(path, *a, **k):
+        if str(path) == str(p) and not refused:
+            refused.append(1)
+            raise PermissionError(13, "Permission denied")
+        return real(path, *a, **k)
+    monkeypatch.setattr(builtins, "open", once)
+    assert safe_read_json(p, retries=1, retry_delay_s=0) == {"agent": "a"} and refused

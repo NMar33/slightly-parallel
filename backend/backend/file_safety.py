@@ -208,6 +208,10 @@ def safe_read_json(
             return json.loads(data.decode("utf-8"))
         except FileNotFoundError as exc:
             last_exc = exc
+        except PermissionError as exc:
+            # Windows refuses to open a file while another process replaces
+            # it, for a moment: the same window as the missing file above.
+            last_exc = exc
         except json.JSONDecodeError as exc:
             last_exc = exc
         if attempt < retries:

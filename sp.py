@@ -120,7 +120,18 @@ def env_set(key: str, value: str) -> None:
     # stop, or two terminals) shared env.tmp, and one replace found none.
     tmp = STATE / f"env.{os.getpid()}.{threading.get_ident()}.tmp"
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(tmp, ENV_FILE)
+    # Windows refuses to replace a file another replace or a reader holds
+    # for a moment (PermissionError): try again for a second, as
+    # hookshared.replace_file does.
+    for attempt in range(40):
+        try:
+            os.replace(tmp, ENV_FILE)
+            return
+        except PermissionError:
+            if attempt == 39:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.025)
 
 
 def settings() -> dict[str, str]:

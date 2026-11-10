@@ -575,6 +575,7 @@ def test_a_folder_name_sh_would_read_is_quoted_so_it_is_not(tmp_path: Path) -> N
 def test_a_line_names_its_data_root_back_in_either_quotes(tmp_path: Path) -> None:
     from backend.routers import setup as _setup
     plain, odd = tmp_path / "plain dir", tmp_path / "it's $HOME"
-    assert _setup._hook_command("alpha", plain).count(f'"{plain}"') == 1   # unchanged for ordinary names
+    # Unchanged for ordinary names (Windows writes the path with forward slashes).
+    assert _setup._hook_command("alpha", plain).count(f'"{_setup._arg(plain)}"') == 1
     for root in (plain, odd):
-        assert _setup._data_root_of(_setup._statusline_base(root)) == str(root)
+        assert _setup._data_root_of(_setup._statusline_base(root)) == _setup._arg(root)
