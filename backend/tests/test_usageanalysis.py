@@ -205,3 +205,20 @@ def test_units_from_a_real_parse_of_a_usage_file(tmp_path: Path) -> None:
     u = usageanalysis.units(series, slots, datetime(2026, 11, 10, 12, 0))
     # 24 points over $48: half a point per dollar.
     assert [(m["model"], m["pct_per_usd"]) for m in u["models"]] == [("claude-opus-5-5", 0.5)] and u["fallback"] == 0.5
+
+
+def test_the_pace_falls_while_the_operator_is_idle() -> None:
+    """Readings that did not change count: an hour after the last rise the
+    pace is 0 and the window lasts, not the last busy hour's 'runs out'."""
+    busy = datetime(2026, 11, 10, 11, 0)
+    resets = datetime(2026, 11, 10, 15, 0)
+    series = [_reading(busy - timedelta(minutes=60), 40, resets), _reading(busy - timedelta(minutes=30), 55, resets),
+              _reading(busy, 70, resets), _reading(busy + timedelta(minutes=40), 70, resets)]
+    w = usageanalysis.window_now(series, {}, busy + timedelta(minutes=30))
+    assert w is not None and w["pace_per_hour"] == 15.0 and w["runs_out_at"] == "2026-11-10T13:30:00"
+    w = usageanalysis.window_now(series, {}, busy + timedelta(minutes=90))
+    assert w is not None and w["pace_per_hour"] == 0.0 and w["lasts"] and w["runs_out_at"] is None
+    assert w["read_at"] == "2026-11-10T11:40:00"
+    # No reading at all for 90 minutes: the same.
+    w = usageanalysis.window_now(series[:3], {}, busy + timedelta(minutes=90))
+    assert w is not None and w["pace_per_hour"] == 0.0 and w["lasts"]

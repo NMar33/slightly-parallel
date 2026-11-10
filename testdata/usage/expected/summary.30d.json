@@ -418,9 +418,9 @@
   "window_now": {
    "used": 62.5,
    "resets_at": "2026-11-01T16:40:00",
-   "read_at": "2026-11-01T14:40:00",
-   "pace_per_hour": 43.3,
-   "runs_out_at": "2026-11-01T15:31:57",
+   "read_at": "2026-11-01T14:44:00",
+   "pace_per_hour": 36.8,
+   "runs_out_at": "2026-11-01T15:49:08",
    "lasts": false,
    "spent_usd": 0.0
   },

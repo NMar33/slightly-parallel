@@ -267,24 +267,36 @@ def chats_by_window(chats: list[dict[str, Any]], costs: dict[str, dict[tuple[str
 
 def window_now(series: list[dict[str, Any]], slots: dict[tuple[str, str], int], ref: datetime) -> dict[str, Any] | None:
     """The 5-hour window open now: ``{used, resets_at, read_at, pace_per_hour,
-    runs_out_at, lasts, spent_usd}``; None without a reading of an open window."""
+    runs_out_at, lasts, spent_usd}``; None without a reading of an open window.
+
+    The pace is the rise over the hour before now, every reading counted (one
+    that did not change too): while the operator is idle the pace falls to 0,
+    and the window lasts, instead of keeping the last busy hour's pace."""
     if not series:
         return None
-    points = _windows(series)
     resets = series[-1]["five_hour"].get("resets_at") or ""
     end = usagelib._moment(resets)
-    got = points.get(resets) or []
-    if end is None or end <= ref or not got:
+    if end is None or end <= ref:
         return None
-    last_at, used = got[-1]
+    points: list[tuple[datetime, float]] = []
+    for r in series:
+        w, at = r["five_hour"], usagelib._moment(r["at"])
+        if (w.get("resets_at") or "") != resets or w.get("used") is None or at is None or at > ref:
+            continue
+        # Within one window the percentage never goes down (an idle session sends an older one again).
+        points.append((at, max(float(w["used"]), points[-1][1] if points else 0.0)))
+    if not points:
+        return None
+    last_at, used = points[-1]
     pace = None
-    early = [p for p in got if (last_at - p[0]).total_seconds() <= PACE_SPAN_S]
-    if early and (last_at - early[0][0]).total_seconds() >= PACE_MIN_S:
-        hours = (last_at - early[0][0]).total_seconds() / 3600
-        pace = round((used - early[0][1]) / hours, 1)
+    start = ref - timedelta(seconds=PACE_SPAN_S)
+    before = [p for p in points if p[0] <= start]
+    base_at, base_used = (start, before[-1][1]) if before else points[0]
+    if (ref - base_at).total_seconds() >= PACE_MIN_S:
+        pace = round((used - base_used) / ((ref - base_at).total_seconds() / 3600), 1)
     runs_out = None
     if pace and pace > 0:
-        at = last_at + timedelta(hours=(100 - used) / pace)
+        at = ref + timedelta(hours=(100 - used) / pace)
         runs_out = usagelib._iso(at) if at < end else None
     spent = sum(_between(slots, end - timedelta(hours=5), ref + timedelta(seconds=SLOT_S)).values())
     return {"used": used, "resets_at": resets, "read_at": usagelib._iso(last_at),
