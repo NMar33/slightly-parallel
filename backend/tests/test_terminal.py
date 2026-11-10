@@ -227,6 +227,8 @@ def test_a_wrapped_line_above_does_not_shift_the_lines_cut_out(env) -> None:
     target = termlib.PREFIX + sid
     rows = termlib.tmux(root, "capture-pane", "-p", "-t", target).stdout.split("\n")
     joined = termlib.capture(root, sid)["text"].split("\n")
+    # When it fails, say what the pane held (CI's macOS, 2026-11-10: no row was "A2").
+    assert any(l.strip() == "A2" for l in rows), f"the pane:\n{chr(10).join(rows)}\njoined:\n{chr(10).join(joined)}"
     row = next(i for i, l in enumerate(rows) if l.strip() == "A2")
     assert row > next(i for i, l in enumerate(joined) if l.strip() == "A2")      # it does take more rows
     pos = c.get(f"/api/terminal/sessions/{sid}/pos").json()
