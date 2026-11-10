@@ -9,6 +9,7 @@ import { FIELD } from '../promptlib/taskstyle'
 import { isoToday, monthOf } from './model'
 
 import { t } from '../../i18n/scope/views'
+import { letter } from '../../lib/typing'
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 /**
@@ -47,7 +48,7 @@ export function MonthPicker({ month, label, onPick, className = '', today }: {
       // While the picker is open its keys are its own: the page's ← → t
       // must not move the month underneath it.
       if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); return }
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 't') e.stopPropagation()
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || letter(e) === 't') e.stopPropagation()
       if (e.key === 'ArrowLeft' && e.shiftKey) setYear((y) => y - 1)
       if (e.key === 'ArrowRight' && e.shiftKey) setYear((y) => y + 1)
     }

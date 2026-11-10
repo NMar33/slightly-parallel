@@ -248,10 +248,11 @@ def story_prompts_delete(preset_id: str, store: ViewStore = Depends(get_store)) 
             if len(data["parts"][part]) != before:
                 gone.append(part)
                 return
+        # Raised inside the edit: an unknown id is a 404 that writes nothing
+        # (the file was rewritten as it was; round 5, the fuzzer).
+        raise not_found("preset", preset_id)
 
     _edit_presets(store, change)
-    if not gone:
-        raise not_found("preset", preset_id)
     return {"deleted": preset_id, "part": gone[0]}
 
 

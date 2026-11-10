@@ -46,7 +46,7 @@ from ..integration_text import (
     _upsert_hooks, _upsert_json_key, _remove_statusline, _upsert_statusline, our_hook_command,
     statusline_key_of,
 )
-from .deps import get_store
+from .deps import get_store, windows_reserved
 # What Setup left in a project folder, read by this page and by #sp alike
 # (folderstate.py: a library, so the checkup imports no router).
 from ..folderstate import (  # noqa: E402,F401
@@ -168,6 +168,22 @@ def _arg(path: Path) -> str:
     return str(path).replace("\\", "/") if _windows() else str(path)
 
 
+#: Characters sh reads inside double quotes: a folder named with one was
+#: another folder (``$HOME``), or ran a command (`` `x` ``), in every hook line.
+_SH_SPECIAL = set('$`\\"!')
+
+
+def _q(path: Path) -> str:
+    """A path as one word of a hook line: in double quotes, as always (an
+    unchanged line is an unchanged install), unless sh would read something
+    in it; then in single quotes, which sh reads as written (round 5)."""
+    text = _arg(path)
+    if not _windows() and _SH_SPECIAL & set(text):
+        import shlex
+        return shlex.quote(text)
+    return f'"{text}"'
+
+
 def _hook_command(project_code: str, data_root: Path, tool: str = "claude-code") -> str:
     """The hook line. It ends in ``|| exit 0`` (read the same by sh and
     cmd): when the script is gone — the repository moved, renamed or
@@ -180,12 +196,12 @@ def _hook_command(project_code: str, data_root: Path, tool: str = "claude-code")
         # string, not a command, without the call operator, and Windows
         # PowerShell 5.1 has no ||. The hook failed on every prompt.
         return (
-            f'& {_hook_python()} "{_arg(_CAPTURE_SCRIPT)}" '
-            f'--project {project_code} --data-root "{_arg(data_root)}"{suffix}; exit 0'
+            f'& {_hook_python()} {_q(_CAPTURE_SCRIPT)} '
+            f'--project {project_code} --data-root {_q(data_root)}{suffix}; exit 0'
         )
     return (
-        f'{_hook_python()} "{_arg(_CAPTURE_SCRIPT)}" '
-        f'--project {project_code} --data-root "{_arg(data_root)}"{suffix} || exit 0'
+        f'{_hook_python()} {_q(_CAPTURE_SCRIPT)} '
+        f'--project {project_code} --data-root {_q(data_root)}{suffix} || exit 0'
     )
 
 
@@ -205,7 +221,7 @@ def _claude_user_settings() -> Path:
 
 def _statusline_base(data_root: Path) -> str:
     """Our status line command without the one it wraps."""
-    return f'{_hook_python()} "{_arg(_STATUSLINE_SCRIPT)}" --data-root "{_arg(data_root)}"'
+    return f'{_hook_python()} {_q(_STATUSLINE_SCRIPT)} --data-root {_q(data_root)}'
 
 
 def _inherited_statusline(project_dir: Path) -> dict | None:
@@ -225,14 +241,27 @@ def _inherited_statusline(project_dir: Path) -> dict | None:
 _DATA_ROOT_ARG_RE = re.compile(r'--data-root\s+"([^"]+)"')
 
 
+def _data_root_of(command: str) -> str:
+    """The data folder a hook or status line names, in double or single quotes."""
+    m = _DATA_ROOT_ARG_RE.search(command or "")
+    if m:
+        return m.group(1)
+    import shlex
+    try:
+        words = shlex.split(command or "")
+    except ValueError:
+        return ""
+    return next((words[i + 1] for i, w in enumerate(words[:-1]) if w == "--data-root"), "")
+
+
 def _side_record(command: str, data_root: Path, key: str) -> dict | None:
     """The side file of ``key``: in this data root, else in the one the line
     itself names (Setup run again after the data folder moved)."""
     got = read_statusline_then(data_root, key)
     if got is None:
-        m = _DATA_ROOT_ARG_RE.search(command or "")
-        if m and Path(m.group(1)) != Path(data_root):
-            got = read_statusline_then(Path(m.group(1)), key)
+        named = _data_root_of(command)
+        if named and Path(named) != Path(data_root):
+            got = read_statusline_then(Path(named), key)
     return got
 
 
@@ -350,8 +379,8 @@ def _cursor_hook_command(project_code: str, data_root: Path) -> str:
     reads on stdout. The same ``|| exit 0`` tail as the other hooks: Cursor
     reads exit 2 as "block", and a moved repository must never block a prompt."""
     return (
-        f'{_hook_python()} "{_arg(_CURSOR_SCRIPT)}" '
-        f'--data-root "{_arg(data_root)}" --project {project_code} || exit 0'
+        f'{_hook_python()} {_q(_CURSOR_SCRIPT)} '
+        f'--data-root {_q(data_root)} --project {project_code} || exit 0'
     )
 
 
@@ -562,6 +591,12 @@ def _integrate(request: Request, body: dict, store: ViewStore) -> dict:
                 "project_code must be a lowercase slug "
                 "(letters, digits, '-', '_'; max 64 chars)"
             ),
+        )
+    if windows_reserved(project_code):
+        raise HTTPException(
+            status_code=422,
+            detail=(f"project_code {project_code} is a name Windows keeps for a device "
+                    "(con, prn, aux, nul, com1–com9, lpt1–lpt9): choose another"),
         )
     project_dir = _validated_dir(str(body.get("project_dir") or ""))
     write_agents = bool(body.get("write_agents", True))

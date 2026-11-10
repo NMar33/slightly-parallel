@@ -31,7 +31,7 @@ import { agentLines, gapLabel, ofAgent, producedWords, toSession, type Row } fro
 import { USAGE_PREF_KEY, paneColumns, readChatsPrefs, storeChatsPrefs, type ChatsPrefs } from './prefs'
 
 import { t, tn } from '../../i18n/scope/views'
-import { isTypingTarget } from '../../lib/typing'
+import { letter, isTypingTarget } from '../../lib/typing'
 /**
  * /chats — every captured chat, read as a day book.
  *
@@ -202,9 +202,9 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
   const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   onKeyRef.current = (e: KeyboardEvent) => {
     if (isTypingTarget(e)) return
-    if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey && cur && !focus) { e.preventDefault(); setFocus(true) }
+    if (letter(e) === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey && cur && !focus) { e.preventDefault(); setFocus(true) }
     // U shows and hides the tokens line of each reply.
-    if (e.key === 'u' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && cur && !focus) { e.preventDefault(); applyPrefs({ ...prefs, usage: !prefs.usage }) }
+    if (letter(e) === 'u' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && cur && !focus) { e.preventDefault(); applyPrefs({ ...prefs, usage: !prefs.usage }) }
   }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => onKeyRef.current(e)

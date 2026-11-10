@@ -918,7 +918,7 @@ def read_uses(chats: list[tuple[str, str, Path]], sessions: list[Any]) -> list[t
     out: list[tuple[Any, ...]] = []
     for project, agent_id, chat_path in chats:
         try:
-            lines = (Path(chat_path).parent / USES_FILE).read_text(encoding="utf-8").splitlines()
+            lines = (Path(chat_path).parent / USES_FILE).read_text(encoding="utf-8").split("\n")  # not splitlines: U+2028 in a name
         except OSError:
             continue
         mine = by_agent.get((project, agent_id), [])
@@ -998,7 +998,7 @@ def backfill(store: ViewStore, claude_root: Path | None = None) -> dict[str, int
 def _known_uses(chat: Path) -> set[tuple[str, str]]:
     keys: set[tuple[str, str]] = set()
     try:
-        for line in (chat / USES_FILE).read_text(encoding="utf-8").splitlines():
+        for line in (chat / USES_FILE).read_text(encoding="utf-8").split("\n"):
             try:
                 u = json.loads(line)
             except json.JSONDecodeError:

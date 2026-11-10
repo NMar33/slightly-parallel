@@ -36,6 +36,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -115,7 +116,9 @@ def env_set(key: str, value: str) -> None:
     lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
     lines = [ln for ln in lines if not ln.startswith(f"{key}=")]
     lines.append(f'{key}="{value}"')
-    tmp = STATE / "env.tmp"
+    # This process's own temp name: two launchers at once (start and a
+    # stop, or two terminals) shared env.tmp, and one replace found none.
+    tmp = STATE / f"env.{os.getpid()}.{threading.get_ident()}.tmp"
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.replace(tmp, ENV_FILE)
 

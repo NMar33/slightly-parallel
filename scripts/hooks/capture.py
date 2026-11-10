@@ -64,7 +64,8 @@ def record_failure(data_root: str | Path, project: str, agent: str, tool: str, e
             fh.write(json.dumps({"at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "project": project,
                                  "agent_id": agent, "tool": tool, "error": error[:500]}, ensure_ascii=False) + "\n")
         if path.stat().st_size > 256 * 1024:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            # At the newline only: an error text may hold U+2028 unescaped.
+            lines = [ln for ln in path.read_text(encoding="utf-8", errors="replace").split("\n") if ln]
             path.write_text("\n".join(lines[len(lines) // 2:]) + "\n", encoding="utf-8")
     except Exception:  # noqa: BLE001
         pass

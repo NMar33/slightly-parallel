@@ -284,3 +284,51 @@ def test_the_same_task_twice_is_one_task_answered_200(client: TestClient) -> Non
     assert again.json()["existing"] is True and again.json()["metadata"]["id"] == first.json()["metadata"]["id"]
     mine = _post(client)
     assert _post(client, expect=200)["metadata"]["id"] == mine["metadata"]["id"]
+
+
+# ---------------------------------------------------------- tags as agents send them
+# Claude Code sent ``"tags": ["ag_followup"]`` eight times in two paid runs
+# and was told ``unknown tag(s) ['ag_followup'] — 1–3 of: …, ag_followup, …``
+# (round 5, docs/testing.md case 5). A list of names is the same tags; any
+# other shape is refused by its shape, and no refusal names a refused value
+# among the allowed ones.
+
+
+def _refusal_contradicts(detail: str, sent: object) -> bool:
+    allowed = detail.split(" of: ", 1)[1] if " of: " in detail else ""
+    names = sent if isinstance(sent, list) else [sent]
+    return any(isinstance(n, str) and n and n in detail.split(" of: ")[0] and n in allowed for n in names)
+
+
+def test_tags_as_a_list_of_names_are_the_same_tags(client: TestClient) -> None:
+    one = _post(client, tags=["ag_followup"])
+    assert one["metadata"]["tags"] == "ag_followup"
+    two = _post(client, created_time="21:11", tags=["ag_bug", " ag_debt"])
+    assert two["metadata"]["tags"] == "ag_bug,ag_debt"
+
+
+@pytest.mark.parametrize("tags", [["ag_followup", 5], 5, {"ag_bug": 1}, True, [["ag_bug"]]])
+def test_tags_of_another_shape_are_refused_by_their_shape(client: TestClient, tags: object) -> None:
+    before = client.get("/api/tasks?project=alpha").json()
+    out = _post(client, expect=422, tags=tags)
+    assert "tags is text" in out["detail"], out
+    assert "unknown tag" not in out["detail"]
+    assert client.get("/api/tasks?project=alpha").json() == before
+
+
+@pytest.mark.parametrize("tags", [["urgent"], "urgent", ["ag_followup", "urgent"], "AG_BUG"])
+def test_a_tag_refusal_never_lists_the_refused_tag_as_allowed(client: TestClient, tags: object) -> None:
+    out = _post(client, expect=422, tags=tags)
+    assert not _refusal_contradicts(out["detail"], tags), out["detail"]
+
+
+def test_an_agent_changes_its_tags_with_a_list(client: TestClient) -> None:
+    tid = _post(client)["metadata"]["id"]
+    r = client.post(f"/api/tasks/{tid}/update", json={"agent_id": "cc-a", "tags": ["ag_bug"]})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/tasks/{tid}").json()["metadata"]["tags"] == "ag_bug"
+    bad = client.post(f"/api/tasks/{tid}/update", json={"agent_id": "cc-a", "tags": ["ag_bug", 3]})
+    assert bad.status_code == 422 and "tags is text" in bad.json()["detail"]
+    unknown = client.post(f"/api/tasks/{tid}/update", json={"agent_id": "cc-a", "tags": ["urgent"]})
+    assert unknown.status_code >= 400 and "unknown tag(s) urgent" in unknown.json()["detail"]
+    assert client.get(f"/api/tasks/{tid}").json()["metadata"]["tags"] == "ag_bug"

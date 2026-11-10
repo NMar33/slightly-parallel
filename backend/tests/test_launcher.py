@@ -42,6 +42,37 @@ def test_env_set_replaces_one_line_and_keeps_the_rest(launcher) -> None:
     assert launcher.read_env() == {"A": "1", "B": "2", "SP_ENABLE_TERMINAL": "1"}
 
 
+def test_two_env_writers_at_once_never_take_each_others_temp_file(launcher, monkeypatch) -> None:
+    """env.tmp was one name for every writer: the second os.replace found the
+    first one's file moved, or moved a file still being written (round 5)."""
+    import threading
+    launcher.ENV_FILE.write_text('A="1"\n', encoding="utf-8")
+    real_write = Path.write_text
+    gate = threading.Barrier(2)
+
+    def write_text(self, *a, **k):
+        out = real_write(self, *a, **k)
+        if self.name.endswith(".tmp"):
+            gate.wait(timeout=5)   # both temp files written before either replace
+        return out
+    monkeypatch.setattr(Path, "write_text", write_text)
+    errors: list[BaseException] = []
+
+    def run(key: str) -> None:
+        try:
+            launcher.env_set(key, "1")
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+    threads = [threading.Thread(target=run, args=(k,)) for k in ("B", "C")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors
+    assert not list(launcher.STATE.glob("*.tmp"))
+    assert launcher.read_env()["A"] == "1"
+
+
 def test_the_venv_python_is_where_each_system_puts_it(launcher, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(launcher, "WINDOWS", True)
     assert launcher.venv_python().parts[-2:] == ("Scripts", "python.exe")

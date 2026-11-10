@@ -112,6 +112,17 @@ def foreign_origin(headers: Any, settings: Any) -> bool:
 # write addressed to project ".." landed outside the projects tree.
 PROJECT_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
+#: Names Windows keeps for devices, with or without an extension: a folder
+#: ``projects/con`` cannot be made there, and ``nul`` swallows what is written.
+WINDOWS_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"} | {f"{d}{i}" for d in ("com", "lpt") for i in "123456789¹²³"})
+
+
+def windows_reserved(code: str) -> bool:
+    """A name Windows refuses or changes as a folder: a device name (``con``,
+    ``COM1``, ``nul.txt``) or one that ends in a dot or a space."""
+    return code.split(".", 1)[0].strip().lower() in WINDOWS_DEVICE_NAMES or code.endswith((".", " "))
+
 
 def known_project(store: ViewStore, project: Any) -> str:
     """The code of a project that exists, or 404. The one guard.
@@ -120,7 +131,8 @@ def known_project(store: ViewStore, project: Any) -> str:
     ``architecture`` and (inlined) ``scans``; none of them rejected ``..``.
     """
     code = str(project or "").strip()
-    if not PROJECT_CODE_RE.match(code) or not (store.data_root / "projects" / code).is_dir():
+    if (not PROJECT_CODE_RE.match(code) or windows_reserved(code)
+            or not (store.data_root / "projects" / code).is_dir()):
         raise not_found("project", code)
     return code
 

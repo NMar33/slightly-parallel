@@ -32,6 +32,7 @@ import { findPaths, type PrintedPath } from './printedPaths'
 import { setWork } from '../../lib/timer'
 import { t as tr, tn } from '../../i18n/scope/system'
 import { THEME } from './palette'
+import { letter } from '../../lib/typing'
 
 const INVALID_TOKEN = 4401
 const OFF = 4409
@@ -415,18 +416,18 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
           return false
         }
         // Ctrl/Cmd+C copies a selection; without one it is ^C.
-        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'c' && t.hasSelection()) {
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && letter(e) === 'c' && t.hasSelection()) {
           void copyText(t.getSelection())
           t.clearSelection()
           return false
         }
         // The classic pair, and find.
-        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
+        if (e.ctrlKey && e.shiftKey && letter(e) === 'c') {
           if (t.hasSelection()) { void copyText(t.getSelection()); t.clearSelection() }
           return false
         }
-        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'v') { void paste(); return false }
-        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') { toggleFind(); return false }
+        if (e.ctrlKey && e.shiftKey && letter(e) === 'v') { void paste(); return false }
+        if (e.ctrlKey && e.shiftKey && letter(e) === 'f') { toggleFind(); return false }
         // Ctrl+` belongs to the drawer.
         if (e.ctrlKey && e.key === '`') return false
         // Ctrl + / Ctrl − : the text size (the browser's zoom stays the browser's elsewhere).

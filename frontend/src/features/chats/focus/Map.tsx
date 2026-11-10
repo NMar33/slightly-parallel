@@ -25,7 +25,7 @@ import {
 } from './shared'
 
 import { t } from '../../../i18n/scope/views'
-import { isTypingTarget } from '../../../lib/typing'
+import { letter, isTypingTarget } from '../../../lib/typing'
 interface Props {
   session: Row
   sessions: Row[]
@@ -322,13 +322,13 @@ function MapLook(p: Props) {
       // Keys typed into the agent's terminal beside the chat stay its own.
       if ((e.target as HTMLElement | null)?.closest?.('.xterm')) return
       if (e.key === 'Escape') { e.preventDefault(); if (gear) setGear(false); else leave() }
-      else if (e.key === 'j') { e.preventDefault(); goTo(at + 1) }
-      else if (e.key === 'k') { e.preventDefault(); goTo(at - 1) }
+      else if (letter(e) === 'j') { e.preventDefault(); goTo(at + 1) }
+      else if (letter(e) === 'k') { e.preventDefault(); goTo(at - 1) }
       else if (e.key === ']' && older) openChat(older.id)
       else if (e.key === '[' && newer) openChat(newer.id)
-      else if (e.key === 'c') { e.preventDefault(); set({ drawer: !prefs.drawer }) }
-      else if (e.key === 'a') { e.preventDefault(); set({ scope: all ? 'one' : 'all' }) }
-      else if (e.key === 't') { e.preventDefault(); flipTerm() }
+      else if (letter(e) === 'c') { e.preventDefault(); set({ drawer: !prefs.drawer }) }
+      else if (letter(e) === 'a') { e.preventDefault(); set({ scope: all ? 'one' : 'all' }) }
+      else if (letter(e) === 't') { e.preventDefault(); flipTerm() }
   })
 
   const chatN = all ? chats.findIndex((c) => c.id === here.id) + 1 : 0

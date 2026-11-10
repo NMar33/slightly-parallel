@@ -18,6 +18,7 @@ import { TaskAddModal } from '../features/project/kanban/TaskWindow'
 import type { TaskRow } from '../features/project/kanban/model'
 import { FIELD, LABEL, PillGroup } from '../features/promptlib/taskstyle'
 import { t, tn } from '../i18n/scope/pages'
+import { letter } from '../lib/typing'
 
 /**
  * Milestones v01 — the ladder.
@@ -122,10 +123,10 @@ export default function MilestonesLadderPage({ projectCode, embedded, views, onV
     if (msWin || taskWin) return
     // Enter on a button or a link is that control's own.
     if (e.key === 'Enter' && (e.target as HTMLElement | null)?.closest?.('button, a, [role="radio"], [role="tab"]')) return
-    if (e.key === 'j' || e.key === 'k') {
+    if (letter(e) === 'j' || letter(e) === 'k') {
       e.preventDefault()
       setFocus((f) => {
-        const n = Math.min(shown.length - 1, Math.max(0, f + (e.key === 'j' ? 1 : -1)))
+        const n = Math.min(shown.length - 1, Math.max(0, f + (letter(e) === 'j' ? 1 : -1)))
         rowRefs.current[n]?.scrollIntoView({ block: 'nearest' })
         return n
       })

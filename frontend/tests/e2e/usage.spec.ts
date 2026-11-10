@@ -40,7 +40,7 @@ test.describe('usage', () => {
   })
 
   test('the golden numbers: limits, tiles, the Codex filter and the line under a turn', async ({ page }) => {
-    test.skip(!golden, 'testdata/usage is not in the tree')
+    expect(golden, 'testdata/usage is in the tree; a missing file fails').toBeTruthy()
     const g = golden!
     // The page's own clock at the server's fixed moment: a reset the server
     // still counts must not have passed on the page.

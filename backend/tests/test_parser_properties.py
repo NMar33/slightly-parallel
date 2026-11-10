@@ -184,3 +184,34 @@ def test_a_usage_file_sums_the_same_with_crlf_ends(rows) -> None:
     a, b = usagelib._parse_usage(lf), usagelib._parse_usage(crlf)
     assert a["turns"] == b["turns"] and a["buckets"] == b["buckets"]
     assert a.get("bad", 0) == b.get("bad", 0) == 0
+
+
+# ----------------------------------------------------------- the lost-session watch
+# capturewatch read the end of a transcript and a rollout with str.splitlines,
+# which also splits at U+2028, U+0085 and \x1c–\x1e: a prompt holding one was
+# two pieces of JSON, neither readable, and the watch saw no prompt (round 5).
+
+SEP_TEXT = st.text(st.characters(blacklist_categories=("Cs",), blacklist_characters="\r\n"), min_size=1, max_size=30)
+
+
+@given(before=st.lists(SEP_TEXT, max_size=5), text=SEP_TEXT, sep=st.sampled_from([" ", "\u0085", "\x1c", "\x1e", " "]),
+       end=ENDS)
+def test_the_lost_session_watch_reads_a_prompt_holding_any_separator(before, text, sep, end) -> None:
+    from backend import capturewatch
+
+    say = text.strip() or "x"
+    prompt = f"{say}{sep}{say}"
+    if prompt.lstrip().startswith(("<", "#")):
+        prompt = "p" + prompt
+    folder = _tmp()
+    claude = [json.dumps({"type": "user", "timestamp": "2026-11-11T10:00:00Z",
+                          "message": {"role": "user", "content": b}}, ensure_ascii=False) for b in before if b.strip()]
+    claude.append(json.dumps({"type": "user", "timestamp": "2026-11-11T10:05:00Z",
+                              "message": {"role": "user", "content": prompt}}, ensure_ascii=False))
+    (folder / "t.jsonl").write_bytes(end.join(x.encode("utf-8") for x in claude) + end)
+    assert capturewatch.last_prompt(folder / "t.jsonl") == capturewatch._utc("2026-11-11T10:05:00Z")
+    codex = [json.dumps({"timestamp": "2026-11-11T10:05:00Z", "type": "response_item",
+                         "payload": {"type": "message", "role": "user",
+                                     "content": [{"type": "input_text", "text": prompt}]}}, ensure_ascii=False)]
+    (folder / "r.jsonl").write_bytes(end.join(x.encode("utf-8") for x in codex) + end)
+    assert capturewatch._codex_prompt(folder / "r.jsonl") == capturewatch._utc("2026-11-11T10:05:00Z")

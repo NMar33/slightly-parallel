@@ -75,6 +75,11 @@ def check_enum_fields(ent_name: str, body: dict) -> None:
         v = body.get(field)
         if v in (None, ""):
             continue
+        if isinstance(v, (list, dict, bool)):
+            # str(["agent"]) is "['agent']": the refusal then named "agent"
+            # among the allowed values. Say the shape (round 5, the fuzzer).
+            raise ValueError(f"{ent_name}.{field} is one text value, not {type(v).__name__} — "
+                             f"use one of: {', '.join(sorted(allowed))}")
         if str(v) not in allowed:
             raise ValueError(f"{ent_name}.{field} {v} is not a known value — "
                              f"use one of: {', '.join(sorted(allowed))}")

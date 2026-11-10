@@ -163,3 +163,19 @@ def test_codex_adds_its_own_agents_md_message_and_that_is_not_a_prompt(tmp_path:
     f = d / "rollout-x.jsonl"
     f.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
     assert capturewatch._codex_prompt(f) is None
+
+
+def test_the_errors_file_trimmed_keeps_every_line_whole(tmp_path: Path) -> None:
+    """The trim past 256 KB split the file with str.splitlines: an error text
+    holding U+2028 (json.dumps leaves it unescaped with ensure_ascii=False)
+    became two broken lines, both dropped by the reader (round 5)."""
+    import importlib.util
+    hooks = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
+    spec = importlib.util.spec_from_file_location("capture_for_trim", hooks / "capture.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for i in range(900):
+        mod.record_failure(tmp_path, "alpha", "cc-a", "claude-code", f"Stop: {i} line two " + "x" * 300)
+    lines = (tmp_path / ".capture" / "errors.jsonl").read_text(encoding="utf-8").split("\n")
+    assert lines[-1] == "" and all(json.loads(ln)["error"].startswith("Stop: ") for ln in lines[:-1])
+    assert json.loads(lines[-2])["error"].startswith("Stop: 899 ")

@@ -12,7 +12,11 @@ added tomorrow is walked with no one remembering to:
 - then each field in turn is sent as an int, a bool, null, a list, an
   object, a string, a float and a huge number.
 
-A 2xx, 4xx is an answer; a 5xx (or an exception) is a bug. The run starts in
+A 2xx, 4xx is an answer; a 5xx (or an exception) is a bug. A 4xx must also
+change no file of the data root, and must not list the value it refused
+among the allowed ones (tests/refusals.py; the agent's tags list was refused
+with ag_followup named as allowed). Each enum field is also sent its own
+allowed value inside a list, the shape that refusal came from. The run starts in
 a folder of its own, so a route that writes relative to the server's working
 folder (P01) shows up as a file there and fails too.
 
@@ -33,6 +37,8 @@ from fastapi.testclient import TestClient
 
 from backend.entities import ENTITIES
 from backend.server import create_app, operator_cookie
+from backend.vocab import ENUM_FIELDS
+from tests.refusals import changed, contradicts, snapshot
 from tests.test_every_get_answers import FIXTURES, PARAM, _first, _ids_in
 
 pytestmark = pytest.mark.heavy
@@ -127,6 +133,22 @@ def _id_for(c: TestClient, path: str, name: str, known: dict[str, str], seen: di
     return seen[base]
 
 
+# Files a refused request may change: the server's own log.
+QUIET = ("logs/",)
+
+
+def _enums(name: str) -> list[set[str]]:
+    return [vals for fields in ENUM_FIELDS.values() for f, vals in fields.items() if f == name and vals]
+
+
+def _detail(r) -> str:
+    try:
+        got = r.json()
+    except ValueError:
+        return r.text
+    return str(got.get("detail", "")) if isinstance(got, dict) else str(got)
+
+
 def _plain(name: str, known: dict[str, str]) -> Any:
     if name in known:
         return known[name]
@@ -161,6 +183,8 @@ def test_no_write_route_answers_a_wrong_shape_with_a_server_error(fuzz_client) -
         "agent_id": _first(root, "tasks.csv", "agent_id"),
     }
     failures: list[str] = []
+    refused_writes: list[str] = []
+    contradictions: list[str] = []
     sent = walked = 0
     seen: dict[str, str] = {}
     routes = sorted(_write_routes(c.app), key=lambda r: bool(LAST.search(r.path)))
@@ -177,14 +201,28 @@ def test_no_write_route_answers_a_wrong_shape_with_a_server_error(fuzz_client) -
         # once without; the shapes go to the fields of those that read some.
         bodies: list[Any] = [base, [], 5, "x", None] if names else [base, 5]
         bodies += [{**base, n: v} for n in names for v in VALUES]
+        # An allowed value in a list: the shape that was refused as "unknown".
+        bodies += [{**base, n: [sorted(allowed)[0]]} for n in names for allowed in _enums(n)]
         walked += 1
         for body in bodies:
+            before = snapshot(root, skip=QUIET)
             r = c.request(method, url, json=body)
             sent += 1
             if r.status_code >= 500:
                 failures.append(f"{r.status_code} {method} {url} {str(body)[:200]}: {r.text[:160]}")
+                continue
+            if 400 <= r.status_code < 500:
+                moved = changed(before, snapshot(root, skip=QUIET))
+                if moved:
+                    refused_writes.append(f"{r.status_code} {method} {url} {str(body)[:120]} changed {moved[:3]}")
+                detail = _detail(r)
+                for n, v in (body.items() if isinstance(body, dict) else []):
+                    if who := contradicts(detail, v):
+                        contradictions.append(f"{method} {url} {n}={v!r}: {detail[:200]} ({who})")
     stray = sorted(p.relative_to(cwd).as_posix() for p in cwd.rglob("*"))
     assert not failures, f"{len(failures)} server errors:\n" + "\n".join(failures[:60])
+    assert not contradictions, f"{len(contradictions)} refusals list the refused value as allowed:\n" + "\n".join(contradictions[:40])
+    assert not refused_writes, f"{len(refused_writes)} refused writes changed files:\n" + "\n".join(refused_writes[:40])
     assert not stray, f"written relative to the server's working folder: {stray[:20]}"
     assert walked >= 170, f"only {walked} write routes walked"
     assert sent >= 5_000, f"only {sent} requests sent"

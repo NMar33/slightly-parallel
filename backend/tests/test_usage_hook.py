@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from backend import hookshared, sessionimport
 from backend.server import create_app
+from tests.conftest import need
 
 _HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
 _HOOK = _HOOKS / "claude-code-capture.py"
@@ -79,7 +80,7 @@ _TABLE = Path(__file__).resolve().parents[2] / "testdata" / "usage" / "format-ta
 
 def _table(name: str) -> list:
     if not _TABLE.exists():
-        pytest.skip("testdata/usage/format-table.json is not there (the server's zone writes it)")
+        need("testdata/usage/format-table.json (the server's zone writes it)")
     return json.loads(_TABLE.read_text(encoding="utf-8"))[name]
 
 

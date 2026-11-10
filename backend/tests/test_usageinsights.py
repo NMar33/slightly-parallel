@@ -97,3 +97,54 @@ def test_the_routes_answer_409_for_a_corrupt_feed(client) -> None:
     r = client.post("/api/usage/insights/clear", json={})
     assert r.status_code == 409 and "cannot be read" in r.json()["detail"]
     assert client.get("/api/usage/insights").json() == {"items": [], "hidden": 0}
+
+
+# ---------------------------------------------------------- a step that fails
+# The day's messages are three steps: the analysis, the new messages, the
+# write. Each is stopped in turn; what already worked (the pins, the
+# messages of earlier days) must still be there and still be shown
+# (docs/testing.md case 6).
+
+def _feed_with_a_pin(tmp_path, monkeypatch):
+    store = _Store(tmp_path)
+    monkeypatch.setattr(usageinsights.usagelib, "summary", lambda *a, **k: {"analysis": A})
+    items = usageinsights.feed(store, datetime(2026, 11, 10, 9, 0))["items"]
+    usageinsights.change(store, items[0]["id"], pinned=True)
+    path = tmp_path / ".usage" / "insights.json"
+    return store, path, path.read_bytes(), items[0]["id"]
+
+
+def _boom(*a, **k):
+    raise RuntimeError("stopped here")
+
+
+def test_a_failed_analysis_keeps_and_shows_the_feed(tmp_path, monkeypatch) -> None:
+    store, path, before, pinned = _feed_with_a_pin(tmp_path, monkeypatch)
+    monkeypatch.setattr(usageinsights.usagelib, "summary", _boom)
+    got = usageinsights.feed(store, datetime(2026, 11, 11, 9, 0))
+    assert path.read_bytes() == before
+    assert got["items"][0]["id"] == pinned and got["items"][0]["pinned"]
+
+
+def test_a_failed_new_message_keeps_and_shows_the_feed(tmp_path, monkeypatch) -> None:
+    store, path, before, pinned = _feed_with_a_pin(tmp_path, monkeypatch)
+    monkeypatch.setattr(usageinsights, "write_day", _boom)
+    got = usageinsights.feed(store, datetime(2026, 11, 11, 9, 0))
+    assert path.read_bytes() == before
+    assert [i["id"] for i in got["items"]][0] == pinned
+
+
+def test_a_failed_write_keeps_the_file_and_shows_the_feed(tmp_path, monkeypatch) -> None:
+    store, path, before, pinned = _feed_with_a_pin(tmp_path, monkeypatch)
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(usageinsights.file_safety, "atomic_write", full)
+    got = usageinsights.feed(store, datetime(2026, 11, 11, 9, 0))
+    assert path.read_bytes() == before
+    assert got["items"][0]["id"] == pinned
+    # The next read, with the disk back, writes the day it could not.
+    monkeypatch.undo()
+    monkeypatch.setattr(usageinsights.usagelib, "summary", lambda *a, **k: {"analysis": A})
+    again = usageinsights.feed(store, datetime(2026, 11, 11, 9, 5))
+    assert len(again["items"]) > len(got["items"])

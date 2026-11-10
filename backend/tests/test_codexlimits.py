@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend import app_settings, codexlimits, hookshared, usagelib
+from tests.conftest import need
 
 LIMITS_RESULT: dict[str, Any] = {
     "ordinaryUsageAllowed": True,
@@ -139,7 +140,10 @@ def test_a_hung_usage_read_keeps_the_limits(tmp_path: Path) -> None:
 
 
 def test_a_read_that_times_out_ends_what_the_wrapper_started(tmp_path: Path) -> None:
-    psutil = pytest.importorskip("psutil")
+    try:
+        import psutil
+    except ImportError:
+        need("psutil")
     assert codexlimits.read(timeout=8, exe=fake_codex(tmp_path, mode="tree"))["cause"] == "no answer in 8 s"
     child = int((tmp_path / "child.pid").read_text())
     for _ in range(50):

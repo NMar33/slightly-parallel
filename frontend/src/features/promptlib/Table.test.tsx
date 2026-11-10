@@ -32,6 +32,10 @@ describe('PromptsTable keys', () => {
     expect(copied).not.toHaveBeenCalled()
     fireEvent.keyDown(window, { key: 'c' })
     expect(copied).toHaveBeenCalledWith(prompt.text)
+    // A Cyrillic layout: the key labelled C types с; the place counts.
+    copied.mockClear()
+    fireEvent.keyDown(window, { key: 'с', code: 'KeyC' })
+    expect(copied).toHaveBeenCalledWith(prompt.text)
   })
 
   it('Enter on a focused link or button is left to that control', async () => {

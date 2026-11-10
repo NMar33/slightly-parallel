@@ -425,12 +425,18 @@ class Helpers:
     def save(self) -> None:
         if self._pos is None:
             return
+        # A temp name of this process's own: the Stop and SessionEnd hooks of
+        # one chat can save at once, and one fixed name let the second replace
+        # move the first's half-written file, or find none.
+        tmp = self._pos_path.with_name(f"{self._pos_path.name}.{os.getpid()}.tmp")
         try:
-            tmp = self._pos_path.with_suffix(".tmp")
             tmp.write_text(json.dumps(self._pos), encoding="utf-8")
             os.replace(tmp, self._pos_path)
         except OSError:
-            pass
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def helper_touched(transcript_path: str, folder: Path, usage: list[dict] | None = None,
@@ -491,12 +497,11 @@ def write_breadcrumb(data_root: str, project: str, session_id: str, cwd: str,
     if not cwd:
         return
     try:
-        import hashlib
         import os
         import time as _time
         sessions = Path(data_root) / ".sessions"
         sessions.mkdir(parents=True, exist_ok=True)
-        digest = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
+        digest = shared.folder_digest(cwd)
         path = sessions / f"{digest}.json"
         # Two chats in one folder write this file at once: each its own temp.
         tmp = path.with_suffix(f".json.{os.getpid()}.tmp")

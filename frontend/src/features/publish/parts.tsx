@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button } from '../../components/primitives'
 import { countOf, wordDiff, type CardImage, type DiffPart, type LifeNode } from './data'
 import { locale, t, tn } from '../../i18n/scope/system'
+import { letter } from '../../lib/typing'
 
 /** `2026-11-03T10:00:00` → `3 Nov` (the operator's language). */
 export function shortDay(iso: string): string {
@@ -186,8 +187,8 @@ export function Zoom({ images, index, onIndex, onClose }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === ' ') { e.preventDefault(); e.stopImmediatePropagation(); onClose() }
-      if (e.key === 'ArrowRight' || e.key === 'l') { e.stopImmediatePropagation(); onIndex(Math.min(images.length - 1, index + 1)) }
-      if (e.key === 'ArrowLeft' || e.key === 'h') { e.stopImmediatePropagation(); onIndex(Math.max(0, index - 1)) }
+      if (e.key === 'ArrowRight' || letter(e) === 'l') { e.stopImmediatePropagation(); onIndex(Math.min(images.length - 1, index + 1)) }
+      if (e.key === 'ArrowLeft' || letter(e) === 'h') { e.stopImmediatePropagation(); onIndex(Math.max(0, index - 1)) }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)

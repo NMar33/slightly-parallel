@@ -1430,6 +1430,28 @@ def is_sp_statusline(entry: Any) -> bool:
         and "--data-root" in str(entry.get("command", ""))
 
 
+def folder_key(cwd: str) -> str:
+    """The one spelling of a working folder, so the hook that writes a chat's
+    breadcrumb and the MCP server that asks for it name one folder alike.
+    The tool and the server spelled it apart: ``c:\\x`` against ``C:\\x``
+    (Windows), ``/var/…`` against ``/private/var/…`` (macOS), a name in NFD
+    against NFC, a trailing separator, a link to the folder. Each was another
+    sha1 and a 404 ("no captured session"; round 5)."""
+    import unicodedata
+    if not cwd:
+        return ""
+    try:
+        real = os.path.realpath(cwd)
+    except (OSError, ValueError):
+        real = cwd
+    return os.path.normcase(unicodedata.normalize("NFC", real))
+
+
+def folder_digest(cwd: str) -> str:
+    """12 hex characters of the folder's one spelling: the breadcrumb's name."""
+    return hashlib.sha1(folder_key(cwd).encode("utf-8", errors="replace")).hexdigest()[:12]
+
+
 def statusline_key(folder: Any) -> str:
     """The name of a folder's side file: 12 hex characters of its path."""
     return hashlib.sha1(str(folder).encode("utf-8")).hexdigest()[:12]

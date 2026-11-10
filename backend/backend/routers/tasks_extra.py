@@ -29,7 +29,7 @@ from .lenses import check_enum_fields, doc_path, task_membership
 # What a task's status, archive and comeback date set off — whoever moves it:
 # the board, an agent, #done, #undo (tasklib.py; the libraries call it there).
 from ..tasklib import (  # noqa: F401
-    AGENT_TAGS, AGENT_TAGS_MAX, AGENT_TITLE_MAX, DESCRIPTION_MAX, TASK_STATUSES, TITLE_MAX, _board_lanes,
+    AGENT_TAGS, AGENT_TAGS_MAX, AGENT_TITLE_MAX, agent_tags, DESCRIPTION_MAX, TASK_STATUSES, TITLE_MAX, _board_lanes,
     _gate_agent_create, _lane_for, _operator_command, _set_archived, _task_doc, _write_task_doc,
     after_status_change, create_task, maybe_resurface, resurface_sweep,
 )
@@ -108,10 +108,12 @@ def tasks_update(
             refuse_agent("a task's later rounds are the operator's",
                          f"add your words after the text: task_update {{id: \"{task_id}\", comment}}.")
         if "tags" in body:
-            tags = [t.strip() for t in str(body.get("tags") or "").split(",") if t.strip()]
-            if any(t not in AGENT_TAGS for t in tags) or len(tags) > AGENT_TAGS_MAX:
+            tags = agent_tags(body.get("tags"))
+            bad = [t for t in tags if t not in AGENT_TAGS]
+            if bad or len(tags) > AGENT_TAGS_MAX:
                 refuse_agent(
-                    f"an agent's tags are {', '.join(AGENT_TAGS)}, at most {AGENT_TAGS_MAX}",
+                    ("unknown tag(s) " + ", ".join(bad) + ": " if bad else "")
+                    + f"an agent's tags are {', '.join(AGENT_TAGS)}, at most {AGENT_TAGS_MAX}",
                     "the operator's tags stay as they are; set yours from that list.",
                 )
             body["_agent_tags"] = tags

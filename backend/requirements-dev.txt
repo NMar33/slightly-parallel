@@ -5,6 +5,7 @@ pytest==9.1.1
 pytest-xdist==3.8.0
 httpx==0.28.1
 hypothesis==6.170.15
+time-machine==3.6.0
 pyflakes==4.0.0
 pyright==1.1.414
 ruff==0.17.2

@@ -40,10 +40,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import app_settings, idle
+from .csvio import DamagedFile
 from .db import ViewStore
 from .file_safety import atomic_write
 
 log = logging.getLogger("sp.timeauto")
+#: Tries of a timer file that is there but cannot be read (Windows holds a
+#: file another program has open; an antivirus scan lasts a moment).
+READ_TRIES = 4
 
 TICK_SEC = 15
 MODES = ("remind", "auto", "manual")
@@ -101,27 +105,69 @@ class AutoTimer:
     def folder(self) -> Path:
         return self.root / "timer"
 
+    def _read(self, name: str) -> dict:
+        """One of the timer's files: {} when it is not there; a file that is
+        there and cannot be read (held open by another program on Windows,
+        damaged) raises DamagedFile after a few tries, so no caller takes it
+        as empty and writes the empty state back over it (P17)."""
+        path = self.folder / name
+        last: Exception | None = None
+        for attempt in range(READ_TRIES):
+            try:
+                got = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(got, dict):
+                    raise ValueError("not an object")
+                return got
+            except FileNotFoundError:
+                return {}
+            except (OSError, ValueError) as exc:
+                last = exc
+                if attempt + 1 < READ_TRIES:
+                    time.sleep(0.05)
+        raise DamagedFile(f"the timer's {name} cannot be read ({last}); nothing was changed")
+
     def _load(self) -> None:
         try:
-            raw = json.loads((self.folder / "state.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            raw = {}
+            raw = self._read("state.json")
+            self._unread = False
+        except DamagedFile as exc:
+            log.warning("%s", exc)
+            raw, self._unread = {}, True
         self.spans = {k: Span(**v) for k, v in (raw.get("spans") or {}).items()}
         self.paused = dict(raw.get("paused") or {})
         self.away = dict(raw.get("away") or {})
 
     def _save(self) -> None:
+        if getattr(self, "_unread", False):
+            # The file was there and could not be read at start: read it
+            # again before writing over it, or keep it and write nothing.
+            try:
+                kept = self._read("state.json")
+            except DamagedFile as exc:
+                log.warning("not saved: %s", exc)
+                return
+            self._unread = False
+            for k, v in (kept.get("spans") or {}).items():
+                self.spans.setdefault(k, Span(**v))
+            for k, v in (kept.get("paused") or {}).items():
+                self.paused.setdefault(k, v)
+            for k, v in (kept.get("away") or {}).items():
+                self.away.setdefault(k, v)
         self.folder.mkdir(parents=True, exist_ok=True)
         state = {"spans": {k: asdict(v) for k, v in self.spans.items()},
                  "paused": self.paused, "away": self.away}
         atomic_write(self.folder / "state.json", json.dumps(state, indent=1))
 
     def modes(self) -> dict[str, str]:
+        """project → mode. A file that cannot be read now gives the modes
+        last read, not none: none closed every open auto span on the tick."""
         try:
-            got = json.loads((self.folder / "modes.json").read_text(encoding="utf-8"))
-            return {k: v for k, v in got.items() if v in MODES}
-        except (OSError, ValueError, AttributeError):
-            return {}
+            got = self._read("modes.json")
+        except DamagedFile as exc:
+            log.warning("%s", exc)
+            return dict(getattr(self, "_modes_seen", {}))
+        self._modes_seen = {k: v for k, v in got.items() if v in MODES}
+        return dict(self._modes_seen)
 
     def mode_of(self, project: str, cfg: dict[str, Any] | None = None) -> str:
         cfg = cfg or self._cfg()
@@ -131,7 +177,9 @@ class AutoTimer:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {', '.join(MODES)}")
         with self._lock:
-            modes = self.modes()
+            # Read strictly: a file that cannot be read is refused (409),
+            # never written back holding this one project.
+            modes = {k: v for k, v in self._read("modes.json").items() if v in MODES}
             modes[project] = mode
             # Whole or not at all: a half-written file reads as "no modes",
             # and the tick then closes every auto span that was open.
@@ -379,7 +427,8 @@ class AutoTimer:
     def dismiss(self, entry_id: str) -> dict[str, Any] | None:
         with self._lock:
             got = self.away.pop(entry_id, None)
-            self._save()
+            if got is not None:   # an unknown entry is a 404 that writes nothing
+                self._save()
             return got
 
     # ------------------------------------------------------------ the thread

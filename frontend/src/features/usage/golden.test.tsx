@@ -142,7 +142,9 @@ describe('the Usage page on the golden data', () => {
 })
 
 describe('the line under a turn on the golden chat', () => {
-  it.skipIf(!chatTurns)('shows the server\'s line, and builds the same one when the answer has none', () => {
+  it('shows the server\'s line, and builds the same one when the answer has none', () => {
+    // In the tree: a missing file is a failure, not a skip (it hid this test once).
+    expect(chatTurns, 'testdata/usage/expected/chat.cc-golden.json').toBeTruthy()
     const turns = chatTurns!.turns
     let prev: TurnUsage | null = null
     for (const n of Object.keys(turns).sort((a, b) => Number(a) - Number(b))) {

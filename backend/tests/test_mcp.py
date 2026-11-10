@@ -348,3 +348,18 @@ def test_the_mcp_server_speaks_utf8_whatever_the_locale(tmp_path: Path) -> None:
                           capture_output=True, cwd=str(tmp_path), env=env, timeout=30)
     reply = json.loads(done.stdout.decode("utf-8"))
     assert reply["error"]["message"] == "method not found: метод", done.stderr
+
+
+def test_a_vocabulary_value_sent_as_a_list_is_refused_by_its_shape(client) -> None:
+    """``status: ["agent"]`` was refused as "['agent'] is not a known value —
+    use one of: agent, …": the refusal named the value it refused."""
+    from backend import mcp as translator
+
+    schema = client.get("/api/schema").json()
+    tr = translator.Translator.__new__(translator.Translator)
+    tr.vocab = schema.get("vocabularies", {})
+    for shape in (["agent"], {"agent": 1}, True):
+        with pytest.raises(translator.ApiError) as e:
+            tr._check_vocab("task", {"status": shape})
+        assert "is one text value" in str(e.value) and "not a known value" not in str(e.value)
+    tr._check_vocab("task", {"status": "agent"})

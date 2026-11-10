@@ -17,3 +17,17 @@ export function isTypingElement(el: EventTarget | Element | null | undefined): b
 export function isTypingTarget(e: { target: EventTarget | null }): boolean {
   return isTypingElement(e.target)
 }
+
+/**
+ * The Latin letter a shortcut means. The character typed when it is a Latin
+ * letter (so Dvorak and AZERTY keep their letters), else the key's place on
+ * the board: with a Cyrillic layout `t` arrives as `е` and Ctrl+S as `ы`,
+ * and a shortcut compared with `e.key` alone did nothing, or let the
+ * browser's Save open.
+ */
+export function letter(e: { key: string; code?: string }): string {
+  const key = e.key ?? ''
+  if (/^[a-z]$/i.test(key)) return key.toLowerCase()
+  const at = /^Key([A-Z])$/.exec(e.code ?? '')
+  return at && key.length === 1 ? at[1].toLowerCase() : key
+}

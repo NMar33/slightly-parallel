@@ -128,6 +128,20 @@ def test_dry_run_touches_nothing(env) -> None:
     assert any(BEGIN_MARK in r["content"] for r in out["results"])
 
 
+@pytest.mark.parametrize("code", ["con", "nul", "aux", "prn", "com1", "lpt9", "nul-", "con_"])
+def test_a_windows_device_name_is_refused_as_a_project_code(env, code) -> None:
+    """``projects/con`` cannot be made on Windows and ``nul`` swallows writes:
+    refused on every system, before any folder or file is made (round 5)."""
+    client, root, project_dir = env
+    r = client.post("/api/setup/integrate", json={"project_code": code, "project_dir": str(project_dir)})
+    if code.rstrip("-_") != code:
+        assert r.status_code == 200, r.text   # con_ and nul- are ordinary names
+        return
+    assert r.status_code == 422 and "Windows keeps for a device" in r.json()["detail"], r.text
+    assert not (root / "projects" / code).exists()
+    assert not (project_dir / "AGENTS.md").exists()
+
+
 def test_validation_rejects_bad_inputs(env) -> None:
     client, _root, project_dir = env
     bad_code = client.post(
@@ -532,3 +546,35 @@ def test_codex_home_follows_codex_home(monkeypatch, tmp_path) -> None:
     assert codex_home() == tmp_path / "ch"
     monkeypatch.delenv("CODEX_HOME")
     assert codex_home() == Path.home() / ".codex"
+
+
+def test_windows_reserved_names() -> None:
+    from backend.routers.deps import windows_reserved
+    for code in ("con", "CON", "Nul.txt", "com1", "COM9.log", "lpt1", "aux", "app.", "app "):
+        assert windows_reserved(code), code
+    for code in ("console", "nul-", "com10", "my-app", "lpt", "a.b"):
+        assert not windows_reserved(code), code
+
+
+def test_a_folder_name_sh_would_read_is_quoted_so_it_is_not(tmp_path: Path) -> None:
+    """A data folder named with $ or ` was another folder in every hook line,
+    or ran a command, under sh (round 5; tests/test_hook_lines_in_shells.py
+    runs the lines). Ordinary names keep their double-quoted line."""
+    import os
+    import subprocess
+    from backend.routers import setup as _setup
+    if os.name == "nt":
+        return
+    odd = tmp_path / "it's $HOME `echo x`"
+    line = _setup._hook_command("alpha", odd)
+    words = subprocess.run(["/bin/sh", "-c", 'printf "%s\\n" ' + line.split(" || ")[0].split(" ", 1)[1]],
+                           capture_output=True, text=True).stdout.splitlines()
+    assert words[words.index("--data-root") + 1] == str(odd)
+
+
+def test_a_line_names_its_data_root_back_in_either_quotes(tmp_path: Path) -> None:
+    from backend.routers import setup as _setup
+    plain, odd = tmp_path / "plain dir", tmp_path / "it's $HOME"
+    assert _setup._hook_command("alpha", plain).count(f'"{plain}"') == 1   # unchanged for ordinary names
+    for root in (plain, odd):
+        assert _setup._data_root_of(_setup._statusline_base(root)) == str(root)

@@ -221,6 +221,27 @@ def _write_task_doc(store: ViewStore, md_ref: str, frontmatter: str, turns: list
 AGENT_TAGS = ("ag_debt", "ag_bug", "ag_followup", "ag_idea", "ag_decision")
 AGENT_TAGS_MAX = 3
 AGENT_TITLE_MAX = limits.MAX_AGENT_TASK_TITLE
+def agent_tags(raw: object) -> list[str]:
+    """An agent's tags, as names: comma-separated text (the published shape,
+    ``"ag_bug,ag_debt"``) or a list of names (``["ag_bug"]``, what agents send
+    when a field holds several values). Any other shape is refused by its
+    shape. A list read as text was ``"['ag_followup']"``, refused with a
+    message that listed ag_followup as allowed (round 5)."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        parts = raw.split(",")
+    elif isinstance(raw, list) and all(isinstance(t, str) for t in raw):
+        parts = [p for t in raw for p in t.split(",")]
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail=f"tags is text such as \"ag_bug,ag_debt\" or a list of tag names, not {type(raw).__name__}"
+            + (" with items that are not text" if isinstance(raw, list) else ""),
+        )
+    return [t.strip() for t in parts if t.strip()]
+
+
 _AGENT_CREATE_FIELDS = frozenset({
     "created_date", "created_time", "project", "projects", "agent_id",
     "title", "description", "tags", "lane", "assignee", "status", "today_on",
@@ -361,7 +382,7 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
             status_code=422,
             detail=f"an agent task title is at most {AGENT_TITLE_MAX} characters ({len(title)} sent)",
         )
-    tags = [t.strip() for t in str(body.get("tags") or "").split(",") if t.strip()]
+    tags = agent_tags(body.get("tags"))
     bad = [t for t in tags if t not in AGENT_TAGS]
     if not tags or bad:
         raise HTTPException(

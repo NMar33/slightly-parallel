@@ -34,6 +34,7 @@ from backend.routers.terminal import token_of
 from backend.server import create_app
 from tests.test_every_get_answers import FIXTURES, PARAM, _files, _first
 from tests.test_write_fuzzer import _write_routes
+from tests.conftest import symlink_or_need
 
 HOSTILE = {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
 MARKER = "OUTSIDE-THE-DATA-ROOT-7f3a"
@@ -153,10 +154,7 @@ def test_the_file_routes_serve_nothing_outside_their_folder(tmp_path: Path) -> N
     for link, target in ((artifact / "leak.txt", secret), (root / "tour_shots" / "leak.png", shot),
                          (root / "task_story" / "leak.png", shot), (root / EVIDENCE_DIR / "leak.png", shot)):
         link.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            link.symlink_to(target)
-        except OSError:     # Windows without the right to make one: the paths are still asked
-            pass
+        symlink_or_need(link, target)
     (root / "story_images.csv").write_text(
         "id,note_id,task_id,project,title,path,width,height,bytes,created_at\n"
         f"im_leak,nt_x,{known['task_id']},alpha-labs,leak,task_story/leak.png,1,1,1,2026-11-10T10:00:00\n"

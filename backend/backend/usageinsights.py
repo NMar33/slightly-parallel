@@ -14,6 +14,8 @@ The texts are the page's (frontend features/usage/LimitsAnalysis.tsx,
 
 from __future__ import annotations
 
+import copy
+
 import json
 import logging
 import secrets
@@ -169,9 +171,17 @@ def feed(store: Any, ref: datetime | None = None) -> dict[str, Any]:
             log.warning("insights not read, nothing written: %s", exc)
             return {"items": [], "hidden": 0}
         if doc.get("day") != ref.date().isoformat():
-            a = usagelib.summary(store, None, "7d", now=ref).get("analysis") or {}
-            write_day(doc, a, ref)
-            _write(root, doc)
+            # The day's messages are a later step: when it fails (the
+            # analysis, a message, the disk), the feed as it was is shown and
+            # kept, and the next read tries the day again (round 5).
+            kept = copy.deepcopy(doc)
+            try:
+                a = usagelib.summary(store, None, "7d", now=ref).get("analysis") or {}
+                write_day(doc, a, ref)
+                _write(root, doc)
+            except Exception as exc:  # noqa: BLE001 — any failure of the day's step
+                log.warning("the day's insights not written, the feed shown as it was: %s", exc)
+                doc = kept
     shown = [i for i in doc["items"] if not i.get("hidden_at")]
     shown.sort(key=lambda i: str(i.get("at") or ""), reverse=True)
     shown.sort(key=lambda i: not i.get("pinned"))     # stable: pinned on top, each part newest first

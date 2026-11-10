@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Button, Input } from '../../components/primitives'
 import { useLibraryWrites, type Version } from './data'
 import { t } from '../../i18n/scope/system'
+import { letter } from '../../lib/typing'
 
 /**
  * The text of one version, and the way to write the next one. Read-only
@@ -57,7 +58,7 @@ export function TextPane({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+            if ((e.metaKey || e.ctrlKey) && letter(e) === 's') {
               e.preventDefault()
               save()
             }

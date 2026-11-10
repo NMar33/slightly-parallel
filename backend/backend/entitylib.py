@@ -249,6 +249,9 @@ def doc_path(store: ViewStore, ent: Entity, row: dict, eid: str) -> tuple[str, P
     return ref, path
 
 
+_SLOTS = frozenset({"l1", "l2", "l3", "l4"})
+
+
 def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "") -> dict:
     """Persist one entity row + its MD detail document.
 
@@ -280,6 +283,13 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     pre = PRE_CREATE.get(ent.name)
     if pre:
         pre(store, body)
+    # A column holds one text value. A list or an object was stored as its
+    # Python text ("['a value']") in every lens (round 5, agent-shaped
+    # writes); the task update refuses it the same way. After
+    # PRE_CREATE, which reads a list where one is meant (a task's projects).
+    for col in ent.columns:
+        if col not in _SLOTS and isinstance(body.get(col), (list, dict)):
+            raise HTTPException(status_code=422, detail=f"{col} is text, not a list or an object")
     check_enum_fields(ent.name, body)
 
     check = CONTRACT_CHECKS.get(ent.name)

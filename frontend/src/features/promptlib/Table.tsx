@@ -19,7 +19,7 @@ import {
 import { usePrompt } from './data'
 import { Compare } from './ComparePage'
 import { t, tn } from '../../i18n/scope/system'
-import { isTypingTarget } from '../../lib/typing'
+import { letter, isTypingTarget } from '../../lib/typing'
 
 /**
  * Prompt library v07 — the table, a row opening into the whole prompt.
@@ -104,12 +104,12 @@ export function PromptsTable() {
       if (isTypingTarget(e)) return
       const i = Math.max(0, shown.findIndex((r) => r.id === open))
       const at = shown[i]
-      if (e.key === 'j' || e.key === 'k') {
-        const next = shown[Math.min(shown.length - 1, Math.max(0, i + (e.key === 'j' ? 1 : -1)))]
+      if (letter(e) === 'j' || letter(e) === 'k') {
+        const next = shown[Math.min(shown.length - 1, Math.max(0, i + (letter(e) === 'j' ? 1 : -1)))]
         if (next) setOpen(next.id)
-      } else if (e.key === 'c' && at) {
+      } else if (letter(e) === 'c' && at) {
         void copyText(at.text)
-      } else if (e.key === 'o' && at) {
+      } else if (letter(e) === 'o' && at) {
         window.location.assign(`/prompts/${at.id}`)
       } else if (e.key === 'Enter' && at) {
         // Enter on a focused link or button is that control's own press.

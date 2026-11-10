@@ -24,6 +24,7 @@ from ..db import ViewStore
 from ..hookshared import process_started
 from .deps import etag_for, get_store, json_response, maybe_304
 from ..entities import ENTITIES
+from ..tasklib import AGENT_TAGS
 from .. import entry_fields
 from ..mcp import TOOLS as _MCP_TOOLS
 from .lenses import ENUM_FIELDS, HEADLINE_REQUIRED, OPERATOR_ONLY
@@ -88,6 +89,10 @@ def build_schema() -> dict:
             # the translator's name gate refused every #task.
             fields["description"] = {"type": "string",
                                      "description": "2–6 plain lines: what is wrong or wanted, and where"}
+            # An agent's tags: the names as text, comma-separated; a list of
+            # the same names is accepted (tasklib.agent_tags).
+            fields["tags"] = {"type": "string", "description": (
+                "1–3 of " + ", ".join(AGENT_TAGS) + ", comma-separated; a list of these names is the same")}
         refused = OPERATOR_ONLY.get(ent.name)
         lenses.append({
             "name": ent.name,
@@ -168,9 +173,15 @@ SESSIONS_DIR = ".sessions"
 
 
 def breadcrumb_path(data_root: Path, cwd: str) -> Path:
+    """The folder's breadcrumb, named by its one spelling (hookshared.folder_key)."""
+    from ..hookshared import folder_digest
+    return data_root / SESSIONS_DIR / f"{folder_digest(cwd)}.json"
+
+
+def _raw_breadcrumb_path(data_root: Path, cwd: str) -> Path:
+    """The name a hook from before round 5 gave it: the path as the tool spelled it."""
     import hashlib
-    digest = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
-    return data_root / SESSIONS_DIR / f"{digest}.json"
+    return data_root / SESSIONS_DIR / f"{hashlib.sha1(cwd.encode('utf-8')).hexdigest()[:12]}.json"
 
 
 #: How near the shared process must be, in both chains, to be the chat's
@@ -181,7 +192,7 @@ def breadcrumb_path(data_root: Path, cwd: str) -> Path:
 OWN_TOOL_DEPTH = 1
 
 
-def _crumb_by_process(folder: Path, pids: str) -> tuple[dict | None, str]:
+def _crumb_by_process(folder: Path, pids: str, everywhere: bool = False) -> tuple[dict | None, str]:
     """The chat in this folder that shares a parent process with the client,
     and how sure that is: ``process`` when the shared process is near both
     (the chat's own tool), ``shared-parent`` when it is only a common
@@ -205,7 +216,7 @@ def _crumb_by_process(folder: Path, pids: str) -> tuple[dict | None, str]:
         at = float(crumb.get("at") or 0)
         return bool(at and started[pid] and started[pid] > at + 2)
 
-    for file in folder.glob("*.json"):
+    for file in folder.glob("*/*.json" if everywhere else "*.json"):
         try:
             crumb = json.loads(file.read_text(encoding="utf-8"))
             theirs = [int(p) for p in crumb.get("pids") or []]
@@ -240,12 +251,25 @@ def whoami(
     own. With no match the newest chat in the folder answers. 404 means no
     captured session runs there.
     """
-    path = breadcrumb_path(store.data_root, cwd)
-    crumb, source = _crumb_by_process(path.with_suffix(""), pids)
-    try:
+    crumb, source = None, ""
+    for path in dict.fromkeys((breadcrumb_path(store.data_root, cwd), _raw_breadcrumb_path(store.data_root, cwd))):
+        crumb, source = _crumb_by_process(path.with_suffix(""), pids)
         if crumb is None:
-            crumb, source = json.loads(path.read_text(encoding="utf-8")), "folder"
-    except (OSError, json.JSONDecodeError):
+            try:
+                crumb, source = json.loads(path.read_text(encoding="utf-8")), "folder"
+            except (OSError, json.JSONDecodeError):
+                crumb = None
+        if crumb is not None:
+            break
+    if crumb is None:
+        # Nothing for this folder: the chat may run in another spelling of it
+        # or in a subfolder (a chat started there, or a cd). Its own tool
+        # process, shared with this client, still names it; a guess through a
+        # shared terminal does not.
+        crumb, source = _crumb_by_process(store.data_root / SESSIONS_DIR, pids, everywhere=True)
+        if source != "process":
+            crumb = None
+    if crumb is None:
         raise HTTPException(
             status_code=404,
             detail=(

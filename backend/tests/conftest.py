@@ -35,11 +35,71 @@ os.environ.setdefault("SP_EXAMPLE", "0")
 
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.server import create_app
+
+@pytest.fixture(autouse=True)
+def _moved_clock():
+    """SP_TEST_CLOCK=<local ISO moment>: every test starts its clock there
+    and the clock runs on (the "clock" CI job: a minute before midnight at
+    the end of a month, and in the night the clocks go back). Two "now"s in
+    one test are a boundary (docs/testing.md case 7). Programs a test starts
+    keep the real clock."""
+    moment = os.environ.get("SP_TEST_CLOCK", "").strip()
+    if not moment:
+        yield
+        return
+    import time_machine
+    from datetime import datetime
+    at = datetime.fromisoformat(moment)
+    if at.tzinfo is None:
+        at = at.astimezone()          # a local moment, in the TZ of the run
+    with time_machine.travel(at, tick=True):
+        yield
+
+
+#: Tests that fail under a moved clock for a known product bug, with its card.
+#: Strict: the day the bug is fixed, the mark fails and is taken away.
+KNOWN_UNDER_CLOCK = {
+    # The timer keeps naive local times; in the hour the clocks go back a
+    # later moment reads earlier (tk_3a363c87).
+    "2026-11-01T01:59:58": ("tk_3a363c87", {
+        "test_working_on_an_auto_project_writes_its_own_entry_on_the_task",
+        "test_away_pauses_back_to_the_last_input_and_counting_it_gives_it_back",
+        "test_a_restart_closes_the_span_where_it_was_last_seen",
+    }),
+}
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    moment = os.environ.get("SP_TEST_CLOCK", "").strip()
+    card, names = KNOWN_UNDER_CLOCK.get(moment, ("", set()))
+    for item in items:
+        if item.name in names and os.environ.get("TZ") == "America/Los_Angeles":
+            item.add_marker(pytest.mark.xfail(strict=True, reason=f"known: {card}"))
+
+
+def need(what: str) -> NoReturn:
+    """A test that cannot run without ``what``: skipped on a laptop that
+    lacks it, failed on a CI machine, where a skip hides code that was never
+    tested (docs/testing.md case 2)."""
+    if os.environ.get("CI"):
+        pytest.fail(f"{what} is missing on this CI machine: install it or give the right")
+    pytest.skip(f"{what} is missing")
+
+
+def symlink_or_need(link: Path, target: Path) -> None:
+    """Make a symlink, or ``need`` the right to (Windows gives it to
+    administrators and developer mode; CI's runners have it)."""
+    try:
+        link.symlink_to(target)
+    except OSError:
+        need("the right to make a symlink")
+
 
 # The server answers only to a name of this computer (server.OwnPagesOnly).
 # Starlette's test client dials "testserver" unless told otherwise: every

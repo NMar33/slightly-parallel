@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.conftest import need
 
 _HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
 
@@ -477,7 +478,7 @@ def test_opencode_plugin_is_valid_and_uses_the_hook_and_the_fetch() -> None:
     assert "--close-if-missing" in src
     node = shutil.which("node")
     if not node:
-        pytest.skip("node not installed")
+        need("node")
     proc = subprocess.run([node, "--input-type=module", "--check"], input=src, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
 

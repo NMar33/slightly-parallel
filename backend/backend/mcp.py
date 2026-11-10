@@ -247,6 +247,13 @@ class Translator:
     def _check_vocab(self, lens: str, payload: dict) -> None:
         for field, allowed in self.vocab.get(lens, {}).items():
             v = payload.get(field)
+            if isinstance(v, (list, dict, bool)):
+                # str(["agent"]) is "['agent']": refused with a list that
+                # names "agent" as allowed. Say the shape instead.
+                raise ApiError(
+                    f"{lens}.{field} is one text value, not {type(v).__name__} — "
+                    f"use one of: {', '.join(allowed)}"
+                )
             if v not in (None, "") and str(v) not in allowed:
                 raise ApiError(
                     f"{lens}.{field} {v!r} is not a known value — "

@@ -23,6 +23,7 @@ import {
 } from '../features/calendar/parts'
 import { factRows, orderDayItems, pickInWeek, stripRange, weekTally } from '../features/calendar/week/model'
 import { t } from '../i18n/scope/pages'
+import { letter } from '../lib/typing'
 
 /**
  * Calendar v02 — the week workbench.
@@ -97,7 +98,7 @@ export default function CalendarWeekPage({ projectCode, embedded, views, onView 
     if (e.key === 'Escape') setHash({ sel: '' })
     else if (e.key === 'ArrowLeft') { e.preventDefault(); goWeek(addDays(week, -7)) }
     else if (e.key === 'ArrowRight') { e.preventDefault(); goWeek(addDays(week, 7)) }
-    else if (e.key === 't') { e.preventDefault(); setHash({ week: startOfWeek(today), sel: today }) }
+    else if (letter(e) === 't') { e.preventDefault(); setHash({ week: startOfWeek(today), sel: today }) }
   })
 
   const openTask = (id: string) => openTaskRow(id, (row) => setOpen({ kind: 'task', row }))
