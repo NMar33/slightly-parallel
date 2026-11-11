@@ -59,6 +59,62 @@ once:
 Thresholds live in Settings (the Agent signals and Chats groups) and persist
 in `settings.json` at the data root, which the capture core reads directly.
 
+## Helper chats
+
+A run another program started is recorded as a chat of its own and marked a
+helper in its `meta.json`: a `codex exec`, a Codex subagent, a `claude -p`,
+an `opencode run`. No command in its messages acts (no `#task`, `#now`,
+`#done`, `#entrypoint`, `#usage`, …, no kept entry, no notice that asks for
+work); the messages are kept whole. The operator's own chats are unchanged:
+a tag anywhere in the message acts, pasted text included.
+
+```json
+{"helper": true, "helper_kind": "codex-exec", "helper_of": "cc-ca77654e", "helper_of_by": "env"}
+```
+
+- `helper_kind` — `codex-exec` (the session file's first line: `source:
+  "exec"`, `originator: "codex_exec"`), `codex-subagent` (`source:
+  {"subagent": …}`), `claude-print` (Claude Code's `entrypoint` `sdk-cli`,
+  read from the hook's `CLAUDE_CODE_ENTRYPOINT`, else the transcript),
+  `opencode-run` (the plugin runs inside `opencode run`).
+- `helper_of` — the chat that started it, "" when not known. Codex's
+  subagents name their parent thread in the first line (`helper_of_by:
+  "session"`). Any other helper inherits its parent's environment, which
+  neither tool filters for its hooks (`helper_of_by: "env"`): Claude Code
+  sets `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID` for what it starts, Codex
+  sets `CODEX_THREAD_ID` for its shell commands. A `claude -p` replaces
+  `CLAUDE_CODE_SESSION_ID` with its own; its parent is the chat whose Claude
+  Code process (the breadcrumb's `tool_pid`, checked against the process's
+  start time, `tool_started`) is among the hook's ancestors. Two candidates:
+  the one started last; a candidate whose time is not known beside another:
+  none. Chats recorded before the hooks marked helpers are marked once at
+  the server's start from the tools' own logs (`helper_backfill` in
+  `meta.json`; [`helperbackfill.py`](../backend/backend/helperbackfill.py)),
+  where `helper_of_by: "time"` is a parent found by folder and time.
+- `CLAUDE_EFFORT` in a hook's environment is the parent Claude Code's when
+  the hook runs under Codex or OpenCode; the effort is read from the logs
+  (below), never from it.
+
+## The reasoning effort of each reply
+
+Each line of a chat's `usage.jsonl` carries `effort`: the reasoning effort
+the reply ran with, "" when the tool's log does not say. One of `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max`; any other word is "".
+
+| Tool | Where it is read | Changes within a chat |
+|---|---|---|
+| Claude Code | `effort` on each assistant record of the transcript (a model without effort levels writes none) | yes: `/effort` (and a model switch) applies from the next reply; checked with Claude Code 2.1.322 (`high` → `/effort low` → `low` → `/effort max` → `max`) |
+| Codex | `effort` of the session file's `turn_context` in force (else its `collaboration_mode.settings.reasoning_effort`) | per turn: `-c model_reasoning_effort=…`, the picker in the TUI |
+| OpenCode | the assistant message's `variant` (else its prompt's `model.variant`), passed by the plugin | per message: `--variant high`, the picker |
+
+The hook's `CLAUDE_EFFORT` is not read: Claude Code sets it at the `Stop`
+event to the effort in force, but at `UserPromptSubmit` it read `medium`
+whatever the level, and a hook under Codex or OpenCode sees its parent
+Claude Code's. Claude Code's `facts.jsonl` line carries the turn's
+`effort` too: the last reply's of the main agent. Lines written before
+2026-11-11 have none. The Usage page splits each model's tokens by effort
+under the model's name in the by-model table, only when a reply named one.
+
 ## Facts for analysis
 
 For Claude Code, the `Stop` hook adds one line per turn to `facts.jsonl` in the
@@ -70,7 +126,7 @@ chat's folder, beside `chat.md`: what the chat's context grew by since the last
  "appended": {"operator": 210, "notices": 1840, "agent_text": 960, "agent_tool_calls": 3100,
               "thinking": 0, "result_Read": 41200, "result_Bash": 5300, "result_MCP": 800, "images": 1},
  "tools": {"Read": 6, "Bash": 3, "mcp__slightly-parallel__tasks": 1},
- "warnings": ["context"]}
+ "warnings": ["context"], "effort": "high"}
 ```
 
 - `appended` — characters by kind; a kind with nothing is left out.
@@ -85,6 +141,8 @@ chat's folder, beside `chat.md`: what the chat's context grew by since the last
 - `tools` — the tool calls by their full name.
 - `warnings` — the usage warnings shown under the reply (`compact`,
   `context`, `rebuild`, `window`; [`usagewarn.py`](../backend/backend/usagewarn.py)).
+- `effort` — the reasoning effort of the turn's last reply of the main
+  agent, "" when the transcript does not say (see above).
 
 The hook counts while it reads the transcript from where the previous `Stop`
 stopped, so the transcript is never read whole. A `Stop` that adds nothing

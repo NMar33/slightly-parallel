@@ -13,6 +13,8 @@
  * 9.9k. Integer arithmetic only, so no float lands differently in two languages.
  */
 
+import { locale } from '../../i18n/scope/system'
+
 function step(n: number, unit: number, cap: number): number {
   const q = Math.floor(n / unit)
   const r = n - q * unit
@@ -96,4 +98,26 @@ export function tenthsText(q: number): string {
 export function cacheShare(cache: number, fresh: number): number | null {
   const all = cache + fresh
   return all > 0 ? roundHalfEven((cache / all) * 10_000) / 10_000 : null
+}
+
+/**
+ * The split of a model's tokens by reasoning effort, largest first, the unknown last:
+ * "high 70% · low 30%". '' when no reply named its effort; the replies that
+ * did not are named "unknown", so the shares add up to the row.
+ */
+export function effortSplit(efforts: Record<string, number> | undefined, unknown: string): string {
+  const all = Object.entries(efforts ?? {}).filter(([, n]) => n > 0)
+  const total = all.reduce((s, [, n]) => s + n, 0)
+  if (!total || !all.some(([e]) => e)) return ''
+  return all
+    .sort((a, b) => Number(!a[0]) - Number(!b[0]) || b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([e, n]) => `${e || unknown} ${pct(n / total)}`)
+    .join(' · ')
+}
+
+/** Dollars at API prices. */
+export function dollars(n: number): string {
+  if (n === 0) return '$0'
+  if (n < 0.01) return '<$0.01'
+  return `$${n.toLocaleString(locale(), n >= 100 ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }

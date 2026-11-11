@@ -93,8 +93,9 @@ def test_claude_code_records_the_turn_and_writes_through_mcp(tmp_path: Path, mon
                    # MCP tools listed with the rest, not loaded through a search first.
                    ENABLE_TOOL_SEARCH="false")
         (tmp_path / "home").mkdir()
-        r = subprocess.run([claude, "-p", "log the decision about the stub model", "--model", "claude-sonnet-4-5",
-                            "--allowedTools", "mcp__slightly-parallel__write_entry"],
+        # A model with effort levels, at one named: the transcript records it per reply.
+        r = subprocess.run([claude, "-p", "log the decision about the stub model", "--model", "claude-opus-4-6",
+                            "--effort", "high", "--allowedTools", "mcp__slightly-parallel__write_entry"],
                            cwd=str(work), env=env, capture_output=True, text=True, timeout=180)
         sent = [json.loads(ln) for ln in (tmp_path / "model.jsonl").read_text(encoding="utf-8").splitlines()]
         seen = f"exit {r.returncode}\nstdout: {r.stdout[-1500:]}\nstderr: {r.stderr[-1500:]}\nmodel saw: {sent}"
@@ -109,6 +110,14 @@ def test_claude_code_records_the_turn_and_writes_through_mcp(tmp_path: Path, mon
         decisions = call("GET", "/api/decisions?project=cli")["decisions"]
         mine = [d for d in decisions if "stub model" in str(d.get("decision_text") or d.get("l1") or "")]
         assert mine and mine[0]["agent_id"] == agent, (decisions, agent, seen)
+        # claude -p is a helper run (entrypoint sdk-cli); started from no chat here, so no
+        # parent. The decision above is its own write through MCP, kept under its own id.
+        meta = json.loads((chats[0].parent / "meta.json").read_text(encoding="utf-8"))
+        assert meta.get("helper") is True and meta["helper_kind"] == "claude-print" and meta["helper_of"] == "", meta
+        usage = [json.loads(x) for x in (chats[0].parent / "usage.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert usage and {x["effort"] for x in usage} == {"high"}, usage
+        facts = [json.loads(x) for x in (chats[0].parent / "facts.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert facts and facts[-1]["effort"] == "high", facts
     finally:
         stub.shutdown()
         server.should_exit = True

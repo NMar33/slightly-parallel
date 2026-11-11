@@ -990,5 +990,7 @@
   "Read Codex's limits every": "Читать лимиты Codex каждые",
   "When Codex is on this machine, its plan limits are read through codex app-server on a schedule, without a chat and without tokens. Off: they come only from Codex chats in integrated folders.": "Если Codex есть на этой машине, его лимиты тарифа читаются через codex app-server по расписанию, без чата и без токенов. Выкл.: они приходят только из чатов Codex в подключённых папках.",
   "Hours between two scheduled readings. The Usage page asks for a fresh one on its own when the last is older than 15 minutes.": "Часов между двумя плановыми чтениями. Страница «Расход» сама запрашивает свежее, когда последнему больше 15 минут.",
-  "After each reply the terminal and the chat viewer show the turn's tokens: → new ↑ output ↓ (cache). Tokens are recorded either way. #usage-on and #usage-off in a chat change this for that chat.": "После каждого ответа терминал и просмотр чата показывают токены хода: → новые ↑ вывод ↓ (кэш). Токены записываются в любом случае. #usage-on и #usage-off в чате меняют это для этого чата."
+  "After each reply the terminal and the chat viewer show the turn's tokens: → new ↑ output ↓ (cache). Tokens are recorded either way. #usage-on and #usage-off in a chat change this for that chat.": "После каждого ответа терминал и просмотр чата показывают токены хода: → новые ↑ вывод ↓ (кэш). Токены записываются в любом случае. #usage-on и #usage-off в чате меняют это для этого чата.",
+  "Helpers with no known parent · {n}": "Помощники без известного родителя · {n}",
+  "Runs started from a terminal, or by a chat that was not recorded. Each opens as a chat.": "Запуски из терминала или из чата, который не записывался. Каждый открывается как чат."
 }

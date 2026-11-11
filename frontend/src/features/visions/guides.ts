@@ -352,6 +352,7 @@ export const AGENTS_GUIDE: Guide = {
     [t('Find'), t('one search over names, ids and headlines.')],
     [t('Groups'), t('chips that show only the agents of one group.')],
     [t('Card'), t('click a card to open the agent: its chats, its tasks and its work.')],
+    [t('Helpers'), t('runs another chat started (codex exec, claude -p, opencode run) are on that chat\'s page; those with no known parent are folded at the end of their project.')],
   ],
   steps: [
     t('Setup connects a project: the hook that records chats, the agent tools and a section of AGENTS.md.'),

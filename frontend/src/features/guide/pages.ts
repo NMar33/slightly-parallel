@@ -41,7 +41,7 @@ export const GUIDE_PAGES: GuidePage[] = [
     route: '/agent/:id',
     title: t('Agent'),
     text:
-      t('One agent. Its name and project are at the top; the sections are listed on the left: overview, chats, files, decisions, tasks, features & fixes, links and subagents. The arrows open the previous and next agent of the same project. The open section is kept in the URL.'),
+      t('One agent. Its name and project are at the top; the sections are listed on the left: overview, chats, files, decisions, tasks, features & fixes, links and subagents, and helpers when it started any. The arrows open the previous and next agent of the same project. The open section is kept in the URL.'),
   },
   {
     route: '/architecture',

@@ -872,7 +872,11 @@ class ViewStore:
         # A chat imported from a tool's own log afterwards (sessionimport.py)
         # is read, never acted on: a #done or #vision in an old message must
         # not close a task or keep a vision weeks later.
-        imported = {str(a.get("agent_id") or "") for a in agents if a.get("capture") == "import"}
+        # A helper chat (a codex exec, a claude -p another chat started) the
+        # same: its messages were written by an agent, and a command in them
+        # is no operator's (hookshared.HELPER_KINDS).
+        imported = {str(a.get("agent_id") or "") for a in agents
+                    if a.get("capture") == "import" or a.get("helper") is True}
         chats = []
         for a in agents:
             chat_path = Path(a.get("_chat_path") or "")

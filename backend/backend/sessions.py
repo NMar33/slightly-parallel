@@ -794,6 +794,19 @@ def chat_path(store: Any, agent_id: str) -> Path | None:
     return chat_paths(store).get(agent_id)
 
 
+def is_helper(agent: Any) -> bool:
+    """A helper chat: a run another program started (a codex exec, a
+    claude -p, an opencode run), marked by the hook in meta.json. Its
+    messages are recorded; no command in them acts, and the lists the
+    operator reads leave it out (hookshared.HELPER_KINDS)."""
+    return isinstance(agent, dict) and agent.get("helper") is True
+
+
+def helper_ids(store: Any) -> set[str]:
+    """The agent ids of every helper chat."""
+    return {str(a.get("agent_id") or "") for a in store.agents() if is_helper(a)}
+
+
 def turns_with_work(store: Any, row: dict[str, Any]) -> list[dict[str, Any]]:
     """One chat's turns, each carrying what it changed when git knows."""
     from . import gitwork

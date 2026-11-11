@@ -82,6 +82,9 @@ def main() -> int:
             if not isinstance(given, dict):
                 given = {}
             args.text = str(given.get("text") or "")
+            # "opencode-run": the plugin runs inside `opencode run`, no chat
+            # the operator types in (hookshared.HELPER_KINDS).
+            args.helper = str(given.get("helper") or "") if given.get("helper") in shared.HELPER_KINDS else ""
             if "times" in given:
                 args.times = json.dumps(given["times"])
             if "touched" in given:
@@ -99,7 +102,12 @@ def main() -> int:
         # loaded mid-session) leaves no trace: noting its origin made the
         # folder of an agent with no messages.
         if (args.tool or args.session or args.cwd) and (args.phase != "complete" or cap.meta_path.exists()):
-            cap.note_origin(args.tool, args.session, args.cwd)
+            kind = getattr(args, "helper", "")
+            # Who started it: the environment this process inherited from
+            # the tool, which inherited it from its parent.
+            parent = shared.helper_parent(args.tool or "cli", args.session, data_root=args.data_root) if kind else ""
+            cap.note_origin(args.tool, args.session, args.cwd, helper_kind=kind, helper_of=parent,
+                            helper_of_by="env" if parent else "")
         if args.phase == "open" and args.cwd:
             # The per-cwd identity file the MCP server reads (GET /api/whoami).
             # Without it every write from an OpenCode agent failed with

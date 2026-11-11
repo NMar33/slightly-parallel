@@ -195,6 +195,30 @@ test.describe('core flows', () => {
     expect((await taskByTitle(request, title))?.status).toBe('done')
   })
 
+  test('helpers: off the board, under the chat that started them, each opens as a chat', async ({ page, request }) => {
+    // The board: the operator's agents; a helper with no known parent folded at the end of its project.
+    await page.goto('/agent')
+    await expect(page.getByText('agent-genesis').first()).toBeVisible()
+    await expect(page.getByText('You are a critic.', { exact: false })).toHaveCount(0)
+    const folded = page.locator('details').filter({ hasText: 'Helpers with no known parent · 1' })
+    await expect(folded).toBeVisible()
+    await folded.locator('summary').click()
+    await folded.getByRole('link', { name: /Started by hand/ }).click()
+    await expect(page).toHaveURL(/\/agent\/codex-e2e00002#sec=chats/)
+    await expect(page.getByText('Summary written.')).toBeVisible()
+    // The parent's page: a helpers section; its row opens the helper's chat.
+    await page.goto('/agent/agent-genesis-2608-01')
+    await page.getByRole('tab', { name: /helpers/ }).click()
+    await page.getByRole('link', { name: /You are a critic/ }).click()
+    await expect(page).toHaveURL(/\/agent\/codex-e2e00001#sec=chats/)
+    await expect(page.getByText('Two issues found.')).toBeVisible()
+    await page.getByRole('tab', { name: /links/ }).click()
+    await expect(page.getByText(/helper run \(codex exec\), started by/)).toBeVisible()
+    // Its #entrypoint was never kept.
+    const eps = await (await request.get('/api/entrypoints?project=alpha-labs')).json()
+    expect(JSON.stringify(eps)).not.toContain('never kept')
+  })
+
   test('chats: pick a chat, read its turns, focus opens with F and leaves with Escape', async ({ page }) => {
     await page.goto('/chats')
     const list = page.getByRole('list', { name: 'Chats' })

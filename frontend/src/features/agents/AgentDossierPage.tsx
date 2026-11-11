@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { FolderKanban, Users } from 'lucide-react'
 
 import { AgentDossier, type SectionId } from './dossier'
@@ -18,19 +18,29 @@ import { t } from '../../i18n/scope/views'
  * project's roster. Chosen from four Lab shapes (v01).
  */
 
-const SECTIONS: SectionId[] = ['overview', 'chats', 'files', 'decisions', 'tasks', 'work', 'links']
+const SECTIONS: SectionId[] = ['overview', 'chats', 'files', 'decisions', 'tasks', 'work', 'links', 'helpers']
+
+function secOf(hash: string): SectionId | null {
+  const m = /sec=([a-z]+)/.exec(hash)
+  const v = m?.[1] as SectionId | undefined
+  return v && SECTIONS.includes(v) ? v : null
+}
 
 function readSec(): SectionId {
   if (typeof window === 'undefined') return 'overview'
-  const m = /sec=([a-z]+)/.exec(window.location.hash)
-  const v = m?.[1] as SectionId | undefined
-  return v && SECTIONS.includes(v) ? v : 'overview'
+  return secOf(window.location.hash) ?? 'overview'
 }
 
 export function AgentDossierPage() {
   const params = useParams<{ id: string }>()
   const id = params.id ?? ''   // react-router has decoded it already; decoding twice threw on a '%'
   const [sec, setSec] = useState<SectionId>(readSec)
+  // A link that names a section (a helper's row opens its chats) wins over the one kept.
+  const { hash } = useLocation()
+  useEffect(() => {
+    const named = secOf(hash)
+    if (named) setSec(named)
+  }, [hash, id])
   // A new agent (← →) keeps the section; a new URL hash wins on load.
   useEffect(() => {
     const url = new URL(window.location.href)

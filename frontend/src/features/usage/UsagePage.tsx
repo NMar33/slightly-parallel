@@ -32,7 +32,7 @@ import {
   TOOL_ORDER, helpersOf, toolColor, toolName, useUsage, useUsageLimits,
   type CauseUsage, type ChatUsage, type LimitReading, type Limits, type LimitWindow, type TaskUsage, type ToolLimits, type UsageCounts, type UsageRange, type UsageSummary,
 } from './data'
-import { exactTokens, formatTokens, pct, pctValue, ratioTenths, sharePct, tenthsText } from './format'
+import { dollars, effortSplit, exactTokens, formatTokens, pct, pctValue, ratioTenths, sharePct, tenthsText } from './format'
 import { clock, dayWord, evenPace, isPast, resetText, shortDate, whenText } from './time'
 import { locale, t, tn } from '../../i18n/scope/system'
 
@@ -534,12 +534,6 @@ function remember(key: string, value: string): void {
   try { localStorage.setItem(key, value) } catch { /* the choice lasts this visit */ }
 }
 
-/** Dollars at API prices. */
-function dollars(n: number): string {
-  if (n === 0) return '$0'
-  if (n < 0.01) return '<$0.01'
-  return `$${n.toLocaleString(locale(), n >= 100 ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 
 /** A row with no price at all draws dashes: not $0. */
 const noPrice = (u: UsageCounts) => (u.cost_usd ?? 0) === 0 && ((u.unpriced ?? 0) > 0 || u.cost == null)
@@ -756,6 +750,7 @@ function ByTool({ data, filter, onFilter, unit }: { data: UsageSummary; filter: 
               </tr>,
               ...tl.models.map((m) => {
                 const fm: Filter = { tool: tl.tool, model: m.model }
+                const split = effortSplit(m.efforts, t('unknown'))
                 return (
                   <tr key={`${tl.tool}:${m.model}`} className={`border-t border-border-subtle text-secondary ${sameFilter(filter, fm) ? 'bg-elevated' : 'hover:bg-hover'}`}>
                     <td className="pl-24 pr-10 py-6 font-mono text-11">
@@ -763,6 +758,10 @@ function ByTool({ data, filter, onFilter, unit }: { data: UsageSummary; filter: 
                         label={sameFilter(filter, fm) ? t('Show the chats and tasks of every tool') : t('Show only the chats and tasks of {what} below', { what: modelWord(m.model) })}>
                         {modelWord(m.model)}
                       </FilterButton>
+                      {split && (
+                        <div className="text-10 text-tertiary mt-1" data-testid="usage-effort"
+                          title={t('Reasoning effort: the share of new input and output at each level')}>{split}</div>
+                      )}
                     </td>
                     <Cells u={m} unit={unit} />
                   </tr>

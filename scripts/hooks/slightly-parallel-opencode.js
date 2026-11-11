@@ -44,6 +44,12 @@ const SP = {
 
 const OPEN_WAIT_MS = 15000
 
+// `opencode run` is a run another program (or a script) started, not a chat
+// the operator types in: Slightly Parallel records it as a helper, and no
+// command in its messages acts. The plugin runs inside that process:
+// argv is [runtime, script, 'run', …].
+const HELPER = (typeof process !== 'undefined' && Array.isArray(process.argv) && process.argv[2] === 'run') ? 'opencode-run' : ''
+
 export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   const seen = new Set()
   const cwd = directory || ((typeof process !== 'undefined' && process.cwd) ? process.cwd() : '')
@@ -67,7 +73,7 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
       // helper's), passed the system's limit on a command line — 32 767
       // characters on Windows — the process never started, and the message
       // or the reply was lost without a word.
-      const input = JSON.stringify({ text: String(text || ''), ...(more || {}) })
+      const input = JSON.stringify({ text: String(text || ''), ...(more || {}), ...(HELPER ? { helper: HELPER } : {}) })
       const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --json-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(input)}`.quiet()
       return out.text().trim()
     } catch {
@@ -131,9 +137,13 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   // OpenCode reports them (info.tokens): Slightly Parallel's usage of the
   // turn, per message, the helpers' (child sessions) named apart.
   const num = (x) => (typeof x === 'number' && isFinite(x) && x > 0 ? Math.round(x) : 0)
+  // ``variant``: the reasoning variant the reply ran with (`--variant high`,
+  // the model picker's): the assistant message's, else its prompt's.
   const usageOf = (list, sinceMs, helper, out) => {
+    let asked = ''
     for (const m of list || []) {
       const info = (m && (m.info || m)) || {}
+      if (info.role === 'user') asked = String((info.model && info.model.variant) || info.variant || '')
       const t = info.tokens
       if (info.role !== 'assistant' || !t || typeof t !== 'object' || !info.id) continue
       const time = info.time || {}
@@ -145,6 +155,7 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         model: String(info.modelID || (info.model && info.model.modelID) || ''),
         input: num(t.input), output: num(t.output), reasoning: num(t.reasoning),
         cache_read: num(cache.read), cache_write: num(cache.write), helper,
+        variant: String(info.variant || asked || ''),
       })
     }
     return out

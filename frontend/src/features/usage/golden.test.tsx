@@ -45,11 +45,11 @@ beforeAll(() => {
 afterAll(() => { vi.useRealTimers() })
 afterEach(() => { vi.unstubAllGlobals() })
 
-function serve() {
+function serve(summary: UsageSummary = SUMMARY) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const path = String(url)
     const body = path.startsWith('/api/usage/limits') ? limitsAnswer
-      : path.startsWith('/api/usage') ? SUMMARY
+      : path.startsWith('/api/usage') ? summary
         : path.startsWith('/api/snapshot') ? { projects: [{ code: 'GOLD' }, { code: 'SIDE' }] }
           : {}
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -64,6 +64,21 @@ function wrap(ui: ReactNode) {
 const tile = (label: string) => screen.getByText(label, { selector: 'div' }).parentElement!
 
 describe('the Usage page on the golden data', () => {
+  it('names a model\'s reasoning efforts under it only when a reply named one', async () => {
+    // The golden logs name no effort: no line at all.
+    serve()
+    const { unmount } = render(wrap(<UsagePage />))
+    await screen.findByText(S.today.tiles.new_output!)
+    expect(screen.queryByTestId('usage-effort')).toBeNull()
+    unmount()
+    const named = JSON.parse(JSON.stringify(SUMMARY)) as UsageSummary
+    const model = named.by_tool[0]!.models[0]!
+    model.efforts = { high: 60, low: 20, '': 20 }
+    serve(named)
+    render(wrap(<UsagePage />))
+    expect((await screen.findByTestId('usage-effort')).textContent).toBe('high 60% · low 20% · unknown 20%')
+  })
+
   it('draws the tiles as the server words them', async () => {
     serve()
     render(wrap(<UsagePage />))

@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
 from .. import app_settings
+from ..sessions import helper_ids, is_helper
 from ..date_utils import format_yymm_dd
 from ..db import ViewStore
 from ..entities import DONE_STATUSES
@@ -138,6 +139,15 @@ def _yymmdd_offset(days: int) -> str:
     return format_yymm_dd(date.today() + timedelta(days=days))
 
 
+def _no_helpers(store: ViewStore, column: str = "agent_id") -> tuple[str, tuple[str, ...]]:
+    """An SQL condition that leaves helper chats out (a codex exec, a claude -p
+    another chat started: their work belongs to that chat), and its values."""
+    ids = tuple(sorted(helper_ids(store)))
+    if not ids:
+        return "1=1", ()
+    return f"{column} NOT IN ({','.join('?' * len(ids))})", ids
+
+
 def _pick_headline(agents: list[dict[str, Any]]) -> str:
     """Newest agent's l1_headline (or empty)."""
     latest, latest_ts = "", ""
@@ -177,7 +187,10 @@ def snapshot(
         return r
 
     prefs = app_settings.load(store.data_root)
-    agents = store.agents()
+    # The lists and counts here are the operator's chats: helpers are listed
+    # under the chat that started them (the agent's page).
+    agents = [a for a in store.agents() if not is_helper(a)]
+    no_helpers, helper_vals = _no_helpers(store)
     done_7d = _tasks_done_since(store, _iso_days_ago(7))
 
     # One grouped query per number, not six queries per project: the
@@ -199,10 +212,11 @@ def snapshot(
     # Hours are the agents' working time, not the sessions' wall clock.
     mins_by = by_project(
         "SELECT project, COALESCE(SUM(agent_min), 0) AS n FROM time_blocks "
-        "WHERE created_date >= ? GROUP BY project",
-        (_yymmdd_offset(-30),),
+        f"WHERE created_date >= ? AND {no_helpers} GROUP BY project",
+        (_yymmdd_offset(-30), *helper_vals),
     )
-    last_by = by_project("SELECT project, MAX(created_date) AS n FROM time_blocks GROUP BY project")
+    last_by = by_project(f"SELECT project, MAX(created_date) AS n FROM time_blocks WHERE {no_helpers} GROUP BY project",
+                         helper_vals)
 
     summaries: list[ProjectSummary] = []
     total_open_tasks = 0
@@ -237,8 +251,8 @@ def snapshot(
         total_hours_30d += mins_30d / 60.0
 
     recent = rows_as(Activity, store.query(
-        "SELECT * FROM time_blocks ORDER BY created_date DESC, start_time DESC LIMIT ?",
-        (prefs["overview.recent_activity_limit"],),
+        f"SELECT * FROM time_blocks WHERE {no_helpers} ORDER BY created_date DESC, start_time DESC LIMIT ?",
+        (*helper_vals, prefs["overview.recent_activity_limit"]),
     ), source="snapshot.recent_activity")
     open_task_rows = _open_tasks(store)[: int(prefs["overview.open_tasks_limit"])]
     recent_decisions_rows = store.query(
@@ -316,13 +330,14 @@ def project(
         "SELECT * FROM decisions_mutual WHERE project=? ORDER BY created_date DESC",
         (code,),
     ), source=f"project:{code}.decisions")
+    no_helpers, helper_vals = _no_helpers(store)
     activity = rows_as(Activity, store.query(
-        "SELECT * FROM time_blocks WHERE project=? "
+        f"SELECT * FROM time_blocks WHERE project=? AND {no_helpers} "
         "ORDER BY created_date DESC LIMIT 500",
-        (code,),
+        (code, *helper_vals),
     ), source=f"project:{code}.activity")
     agents = rows_as(
-        Agent, [a for a in store.agents() if a.get("project") == code],
+        Agent, [a for a in store.agents() if a.get("project") == code and not is_helper(a)],
         source=f"project:{code}.agents", prepare=clean_agent,
     )
 
@@ -348,7 +363,7 @@ def project(
         code=code,
         name=code,
         l1_headline=_pick_headline(
-            [a for a in store.agents() if a.get("project") == code]
+            [a for a in store.agents() if a.get("project") == code and not is_helper(a)]
         ),
         open_tasks=open_tasks,
         tasks_total=tasks_total,
@@ -514,7 +529,7 @@ def search(
     )
     agent_ids = set(by_kind.get("agent", [])[:limit])
     result.agents = rows_as(
-        Agent, [a for a in store.agents() if str(a.get("agent_id") or "") in agent_ids],
+        Agent, [a for a in store.agents() if str(a.get("agent_id") or "") in agent_ids and not is_helper(a)],
         source="search.agents", prepare=clean_agent,
     )
     return result
@@ -554,7 +569,7 @@ def timeline(
     if (r := maybe_304(request, etag)) is not None:
         return r
 
-    agents = store.agents()
+    agents = [a for a in store.agents() if not is_helper(a)]
     if project:
         agents = [a for a in agents if a.get("project") == project]
 

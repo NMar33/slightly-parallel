@@ -84,7 +84,10 @@ def _rid(agent_id: str, turn: int) -> str:
 
 def _turns(store: ViewStore, agent_id: str) -> list[Turn]:
     from .keeplib import _chat_path
+    from .sessions import helper_ids
 
+    if agent_id in helper_ids(store):
+        return []    # a helper chat: an #undo in its prompt is no operator's
     path = _chat_path(store, agent_id)
     return parse_turns(path) if path is not None else []
 

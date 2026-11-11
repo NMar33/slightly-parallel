@@ -144,7 +144,11 @@ export interface UsageAnalysis {
 /** Why old context was written to the cache again, summed over the range. */
 export interface CauseUsage { cause: string; rebuilt: number; cost_usd: number; events: number; chats: number }
 
-export interface ModelUsage extends UsageCounts { model: string }
+export interface ModelUsage extends UsageCounts {
+  model: string
+  /** New input plus output (helpers included) by the reasoning effort the replies ran with; '' is not known. */
+  efforts?: Record<string, number>
+}
 export interface ToolUsage extends UsageCounts { tool: UsageTool; models: ModelUsage[] }
 
 export interface ChatUsage extends Partial<UsageCounts> {

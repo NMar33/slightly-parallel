@@ -34,8 +34,10 @@ import {
   toolOfProfile,
   TOOL_LABEL,
   type AgentProfile,
+  type HelperRow,
   type ProfileTask,
 } from './profile'
+import { dollars, formatTokens } from '../usage/format'
 
 import { t, tn } from '../../i18n/scope/views'
 import { rich } from '../../i18n/rich'
@@ -405,6 +407,47 @@ export function EntryRows<R extends EntryRowLike>({
   )
 }
 
+/** How each kind of helper run is started: the command, as typed. */
+export const HELPER_KIND_LABEL: Record<string, string> = {
+  'codex-exec': 'codex exec',
+  'codex-subagent': 'Codex subagent',
+  'claude-print': 'claude -p',
+  'opencode-run': 'opencode run',
+}
+
+/**
+ * Helper chats: the runs a chat started (codex exec, claude -p, opencode
+ * run). One row each: when, how it was started, the first line of its
+ * prompt, its messages and what it used. A row opens the helper's chat.
+ */
+export function HelperRows({ rows, empty = t('No helpers.') }: { rows: HelperRow[]; empty?: string }) {
+  if (rows.length === 0) return <EmptyState compact title={empty} />
+  return (
+    <ol className="flex flex-col gap-1" aria-label={t('Helpers')}>
+      {rows.map((h) => (
+        <li key={h.agent_id}>
+          <Link
+            to={`/agent/${encodeURIComponent(h.agent_id)}#sec=chats`}
+            title={t('Open this helper\'s chat')}
+            className="w-full text-left text-12 flex flex-col gap-1 px-6 py-4 rounded-input hover:bg-hover min-w-0 no-underline"
+          >
+            <span className="flex items-baseline gap-8 text-10 font-mono text-tertiary tabular min-w-0">
+              <span className="shrink-0">{fmtDay(h.started)} {h.started.slice(11, 16)}</span>
+              <span className="shrink-0 text-secondary">{HELPER_KIND_LABEL[h.helper_kind] ?? (TOOL_LABEL[h.tool] || h.tool)}</span>
+              <span className="ml-auto shrink-0">
+                {t('{message_count} msgs', { message_count: h.message_count })}
+                {h.tokens > 0 ? ` · ${formatTokens(h.tokens)}` : ''}
+                {h.cost_usd != null ? ` · ${dollars(h.cost_usd)}` : ''}
+              </span>
+            </span>
+            <span className="text-secondary truncate">{h.first_line || h.chat_title || h.agent_id}</span>
+          </Link>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Origin + edit
 // ---------------------------------------------------------------------------
@@ -487,6 +530,17 @@ export function LinkRows({ p, byId }: { p: AgentProfile; byId?: Map<string, Agen
     return q ? profileLabel(q) : b.agent_name || b.agent_id
   }
   const fam: ReactNode[] = []
+  if (p.agent.helper) {
+    const from = p.agent.helper_of
+    const kind = HELPER_KIND_LABEL[p.agent.helper_kind ?? ''] ?? ''
+    fam.push(
+      <li key="helper-of" className="text-12 text-secondary">
+        {from
+          ? <>{t('helper run ({kind}), started by', { kind })}{' '}<Link to={`/agent/${encodeURIComponent(from)}`} className="text-primary hover:text-brand">{byId?.get(from) ? profileLabel(byId.get(from)!) : from}</Link></>
+          : t('helper run ({kind}); the chat that started it is not known', { kind })}
+      </li>,
+    )
+  }
   if (p.parent) fam.push(<li key="parent" className="text-12 text-secondary">{t('started by')}{' '}<Link to={`/agent/${encodeURIComponent(p.parent.agent_id)}`} className="text-primary hover:text-brand">{nameOf(p.parent)}</Link></li>)
   for (const c of p.children) fam.push(<li key={c.agent_id} className="text-12 text-secondary">{t('started')}{' '}<Link to={`/agent/${encodeURIComponent(c.agent_id)}`} className="text-primary hover:text-brand">{nameOf(c)}</Link></li>)
   for (const m of p.group.members) fam.push(<li key={`g-${m.agent_id}`} className="text-12 text-secondary">{rich(t('in group {group} with {agent}'), { group: <span className="font-mono text-11">{p.group.name}</span>, agent: <Link to={`/agent/${encodeURIComponent(m.agent_id)}`} className="text-primary hover:text-brand">{nameOf(m)}</Link> })}</li>)

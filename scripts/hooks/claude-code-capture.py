@@ -509,6 +509,12 @@ def write_breadcrumb(data_root: str, project: str, session_id: str, cwd: str,
             "agent_id": agent_id or agent_name(session_id, tool), "project": project,
             "session_id": session_id, "cwd": cwd, "at": _time.time(),
         }
+        if tool == "claude-code":
+            # The Claude Code process of this chat and when it started: a
+            # claude -p it runs finds its parent by them (hookshared.helper_parent).
+            pid, started = shared.tool_process()
+            if pid and started is not None:
+                crumb.update(tool_pid=pid, tool_started=started)
         try:
             # This chat's own file, and a sweep of the ones a week old.
             mine = sessions / digest
@@ -545,6 +551,33 @@ def codex_usage(payload: dict, session_id: str, since: float | None = None) -> t
     if since is not None:
         return shared.codex_turn_usage(rollout, since=since)
     return shared.codex_turn_usage(rollout, str(payload.get("turn_id") or ""), back=1)
+
+
+def helper_signal(tool: str, payload: dict, session_id: str, data_root: str) -> tuple[str, str, str]:
+    """(helper kind, the parent's agent id, how it was found) of this chat;
+    ("", "", "") for a chat the operator runs. Claude Code: the entrypoint
+    in the hook's environment (``sdk-cli`` for claude -p), else the
+    transcript's. Codex: its session file's first line (the payload's
+    ``transcript_path``, else found by the thread id). The parent: Codex's
+    own subagents name it in that line; any other helper inherits it in its
+    environment (hookshared.helper_parent). Never raises."""
+    try:
+        parent_thread = ""
+        if tool == "codex":
+            given = str(payload.get("transcript_path") or "")
+            rollout = given if given and Path(given).name.startswith("rollout-") else shared.codex_rollout(session_id)
+            kind, parent_thread = shared.codex_helper_kind(shared.codex_session_meta(rollout)) if rollout else ("", "")
+        else:
+            kind = shared.claude_helper_kind(os.environ.get("CLAUDE_CODE_ENTRYPOINT")) or \
+                shared.claude_helper_kind(shared.claude_entrypoint(str(payload.get("transcript_path") or "")))
+        if not kind:
+            return "", "", ""
+        if parent_thread:
+            return kind, f"codex-{shared.session_key('codex', parent_thread)}", "session"
+        parent = shared.helper_parent(tool, session_id, os.environ, data_root)
+        return kind, parent, "env" if parent else ""
+    except Exception:  # noqa: BLE001 — a helper not recognised is recorded as a chat
+        return "", "", ""
 
 
 #: Events that only record the tokens read so far: the session ended, or the
@@ -596,9 +629,11 @@ def main() -> int:
             if is_system_payload(prompt):
                 return 0
             cwd = str(payload.get("cwd") or "")
-            cap.note_origin(args.tool, session_id, cwd)
+            # Before the message is recorded: a helper's commands never act.
+            kind, parent, by = helper_signal(args.tool, payload, session_id, args.data_root)
+            cap.note_origin(args.tool, session_id, cwd, helper_kind=kind, helper_of=parent, helper_of_by=by)
             write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
-            if args.tool == "claude-code" and usage_only(prompt):
+            if args.tool == "claude-code" and usage_only(prompt) and not cap.is_helper():
                 # #usage, #usage-on, #usage-off alone: answered here, shown to
                 # the user only, and the prompt never reaches the model
                 # (UserPromptSubmit decision "block": its reason is shown to
@@ -622,6 +657,11 @@ def main() -> int:
             # the skills and the times — all from one read of what was
             # written since the previous Stop.
             stop = event == "Stop"
+            if stop and cap.meta_path.exists() and not cap.is_helper():
+                # A chat whose prompt event was missed is still known for a helper.
+                kind, parent, by = helper_signal(args.tool, payload, session_id, args.data_root)
+                if kind:
+                    cap.note_origin(helper_kind=kind, helper_of=parent, helper_of_by=by)
             given = str(payload.get("last_assistant_message") or "").strip() if stop else ""
             transcript_path = str(payload.get("transcript_path") or "")
             seg = Segment(transcript_path, cap.transcript_pos(transcript_path), _turntimes() if stop else None)
@@ -686,7 +726,11 @@ def main() -> int:
                     print(json.dumps({"systemMessage": "\n".join(parts)}, ensure_ascii=False))
                 facts = seg.facts
                 if transcript_path and (facts.appended or facts.tools or warned):
-                    cap.record_facts(turn, facts.appended, facts.tools, [warned[0]] if warned else [])
+                    # The effort of the turn's last reply of the main agent (the
+                    # transcript's; the hook's CLAUDE_EFFORT reads stale on a prompt).
+                    effort = next((str(x.get("effort") or "") for x in reversed(seg.usage_lines())
+                                   if not x.get("helper") and x.get("effort")), "")
+                    cap.record_facts(turn, facts.appended, facts.tools, [warned[0]] if warned else [], effort)
     except Exception as exc:  # noqa: BLE001 — capture must never take down the session it observes
         # Exit 0 keeps the session alive; the notice goes where it is shown
         # (stdout on a prompt, stderr on Stop), so the loss is named instead

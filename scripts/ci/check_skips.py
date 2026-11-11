@@ -35,6 +35,7 @@ ALLOWED: list[tuple[str, set[str]]] = [
     (r"drive letters are a Windows spelling", {LINUX, MAC}),
     (r"restore needs tarfile's data filter", ALL),
     (r"the real CLI runs in its own CI job", ALL),   # tests/test_real_cli.py, job real-cli   # Python before 3.12
+    (r"the real Codex runs in its own CI job", ALL),   # tests/test_real_codex.py, job real-cli
 ]
 
 

@@ -66,6 +66,31 @@ less than a minute earlier it was not.
 Question: what if a minute, a day or the time zone changes between the
 two "now"s?
 
+## 8. Send the right value in the wrong shape
+
+The write fuzzer sent junk to every route for months and found 500s only.
+Sending what an agent sends, a valid value inside a list, found that 13
+lenses stored `["chat"]` as the text `['chat']` in 50 columns, and that two
+checks refused `["agent"]` while listing `agent` as allowed.
+
+Question: what is stored when the meaning is right and the shape is not?
+
+## 9. A refusal must change nothing
+
+The fuzzer was taught to compare the data folder before and after each 4xx.
+Two 404s for ids that did not exist rewrote their whole file.
+
+Question: what did a refused request write?
+
+## 10. One thing named two ways is two things
+
+The hook named a chat's breadcrumb by the folder as the tool spelled it,
+the MCP server by `os.getcwd()`. A trailing separator, /var against
+/private/var, NFD letters or a drive letter's case gave "no captured
+session"; so did a folder name holding `$`, which sh read as a variable.
+
+Question: is the same thing spelled the same way by everyone who names it?
+
 ## Questions before writing a test
 
 1. What did the test see at the moment it failed?
@@ -75,3 +100,6 @@ two "now"s?
 5. Does the error message contradict itself?
 6. What happens to what already worked if the next step fails?
 7. What if a minute, a day or the time zone changes between two "now"s?
+8. What is stored when the meaning is right and the shape is not?
+9. What did a refused request write?
+10. Is the same thing spelled the same way by everyone who names it?

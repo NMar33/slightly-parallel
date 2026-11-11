@@ -560,7 +560,12 @@ class TurnCapture:
         # now, after it (answer_usage).
         self._flush_deferred(meta)
         settings = _load_settings(self.data_root)
-        if quiet:
+        # A helper chat (a codex exec, a claude -p another chat started): its
+        # messages are recorded, and nothing in them acts — no command, no
+        # kept entry, no notice that asks for work (the standup, a scan's
+        # reminders). Its prompt was written by an agent, not the operator.
+        helper = bool(meta.get("helper"))
+        if quiet or helper:
             settings = {**settings, "standup_enabled": False, "decision_hint_enabled": False,
                         "contract_refresh_turns": 0, "files_due_enabled": False, "architecture_due_enabled": False}
 
@@ -610,15 +615,15 @@ class TurnCapture:
             meta["last_task"] = named[-1]
         # The message as the commands read it: a ###command silences the
         # other tags (hookshared.command_text, the server reads the same).
-        said = shared.command_text(user_text or "")
+        said = "" if helper else shared.command_text(user_text or "")
         evidence_for = None
         if _EVIDENCE_RE.search(said):
             tid = named[0] if named else str(meta.get("last_task") or "")
             evidence_for = {"id": tid, "title": _task_title(self.data_root, tid) if tid else ""}
 
         # Commits of the last turn that said no task: told once, here.
-        unsigned = None if quiet else meta.pop("unsigned_commits", None)
-        unsigned_sure = False if quiet else bool(meta.pop("unsigned_sure", False))
+        unsigned = None if quiet or helper else meta.pop("unsigned_commits", None)
+        unsigned_sure = False if quiet or helper else bool(meta.pop("unsigned_sure", False))
         # #usage-on / #usage-off: this chat shows each reply's tokens, or not.
         commands = list(dict.fromkeys(" ".join(m.group(1).lower().split()) for m in _COMMAND_RE.finditer(said)))
         usage_cmds = [c for c in commands if c in _USAGE_COMMANDS]
@@ -944,15 +949,32 @@ class TurnCapture:
         return str(shared.last_json(self.folder / "work.jsonl", "head") or "")
 
     @_with_meta_lock
-    def note_origin(self, tool: str = "", session_id: str = "", cwd: str = "") -> None:
+    def note_origin(self, tool: str = "", session_id: str = "", cwd: str = "",
+                    helper_kind: str = "", helper_of: str = "", helper_of_by: str = "") -> None:
         """Record where this agent runs: the tool, its full session id and
         the working directory — enough to print a resume command later.
         Written once (or when a value changes); never breaks the session.
         The directory is the one the chat started in and is kept: the tool
         reports the agent's current one, which moves when it works in a
-        subfolder, and a resume there meets a different set of instructions."""
+        subfolder, and a resume there meets a different set of instructions.
+
+        ``helper_kind``: this chat is a run another program started
+        (hookshared.HELPER_KINDS): ``helper``, ``helper_kind`` and
+        ``helper_of`` (the chat that started it, when known; ``helper_of_by``
+        says how it was found) are written. A chat once a helper stays one;
+        a parent found later fills an empty ``helper_of``."""
         updates = {}
         meta = self._load_meta()
+        if helper_kind:
+            parent = shared.helper_of_clean(self.agent_name, helper_of)
+            if not meta.get("helper"):
+                updates.update({"helper": True, "helper_kind": helper_kind, "helper_of": parent})
+                if parent and helper_of_by:
+                    updates["helper_of_by"] = helper_of_by
+            elif parent and not meta.get("helper_of"):
+                updates["helper_of"] = parent
+                if helper_of_by:
+                    updates["helper_of_by"] = helper_of_by
         if meta.get("cwd"):
             cwd = ""
         elif cwd and not meta.get("base_head"):
@@ -993,6 +1015,14 @@ class TurnCapture:
             _atomic_write_json(self.meta_path, meta)
         except OSError as exc:
             self._lost("transcript position not kept", exc)
+
+    def is_helper(self) -> bool:
+        """This chat is a helper run (note_origin marked it): nothing in its
+        messages acts."""
+        try:
+            return bool(json.loads(self.meta_path.read_text(encoding="utf-8")).get("helper"))
+        except (OSError, ValueError, AttributeError):
+            return False
 
     def transcript_pos(self, path: str) -> int:
         """Where the previous Stop stopped reading this transcript (0: read
@@ -1221,13 +1251,16 @@ class TurnCapture:
         _atomic_write_json(self.meta_path, meta)
         return got
 
-    def record_facts(self, turn: int, appended: dict, tools: dict, warnings: list[str]) -> None:
+    def record_facts(self, turn: int, appended: dict, tools: dict, warnings: list[str],
+                     effort: str = "") -> None:
         """One line per turn in ``facts.jsonl``: what was added to the chat's
         context since the last Stop, by kind (characters; images counted),
-        the tool calls by name, and the warnings shown. Never raises."""
+        the tool calls by name, the warnings shown, and the reasoning effort
+        of the turn's last reply ("" when the log does not say). Never raises."""
         if turn < 1 or not self.folder.is_dir():
             return
-        line = {"turn": int(turn), "at": now_iso(), "appended": appended, "tools": tools, "warnings": warnings}
+        line = {"turn": int(turn), "at": now_iso(), "appended": appended, "tools": tools, "warnings": warnings,
+                "effort": effort}
         try:
             with open(self.folder / "facts.jsonl", "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(line, ensure_ascii=False) + "\n")

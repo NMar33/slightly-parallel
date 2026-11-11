@@ -219,7 +219,10 @@
      },
      "cost_usd": 0.0,
      "unpriced": 700220,
-     "model": "claude-opus-4-5"
+     "model": "claude-opus-4-5",
+     "efforts": {
+      "": 129220
+     }
     },
     {
      "new": 0,
@@ -246,7 +249,10 @@
      },
      "cost_usd": 0.0,
      "unpriced": 23000,
-     "model": "claude-sonnet-4-5"
+     "model": "claude-sonnet-4-5",
+     "efforts": {
+      "": 23000
+     }
     },
     {
      "new": 0,
@@ -273,7 +279,10 @@
      },
      "cost_usd": 0.0,
      "unpriced": 18300,
-     "model": "claude-haiku-4-5"
+     "model": "claude-haiku-4-5",
+     "efforts": {
+      "": 10300
+     }
     }
    ]
   },
@@ -329,7 +338,10 @@
      },
      "cost_usd": 0.0,
      "unpriced": 57000,
-     "model": "gpt-5-codex"
+     "model": "gpt-5-codex",
+     "efforts": {
+      "": 11000
+     }
     }
    ]
   }

@@ -390,6 +390,7 @@ def _record(r: dict[str, Any]) -> dict[str, Any] | None:
         "tool": str(r.get("tool") or ""), "model": model,
         **{k: _int(r.get(k)) for k in _SUMS},
         "ttl": str(r.get("ttl") or ""), "helper": str(r.get("helper") or ""),
+        "effort": str(r.get("effort") or ""),
         "limit": lim, "compacted": r.get("compacted") is True,
     }
 
@@ -743,8 +744,11 @@ def _parse_usage(data: bytes) -> dict[str, Any]:
         _add_sums(b["helpers"] if r["helper"] else b["main"], r)
         m = b["models"].get((r["model"], bool(r["helper"])))
         if m is None:
-            m = b["models"][(r["model"], bool(r["helper"]))] = {**_sums(), "helper_ids": set()}
+            m = b["models"][(r["model"], bool(r["helper"]))] = {**_sums(), "helper_ids": set(), "efforts": {}}
         _add_sums(m, r)
+        # The model's new input and output by the reasoning effort it ran
+        # with ("" when the log does not say): the by-model table's split.
+        m["efforts"][r["effort"]] = m["efforts"].get(r["effort"], 0) + r["new"] + r["output"]
         if r["helper"]:
             b["helper_ids"].add(r["helper"])
             m["helper_ids"].add(r["helper"])
@@ -1794,6 +1798,8 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
     totals = _Row()
     by_tool: dict[str, _Row] = {}
     by_model: dict[tuple[str, str], _Row] = {}
+    # (tool, model) → {effort: new input + output}, the main agent's and its helpers'.
+    model_efforts: dict[tuple[str, str], dict[str, int]] = {}
     per_chat: dict[str, _Row] = {}
     chat_model: dict[str, tuple[str, str]] = {}
     chat_tool: dict[str, str] = {}
@@ -1870,6 +1876,9 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
                 cc[(tool, model)] = cc.get((tool, model), 0) + sum(ms[k] for k in _COSTS)
                 mr = by_model.setdefault((tool, model), _Row())
                 mr.turns.add(key)
+                me = model_efforts.setdefault((tool, model), {})
+                for effort, used in (ms.get("efforts") or {}).items():
+                    me[effort] = me.get(effort, 0) + used
                 if is_helper:
                     _add_sums(mr.helpers, ms)
                     mr.helper_ids |= {(aid, h) for h in ms["helper_ids"]}
@@ -1883,7 +1892,8 @@ def summary(store: Any, project: str | None, rng: str = "today", now: datetime |
 
     tools = []
     for tool, s in by_tool.items():
-        models = [{**r.out(), "model": model} for (t, model), r in by_model.items() if t == tool]
+        models = [{**r.out(), "model": model, "efforts": model_efforts.get((t, model), {})}
+                  for (t, model), r in by_model.items() if t == tool]
         models.sort(key=lambda m: (*_key_of(m), m["model"]))
         tools.append({**s.out(), "tool": tool, "models": models})
     tools.sort(key=lambda r: (*_key_of(r), r["tool"]))

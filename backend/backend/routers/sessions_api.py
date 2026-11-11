@@ -32,9 +32,14 @@ def sessions_list(
     limit: int = Query(500, ge=1, le=5000),
     prompt: str | None = Query(None),
     q: str | None = Query(None),
+    helpers: bool = Query(False),
     store: ViewStore = Depends(get_store),
 ) -> Response:
     """Work sessions, newest first. Derived — agents never write these.
+
+    Helper chats (a codex exec, a claude -p another chat started) are left
+    out: they are listed under the chat that started them. ``agent_id``
+    names one chat, a helper too; ``helpers=1`` keeps them in.
 
     ``prompt=<id>`` narrows to the sessions a prompt was sent in — every
     version and every reworded send — and puts ``prompt_turn`` on each row,
@@ -50,7 +55,7 @@ def sessions_list(
     old drill-down had, at a fraction of its weight, from tables that
     already exist.
     """
-    etag = etag_for(f"sessions:{project}:{agent_id}:{from_}:{to}:{limit}:{prompt}:{q}", store)
+    etag = etag_for(f"sessions:{project}:{agent_id}:{from_}:{to}:{limit}:{prompt}:{q}:{helpers}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
     clauses: list[str] = ["1=1"]
@@ -71,6 +76,12 @@ def sessions_list(
     if agent_id:
         clauses.append("agent_id = ?")
         params.append(agent_id)
+    elif not helpers:
+        from ..sessions import helper_ids
+        hidden = sorted(helper_ids(store))
+        if hidden:
+            clauses.append(f"agent_id NOT IN ({','.join('?' * len(hidden))})")
+            params.extend(hidden)
     if from_:
         clauses.append("created_date >= ?")
         params.append(from_)

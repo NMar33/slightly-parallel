@@ -161,7 +161,7 @@ jobs:
     # The real Claude Code CLI, pinned, against a local stub of the Messages
     # API (tests/test_real_cli.py): hook events, payloads, the MCP server and
     # the page, end to end, without tokens. The newest runs weekly.
-    name: Real Claude Code 2.1.312 against a stub model (${{ matrix.os }})
+    name: Real Claude Code 2.1.312 and Codex 0.167.0 against stub models (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -192,6 +192,12 @@ jobs:
         env:
           SP_REAL_CLI: "1"
         run: python -m pytest -q -rs -o addopts="" tests/test_real_cli.py
+      - name: Install Codex 0.167.0 (the version the Real Codex job pins)
+        run: npm install -g @openai/codex@0.167.0 && codex --version
+      - name: "codex exec against a stub of the Responses API: recorded as a helper of the chat in its environment, with its effort (scripts/ci/stub_responses.py; no tokens, no key)"
+        env:
+          SP_REAL_CODEX: "1"
+        run: python -m pytest -q -rs -o addopts="" tests/test_real_codex.py
 
   audit:
     # Known vulnerabilities in the pinned dependencies. A job of its own: an

@@ -722,6 +722,199 @@ def tracked_cores(data_root: Any, project: str) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Helper chats: a run another program started (codex exec, claude -p, …)
+# ---------------------------------------------------------------------------
+#
+# A helper is recorded like any chat, but its messages are no operator's:
+# no command in them acts, and the board lists it under the chat that
+# started it. What says a chat is one, as each tool writes it (checked with
+# Codex 0.163, Claude Code 2.1.322, OpenCode 1.19.3):
+#
+# - Codex: the session file's first line (``session_meta``): ``source:
+#   "exec"`` / ``originator: "codex_exec"`` for ``codex exec``; ``source:
+#   {"subagent": …}`` for Codex's own subagents, the parent thread in
+#   ``thread_spawn.parent_thread_id`` (or ``parent_thread_id`` beside it).
+# - Claude Code: ``entrypoint`` ``sdk-cli`` for ``claude -p`` (``sdk-ts`` /
+#   ``sdk-py`` for a program on the Agent SDK) — in every transcript line,
+#   and in the hook's environment as CLAUDE_CODE_ENTRYPOINT.
+# - OpenCode: the plugin's process runs ``opencode run`` (argv).
+#
+# Who started it: the environment the helper inherits. Claude Code gives the
+# programs it starts CLAUDE_CODE_SESSION_ID (its session) and CLAUDE_PID
+# (itself); Codex gives its shell commands CODEX_THREAD_ID. Neither tool
+# filters the hook's environment, so a helper's hook sees its parent's. A
+# nested ``claude -p`` sets CLAUDE_CODE_SESSION_ID to its own session: its
+# parent is found by process — the parent Claude Code is one of the hook's
+# ancestors, and the parent's own hook wrote its CLAUDE_PID and that
+# process's start time into its breadcrumb. Two candidates (a Codex inside
+# a Claude Code inside a Codex …): the one started last is the nearest. A
+# candidate whose time is unknown beside another: no parent, never a guess.
+
+HELPER_KINDS = ("codex-exec", "codex-subagent", "claude-print", "opencode-run")
+
+
+def codex_helper_kind(meta_line: Any) -> tuple[str, str]:
+    """(helper kind, the parent thread id) of a Codex session from its
+    session file's first record (or that record's payload); ("", "") for an
+    interactive session or a line that is not one."""
+    if not isinstance(meta_line, dict):
+        return "", ""
+    pl = meta_line.get("payload") if meta_line.get("type") == "session_meta" else meta_line
+    if not isinstance(pl, dict):
+        return "", ""
+    source = pl.get("source")
+    if isinstance(source, dict) and "subagent" in source:
+        sub = source.get("subagent")
+        spawn = sub.get("thread_spawn") if isinstance(sub, dict) else None
+        parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+        return "codex-subagent", str(parent or pl.get("parent_thread_id") or "")
+    if source == "exec" or pl.get("originator") == "codex_exec":
+        return "codex-exec", ""
+    return "", ""
+
+
+def codex_session_meta(rollout: Any) -> dict[str, Any] | None:
+    """The first record of a Codex session file when it is its
+    ``session_meta``; None when the file cannot be read."""
+    try:
+        with open(rollout, encoding="utf-8", errors="replace") as fh:
+            rec = json.loads(fh.readline() or "null")
+    except (OSError, ValueError):
+        return None
+    return rec if isinstance(rec, dict) and rec.get("type") == "session_meta" else None
+
+
+def claude_helper_kind(entrypoint: Any) -> str:
+    """"claude-print" for a Claude Code run that is no interactive chat
+    (``claude -p``, a program on the Agent SDK), else ""."""
+    return "claude-print" if str(entrypoint or "").startswith("sdk") else ""
+
+
+def claude_entrypoint(transcript: Any, max_lines: int = 40) -> str:
+    """The ``entrypoint`` a Claude Code transcript names in its first lines
+    ("" when none does, or it cannot be read)."""
+    try:
+        with open(transcript, encoding="utf-8", errors="replace") as fh:
+            for i, raw in enumerate(fh):
+                if i >= max_lines:
+                    break
+                if '"entrypoint"' not in raw:
+                    continue
+                try:
+                    rec = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("entrypoint"):
+                    return str(rec["entrypoint"])
+    except OSError:
+        pass
+    return ""
+
+
+def _uuid7_epoch(value: str) -> float | None:
+    """When a UUIDv7 (Codex's thread ids) was made, from its first 48 bits."""
+    hexa = (value or "").replace("-", "")
+    if len(hexa) != 32 or hexa[12:13] != "7":
+        return None
+    try:
+        return int(hexa[:12], 16) / 1000
+    except ValueError:
+        return None
+
+
+def _same_session(tool: str, a: str, b: str) -> bool:
+    return bool(a) and bool(b) and session_key(tool, a) == session_key(tool, b)
+
+
+def _pid_of(env: Any) -> int:
+    try:
+        pid = int(str(env.get("CLAUDE_PID") or "0"))
+    except ValueError:
+        return 0
+    return pid if pid > 1 else 0
+
+
+def _crumb_parent(data_root: Any, own_pid: int, pids: list[int]) -> tuple[str, float | None]:
+    """The chat whose tool process is the nearest of ``pids`` (this hook's
+    ancestors, nearest first): its breadcrumb names that process and when it
+    started, and the process now there started then (a number used again by
+    another process is no match). ("", None) when none is, or two chats
+    claim the process."""
+    base = Path(data_root) / ".sessions"
+    try:
+        crumbs = list(base.glob("*/*.json")) if base.is_dir() else []
+    except OSError:
+        return "", None
+    by_pid: dict[int, list[dict[str, Any]]] = {}
+    for p in crumbs:
+        try:
+            c = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(c, dict):
+            continue
+        pid = c.get("tool_pid")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid != own_pid:
+            by_pid.setdefault(pid, []).append(c)
+    for pid in pids:
+        if pid == own_pid or pid not in by_pid:
+            continue
+        started = process_started(pid)
+        if started is None:
+            return "", None
+        same = {str(c.get("agent_id") or "") for c in by_pid[pid]
+                if isinstance(c.get("tool_started"), (int, float)) and not isinstance(c.get("tool_started"), bool)
+                and abs(float(c["tool_started"]) - started) < 2}
+        same.discard("")
+        return (same.pop(), started) if len(same) == 1 else ("", None)
+    return "", None
+
+
+def helper_parent(tool: str, own_session: str, env: Any = None, data_root: Any = None,
+                  pids: list[int] | None = None) -> str:
+    """The agent id of the chat that started this helper, from the
+    environment its hook inherited (see the section's note); "" when it is
+    not known, or two candidates cannot be ordered. ``tool``: the helper's
+    own tool; ``own_session``: its own session id (a variable that names it
+    is no parent); ``pids``: the hook's ancestors (read when not given)."""
+    env = os.environ if env is None else env
+    cands: list[tuple[str, float | None]] = []
+    codex_thread = str(env.get("CODEX_THREAD_ID") or "")
+    if codex_thread and not (tool == "codex" and _same_session("codex", codex_thread, own_session)):
+        cands.append(("codex-" + session_key("codex", codex_thread), _uuid7_epoch(codex_thread)))
+    claude_session = str(env.get("CLAUDE_CODE_SESSION_ID") or "")
+    own_claude = tool == "claude-code" and _same_session("claude-code", claude_session, own_session)
+    if claude_session and not own_claude:
+        pid = _pid_of(env)
+        cands.append(("cc-" + session_key("claude-code", claude_session), process_started(pid) if pid else None))
+    elif tool == "claude-code" and data_root is not None:
+        # A claude -p inside a Claude Code chat: the variable names itself.
+        found, started = _crumb_parent(data_root, _pid_of(env), ancestors() if pids is None else pids)
+        if found:
+            cands.append((found, started))
+    if not cands:
+        return ""
+    if len(cands) == 1:
+        return cands[0][0]
+    if any(t is None for _, t in cands):
+        return ""
+    return max(cands, key=lambda c: c[1] or 0.0)[0]
+
+
+def tool_process(env: Any = None) -> tuple[int, float | None]:
+    """(pid, start time) of the Claude Code process a hook runs under
+    (CLAUDE_PID): the breadcrumb keeps them, and a ``claude -p`` started by
+    that chat finds its parent by them. (0, None) elsewhere."""
+    pid = _pid_of(os.environ if env is None else env)
+    return (pid, process_started(pid)) if pid else (0, None)
+
+
+def helper_of_clean(agent_id: str, parent: str) -> str:
+    """A parent that is the chat itself is none."""
+    return "" if not parent or parent == agent_id else parent
+
+
+# ---------------------------------------------------------------------------
 # Usage: tokens per API message, plan limits (the Usage page, #usage)
 # ---------------------------------------------------------------------------
 #
@@ -826,14 +1019,27 @@ def now_epoch() -> float:
     return d.timestamp() if d is not None else time.time()
 
 
+#: The reasoning efforts the tools name (Claude Code's /effort, Codex's
+#: model_reasoning_effort, an OpenCode variant of these names). Anything else
+#: (an OpenCode variant named otherwise, "default") is no effort: "".
+EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"})
+
+
+def effort_of(value: Any) -> str:
+    """A reasoning effort as usage.jsonl keeps it: one of EFFORTS, else ""."""
+    v = str(value or "").strip().lower()
+    return v if v in EFFORTS else ""
+
+
 def _usage_line(*, at: str, id: str, tool: str, model: str, new: int, cache_write: int, cache: int,
-                output: int, thinking: int, ttl: str = "", helper: str = "",
+                output: int, thinking: int, ttl: str = "", helper: str = "", effort: str = "",
                 limit: dict[str, float] | None = None, t: float | None = None) -> dict[str, Any]:
     """One line of usage.jsonl, its keys in one order (``turn`` is put in
-    front by assign_turns, ``compacted`` at the end)."""
+    front by assign_turns, ``compacted`` at the end). ``effort``: the
+    reasoning effort the reply ran with, "" when the log does not say."""
     line: dict[str, Any] = {"at": at, "id": id, "tool": tool, "model": model, "new": new,
                             "cache_write": cache_write, "cache": cache, "output": output,
-                            "thinking": thinking, "ttl": ttl, "helper": helper}
+                            "thinking": thinking, "ttl": ttl, "helper": helper, "effort": effort_of(effort)}
     if limit:
         line["limit"] = limit
     line["_t"] = t
@@ -882,6 +1088,9 @@ def usage_line_claude(rec: dict[str, Any], session_id: str = "", helper: str = "
         new=_n(u.get("input_tokens")) + written, cache_write=written,
         cache=_n(u.get("cache_read_input_tokens")), output=_n(u.get("output_tokens")),
         thinking=_n(details.get("thinking_tokens")), ttl=ttl, helper=who, t=epoch_of(ts),
+        # The record's own effort (Claude Code 2.1.322 writes it on every
+        # assistant record of a model that has one; /effort changes it).
+        effort=rec.get("effort") or "",
     )
 
 
@@ -1042,13 +1251,26 @@ def _codex_id(rec: dict[str, Any], info: dict[str, Any]) -> str:
     return str(rec.get("timestamp") or "")
 
 
+def codex_effort(turn_context: Any) -> str:
+    """The reasoning effort a Codex ``turn_context`` payload names: ``effort``,
+    else its collaboration mode's ``reasoning_effort``."""
+    if not isinstance(turn_context, dict):
+        return ""
+    mode = turn_context.get("collaboration_mode")
+    settings = mode.get("settings") if isinstance(mode, dict) else None
+    return effort_of(turn_context.get("effort")
+                     or (settings.get("reasoning_effort") if isinstance(settings, dict) else ""))
+
+
 def usage_records_codex(records: Any, model: str = "",
-                        limits_out: list[dict[str, Any]] | None = None, session: str = "") -> list[dict[str, Any]]:
+                        limits_out: list[dict[str, Any]] | None = None, session: str = "",
+                        effort: str = "") -> list[dict[str, Any]]:
     """The usage lines of Codex rollout records: one per API call, from the
     ``last_token_usage`` of its ``token_count`` event (``total_token_usage``
     grows over the thread and is not summed). A call reported again keeps
-    its first report (its time decides its turn). The model is the last
-    ``turn_context``'s. ``limits_out`` receives the last limits line seen."""
+    its first report (its time decides its turn). The model and the effort
+    are the last ``turn_context``'s. ``limits_out`` receives the last limits
+    line seen."""
     out: dict[str, dict[str, Any]] = {}
     for rec in records:
         if not isinstance(rec, dict):
@@ -1058,6 +1280,7 @@ def usage_records_codex(records: Any, model: str = "",
             continue
         if rec.get("type") == "turn_context":
             model = str(pl.get("model") or model)
+            effort = codex_effort(pl)
             continue
         if rec.get("type") != "event_msg" or pl.get("type") != "token_count":
             continue
@@ -1080,7 +1303,7 @@ def usage_records_codex(records: Any, model: str = "",
                 at=at, id=key, tool="codex", model=model,
                 new=max(0, _n(u.get("input_tokens")) - cached) + written, cache_write=written, cache=cached,
                 output=_n(u.get("output_tokens")), thinking=_n(u.get("reasoning_output_tokens")),
-                limit=_codex_limit_pct(pl.get("rate_limits")) or None, t=epoch_of(rec.get("timestamp")),
+                effort=effort, limit=_codex_limit_pct(pl.get("rate_limits")) or None, t=epoch_of(rec.get("timestamp")),
             )
         except Exception:  # noqa: BLE001 — one bad record never stops the batch
             continue
@@ -1095,8 +1318,9 @@ def codex_turn_usage(rollout: Path, turn_id: str = "", back: int = 0,
     many turns before it too. With ``since`` (epoch), instead every call
     written after that time, of any turn: a call the previous read came too
     early for is kept now. ([], None) when the file cannot be read."""
-    model = ""
-    turns: list[tuple[str, str, list[dict[str, Any]]]] = []   # (turn id, model at its start, records)
+    model = effort = ""
+    # (turn id, model at its start, records, effort at its start)
+    turns: list[tuple[str, str, list[dict[str, Any]], str]] = []
     try:
         with open(rollout, encoding="utf-8", errors="replace") as fh:
             for raw in fh:
@@ -1108,10 +1332,11 @@ def codex_turn_usage(rollout: Path, turn_id: str = "", back: int = 0,
                     continue
                 pl = rec.get("payload")
                 if rec.get("type") == "event_msg" and isinstance(pl, dict) and pl.get("type") == "task_started":
-                    turns.append((str(pl.get("turn_id") or ""), model, []))
+                    turns.append((str(pl.get("turn_id") or ""), model, [], effort))
                     continue
                 if rec.get("type") == "turn_context" and isinstance(pl, dict):
                     model = str(pl.get("model") or model)
+                    effort = codex_effort(pl)
                 if turns:
                     turns[-1][2].append(rec)
     except OSError:
@@ -1124,23 +1349,24 @@ def codex_turn_usage(rollout: Path, turn_id: str = "", back: int = 0,
     named = re.match(r"rollout-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-(.+)\.jsonl$", Path(rollout).name)
     session = session_key("codex", named.group(1)) if named else ""
     if since is not None:
-        every = [r for _id, _m, recs in turns for r in recs]
+        every = [r for _id, _m, recs, _e in turns for r in recs]
         # From the mark itself: a call written later with the same time is
         # read too (the ones kept already are skipped by id).
-        lines = [x for x in usage_records_codex(every, turns[0][1], limits, session)
+        lines = [x for x in usage_records_codex(every, turns[0][1], limits, session, turns[0][3])
                  if isinstance(x["_t"], (int, float)) and x["_t"] >= since]
         return lines, (limits[0] if limits else None)
     at = next((i for i in range(len(turns) - 1, -1, -1) if turns[i][0] == turn_id), None) if turn_id else None
     if at is None:
         at = len(turns) - 1
     picked = turns[max(0, at - back):at + 1]
-    recs = [r for _id, _m, rs in picked for r in rs]
-    return usage_records_codex(recs, picked[0][1], limits, session), (limits[0] if limits else None)
+    recs = [r for _id, _m, rs, _e in picked for r in rs]
+    return usage_records_codex(recs, picked[0][1], limits, session, picked[0][3]), (limits[0] if limits else None)
 
 
 def usage_records_opencode(messages: Any) -> list[dict[str, Any]]:
     """Usage lines from the OpenCode plugin's message tokens: [{id, at (epoch
-    ms), model, input, output, reasoning, cache_read, cache_write, helper}].
+    ms), model, input, output, reasoning, cache_read, cache_write, helper,
+    variant}].
     OpenCode counts reasoning beside output (total = input + output +
     reasoning + cache), so here it is added to output, where the other tools
     count it. A message that cannot be read is skipped."""
@@ -1161,7 +1387,10 @@ def usage_records_opencode(messages: Any) -> list[dict[str, Any]]:
             out[str(m["id"])] = _usage_line(
                 at=when, id=str(m["id"]), tool="opencode", model=str(m.get("model") or ""),
                 new=_n(m.get("input")) + written, cache_write=written, cache=_n(m.get("cache_read")),
-                output=_n(m.get("output")) + reasoning, thinking=reasoning, helper=str(m.get("helper") or ""), t=t,
+                output=_n(m.get("output")) + reasoning, thinking=reasoning, helper=str(m.get("helper") or ""),
+                # The reply's reasoning variant (`--variant high`): an effort
+                # only when it is named as one (EFFORTS).
+                effort=m.get("variant") or "", t=t,
             )
         except Exception:  # noqa: BLE001 — one bad message never stops the batch
             continue

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import shared from '../../../../testdata/usage/format-table.json'
 
-import { exactTokens, formatTokens, pct, ratioTenths, sharePct, tenthsText } from './format'
+import { effortSplit, exactTokens, formatTokens, pct, ratioTenths, sharePct, tenthsText } from './format'
 
 /**
  * One table for Python and TypeScript: testdata/usage/format-table.json,
@@ -57,5 +57,14 @@ describe('formatTokens', () => {
     expect(exactTokens(108_233)).toBe('108,233')
     expect(sharePct(0.976)).toBe('98%')
     expect(sharePct(null)).toBe('—')
+  })
+})
+
+describe('effortSplit', () => {
+  it('shares of the row, largest first; nothing when no reply named an effort', () => {
+    expect(effortSplit({ high: 300, low: 100 }, 'unknown')).toBe('high 75% · low 25%')
+    expect(effortSplit({ '': 500 }, 'unknown')).toBe('')
+    expect(effortSplit(undefined, 'unknown')).toBe('')
+    expect(effortSplit({ '': 1, max: 3 }, 'unknown')).toBe('max 75% · unknown 25%')
   })
 })

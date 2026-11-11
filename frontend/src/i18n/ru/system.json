@@ -2082,5 +2082,7 @@
   "A reply in a chat over 500,000 tokens": "Ответ в чате больше 500 000 токенов",
   "Returning to a chat after a break of over an hour": "Возврат в чат после перерыва больше часа",
   "One helper agent": "Один агент-помощник",
-  "What one action costs": "Сколько стоит одно действие"
+  "What one action costs": "Сколько стоит одно действие",
+  "unknown": "неизвестно",
+  "Reasoning effort: the share of new input and output at each level": "Уровень рассуждений: доля нового ввода и вывода на каждом уровне"
 }

@@ -198,8 +198,12 @@ def _backfill_usage(root: Path) -> None:
 
 def _backfill_from_logs(root: Path) -> None:
     """The start's backfills from the tools' own logs, one after the other
-    in one thread: the answers' ends, then the tokens of the chats recorded
-    before the hooks kept them (usagebackfill.py)."""
+    in one thread: the helper chats recorded before the hooks marked them
+    (helperbackfill.py) first, so their commands stop acting soonest; the
+    answers' ends; then the tokens of the chats recorded before the hooks
+    kept them (usagebackfill.py)."""
+    from .helperbackfill import run_once as mark_helpers
+    mark_helpers(root)
     _backfill_turn_times(root)
     _backfill_usage(root)
 

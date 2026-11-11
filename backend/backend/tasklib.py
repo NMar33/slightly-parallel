@@ -252,10 +252,11 @@ def _operator_command(store: ViewStore, agent: str) -> tuple[str, str, str, str]
     """(command, lane, column, message) of the operator's latest message in
     the agent's chat: ``#now-todo {ui} …`` → ("now", "ui", "todo", the whole
     message); no chat, or no command → ("", "", "", "")."""
-    from .sessions import _operator_text, chat_path, parse_turns, task_command
+    from .sessions import _operator_text, chat_path, helper_ids, parse_turns, task_command
     from .hookshared import command_text
     path = chat_path(store, agent)
-    if path is None:
+    if path is None or agent in helper_ids(store):
+        # A helper's prompt was written by another agent: no operator's command.
         return "", "", "", ""
     try:
         turns = parse_turns(path)

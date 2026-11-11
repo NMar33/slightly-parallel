@@ -1079,5 +1079,11 @@
   "Usage on a turn": "Расход за ход",
   "Tokens of each reply. Hover the numbers for the detail.": "Токены каждого ответа. Наведите на числа, чтобы увидеть подробности.",
   "Show the tokens of each reply (U)": "Показать токены каждого ответа (U)",
-  "Hide the tokens of each reply (U)": "Скрыть токены каждого ответа (U)"
+  "Hide the tokens of each reply (U)": "Скрыть токены каждого ответа (U)",
+  "No helpers.": "Помощников нет.",
+  "Helpers": "Помощники",
+  "helpers": "помощники",
+  "Open this helper's chat": "Открыть чат этого помощника",
+  "helper run ({kind}), started by": "запуск-помощник ({kind}), его запустил",
+  "helper run ({kind}); the chat that started it is not known": "запуск-помощник ({kind}); чат, который его запустил, неизвестен"
 }

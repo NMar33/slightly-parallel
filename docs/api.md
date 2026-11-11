@@ -60,6 +60,11 @@ noted writes.
   `load_errors`).
 - `GET /api/snapshot` — the Overview payload: KPIs, per-project summaries
   with task counts, recent chats and decisions, open tasks in play, every agent.
+  Helper chats (a `codex exec`, a `claude -p`, an `opencode run` another chat
+  started; `helper` in their `meta.json`, see [logging.md](logging.md)) are
+  left out of the agents, the counts, the hours and the recent chats here, in
+  `GET /api/project/{code}` and in `GET /api/timeline`; search answers no
+  helper as an agent (its turns are still found).
 - `GET /api/search?q=&types=&limit=` — one word over everything
   (`searchlib.py`): every entity in the registry, every scan, every agent,
   every row of a project's map, and every captured **turn** of every chat —
@@ -107,15 +112,24 @@ noted writes.
   the ends stay. Answers: `link`.
 - `POST /api/agents/links/{link_id}/delete` — answers: `deleted`.
 - `GET /api/agents/profiles?project=` — every agent of a project with its
-  profile: the roster in one read.
-- `GET /api/agents/{agent_id}/profile` — everything one agent left behind.
+  profile: the roster in one read. Helper chats are not in `profiles`: each
+  is in its parent's `helpers`, and `orphans` lists the project's helpers
+  whose parent is not known or was not recorded. A helper row:
+  `{agent_id, agent_name, chat_title, project, tool, helper_kind, helper_of,
+  helper_of_by, started, first_line, message_count, tokens, cost_usd}` —
+  `tokens` new input plus output, helpers included; `cost_usd` dollars at
+  API prices, null when nothing was priced.
+- `GET /api/agents/{agent_id}/profile` — everything one agent left behind,
+  `helpers` (the runs it started) included. A helper's own profile carries
+  `helper`, `helper_kind` and `helper_of` in `agent`.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
   Answers: `agent_id`, `agent_group`.
 - `POST /api/agents/{agent_id}/rename` — body: `name`, stored as
   `agent_name` in the agent's `meta.json`. Answers: `agent_id`, `agent_name`.
   Both of these are presentation only; the ids never change.
 - `GET /api/chat/{agent_id}?range=a-b` — a raw `chat.md` line slice.
-- `GET /api/sessions?project=` — the chats, newest first. Each row carries `chat_end_line`, the chat's last line in chat.md, which grows with every captured line (a page's cue to fetch that chat's turns again). Read from the
+- `GET /api/sessions?project=` — the chats, newest first. Helper chats are
+  left out unless `agent_id` names one or `helpers=1`. Each row carries `chat_end_line`, the chat's last line in chat.md, which grows with every captured line (a page's cue to fetch that chat's turns again). Read from the
   captured turns; agents never write these. The pages call them chats; the
   route keeps the name it was published under, and one chat with a long
   pause in it is read as two.
@@ -1046,7 +1060,10 @@ them. Per chat `projects/<p>/chats/<agent>/usage.jsonl`, one line per API
 message: `turn`, `at`, `id`, `tool`, `model`, `new` (read for the first
 time, cache writes included), `cache_write`, `cache` (read again from
 cache), `output` (thinking included), `thinking`, `ttl`, `helper` (the
-helper agent's id, or ""), `limit?`, `compacted?` (on the turn's first
+helper agent's id, or ""), `effort` (the reasoning effort the reply ran
+with: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; ""
+when the log does not say, and on every line written before 2026-11-11;
+see [logging.md](logging.md)), `limit?`, `compacted?` (on the turn's first
 line after a context compaction); the last line of an id wins. Account
 wide `.usage/limits.jsonl` (one line per limits reading: `at`, `tool`,
 `account` (12 hex characters naming the tool's config folder:
@@ -1135,7 +1152,11 @@ moment. The golden root `testdata/usage/root` and its snapshots
   and `prices`; the MCP `usage` tool gives all of it),   `api_prices` (`as_of`, `sources`, `models`: the newest price of the
   models in the range, dollars per million tokens, `missing`: models with
   none; a message is priced as of its own day), `by_tool` (`tool`, the same sums, `share`, `turns`, `helpers`
-  and `models` with the same keys and `model`), `chats` (top 40:
+  and `models` with the same keys, `model` and `efforts` — `{effort: new
+  input + output}` of the model's replies and its helpers', "" for the
+  replies that named none; the parts add up to `new_output` plus the
+  helpers' — which the page shows under the model's name when a reply named
+  one), `chats` (top 40:
   `agent_id`, `project`, `title`, `tool`, `model` (the last the main agent
   used), `models` and `tools` (every one seen, helpers' included), the
   sums, `new_output`, `share`, `turns`, `helpers`, `helpers_n`,

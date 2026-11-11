@@ -104,10 +104,20 @@ def main() -> int:
     )
     try:
         cap = TurnCapture(data_root, project, f"codex-{shared.session_key('codex', session)}")
-        cap.note_origin("codex", session, str(event.get("cwd") or ""))
         # The turn arrives only at its end: its start and its commit calls
         # come from the session file, so the work stamp has the real window.
         rollout = shared.codex_rollout(thread_id)
+        # A codex exec or a subagent is a helper (its first line says so):
+        # marked before the turn is recorded, so nothing in it acts.
+        kind, parent_thread = shared.codex_helper_kind(shared.codex_session_meta(rollout)) if rollout else ("", "")
+        parent, by = "", ""
+        if parent_thread:
+            parent, by = f"codex-{shared.session_key('codex', parent_thread)}", "session"
+        elif kind:
+            parent = shared.helper_parent("codex", session, data_root=data_root)
+            by = "env" if parent else ""
+        cap.note_origin("codex", session, str(event.get("cwd") or ""),
+                        helper_kind=kind, helper_of=parent, helper_of_by=by)
         started, calls = shared.codex_last_turn(rollout, "" if turn_id == "session" else turn_id) if rollout else ("", None)
         # The turn's tokens and the plan limits Codex reported with them.
         usage, limits = shared.codex_turn_usage(rollout, "" if turn_id == "session" else turn_id) if rollout else ([], None)

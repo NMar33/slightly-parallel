@@ -34,6 +34,7 @@ function dataRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-e2e-'))
   fs.cpSync(path.join(REPO, 'fixtures'), root, { recursive: true })
   addUsageGolden(root)
+  addHelpers(root)
   process.on('exit', () => {
     for (const dir of [root, `${root}-backups`]) {
       try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* the OS cleans tmp */ }
@@ -61,6 +62,27 @@ function addUsageGolden(root: string): void {
   const usage = path.join(USAGE_GOLDEN, '.usage')
   if (fs.existsSync(usage)) fs.cpSync(usage, path.join(root, '.usage'), { recursive: true })
 }
+/**
+ * Two helper chats in alpha-labs (tests/e2e/flows.spec.ts, helpers:): a
+ * codex exec the demo agent started, and one started by hand, with no
+ * known parent. Written the way the hook writes them (helper in meta.json).
+ */
+function addHelpers(root: string): void {
+  const chats = path.join(root, 'projects', 'alpha-labs', 'chats')
+  const write = (id: string, parent: string, said: string, answer: string) => {
+    fs.mkdirSync(path.join(chats, id), { recursive: true })
+    fs.writeFileSync(path.join(chats, id, 'meta.json'), JSON.stringify({
+      agent_id: id, agent_name: id, project: 'alpha-labs', created_date: '2608-05', last_active: '2026-08-05T17:10:00',
+      message_count: 1, tool: 'codex', session_ref: id, capture: 'hooks',
+      helper: true, helper_kind: 'codex-exec', helper_of: parent, ...(parent ? { helper_of_by: 'env' } : {}),
+    }))
+    fs.writeFileSync(path.join(chats, id, 'chat.md'),
+      `# Chat log — ${id}\n\n## Turn 1 · 2026-08-05T17:05:00\n**User**: ${said}\n**Agent**: ${answer}\n`)
+  }
+  write('codex-e2e00001', 'agent-genesis-2608-01', 'You are a critic. Review the rate limit design. #entrypoint never kept', 'Two issues found.')
+  write('codex-e2e00002', '', 'Started by hand: summarise the SDK notes', 'Summary written.')
+}
+
 const DATA_ROOT = dataRoot()
 // The backend's own interpreter, where each system puts it.
 const PYTHON = process.platform === 'win32'
