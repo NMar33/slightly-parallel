@@ -18,6 +18,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from .. import examples, keeplib
 from ..db import ViewStore
 from ..entities import ENTITIES
+from ..actors import identity_of, is_agent
 from .deps import create_answer, get_store, refuse_agent, written_by_agent
 from .integrate import sync_all_rules
 
@@ -55,6 +56,14 @@ def _register(kind: str) -> None:
                     f"interpretation — change its text with the MCP tool update_entry"
                 ),
             )
+        who = identity_of(body)
+        if kind == "entrypoint" and is_agent(who) and who != str(row.get("agent_id") or ""):
+            # The record follows the operator's #entrypoint in its own chat;
+            # elsewhere an agent writes a stop, a way in or a shot.
+            refuse_agent(
+                f"the record of {item_id} is written by the chat where the operator kept it "
+                f"({row.get('agent_id')})",
+                "here, add a message with the MCP tool entrypoint_stop, or a way in with entrypoint_way")
         try:
             keeplib.interpret(
                 store, kind, row,

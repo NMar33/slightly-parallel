@@ -18,9 +18,17 @@ never change a task's status. Your part is the account.
    it is the note on the card.
 4. When `evidence` is true for a task, the report's answer carries the
    operator's instructions: follow them (the skill `task-evidence`).
-5. If choices were made in the stretch that are not logged yet, offer
+5. When the answer names a task's topic (an entry point), add one
+   message of where it stopped: `entrypoint_stop {id, task_id, text}`,
+   one or two plain sentences — what is done, what is not, what waits for
+   whom. One per topic, even when two of its tasks closed. A task with no
+   topic: if its work belongs to an entry point of this project, set it
+   with `task_topic` first. A way in only when you made one or its way to
+   open changed (`entrypoint_way`, a shot while it is up); a new entry
+   point only by section 4's rule (`entrypoint_offer` first).
+6. If choices were made in the stretch that are not logged yet, offer
    `#decision` in one line.
-6. Next tasks, only when a step follows without which the task does not
+7. Next tasks, only when a step follows without which the task does not
    do what it was for (section 4's examples): call `task_done
    {proposals}` (at most three `{title, line}`), drop one whose `similar`
    task is the same thing (call again with the rest), and end the reply

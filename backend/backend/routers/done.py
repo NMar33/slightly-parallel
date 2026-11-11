@@ -23,7 +23,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from .. import donelib, nextlib, nowlib
+from .. import donelib, entrypointlib, nextlib, nowlib
 from ..csvio import as_int
 from ..db import ViewStore
 from .deps import get_store
@@ -83,7 +83,8 @@ def _latest_done(store: ViewStore, agent_id: str) -> dict[str, Any]:
                         if s["end"] == turn and s["agent_id"] == r["agent_id"]), None)
         out.append({"id": r["task_id"], "title": t.get("title") or "", "status": t.get("status") or "",
                     "result": r["result"], "from_status": r.get("from_status") or "",
-                    "evidence": str(t.get("evidence_required") or "") == "yes", "stretch": stretch})
+                    "evidence": str(t.get("evidence_required") or "") == "yes", "stretch": stretch,
+                    "topic": entrypointlib.topic_of_task(store, r["task_id"])})
     moved = [x["id"] for x in out if x["result"] in ("moved", "already")]
     archived = [x["id"] for x in out if x["result"] == "archived"]
     ids = ", ".join(moved)
@@ -94,8 +95,36 @@ def _latest_done(store: ViewStore, agent_id: str) -> dict[str, Any]:
                 "one line, what shipped — it is your account on the card, it moves nothing. "
                 "Where evidence is true, follow the answer's evidence_prompt with task_evidence."
                 + (f" {', '.join(archived)} is archived: say so, no report." if archived else ""))
-    return {"found": True, "turn": turn, "tasks": out, "unnamed": False, "next": step,
+    return {"found": True, "turn": turn, "tasks": out, "unnamed": False, "next": step + _topic_step(out),
             "project": latest[0].get("project") or ""}
+
+
+def _topic_step(tasks: list[dict[str, Any]]) -> str:
+    """The entry point part of the answer: one "where it stopped" message
+    for each topic a moved task belongs to (one per topic, not per task);
+    for a moved task with no topic, set one when its work belongs to one.
+    A task moved before (already) is asked nothing: its message was asked then."""
+    moved = [t for t in tasks if t.get("result") == "moved"]
+    if not moved:
+        return ""
+    topics: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+    for t in moved:
+        tp = t.get("topic")
+        if tp and tp.get("state") != "dead":
+            topics.setdefault(tp["id"], []).append(t["id"])
+            names[tp["id"]] = tp.get("name") or tp["id"]
+    out = ""
+    for ep, ids in topics.items():
+        out += (f" Then entrypoint_stop {{id: \"{ep}\", task_id: \"{ids[0]}\", text}} — one message for the topic "
+                f"«{names[ep]}»: where its work stopped now, one or two plain sentences.")
+    loose = [t["id"] for t in moved if not t.get("topic")]
+    if loose:
+        out += (f" {', '.join(loose)} has no topic: if its work belongs to an entry point of this project (the "
+                "MCP tool entrypoints lists them), set it with task_topic and add that one message. Offer a new "
+                "entry point only when something new to open appeared or a way to open one changed "
+                "(entrypoint_offer first).")
+    return out
 
 
 @router.get("/api/tasks/{task_id}/done")
@@ -135,6 +164,7 @@ def done_tags_with_proposals(body: Any = Body(...), store: ViewStore = Depends(g
     except nextlib.NextRefused as e:
         return {**got, "proposals_ignored": str(e)}
     return {**got, **offered, "next": (
+        _topic_step(got.get("tasks") or []).strip() + " "
         "Show the operator this line as it is, as the last line of your reply: " + offered["show"]
         + " Where a similar task is the same thing, leave that proposal out and call task_done again "
         "with the rest, so the numbers match; name the task that is already on the board instead. "

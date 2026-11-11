@@ -37,6 +37,11 @@ ARGS: dict[str, dict[str, Any]] = {
     "core_new": {"name": "x", "type": "feature", "text": "x"},
     "core_attach": {"id": "cr_none", "turn": 1},
     "publish_attach": {"id": "pu_none", "links": [{"title": "x", "url": "https://example.org"}]},
+    "entrypoint_stop": {"id": "ep_none", "text": "stopped at the voice"},
+    "entrypoint_way": {"id": "ep_none", "way": {"name": "x", "kind": "site", "url": "https://example.org"}},
+    "entrypoint_shot": {"id": "ep_none", "way_id": "ew_none", "path": __file__},
+    "entrypoint_offer": {"name": "the install film"},
+    "task_topic": {"id": "tk_none", "topic": "ep_none"},
 }
 
 

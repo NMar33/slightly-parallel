@@ -192,7 +192,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/tasks` · `/api/tasks/{id}` · `/api/tasks/{id}/update` | `status`, `assignee`, `priority`, `lane` | see **Tasks** | see **Tasks** |
 | `/api/time-entries` · `/api/time-entries/{id}` · `/api/time-entries/{id}/update` | `goal_id`, `sprint_id`, `running` | `duration_min`, `ended_at`, `goal_id`, `note`, `share_pct`, `sprint_id`, `started_at` | see **Operator-only admin** |
 | `/api/visions` · `/api/visions/{id}` · `/api/visions/{id}/update` | `tag`, `category`, `impact`, `search` | `category`, `effort`, `impact`, `tags` | see **Kept messages and skills** |
-| `/api/entrypoints` · `/api/entrypoints/{id}` · `/api/entrypoints/{id}/update` | `tag`, `status`, `search` | `topic`, `status` (`open`, `closed`), `tags` | see **Kept messages and skills** |
+| `/api/entrypoints` · `/api/entrypoints/{id}` · `/api/entrypoints/{id}/update` | `tag`, `status`, `search` | `topic`, `status` (`open`, `closed`), `tags`; an agent changes `topic` and `tags` only | see **Entry points** |
 
 Writes an agent may not make (422 with the reason): `sprints` (the operator
 plans them), `prompts` (harvested from the chat
@@ -401,7 +401,7 @@ operator writes about it, as a new version under `kept_versions/`.
 - `POST /api/visions/{item_id}/interpretation`
 - `POST /api/rules/{item_id}/interpretation`
 - `POST /api/problems/{item_id}/interpretation`
-- `POST /api/entrypoints/{item_id}/interpretation` — the entry point's text: What, Where, How, State, Next
+- `POST /api/entrypoints/{item_id}/interpretation` — the entry point's record: What, Where, How, State, Next; an agent writes it only from the chat that kept it
 - `POST /api/artifacts/{item_id}/interpretation`
   — all five: body `text`, `note?`. Answers: `metadata`, `kept` (the
   versions). 422 if the entry was posted rather than kept, since then its
@@ -1074,6 +1074,64 @@ are the operator's.
   Answers: `core`, `tracking`.
 - `POST /api/cores/{core_id}/off` — out of view (`#core-off`, run by the
   agent once the operator confirmed); the story and the links stay.
+
+### Entry points
+
+The outside of a project: a topic the operator opens and comes back to
+(`entrypointlib.py`, `routers/entrypoints.py`). The kept `#entrypoint` row is
+its record (versions under `kept_versions/`); beside it four ledgers:
+`entrypoint_ways.csv` (ways in), `entrypoint_stops.csv` (where it stopped),
+`entrypoint_shots.csv` (screenshots, files under `entrypoint_shots/<ep>/`),
+`task_topics.csv` (a task's topic, one row per task). `state` is active ·
+paused · dead; a row with none reads it from `status` (closed → paused).
+Who writes: the operator everything; an agent, through the MCP tools, a stop,
+a way in (added, or changed when an agent wrote it), a shot and a task's
+topic, on a topic of its own chat's project. Every write checks the shape
+first and a refusal writes nothing.
+
+- `GET /api/entrypoints/desk?project=` — every topic (all projects when
+  empty): `name`, `title` (the message's first line), `state`, `no_project`,
+  `home`, `what` (the record's What, first paragraph), `has_record`,
+  `versions`, `ways`, `stops` (the last five) and `stops_n`, `shots` (oldest
+  first, each with `src`), `open_tasks`, `chats`, `last_at`. Also `projects`.
+- `GET /api/entrypoints/similar?project=&text=` — the topics like `text`
+  (`similar`: `id`, `name`, `state`, `score`) and `next`: the line for an
+  agent's offer. Writes nothing.
+- `GET /api/entrypoints/{ep_id}/context` — `chats` (oldest first: `id`,
+  `name`, `tool`, `session_ref`, `cwd`, `first`, `last`, `messages` and
+  `turns` — the topic's turns of that chat, each once: the #entrypoint turn,
+  turns where the operator named a task of the topic, #done stretches, turns
+  where a stop or a shot was written — `origin`, `did`, `tail`, `commits`,
+  `live`, `from` (handoff or branch), `waiting` and `waiting_text`); `open`
+  and `done` tasks (done with `report` and `chat`); `decisions`, `made`
+  (artifacts and Publish cards) made in those turns; `commits` (each once)
+  and `files` (summed over those commits), with `commits_n`, `files_n`;
+  `spend` (`tokens`, `dollars`, `by_chat`) over those turns; `tasks_n`,
+  `tasks_truncated` (over 40 tasks); `briefing`. Only the topic's project:
+  a chat or task of another project never enters.
+- `GET /api/entrypoints/{ep_id}/briefing` — `{text}`: what Copy to agent gives.
+- `GET /api/entrypoints/{ep_id}/ports` — `ways`: `{id, port, up, why}` per way
+  in. A TCP connect on this computer only (localhost on 127.0.0.1 and ::1);
+  a host that is not a loopback name or address is never connected to
+  (`up: null`); at most a second for all.
+- `GET /api/entrypoints/shots/{shot_id}/file` — the screenshot.
+- `POST /api/entrypoints/{ep_id}/stops` — `text` (≤ 1000), `task_id?` (a task
+  of this topic). The same text by the same author for the same task is the
+  same message (200, `existing`).
+- `POST /api/entrypoints/{ep_id}/stops/{stop_id}/remove` — operator only.
+- `POST /api/entrypoints/{ep_id}/ways` — `way: {name, kind (page · site · app ·
+  file · folder · script · artifact), url?, path?, command?, folder?, port?,
+  note?}`, `id?` to change one.
+- `POST /api/entrypoints/{ep_id}/ways/{way_id}/remove` — operator only.
+- `POST /api/entrypoints/{ep_id}/shots` — `way_id`, `data_base64` (PNG, JPEG,
+  GIF or WebP, read from the bytes), `caption?`, `replaces?` (a shot of this
+  topic, then out of the series).
+- `POST /api/entrypoints/{ep_id}/state` — operator only: `state`.
+- `POST /api/entrypoints/{ep_id}/name` — operator only: `name`, `home?`,
+  `no_project?` (true or false).
+- `GET /api/tasks/{task_id}/topic` — the task's topic, or null.
+- `POST /api/tasks/{task_id}/topic` — `entrypoint_id` ("" clears): a topic of
+  the task's project.
 
 ### Usage
 

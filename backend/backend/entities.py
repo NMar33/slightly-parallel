@@ -218,15 +218,21 @@ ENTITIES: dict[str, Entity] = {
             list_key="publish",
         ),
         _e(
-            # An entry point: the way into a topic — what it is, where its
-            # files and links are, how to run it, where the work stopped,
-            # what comes next. Kept from a #entrypoint message; the agent
-            # writes the text, in versions. Open until the topic is done.
+            # An entry point: the outside of a project — a topic the
+            # operator opens and comes back to, with its ways in, the feed
+            # of where it stopped and the screenshots (entrypointlib.py).
+            # Kept from a #entrypoint message; the agent writes the record
+            # (What, Where, How, State, Next), in versions. `topic` is its
+            # name; `state` active · paused · dead (`status` open/closed is
+            # kept beside it for older readers); `no_project` marks a thing
+            # filed under Slightly Parallel's own project; `home` the folder
+            # an agent starts in.
             "entrypoint", "entrypoints.csv", "entrypoint_details", "ep_",
             (
                 "id", "created_date", "created_time", "project", "agent_id",
                 "l1", "topic", "status", "md_ref", "source", "session_id",
                 "source_turn", "versions_n", "tags", "archived_at",
+                "state", "no_project", "home",
             ),
             ints=("source_turn", "versions_n"),
             mutable=("topic", "status", "tags"),
@@ -569,6 +575,29 @@ CORE_LINK_COLUMNS: tuple[str, ...] = ("id", "core_id", "kind", "target", "note",
 # (value: the end date, or empty for none) · tracking_off · off · view.
 CORE_EVENT_COLUMNS: tuple[str, ...] = ("id", "core_id", "at", "kind", "value", "actor")
 
+# Entry points (entrypointlib.py): the ways in of a topic, the feed of
+# where it stopped, the screenshots of its ways in, and the topic of a task.
+# A way in: kind page · site · app · file · folder · script · artifact.
+ENTRYPOINT_WAY_COLUMNS: tuple[str, ...] = (
+    "id", "entrypoint_id", "name", "kind", "url", "path", "command", "folder", "port",
+    "note", "position", "created_at", "updated_at", "actor", "removed_at",
+)
+ENTRYPOINT_WAY_KINDS: tuple[str, ...] = ("page", "site", "app", "file", "folder", "script", "artifact")
+ENTRYPOINT_STATES: tuple[str, ...] = ("active", "paused", "dead")
+# A message of "where it stopped": the operator's or an agent's (author).
+ENTRYPOINT_STOP_COLUMNS: tuple[str, ...] = (
+    "id", "entrypoint_id", "at", "author", "text", "task_id", "removed_at", "turn",
+)
+# A screenshot of a way in: the file under entrypoint_shots/<ep>/, the chat
+# it was taken in (agent_id), and the shot it replaced.
+ENTRYPOINT_SHOT_COLUMNS: tuple[str, ...] = (
+    "id", "entrypoint_id", "way_id", "file", "caption", "at", "author", "agent_id",
+    "replaces", "removed_at", "width", "height", "turn",
+)
+# A task's topic: one row per task (an empty entrypoint_id clears it). A
+# ledger, so the task schema stays as it is.
+TASK_TOPIC_COLUMNS: tuple[str, ...] = ("id", "task_id", "entrypoint_id", "at", "actor")
+
 # A commit linked to a task after the fact (MCP task_commits): the agent's
 # word, the same as a ``Task:`` line in the commit, for one it did not sign.
 COMMIT_LINK_COLUMNS: tuple[str, ...] = ("id", "sha", "task_id", "agent_id", "at", "actor")
@@ -593,6 +622,10 @@ LEDGERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("publish_versions_mutual", "publish_versions.csv", PUBLISH_VERSION_COLUMNS),
     ("publish_items_mutual", "publish_items.csv", PUBLISH_ITEM_COLUMNS),
     ("publish_attachments_mutual", "publish_attachments.csv", PUBLISH_ATTACHMENT_COLUMNS),
+    ("entrypoint_ways_mutual", "entrypoint_ways.csv", ENTRYPOINT_WAY_COLUMNS),
+    ("entrypoint_stops_mutual", "entrypoint_stops.csv", ENTRYPOINT_STOP_COLUMNS),
+    ("entrypoint_shots_mutual", "entrypoint_shots.csv", ENTRYPOINT_SHOT_COLUMNS),
+    ("task_topics_mutual", "task_topics.csv", TASK_TOPIC_COLUMNS),
     ("cores_mutual", "cores.csv", CORE_COLUMNS),
     ("core_notes_mutual", "core_notes.csv", CORE_NOTE_COLUMNS),
     ("core_links_mutual", "core_links.csv", CORE_LINK_COLUMNS),

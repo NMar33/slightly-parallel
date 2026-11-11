@@ -516,9 +516,9 @@ def _skill() -> str:
 def test_the_skill_carries_the_step_and_the_examples() -> None:
     text = _skill()
     assert "{{part:" not in text
-    step5, step6 = text.index("\n5. "), text.index("\n6. ")
-    assert step5 < step6 and "#decision" in text[step5:step6]
-    six = text[step6:text.index("\n\n", step6)]
+    step6, step7 = text.index("\n6. "), text.index("\n7. ")
+    assert step6 < step7 and "#decision" in text[step6:step7]
+    six = text[step7:text.index("\n\n", step7)]
     assert "task_done" in six and "next_tasks" in six and "show" in six
     assert text.count("   - yes:") == 2 and text.count("   - no:") == 2
     assert "Never write them with `write_entry`" in text

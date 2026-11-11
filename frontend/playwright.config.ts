@@ -35,6 +35,7 @@ function dataRoot(): string {
   fs.cpSync(path.join(REPO, 'fixtures'), root, { recursive: true })
   addUsageGolden(root)
   addHelpers(root)
+  addEntryPoint(root)
   process.on('exit', () => {
     for (const dir of [root, `${root}-backups`]) {
       try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* the OS cleans tmp */ }
@@ -81,6 +82,24 @@ function addHelpers(root: string): void {
   }
   write('codex-e2e00001', 'agent-genesis-2608-01', 'You are a critic. Review the rate limit design. #entrypoint never kept', 'Two issues found.')
   write('codex-e2e00002', '', 'Started by hand: summarise the SDK notes', 'Summary written.')
+}
+
+/**
+ * A chat in alpha-labs whose operator typed #entrypoint (tests/e2e/
+ * entrypoints.spec.ts): the server keeps it as an entry point on the first
+ * read, as it does on the operator's data. The fixtures have none.
+ */
+function addEntryPoint(root: string): void {
+  const id = 'cc-e2eentry1'
+  const dir = path.join(root, 'projects', 'alpha-labs', 'chats', id)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
+    agent_id: id, agent_name: 'release film', project: 'alpha-labs', created_date: '2608-06',
+    last_active: '2608-06T10:05:00', message_count: 2, tool: 'claude-code', session_ref: '0e2e-entry-0001', capture: 'hooks',
+  }))
+  fs.writeFileSync(path.join(dir, 'chat.md'),
+    `# Chat log — ${id}\n\n## Turn 1 · 2026-08-06T10:00:00\n**User**: render the release film\n**Agent**: Rendered.\n`
+    + `\n## Turn 2 · 2026-08-06T10:05:00\n**User**: #entrypoint the release film and its studio\n**Agent**: Kept.\n`)
 }
 
 const DATA_ROOT = dataRoot()

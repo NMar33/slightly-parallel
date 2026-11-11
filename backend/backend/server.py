@@ -65,6 +65,7 @@ from .routers import (
     core,
     files_extra,
     integrate,
+    entrypoints,
     keep,
     lenses,
     logs,
@@ -321,7 +322,8 @@ _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "ta
                 "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
                 "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
                 "task_done", "next_tasks",
-                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "usage_prices_write")
+                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "usage_prices_write",
+                "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "task_topic")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
 MCP_REFUSAL = (
     f"agents write through the Slightly Parallel MCP tools ({', '.join(_WRITE_TOOLS)}), not by HTTP. "
@@ -357,6 +359,8 @@ _MCP_WRITE_PATHS = (
     r"/api/cores",
     r"/api/cores/[^/]+/(notes|links|off)",
     r"/api/publishing/cards/[^/]+/attach",
+    r"/api/entrypoints/[^/]+/(stops|ways|shots)",
+    r"/api/tasks/[^/]+/topic",
     r"/api/usage/prices",
 )
 MCP_PATH_REFUSAL = (
@@ -654,6 +658,17 @@ def create_app(
             log.info("task documents migrated to Description/Turn sections: %d", migrated)
     except OSError as exc:
         log.warning("task document migration skipped: %s", exc)
+    # Entry points written before ways in existed: their ways read out of
+    # the record once (entrypointlib.migrate), never on the shipped fixtures.
+    if root.resolve() != FIXTURES.resolve():
+        try:
+            from .entrypointlib import migrate as migrate_entrypoints
+            got = migrate_entrypoints(root)
+            if got["migrated"]:
+                log.info("entry points migrated: %d, ways in read from their records: %d",
+                         len(got["migrated"]), got["ways"])
+        except (OSError, RuntimeError) as exc:
+            log.warning("entry point migration skipped: %s", exc)
     store = ViewStore(data_root=root)
     # A new data root starts with example visions, rules and problems, once.
     if os.environ.get("SP_EXAMPLES", "1") != "0":
@@ -1022,6 +1037,7 @@ def create_app(
     app.include_router(snippets_extra.router)
     app.include_router(tasks_extra.detail_router)
     app.include_router(keep.router)
+    app.include_router(entrypoints.router)  # before the lens router: /api/entrypoints/desk
     app.include_router(standups.router)  # before the lens router: /api/standups/material
     app.include_router(skills.router)
     app.include_router(artifacts.router)

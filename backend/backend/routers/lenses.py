@@ -309,6 +309,11 @@ def update_entity(
             # interpretation, not an edit of the message.
             refuse_agent(f"a {ent.name}'s text is the operator's own message, kept as it was written",
                          f"write your reading of it with the MCP tool interpret {{lens: \"{ent.name}\", id, text}}")
+    if ent.name == "entrypoint" and written_by_agent(body):
+        held = sorted(k for k in ("status", "state", "no_project", "home") if k in body)
+        if held:
+            refuse_agent(f"an entry point's {', '.join(held)} is the operator's, set on the Entry points page",
+                         "an agent adds a stop (entrypoint_stop), a way in (entrypoint_way) or a shot (entrypoint_shot)")
     csv_path = store.data_root / ent.csv
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail=f"{ent.csv} not found")

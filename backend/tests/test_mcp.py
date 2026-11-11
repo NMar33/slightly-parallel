@@ -248,11 +248,12 @@ def _tools_from(client) -> dict:
 def test_the_lens_picker_offers_only_lenses_an_agent_may_write(client) -> None:
     """A lens the server refuses an agent must not be in the enum: the picker
     and the refusal came apart once, and the agent read the larger list."""
+    from backend.entitylib import AGENT_CREATE_REFUSED
     from backend.routers.lenses import OPERATOR_ONLY
 
     tools = _tools_from(client)
     offered = set(tools["write_entry"]["inputSchema"]["properties"]["lens"]["enum"])
-    assert offered and not (offered & set(OPERATOR_ONLY))
+    assert offered and not (offered & (set(OPERATOR_ONLY) | set(AGENT_CREATE_REFUSED)))
     assert {"scan", "file", "architecture", "decision", "problem", "standup", "task"} <= offered
     assert not (set(tools["update_entry"]["inputSchema"]["properties"]["lens"]["enum"])
                 & set(OPERATOR_ONLY))
@@ -260,7 +261,9 @@ def test_the_lens_picker_offers_only_lenses_an_agent_may_write(client) -> None:
     # And an operator-only lens says so where an agent reads it.
     schema = client.get("/api/schema").json()
     for lens in schema["lenses"]:
-        refused = OPERATOR_ONLY.get(lens["name"])
+        # An entry point an agent changes (its topic) but never makes: the
+        # create is refused, and the lens says so the same way.
+        refused = OPERATOR_ONLY.get(lens["name"]) or AGENT_CREATE_REFUSED.get(lens["name"])
         assert lens["agent_write"] is not bool(refused)
         if refused:
             assert refused in lens["when_to_use"]

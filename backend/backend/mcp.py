@@ -71,6 +71,12 @@ TOOLS: dict[str, str] = {
     "core_attach": "After #core: attach this message, and this chat's task, to the matching core.",
     "core_off": "After #core-off, confirmed by the operator: remove a core from view; its notes and links are kept.",
     "publish_attach": "After the operator's #publish: attach screenshots and links to the card; its text is the operator's.",
+    "entrypoints": "The project's entry points: the topics the operator comes back to, with their ways in.",
+    "entrypoint_stop": "One line of where a topic stopped: at #done for a task of the topic.",
+    "entrypoint_way": "Add a way in to a topic (a page, a site, an app, a file …), or change one an agent wrote.",
+    "entrypoint_shot": "Attach a screenshot of a way in you made or changed, while it is up.",
+    "entrypoint_offer": "Before offering a new entry point: the topics like it, and the line to show the operator.",
+    "task_topic": "Set the topic (entry point) of a task of this project.",
     "architecture_status": "After #architecture: which of the form, the page and the map are out of date, and why.",
     "architecture_material": "What the architecture page is written from: computed facts, the current page, instructions.",
     "architecture_page": "Write the next version of the project's architecture page.",
@@ -305,7 +311,7 @@ class Translator:
         # picker never offers a lens the server refuses.
         lens_names = sorted(n for n, l in self.lenses.items() if l.get("agent_write", True))
         mutable = sorted(n for n, l in self.lenses.items()
-                         if l["mutable"] and l.get("agent_write", True))
+                         if l["mutable"] and l.get("agent_update", l.get("agent_write", True)))
         task_status = self.vocab.get("task", {}).get("status", [])
         evidence_max = ((self.schema or {}).get("limits") or {}).get("evidence_items", 8)
         return [
@@ -626,6 +632,66 @@ class Translator:
                          "required": ["url"]}},
                  },
                  "required": ["id"]}},
+            {"name": "entrypoints",
+             "description": (
+                 "The project's entry points: each topic's id, name, state, what it is, its ways in "
+                 "and the last messages of where it stopped. Read it to find the topic of your work."),
+             "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}}},
+            {"name": "entrypoint_stop",
+             "description": (
+                 "One message of where a topic stopped, in one or two plain sentences: what is done, "
+                 "what is not, what waits for whom. At #done, once for the task's topic (the task_done "
+                 "answer names it, with `task_id`). Never the record, never a list of everything."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the entry point, ep_…"},
+                 "text": {"type": "string", "description": "at most 1000 characters"},
+                 "task_id": {"type": "string", "description": "the task of this topic it is about"}},
+                 "required": ["id", "text"]}},
+            {"name": "entrypoint_way",
+             "description": (
+                 "Add a way in to a topic: what the operator opens to look at the work — a page, a "
+                 "site, an app, a file, a folder, a script, an artifact — with where it opens, the "
+                 "command that starts it, its folder and port. Only when you made it or a way to open "
+                 "it changed (port, command, folder). `way_id` changes one an agent wrote; one the "
+                 "operator wrote is theirs."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the entry point, ep_…"},
+                 "way_id": {"type": "string"},
+                 "way": {"type": "object", "properties": {
+                     "name": {"type": "string", "description": "a few words, what the operator calls it"},
+                     "kind": {"type": "string", "enum": ["page", "site", "app", "file", "folder", "script", "artifact"]},
+                     "url": {"type": "string"}, "path": {"type": "string"},
+                     "command": {"type": "string", "description": "the start command, run in `folder`"},
+                     "folder": {"type": "string"}, "port": {"type": "integer"},
+                     "note": {"type": "string", "description": "one line the reader needs"}},
+                     "required": ["name", "kind"]}},
+                 "required": ["id", "way"]}},
+            {"name": "entrypoint_shot",
+             "description": (
+                 "A screenshot of a way in you made or changed, taken while it is up: the image file's "
+                 "`path` on this machine (PNG, JPEG, GIF or WebP; read by the tool) and a one-line "
+                 "caption of what it shows. `replaces`: a shot of yours it takes the place of."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string"}, "way_id": {"type": "string"},
+                 "path": {"type": "string"}, "caption": {"type": "string"},
+                 "replaces": {"type": "string"}},
+                 "required": ["id", "way_id", "path"]}},
+            {"name": "entrypoint_offer",
+             "description": (
+                 "Only when something new to open appeared (a page, a server, a site, a dashboard, an "
+                 "artifact with a link) or a way to open one changed, and it is not a one-off result: "
+                 "`name` (a few words) and `why`. Answers the topics like it and `next`: add the way in "
+                 "to the match, or the one line that offers a new entry point to the operator. Writes "
+                 "nothing; the operator keeps it with #entrypoint."),
+             "inputSchema": {"type": "object", "properties": {
+                 "name": {"type": "string"}, "why": {"type": "string"}},
+                 "required": ["name"]}},
+            {"name": "task_topic",
+             "description": "Set the topic of a task: the entry point (ep_…) its work belongs to; \"\" clears.",
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the task, tk_…"},
+                 "topic": {"type": "string", "description": "the entry point, ep_…"}},
+                 "required": ["id", "topic"]}},
             {"name": "task_evidence",
              "description": (
                  "Attach evidence to a task. Follow the operator's instructions: "
@@ -724,7 +790,8 @@ class Translator:
                  "Write the interpretation of a kept #vision, #rule, #problem or "
                  "#entrypoint (the id the [slightly-parallel] notice named): the "
                  "message read with the conversation around it, in plain words. "
-                 "An entry point has five sections: What, Where, How, State, Next. "
+                 "An entry point's record has five sections: What, Where, How, State, Next; it is written "
+                 "only in the chat where the operator kept it. "
                  "Each write is a version; the current one is what the page shows."),
              "inputSchema": {
                  "type": "object",
@@ -1009,6 +1076,9 @@ class Translator:
                 {"agent_id": self.identity()["agent_id"],
                  "images": images, "links": args.get("links") or []},
             )
+        if name in ("entrypoints", "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_offer",
+                    "task_topic"):
+            return self._entrypoint(name, args)
         if name == "task_story":
             return self.api.post(
                 f"/api/tasks/{_id(args)}/story",
@@ -1119,6 +1189,52 @@ class Translator:
         raise ApiError(f"unknown tool: {name}")
 
     # -- resources ---------------------------------------------------------
+
+    def _entrypoint(self, name: str, args: dict) -> Any:
+        """The entry point tools. Text arguments are text: a list or an
+        object where a sentence is meant is refused here, before a request."""
+        def text(key: str, required: bool = False) -> str:
+            v = args.get(key)
+            if v is None or v == "":
+                if required:
+                    raise ApiError(f"{key} is required")
+                return ""
+            if not isinstance(v, str):
+                raise ApiError(f"{key} is text, not {'a list' if isinstance(v, list) else type(v).__name__}")
+            return v
+        who = self.identity()
+        if name == "entrypoints":
+            project = text("project") or who["project"]
+            got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(str(project))}")
+            return {"topics": [{k: t.get(k) for k in ("id", "name", "title", "state", "what", "ways", "stops", "open_tasks")}
+                               for t in got.get("topics") or []]}
+        if name == "entrypoint_offer":
+            words = " — ".join(x for x in (text("name", True), text("why")) if x)
+            q = urllib.parse.urlencode({"project": who["project"], "text": words})
+            return self.api.get(f"/api/entrypoints/similar?{q}")
+        if name == "task_topic":
+            return self.api.post(f"/api/tasks/{_id(args)}/topic",
+                                 {"agent_id": who["agent_id"], "entrypoint_id": text("topic")})
+        if name == "entrypoint_stop":
+            return self.api.post(f"/api/entrypoints/{_id(args)}/stops",
+                                 {"agent_id": who["agent_id"], "text": text("text", True), "task_id": text("task_id")})
+        if name == "entrypoint_way":
+            way = args.get("way")
+            if not isinstance(way, dict):
+                raise ApiError("way is an object: {name, kind, url?, path?, command?, folder?, port?, note?}")
+            body: dict[str, Any] = {"agent_id": who["agent_id"], "way": way}
+            if text("way_id"):
+                body["id"] = text("way_id")
+            return self.api.post(f"/api/entrypoints/{_id(args)}/ways", body)
+        # entrypoint_shot: the image is read here, on the agent's machine.
+        p = pathlib.Path(text("path", True)).expanduser()
+        if not p.is_file():
+            raise ApiError(f"{p} is not a file")
+        if p.stat().st_size > 12 * 1024 * 1024:
+            raise ApiError(f"{p.name} is over 12MB")
+        return self.api.post(f"/api/entrypoints/{_id(args)}/shots", {
+            "agent_id": who["agent_id"], "way_id": text("way_id", True), "caption": text("caption") or p.stem,
+            "replaces": text("replaces"), "data_base64": base64.b64encode(p.read_bytes()).decode("ascii")})
 
     def resource_defs(self) -> list[dict]:
         return [

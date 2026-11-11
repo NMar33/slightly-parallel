@@ -59,6 +59,17 @@ OPERATOR_ONLY: dict[str, str] = {
 }
 
 
+# Lenses an agent changes but never makes: the row is kept from the
+# operator's message. Said in the schema too, so the translator's lens list
+# and the server's answer are one text.
+AGENT_CREATE_REFUSED: dict[str, str] = {
+    "entrypoint": (
+        "an entry point is kept from the operator's #entrypoint message, not written by an agent — "
+        "offer one with the MCP tool entrypoint_offer; inside a topic, add a stop (entrypoint_stop) "
+        "or a way in (entrypoint_way)"),
+}
+
+
 def refuse_agent_write(ent: Entity, body: dict) -> None:
     reason = OPERATOR_ONLY.get(ent.name)
     if reason and written_by_agent(body):
@@ -262,6 +273,8 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="send the body as a JSON object")
     refuse_agent_write(ent, body)
+    if (reason := AGENT_CREATE_REFUSED.get(ent.name)) and written_by_agent(body):
+        refuse_agent(reason)
     # Agents write what the entry holds by name (entry_fields.py); the names
     # land in the storage slots here, before anything reads them.
     entry_fields.to_slots(ent.name, body, ent.columns)

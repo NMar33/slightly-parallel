@@ -50,7 +50,7 @@ _DEFAULTS: dict[str, dict[str, str]] = {
     "rule": {"status": "active"},
     "problem": {"status": "open"},
     # An entry point is open while the topic is worked on; closed when it is done.
-    "entrypoint": {"status": "open"},
+    "entrypoint": {"status": "open", "state": "active"},
     # A skill is a draft until the operator has read it (skilllib.py).
     "skill": {"status": "draft"},
     # An artifact is a draft until the agent has written the folder and

@@ -27,6 +27,7 @@ from ..entities import ENTITIES
 from ..tasklib import AGENT_TAGS
 from .. import entry_fields
 from ..mcp import TOOLS as _MCP_TOOLS
+from ..entitylib import AGENT_CREATE_REFUSED
 from .lenses import ENUM_FIELDS, HEADLINE_REQUIRED, OPERATOR_ONLY
 from .architecture import GROUPS as _ARCH_GROUPS, OPS as _ARCH_OPS
 
@@ -44,7 +45,7 @@ _WHEN = {
     "decision": "A choice was made between alternatives; `alternatives` holds what was rejected and why.",
     "vision": "A product idea worth keeping, not yet a commitment.",
     "problem": "You are blocked — log it before workarounds bury it.",
-    "entrypoint": "The operator wrote #entrypoint: the way into a topic — what, where, how, state, next — written through `interpret`, never as a new entry.",
+    "entrypoint": "The operator wrote #entrypoint: a topic they come back to; its record (what, where, how, state, next) is written through `interpret`, never as a new entry.",
     "file": "The per-path judgment behind a scan: what moved and which moves matter.",
     "architecture": "The form behind a scan: eight groups, each checked or with its changes.",
     "idea": "A thought worth keeping, filed by title.",
@@ -93,7 +94,7 @@ def build_schema() -> dict:
             # the same names is accepted (tasklib.agent_tags).
             fields["tags"] = {"type": "string", "description": (
                 "1–3 of " + ", ".join(AGENT_TAGS) + ", comma-separated; a list of these names is the same")}
-        refused = OPERATOR_ONLY.get(ent.name)
+        refused = OPERATOR_ONLY.get(ent.name) or AGENT_CREATE_REFUSED.get(ent.name)
         lenses.append({
             "name": ent.name,
             "base": ent.list_key.replace("_", "-") if ent.name != "activity" else "activity",
@@ -103,6 +104,9 @@ def build_schema() -> dict:
             # says so in its own line, and the MCP translator keeps it out of
             # the lens list an agent picks from.
             "agent_write": not refused,
+            # Made only by the operator, yet an agent changes some of its
+            # fields (an entry point's topic): update_entry offers it.
+            "agent_update": not OPERATOR_ONLY.get(ent.name),
             "when_to_use": f"Operator only — {refused}." if refused else _WHEN.get(ent.name, ""),
             "fields": fields,
             "headline": headline,

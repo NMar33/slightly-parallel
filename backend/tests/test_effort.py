@@ -102,10 +102,16 @@ def test_the_stop_hook_keeps_the_effort_in_usage_and_facts(tmp_path: Path) -> No
     root = tmp_path / "data"
     root.mkdir()
     t = tmp_path / "t.jsonl"
-    recs = [{"type": "user", "timestamp": "2026-11-11T10:00:00.000Z", "sessionId": "s1",
+    # Stamped from now, not a fixed day: the hook reads only the replies
+    # after the prompt it saw, so a fixed 10:00Z failed every day after
+    # 10:00 UTC (docs/testing.md, two "now"s).
+    from datetime import datetime, timedelta, timezone
+    base = datetime.now(timezone.utc) + timedelta(minutes=1)
+    at = lambda s: (base + timedelta(seconds=s)).strftime("%Y-%m-%dT%H:%M:%S.000Z")  # noqa: E731
+    recs = [{"type": "user", "timestamp": at(0), "sessionId": "s1",
              "message": {"role": "user", "content": "go"}},
-            _assistant("m1", "low", "2026-11-11T10:00:05.000Z"),
-            _assistant("m2", "max", "2026-11-11T10:00:09.000Z")]
+            _assistant("m1", "low", at(5)),
+            _assistant("m2", "max", at(9))]
     t.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
     args = [sys.executable, str(HOOKS / "claude-code-capture.py"), "--project", "p", "--data-root", str(root)]
     for payload in ({"hook_event_name": "UserPromptSubmit", "session_id": "s1", "cwd": str(tmp_path), "prompt": "go"},

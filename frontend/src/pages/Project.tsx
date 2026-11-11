@@ -69,7 +69,7 @@ const ArchitectureTab = lazy(() => import('../features/project/ArchitectureTab')
 const StandupsDayBook = lazy(() => import('../features/standups/DayBook').then((m) => ({ default: m.StandupsDayBook })))
 const ScansDayBook = lazy(() => import('../features/scans/DayBook').then((m) => ({ default: m.ScansDayBook })))
 const VisionsDocument = lazy(() => import('../features/visions/Document').then((m) => ({ default: m.VisionsDocument })))
-const EntryPointsBook = lazy(() => import('../features/entrypoints/Book').then((m) => ({ default: m.EntryPointsBook })))
+const EntryPointsDesk = lazy(() => import('../features/entrypoints/desk/Desk').then((m) => ({ default: m.EntryPointsDesk })))
 const ProblemsMemory = lazy(() => import('../features/problems/Memory').then((m) => ({ default: m.ProblemsMemory })))
 const RulesBook = lazy(() => import('../features/rules/Book').then((m) => ({ default: m.RulesBook })))
 
@@ -331,7 +331,7 @@ export default function ProjectPage({
         {tab === 'standups'  && <StandupsDayBook project={data.code} />}
         {tab === 'scans'     && <ScansDayBook    project={data.code} />}
         {tab === 'visions'   && <VisionsDocument project={data.code} />}
-        {tab === 'entrypoints' && <EntryPointsBook project={data.code} />}
+        {tab === 'entrypoints' && <EntryPointsDesk project={data.code} />}
         {tab === 'problems'  && <ProblemsMemory  project={data.code} />}
         {tab === 'rules'     && <RulesBook       project={data.code} />}
         </Suspense>
