@@ -84,7 +84,8 @@ SHAPES = [
 def _seed(root: Path, shapes=SHAPES) -> None:
     ent = ENTITIES["entrypoint"]
     for eid, l1, topic, text, archived in shapes:
-        md_ref = f"{ent.detail_dir}/x__merkhet__cc-1__{eid}.md"
+        # Not "x…": test_doc_paths looks for stray x*.md files in the whole temp folder.
+        md_ref = f"{ent.detail_dir}/261016-1913__merkhet__cc-1__{eid}.md"
         row = {"id": eid, "created_date": "2610-16", "created_time": "19:13", "project": "merkhet",
                "agent_id": "cc-1", "l1": l1, "topic": topic, "status": "open", "md_ref": md_ref,
                "source": "captured", "session_id": "s1", "source_turn": 3,

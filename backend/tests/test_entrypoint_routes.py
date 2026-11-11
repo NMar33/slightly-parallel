@@ -226,7 +226,9 @@ def test_the_operators_fields_are_refused_to_an_agent_on_every_path(world) -> No
 def _listening() -> tuple[socket.socket, int]:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
-    s.listen(1)
+    # Room for every probe at once: with a backlog of 1, macOS refuses the
+    # second connect while the first is not accepted.
+    s.listen(16)
     return s, s.getsockname()[1]
 
 
