@@ -55,7 +55,8 @@ TOOLS: dict[str, str] = {
     "task_update": "Edit a task. Status is the operator's.",
     "task_report": "Say a task is done, in your opinion.",
     "task_commits": "Link commits that have no Task: line to the task they were made for.",
-    "task_done": "After #done: what the operator's #done moved, and each task's stretch of the chat.",
+    "task_done": "After #done: what the operator's #done moved, and each task's stretch of the chat; with proposals, offers next tasks.",
+    "next_tasks": "After the operator answered the next tasks offered at #done: make the ones they chose by number.",
     "undo_find": "After #undo: the operator's request and the entries it could mean, numbered.",
     "undo_propose": "Send the entries the operator chose to archive; answers the confirmation to show.",
     "undo_apply": "After #undo-yes: archive the confirmed entries. Refused without the operator's #undo-yes.",
@@ -406,8 +407,29 @@ class Translator:
                  "verdict and gives it its stretch of the chat. This returns what moved (or "
                  "unnamed: ask which task), each with its stretch counted, and `next`: your "
                  "one-line task_report and any evidence (the skill finish-a-task). You never "
-                 "change a status yourself."),
-             "inputSchema": {"type": "object", "properties": {}}},
+                 "change a status yourself. Call it once without arguments; then, only when a next "
+                 "step truly follows (without it the work stays unfinished), call it again with "
+                 "`proposals`: at most three {title, line}. The answer gives each its similar open "
+                 "tasks on the board and the line to show the operator."),
+             "inputSchema": {"type": "object", "properties": {
+                 "proposals": {"type": "array", "maxItems": 3, "items": {
+                     "type": "object",
+                     "properties": {
+                         "title": {"type": "string", "description": "the task's title, at most 80 characters"},
+                         "line": {"type": "string", "description": "one line: what is left and why it follows"},
+                     },
+                     "required": ["title"]}},
+             }}},
+            {"name": "next_tasks",
+             "description": (
+                 "The operator answered the line 'Make these tasks? 1) … 2) …' that task_done gave. "
+                 "Send the numbers they chose ([] when they chose none). The server checks them "
+                 "against the operator's next message and makes the tasks in the agent column; "
+                 "a retry answers the same tasks."),
+             "inputSchema": {"type": "object", "properties": {
+                 "numbers": {"type": "array", "items": {"type": "integer"},
+                             "description": "the numbers the operator chose, such as [1, 3]"}},
+                 "required": ["numbers"]}},
             {"name": "undo_find",
              "description": (
                  "The operator typed #undo and said what was a mistake. This returns their request "
@@ -898,7 +920,14 @@ class Translator:
             return self.api.get(q)
         if name == "task_done":
             who = self.identity()
-            return self.api.get(f"/api/done-tags?agent_id={urllib.parse.quote(str(who['agent_id']))}")
+            raw = args.get("proposals")
+            if raw is None or raw == "" or raw == []:
+                # Without proposals: the answer it always was.
+                return self.api.get(f"/api/done-tags?agent_id={urllib.parse.quote(str(who['agent_id']))}")
+            return self.api.post("/api/done-tags", {"agent_id": who["agent_id"], "proposals": raw})
+        if name == "next_tasks":
+            return self.api.post("/api/next-tasks/make",
+                                 {"agent_id": self.identity()["agent_id"], "numbers": args.get("numbers")})
         if name in ("undo_find", "undo_propose", "undo_apply", "undo_restore"):
             who = self.identity()["agent_id"]
             if name == "undo_find":

@@ -320,6 +320,7 @@ from .mcp import TOOLS as _MCP_TOOLS  # noqa: E402 — the one tool list
 _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "task_evidence",
                 "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
                 "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
+                "task_done", "next_tasks",
                 "core_new", "core_note", "core_attach", "core_off", "publish_attach", "usage_prices_write")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
 MCP_REFUSAL = (
@@ -351,6 +352,8 @@ _MCP_WRITE_PATHS = (
     r"/api/architecture/page",
     r"/api/map",
     r"/api/undo/(propose|apply|restore)",
+    r"/api/done-tags",
+    r"/api/next-tasks/make",
     r"/api/cores",
     r"/api/cores/[^/]+/(notes|links|off)",
     r"/api/publishing/cards/[^/]+/attach",

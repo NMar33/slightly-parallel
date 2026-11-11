@@ -26,6 +26,8 @@ ARGS: dict[str, dict[str, Any]] = {
     "update_entry": {"lens": "decision", "id": "dc_none", "changes": {"why": "x"}},
     "interpret": {"lens": "vision", "id": "vs_none", "text": "x"},
     "undo_propose": {"ids": ["vs_none"]},
+    "task_done": {"proposals": [{"title": "Check it on Windows", "line": "run on Linux only"}]},
+    "next_tasks": {"numbers": [1]},
     "standup_postpone": {"date": "2609-17", "hours": 4},
     "standup_material": {"date": "2609-17", "claim": True},
     "map_write": {"map": {"template": "tool", "rows": []}, "note": "x"},

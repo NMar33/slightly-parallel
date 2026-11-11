@@ -405,11 +405,17 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     return sorted(set(ignored) | dropped)
 
 
-def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPTION_MAX) -> dict:
+def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPTION_MAX,
+                chosen: bool = False) -> dict:
     """One task, as POST /api/tasks makes it — the operator's board, an
     agent through the /task gate, the server's own #now card (nowlib). The
     answer is create_answer's: ``existing`` true when the same task was
-    already there (the route then answers 200, not 201)."""
+    already there (the route then answers 200, not 201).
+
+    ``chosen``: a next task the operator chose by number after #done
+    (nextlib). The server built the body (status agent, its tag, no lane),
+    so the gate is not asked: it reads the operator's latest message as a
+    command, and a later #now or #task {lane} there would move the card."""
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="body must be a JSON object")
     if any(k in body for k in ("l2", "l3", "l4")):
@@ -417,9 +423,10 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
             status_code=422,
             detail="a task holds title and description — send its text as description",
         )
-    said = _operator_command(store, identity_of(body)) if identity_of(body) not in _HOUSE_ACTORS else ("", "", "", "")
+    said = (_operator_command(store, identity_of(body))
+            if identity_of(body) not in _HOUSE_ACTORS and not chosen else ("", "", "", ""))
     started_now, column = said[0] == "now", said[2]
-    ignored = _gate_agent_create(body, store)
+    ignored = [] if chosen else _gate_agent_create(body, store)
     if len(str(body.get("title") or "")) > TITLE_MAX:
         raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
     description = str(body.pop("description", "") or "").strip()

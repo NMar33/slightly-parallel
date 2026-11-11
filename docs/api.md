@@ -175,7 +175,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/activity` · `/api/activity/{id}` | `goal_id`, `activity_type`, `min_duration`, `max_duration` | — | for external pipelines; agents never post it |
 | `/api/architecture` · `/api/architecture/{id}` | — | — | see **Architecture** |
 | `/api/artifacts` · `/api/artifacts/{id}` · `/api/artifacts/{id}/update` | — | `status`, `tags` | see **Artifacts** |
-| `/api/decisions` · `/api/decisions/{id}` · `/api/decisions/{id}/update` | `source`, `related_goal_id` | `tags`, `weight` | — |
+| `/api/decisions` · `/api/decisions/{id}` · `/api/decisions/{id}/update` | `source`, `related_goal_id` | `tags`, `weight` | — . A new decision's answer carries `similar`: the project's one decision most like it (`id`, `decision`, `created`, `score`), with a line in `warnings`; never refused |
 | `/api/files` · `/api/files/{id}` · `/api/files/{id}/update` | `trigger_lens` | `files_ignored_n`, `files_important_n` | `paths` (see below) |
 | `/api/goals` · `/api/goals/{id}` · `/api/goals/{id}/update` | `status`, `parent_goal_id`, `sprint_id`, `root_only` | `confidence_pct`, `retro_outcome`, `sprint_id`, `status`, `success_comment`, `time_est` | `children`. **Retired**: the product no longer writes goals; the routes stay so pre-task data still reads, and sprints still join the rows they have |
 | `/api/ideas` · `/api/ideas/{id}` | `tag` | — | `body`. Legacy reader — the library retired in favour of tasks |
@@ -717,6 +717,29 @@ more, a normal one its alternatives, a major one also what would undo it.
   what this agent's latest `#done` did: `tasks` (each with `result` moved ·
   already · archived and its `stretch`), or `unnamed` when no task was named
   since the previous `#done`, and `next`. The MCP tool `task_done` reads it.
+- `POST /api/done-tags` — the same answer, and the next tasks offered after it
+  (nextlib.py, [next-tasks.md](next-tasks.md)). Body: `agent_id`, `proposals`
+  (at most three `{title, line}`; absent, null or `[]` answers exactly as the
+  GET). Each proposal comes back with `n` and `similar` (up to three open tasks
+  of the project: `id`, `title`, `status`, `score`), with `offer` (its id) and
+  `show`, the line the agent gives the operator. A wrong shape or a fourth
+  proposal is 422 before anything is applied. No offer where it does not belong
+  (the `#done` closed nothing, the operator has written since, a helper chat,
+  an offer already made into tasks): `proposals_ignored` says why. The MCP tool
+  `task_done` posts here when it carries proposals.
+- `POST /api/next-tasks/make` — the operator answered the offer: makes the
+  tasks they chose in the `agent` column (tag `ag_followup`, the offer's
+  project). Body: `agent_id`, `numbers`. Checked against the operator's next
+  message in the chat: numbers only there must be the numbers sent; "yes" or
+  "all" means every one; a command or a question chooses nothing (`skipped`);
+  other text must contain each number sent. 409 when the operator has not
+  answered yet or did not write a number sent. A retry answers the same tasks
+  (`existing: true`). The MCP tool `next_tasks` posts here.
+- `GET /api/next-tasks?project=&agent_id=` — every offer (`next_tasks.csv`):
+  `state` offered · made · skipped, the proposals with their similar tasks,
+  the `#done` turn and the tasks it closed, `chosen`, `made`; an offer still
+  `offered` carries `answer_in_chat`, the operator's next message as read
+  (`turn`, `kind`, `numbers`), or null. Reads only.
 - `GET /api/undo/candidates?agent_id=` — `#undo` (undolib.py): this chat's live
   `#undo` request (`said`: the operator's words) and the entries it could mean,
   numbered, this chat's first. 409 when the chat has no `#undo` request. The MCP
@@ -1338,7 +1361,8 @@ these tools only; the POST routes in this document are what the tools and
 the operator's pages call. By purpose:
 
 - entries: `write_entry {lens, fields}`, `update_entry {lens, id, changes}`
-- tasks: `tasks`, `task_update`, `task_report`, `task_done`,
+- tasks: `tasks`, `task_update`, `task_report`, `task_done` (with `proposals`, the
+  next tasks offered after `#done`), `next_tasks`,
   `task_evidence_ask`, `task_evidence`, `task_work`, `task_story`
 - kept messages: `interpret`, `skill_draft`, `artifact_write`
 - entries made by mistake: `undo_find`, `undo_propose`, `undo_apply`,

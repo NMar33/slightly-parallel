@@ -307,6 +307,18 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
             existing=True, warnings=warnings,
         )
 
+    similar: list[dict[str, Any]] = []
+    if ent.name == "decision":
+        # A warning, never a refusal: the decision already logged that this
+        # one is most like, read before this one is written.
+        from .similarlib import similar_decisions
+        similar = similar_decisions(store, str(body.get("project") or ""),
+                                    str(body.get(ent.headline_field) or ""), exclude=eid)
+        for d in similar:
+            warnings.append(
+                f"A similar decision is already logged: {d['id']} \"{d['decision'][:160]}\" "
+                f"({d['created']}). Nothing was refused; if this one changes it, say so in why.")
+
     md_ref, md_path = doc_path(store, ent, {**body, "md_ref": ""}, eid)
     body["md_ref"] = md_ref
 
@@ -340,4 +352,6 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
         "l4": body.get("l4", ""),
     }
     out["text"] = named_text(ent, stored, out["l2"], out["l3"], out["l4"])
+    if ent.name == "decision":
+        out["similar"] = similar
     return create_answer(out, warnings=warnings)
