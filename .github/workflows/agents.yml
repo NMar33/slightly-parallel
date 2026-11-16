@@ -57,7 +57,7 @@ jobs:
       - uses: actions/setup-node@v7
         if: steps.key.outputs.ok
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: The browser the test drives

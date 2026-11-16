@@ -1,0 +1,7 @@
+{"at": "2026-11-01T09:00:00", "tool": "claude-code", "source": "statusline", "five_hour": {"used": 12.0, "resets_at": "2026-11-01T11:40:00"}, "seven_day": {"used": 28.0, "resets_at": "2026-11-05T09:00:00"}}
+{"at": "2026-11-01T10:30:00", "tool": "claude-code", "source": "statusline", "five_hour": {"used": 40.0, "resets_at": "2026-11-01T11:40:00"}, "seven_day": {"used": 29.0, "resets_at": "2026-11-05T09:00:00"}}
+{"at": "2026-11-01T13:48:00", "tool": "codex", "plan": "plus", "source": "rollout", "five_hour": {"used": 9.0, "resets_at": "2026-11-01T14:10:00"}, "seven_day": {"used": 81.0, "resets_at": "2026-11-03T06:00:00"}}
+garbage line
+{"at": "2026-11-01T13:55:00", "tool": "claude-code", "account": "2403ec81aa11", "model": "claude-fable-5-1", "session": "sess-fab", "source": "statusline", "five_hour": {"used": 30.0, "resets_at": "2026-11-01T16:40:00"}, "seven_day": {"used": 29.0, "resets_at": "2026-11-05T09:00:00"}}
+{"at": "2026-11-01T14:40:00", "tool": "claude-code", "account": "2403ec81aa11", "model": "claude-opus-4-5", "session": "sess-gol", "source": "statusline", "five_hour": {"used": 62.5, "resets_at": "2026-11-01T16:40:00"}, "seven_day": {"used": 31.0, "resets_at": "2026-11-05T09:00:00"}}
+{"at": "2026-11-01T14:44:00", "tool": "claude-code", "account": "2403ec81aa11", "model": "claude-opus-4-5", "session": "sess-idl", "source": "statusline", "five_hour": {"used": 38.0, "resets_at": "2026-11-01T16:40:00"}, "seven_day": {"used": 30.0, "resets_at": "2026-11-05T09:00:00"}}

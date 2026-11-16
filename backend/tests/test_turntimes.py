@@ -68,8 +68,8 @@ def _rec(kind: str, at: str, content) -> dict:
     return {"type": kind, "timestamp": at, "message": {"content": content}}
 
 
-def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> None:
-    folder = _chat(tmp_path, meta={"tool": "claude-code", "session_ref": "sess-1"})
+def _transcript(tmp_path: Path) -> Path:
+    """A Claude Code transcript answering both turns of CHAT."""
     claude = tmp_path / "claude" / "-work"
     claude.mkdir(parents=True)
     # Transcript times carry their zone; build them from local times.
@@ -90,6 +90,12 @@ def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> 
         _rec("assistant", utc("2026-09-29T10:25:00"), [{"type": "text", "text": "done too"}]),
     ]
     (claude / "sess-1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+    return tmp_path / "claude"
+
+
+def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> None:
+    folder = _chat(tmp_path, meta={"tool": "claude-code", "session_ref": "sess-1"})
+    _transcript(tmp_path)
 
     assert turntimes.backfill(tmp_path / "data", claude_dir=tmp_path / "claude") == 2
     got = turntimes.times(folder)
@@ -98,6 +104,24 @@ def test_the_backfill_reads_the_answer_out_of_the_transcript(tmp_path: Path) -> 
     # Twice is once.
     assert turntimes.backfill(tmp_path / "data", claude_dir=tmp_path / "claude") == 0
     assert _session(folder).timed == "exact"
+
+
+def test_the_backfill_waits_for_the_hooks_lock_and_loses_no_line(tmp_path: Path) -> None:
+    """The hook appends turns.jsonl under its lock; a backfill that cannot
+    take it leaves the file as it is and tries again on the next start."""
+    from backend.file_safety import acquire_flock, lock_path
+    from backend.hookshared import append_locked
+
+    folder = _chat(tmp_path, meta={"tool": "claude-code", "session_ref": "sess-1"})
+    claude = _transcript(tmp_path)
+    hook_line = {"turn": 9, "start": "", "end": "2026-09-29T11:00:00", "source": "hook", "busy": []}
+    with acquire_flock(lock_path(folder / "turns.jsonl")):
+        assert turntimes.backfill(tmp_path / "data", claude_dir=claude) == 0
+        # The hook never hangs: past its wait it appends anyway.
+        append_locked(folder / "turns.jsonl", json.dumps(hook_line) + "\n", timeout_s=0.05)
+    assert turntimes.backfill(tmp_path / "data", claude_dir=claude) == 2
+    lines = [json.loads(x) for x in (folder / "turns.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert hook_line in lines
 
 
 def test_a_turn_ends_before_the_next_captured_turn_even_unseen_in_the_transcript(tmp_path: Path) -> None:
@@ -185,3 +209,18 @@ def test_one_file_too_large_to_keep_is_read_but_not_kept(tmp_path, monkeypatch) 
     monkeypatch.setattr(tt, "POINTS_KEPT", 8)
     monkeypatch.setattr(tt, "_points_cache", {})
     assert len(tt.points_of(f)) == 8 and tt._points_cache == {}
+
+
+def test_two_hook_stamps_for_one_turn_add_up(tmp_path: Path) -> None:
+    """The reply after the tool woke the agent itself (a helper's report)
+    is a second stamp for the same turn: the turn's stretches add up and
+    its end is the later one; the last stamp used to replace the first."""
+    folder = _chat(tmp_path, [
+        {"turn": 1, "start": "2026-11-04T15:36:41", "end": "2026-11-04T15:40:09", "source": "hook",
+         "busy": [["2026-11-04T15:36:41", "2026-11-04T15:40:09"]], "active_sec": 200, "helper_sec": 0},
+        {"turn": 1, "start": "2026-11-04T15:40:09", "end": "2026-11-04T18:40:00", "source": "hook",
+         "busy": [["2026-11-04T18:30:00", "2026-11-04T18:40:00"]], "active_sec": 600, "helper_sec": 1000},
+    ])
+    got = turntimes.times(folder)[1]
+    assert got.end.isoformat() == "2026-11-04T18:40:00"
+    assert len(got.busy or []) == 2 and got.active_sec == 800 and got.helper_sec == 1000

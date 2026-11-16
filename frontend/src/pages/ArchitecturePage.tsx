@@ -14,6 +14,7 @@ import { ArchViewSwitch, ArchitectureView, useArchView } from '../features/archi
 import { ArchPagePanel } from '../features/architecture/page/ArchPagePanel'
 import { MapPanel } from '../features/architecture/map/MapPanel'
 import { ArchModeSwitch, useArchMode } from '../features/architecture/page/mode'
+import { CoresPanel } from '../features/architecture/cores/CoresPanel'
 import { t, tn } from '../i18n/scope/pages'
 
 /**
@@ -72,6 +73,7 @@ export default function ArchitecturePage() {
 
       {mode === 'page' && project && <ArchPagePanel projectCode={project} />}
       {mode === 'map' && project && <MapPanel projectCode={project} />}
+      {mode === 'cores' && project && <CoresPanel projectCode={project} />}
 
       {mode === 'ledger' && <>
       {error && <ErrorBanner title={t('Could not read the architecture answers')} message={error} hideDismiss />}

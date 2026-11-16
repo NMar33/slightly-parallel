@@ -52,12 +52,17 @@ it. The identity notice is the one exception: it opens with the project.
   write the eight-group form, or all groups `checked` (section 4).
 - **kept notice** — the user tagged the message `#vision`, `#rule`,
   `#problem` or `#entrypoint`: the server keeps it; write its interpretation with
-  `interpret` (section 4, Kept messages). For `#skill`, write the skill
+  `interpret` (section 4, Kept messages); for `#entrypoint`, after the
+  operator chose the topic (`entrypoint_ask` first, section 4, Entry
+  point). For `#skill`, write the skill
   from this chat with `skill_draft` (section 4, Skill).
 - **command notice** — the user typed a command (section 2): it names the
   skill with the steps and the tool to start with.
 - **evidence notice** — the user typed `#evidence`: it names the task
   (section 4, Finishing a task).
+- **commits notice** — commits of your last turn have no `Task:` line:
+  link each to its task with `task_commits {id, shas}`; a commit for no
+  task needs nothing (section 4, Agent task, Commits).
 - **capture-failure notice** — the hook could not write the turn: tell the
   user, and write nothing as an agent until it is fixed.
 
@@ -71,7 +76,8 @@ server does with a write that goes around them).
 Vocabulary the tools and the server enforce (a wrong value is refused with
 the allowed list, never a silent loss): task `status` ∈ unclassified ·
 backlog · next · agent · todo · parked · doing · review · review-later ·
-done · done-archived (`agent` is the only status you may create with —
+done · done-archived (`agent` is the status `#task` creates with, and the
+column the operator's `#now` names is the other one —
 section 4, `#task`); problem `status` ∈ open · resolved; architecture `op`
 ∈ add · change · remove over a closed set of entity types, with per-type
 required fields and path checks (section 4). A decision requires its
@@ -80,7 +86,9 @@ required fields and path checks (section 4). A decision requires its
 ## 2. Commands
 
 When the user types one of these, act as described. Commands start with
-`#` and may stand anywhere in the message.
+`#` and may stand anywhere in the message. One written with three hashes
+(`###now-todo`) is the message's only command: the other tags in it are
+silenced, and the notice names only that one.
 
 | Command | What you do |
 |---|---|
@@ -98,16 +106,28 @@ When the user types one of these, act as described. Commands start with
 | `#standup` | Write the standup for yesterday now (also offered on the first message of a day) |
 | `#rule <text>` | Nothing to write — the server keeps the message as a rule; write its interpretation (Kept messages, section 4) |
 | `#vision` | Nothing to write — the server keeps the message as a vision; write its interpretation (Kept messages, section 4) |
+| `#publish <text>` | Nothing to write — the server keeps the message as a card on the Publish page (what shipped, worth telling) |
 | `#prompt` | Nothing to write — the server keeps the message in the operator's prompt library |
 | `#important` | Nothing to write — the server stars the message, its agent and the tasks it names; `#important-agent`, `-task` or `-message` stars one of them |
 | `#skill` | Write the skill from what was done in this chat (Skill, section 4) |
 | `#artifact <what>` | Write the folder under the project's artifacts/, then make its record with artifact_write (Artifact, section 4) |
 | `#help` | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it) |
-| `#done` | MCP tool task_done: the server has moved the task; say what moved, then your task_report line (the skill finish-a-task) |
-| `#entrypoint` | Nothing to write — the server keeps the message as an entry point; write its text (Kept messages, section 4): What, Where, How, State, Next |
+| `#mute` | No command in the message runs, `###` ones too: every tag in it is plain text. Do nothing for its tags |
+| `#done` | MCP tool task_done: the server has moved the task; say what moved, then your task_report line; next tasks only when the work is unfinished without them (the skill finish-a-task) |
+| `#entrypoint` | Nothing is made until the operator chooses the topic: entrypoint_ask {id, name}, show its line; on their answer entrypoint_answer {number, name?}; then write the record (What, Where, How, State, Next), the ways in, one stop, shots of the ways that are up, the tasks' topic |
 | `#undo <what was the mistake>` | MCP tool undo_find, list the candidates by number, then undo_propose with the operator's numbers and show its confirm text (the skill undo-a-mistake) |
 | `#undo-yes` | The operator confirmed: MCP tool undo_apply. The server archives only on this reply right after your proposal |
 | `#sp <what worries you>` | MCP tool checkup: say what works and what is a concern, in the fixed shape; with text, look into that too. Read freely; change nothing without the operator's yes (the skill sp-checkup) |
+| `#core-new <text>` | A new core of the program, the thing the text names: give it a short name, a type and the files you know; the server saves the message as its first note (MCP tool core_new; the skill keep-a-core) |
+| `#core-note <text>` | A note on a core: read `cores`, choose the matching core, add the message as typed with your one-line comment (core_note); if two match, ask the operator to choose by number first |
+| `#core` | Attach this message, and this chat's task when it has one, to the matching core (core_attach); if two match, ask the operator to choose by number first |
+| `#core-off <words>` | Remove a core from view: choose the matching core, ask the operator to confirm its number, then core_off; the notes and links are kept |
+| `#usage` | The hook answers: it prints this chat's tokens, the plan limits and the project's day, and the message does not reach you. Add nothing. In Codex and OpenCode the notice carries the text: give it as it is, in a code block |
+| `#usage-on` | The hook answers: each reply in this chat shows its tokens from now on. Add nothing |
+| `#usage-off` | The hook answers: the replies in this chat no longer show their tokens; they are still recorded. Add nothing |
+| `#usage-warnings-on` | The hook answers: Claude Code shows the usage warnings under the replies of this chat again (Codex and OpenCode show none, and the hook says so). Add nothing |
+| `#usage-warnings-off` | The hook answers: Claude Code no longer shows the usage warnings in this chat; tokens are still recorded (Codex and OpenCode show none, and the hook says so). Add nothing |
+| `#usage-price` | Update the API prices the Usage page counts dollars with: say which pages you are going to, a helper agent reads them, then usage_prices_write (the skill update-usage-prices) |
 
 **Resolving `<id or text>`**: if it looks like an id (`sp_…`, `pb_…`), use it.
 Otherwise read the lens (`search`, or `GET /api/<lens>?project=…`), match
@@ -224,7 +244,9 @@ Before you send it, read each sentence as the lead: is it clear with no chat his
 **Architecture** (`#architecture`). Keeps three things current, each only when out of date: the form for the last scan (`write_entry {lens: "architecture"}`, with the scan's id as `trigger_id`: eight groups, each checked or with its changes; written after every scan), the architecture page, and the map of the program. Call `architecture_status`: it says which are needed and why. The skill `update-the-architecture` holds the steps. `#page` and `#map` still do their one part.
 
 **Finishing a task — `task_report {id, summary}`.** Task status belongs to
-the operator: never change a task's `status` yourself. When you believe a
+the operator: never change a task's `status` yourself (the two exceptions:
+a task the operator switched auto-manage on for, and dropping a card you
+made in the agent column with `done-archived`). When you believe a
 task is done, report it — `summary` is one line: what shipped. The server
 records your opinion (the operator sees a badge), moves the card to
 *review* only if the operator switched auto-manage on for that task, and
@@ -263,7 +285,7 @@ final in the pack's shape, then post the whole text with
 this version changed. Each post is the next version; the operator reads
 and compares them on the Storyboard. An unknown id is refused.
 
-**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only. `{lane}` after the tag names the board lane; the server sets it. The skill `write-a-task` holds the steps.
+**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
 
 **Architecture page** (part of `#architecture`, and at the end of a `#scan`; `#page` still asks for it alone). One page per project: what it is, what it does now, what it is made of and what is owed, as claims with their evidence, for a team lead who was not in the chat. Call `architecture_material`: it returns the computed facts, the current page and the instructions. Write the next version with `architecture_page {text, note}`. The skill `keep-the-architecture-page` holds the steps.
 
@@ -300,7 +322,17 @@ minted and no notice appears — ask the user what to keep. The hook names the i
 `[slightly-parallel] #vision — the server keeps this message as vs_…` — and your part
 is the interpretation, written in the same turn:
 `interpret {lens: "vision" | "rule" | "problem" | "entrypoint", id, text}` (`text` is
-markdown; `note` is one optional line on what changed).
+markdown; `note` is one optional line on what changed). An `#entrypoint` makes
+nothing until the operator chooses its topic: `entrypoint_ask` first
+(Entry point, below).
+
+`#publish` is kept the same way, as a card on the Publish page (what
+shipped, worth telling). Its text is the operator's: no interpretation, no
+entry. What you add is what they may need to tell about it: 1–3
+screenshots of what it is about (the page or the product, as you can
+render it), each in its original size, never shrunk or recompressed, given
+by its file `path`, and the links, with `publish_attach {id, images,
+links}` in the same turn. The notice names the card.
 
 The interpretation is the message read with the conversation around it:
 what the user means, in plain words, with what the context settles —
@@ -344,38 +376,116 @@ install skills.
 
 **Help** (`#help`). Answer the operator with the list of commands, what each does for them and where they see the result. The skill `sp-help` holds the list; give it as it is, in the operator's language, and add nothing that is not in it.
 
-**Done** (`#done`). The operator closes a task from the chat: the server moves it to done and gives it its stretch of the chat. Call `task_done`, say what moved, then your one-line `task_report`. The skill `finish-a-task` holds the steps.
+**Done** (`#done`). The operator closes a task from the chat: the server moves it to done and gives it its stretch of the chat. Call `task_done`, say what moved, then your one-line `task_report`. Offer next tasks (`task_done {proposals}`, then `next_tasks`) only when the work is unfinished without them. The skill `finish-a-task` holds the steps.
 
-**Entry point — `#entrypoint`.** The way into a topic, for whoever comes
-back to it after a while — the operator in a month, or an agent in a new
-chat. One entry point per topic ("the install film", "the launch"), kept by
-the server from the operator's message; you write its text through
-`interpret {lens: "entrypoint", id, text, note}`.
+**Entry point — `#entrypoint`.** The outside of a project: a topic the
+operator opens and comes back to ("the films and the launch", "the site's
+texts"), for the operator in a month and for the agent they hand it to. One
+entry point per topic; what is opened lives inside it. Cores are the inside
+of the program; entry points are the outside.
 
-The text has five sections, as Markdown headings, 400 words at most
-(Where is the long one: every path and link the topic needs):
+An entry point holds:
 
-- **What** — what the topic is and what for, one or two sentences.
-- **Where** — the files, folders, artifacts and links the topic lives in,
-  one per line, exact paths.
-- **How** — how to run or repeat it: the commands, the pages, the skill to
-  use.
-- **State** — where the work stopped, as of this version.
-- **Next** — what comes next, by items.
+- **its name** — the operator's words, four words or so;
+- **ways in** — what the operator opens to look at the work: a page, a
+  site, an app, a file, a folder, a script, an artifact; each with where it
+  opens (URL or path), the command that starts it, its folder and port.
+  Slightly Parallel checks the port when the page opens and shows the
+  command of a way that is down; it starts nothing itself;
+- **where it stopped** — a feed of short messages, the operator's and the
+  agents'; the last five count;
+- **shots** — screenshots, a series per way in, each with the chat it was
+  taken in;
+- **the record** — What, Where, How, State, Next, in versions;
+- **what is next** — not written anywhere: it is the topic's open tasks
+  (a task carries its topic).
 
-Write it from this chat: the paths and commands that were used, the state
-as the last messages leave it. Nothing that was not done or decided. A
-second `#entrypoint` on the same topic is a new version of the same
-record: replace State and Next, add to Where and How, keep the rest.
-`topic` is the title, four words or so.
+**After `#entrypoint`** (the notice names the id) nothing is made until
+the operator chooses the topic: they do not remember topic names, and may
+type the command with a name, a description or nothing, in any chat of the
+project.
 
-When the operator opens a topic that has an entry point, read it first
-(the Entry points page, or `GET /api/entrypoints?project=…`): it says
-where things are and where the work stopped.
+1. `entrypoint_ask {id, name}` at once, `name` your proposal for a new
+   topic, four words or so, from their words or this chat. The server finds
+   the topics of this project the command may mean — by the message's
+   words, by what this chat already wrote on (stops, ways in, versions), by
+   the topics of the tasks named in this chat — at most three, and always
+   a last line for a new topic. It answers `show`: give it as it is, as the
+   last line of your reply (`Is this one of the topics? 1) Site and SEO —
+   last stop 5 Nov: deploy, the text console 2) A new topic: «…»`); with no
+   candidate it is one line, `A new topic: «…»?`. Write nothing else for the
+   topic yet. The exact name of one named topic skips the question: the
+   answer says a new version of it was opened; say so in one line.
+2. The operator answers in their next message: a number; the new topic's
+   number and a name (`2 Консоль текстов`); `yes` when there is one line.
+   Call `entrypoint_answer {number, name?}`: the number they chose (0 when
+   none), the name only when they wrote one, as they wrote it. The server
+   checks both against their message. A command or a question in it
+   chooses nothing: answer the question and call `entrypoint_ask` again.
+3. An existing topic chosen opens a new version of its record, and you, in
+   this chat, write it (an unnamed topic takes the name given); the new
+   topic's line makes the topic then, with its name. The answer gives the
+   topic's id, the record as it is and `next`, the line of what to write.
+
+Then write the record through `interpret {lens: "entrypoint", id, text,
+note}` — five sections as Markdown headings, no word limit: **What**
+(one or two sentences), **Where** (every file, folder and link, one per
+line, exact paths), **How** (the commands, the pages, the skill),
+**State** (where the work stopped), **Next** (by items). A new version
+starts from the record as it is: Where and How are added to (every line
+kept, this chat's added), State is replaced, What and Next are kept
+unless this chat changed them. Write from this chat; nothing that was not
+done or decided.
+
+Then, in this order (the answer's `next` names them for the topic):
+
+1. each way in this chat used or made: `entrypoint_way` (where it opens,
+   the command that starts it, its folder and port);
+2. one message of where the work stopped: `entrypoint_stop`;
+3. a screenshot of each way in that is up now (the port check:
+   `GET /api/entrypoints/{id}/ports`, or open it): `entrypoint_shot`;
+4. the topic of each task of this topic named in this chat:
+   `task_topic {id, topic}` — the card's tasks, what is next, come from it.
+
+Then say in one line what was written.
+
+The record is written only right after the operator's `#entrypoint` in
+your chat and their choice, never on your own: the chat that chose the
+topic last writes it, every version is kept with the chat that wrote it,
+and a topic of another project is refused.
+
+**Everywhere else you write three things, never free text into the topic:**
+
+- `entrypoint_stop {id, text, task_id?}` — one message of where it
+  stopped, one or two plain sentences: what is done, what is not, what
+  waits for whom. At `#done` the answer names the task's topic and asks
+  for it: one per topic.
+- `entrypoint_way {id, way}` — a way in you made, or one whose way to open
+  changed (port, command, folder). A way the operator wrote is theirs.
+- `entrypoint_shot {id, way_id, path, caption}` — a screenshot of a way in
+  you made or changed, taken while it is up.
+
+A task's topic: `task_topic {id, topic}` when its work belongs to an
+entry point of this project. The topics: the MCP tool `entrypoints`.
+
+**Offering a new entry point.** Only when something new to open appeared
+(a page, a server, a site, a dashboard, an artifact with a link) or a way
+to open one changed — never for a one-off result. Call `entrypoint_offer
+{name, why}` first: it answers the topics like it. A match: add the way in
+there and say so in one line. None: show the operator its line; they keep
+it with `#entrypoint`. Inside an existing topic, only a stop message.
+
+When the operator brings up a topic that has an entry point, read it
+first (`entrypoints`; the briefing is on the Entry points page, "Copy to
+agent"): it says where things are and where the work stopped.
 
 **Undo** (`#undo`). The operator archives entries made by mistake. List the candidates from `undo_find` by number; send their numbers' ids to `undo_propose` and show its confirm text; on `#undo-yes`, call `undo_apply`. Never archive without both. The skill `undo-a-mistake` holds the steps.
 
 **Is it working** (`#sp`). Call `checkup` and report it in the fixed shape: the verdict, each concern as what · why it matters · the next step, then one line of what is fine. What could not be checked is said, never called fine. With text after the tag, look into that worry too. Read and investigate freely; restart, re-integrate or change nothing without the operator's yes. The skill `sp-checkup` holds the steps.
+
+**Cores** (`#core-new <text>`, `#core-note <text>`, `#core`, `#core-off`). The program's core elements the operator keeps in view — a capability, a feature, a store, a part of the interface — each with its notes, tasks and commits. `#core-new` makes one: a short name, a type (capability · feature · interface · store · integration · internals · workflow · experiment), the files you know, the message as its first note (`core_new`). `#core-note` adds the message, as typed, with your one line (`core_note`); `#core` attaches the message and this chat's task (`core_attach`); `#core-off` removes one from view after the operator confirms (`core_off`). Read `cores` first and choose the matching core; if two match, ask the operator to choose by number. When the hook's notice names a tracked core and finished work changes it, add one line with `core_note {kind: "auto"}`. The skill `keep-a-core` holds the steps.
+
+**Usage prices** (`#usage-price`). The operator asks; you say in one line which pages you are going to, a helper agent reads the providers' own pricing pages (`usage_prices_material`) and writes the prices (`usage_prices_write`), and you say what changed. Never on your own. **Usage** (`#usage`, `#usage-on`, `#usage-off`, `#usage-warnings-on`, `#usage-warnings-off`). The hook answers these itself; in Claude Code the message does not reach you. Add nothing. When it does reach you, the notice says so: in Codex and OpenCode it carries the #usage text, which you give as it is, in a code block; in a message with other text, the hook printed the text already and you add nothing about it. Tokens are recorded for every reply of Claude Code, Codex and OpenCode in any case (Cursor's are not recorded); `#usage-on` and `#usage-off` only show or hide the line after each reply (`→ 1.9k ↑ 512 ↓ (108k)`: new input, output, cache in brackets). In Claude Code a warning may follow that line: the chat is 70k tokens short of its context window, where Claude Code compacts it and keeps only a summary; the chat's context passed 300k, 500k or 800k tokens; a reply read the whole chat again after a break of over an hour; or the chat used more than 25% of the 5-hour limit. `#usage-warnings-on` and `#usage-warnings-off` show or hide them for this chat; in Codex and OpenCode the hook answers that warnings are shown in Claude Code only. The Usage page also counts dollars at the providers' API prices; give a dollar or percent figure only as `usage {}` or the page gives it, never your own. Asked about tokens or limits in words, call `usage {}` and give its `block` the same way. The Usage page is `/usage` on the server.
 
 ## 5. Reading
 

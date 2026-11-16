@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import http.server
 import json
-import socket
 import threading
 import time
 from typing import Any
 
 import pytest
+
+from tests.conftest import free_port
 
 from backend import mcp
 
@@ -42,12 +43,6 @@ def other_server():
     srv.shutdown()
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 def test_a_refusal_carries_the_servers_own_words(other_server) -> None:
     with pytest.raises(mcp.ApiError, match="^404: no such task$"):
         mcp.Api(other_server).get("/missing")
@@ -59,7 +54,7 @@ def test_something_else_on_the_port_is_named_not_a_crash(other_server) -> None:
 
 
 def test_no_server_is_named_with_its_address() -> None:
-    base = f"http://127.0.0.1:{_free_port()}"
+    base = f"http://127.0.0.1:{free_port()}"
     with pytest.raises(mcp.ApiError, match="cannot reach the Slightly Parallel server at " + base):
         mcp.Api(base).get("/api/schema")
 

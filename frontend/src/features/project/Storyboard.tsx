@@ -388,7 +388,15 @@ function DocEditor({ doc, onChanged }: { doc: Doc; onChanged: () => void }) {
               if (!adding.trim()) { drop(); return }
               setAsking({ text: t('Unsaved draft. It is kept in this browser until you discard it.'), action: t('Discard'), run: drop })
             }}>{t('discard')}</Button>
-            <button type="button" disabled={!adding.trim()} onClick={() => { const t = adding; clearDraft(`sp-doc-block-draft:${doc.id}`); setAdding(null); void run(() => postJson(`/api/docs/${encodeURIComponent(doc.id)}/items`, { text: t })) }} className="text-brand disabled:opacity-40">{t('add block')}</button>
+            <button type="button" disabled={!adding.trim()} onClick={() => {
+              // Cleared once the save landed: a failed save kept the text (and its draft) to try again.
+              const text = adding
+              void run(async () => {
+                await postJson(`/api/docs/${encodeURIComponent(doc.id)}/items`, { text })
+                clearDraft(`sp-doc-block-draft:${doc.id}`)
+                setAdding(null)
+              })
+            }} className="text-brand disabled:opacity-40">{t('add block')}</button>
           </div>
         </div>
       ) : (

@@ -80,7 +80,9 @@ export function useBoardColumns({
       if (sprintFilter && sprintFilter !== 'none' && t.sprint_id !== sprintFilter) continue
       if (onlyRemembered && t.remember !== 'yes') continue
       if (onlyToday && !isToday(t, today)) continue
-      map[columnKeyOf(t)]!.push(t)
+      // The fallback column (Unclassified) can be hidden too: its cards are
+      // then out of view, like the other hidden columns' (not a crash).
+      map[columnKeyOf(t)]?.push(t)
     }
     for (const col of columns) {
       const mode = (sorts[col.key] ?? 'manual') as SortMode

@@ -22,6 +22,7 @@ import {
   type CalendarPageProps,
 } from '../features/calendar/parts'
 import { t, tn } from '../i18n/scope/pages'
+import { letter } from '../lib/typing'
 
 /**
  * Calendar v01 — the plan, a month at a time.
@@ -107,7 +108,7 @@ export default function CalendarMonthPage({ projectCode, embedded, views, onView
     if (e.key === 'Escape') { if (sel) setHash({ sel: '' }) }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1) }
     else if (e.key === 'ArrowRight') { e.preventDefault(); go(1) }
-    else if (e.key === 't') { e.preventDefault(); goToday() }
+    else if (letter(e) === 't') { e.preventDefault(); goToday() }
   })
 
   const openTask = (t: CalTask) => openTaskRow(t.id, setEditingTask)

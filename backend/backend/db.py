@@ -306,6 +306,7 @@ class ProjectFolder:
 FILE_SOURCES: tuple[str, ...] = (
     "marks.csv",        # the ★ (marklib.py)
     "done.csv",         # #done in a chat (donelib.py): statistics and analytics read it
+    "now.csv",          # the #now cards the server wrote (nowlib.py): the task thread reads it
 )
 # Documents kept as numbered versions under a project (versioned.py).
 VERSIONED_KINDS: tuple[str, ...] = ("map",)
@@ -370,6 +371,9 @@ class ViewStore:
         # renames), and the errors each recorded; see _rebuild_inner.
         self._built: dict[str, tuple] = {}
         self._built_errors: dict[str, list[dict[str, str]]] = {}
+        # The areas those tables belong to; a rebuilt table moves its area's
+        # stamp even when no mtime grew (see _rebuild_inner).
+        self._built_areas: set[str] = set()
         # Per-version caches the chat pages keep (produced.posts,
         # task_mentions, marks): (view_mtime, value).
         self._mentions_cache: tuple[float, dict[str, int]] | None = None
@@ -433,6 +437,9 @@ class ViewStore:
             if pf.chats_dir is None:
                 continue
             for f in sorted(pf.chats_dir.glob("*/*")):
+                # Not usage.jsonl: no session is derived from it, and the hook
+                # appends to it every turn (it moves view_mtime through
+                # _collect_stamps, which is all the turns' usage needs).
                 if f.name not in ("meta.json", "chat.md", "skills.jsonl", "work.jsonl", "turns.jsonl"):
                     continue
                 try:
@@ -493,7 +500,8 @@ class ViewStore:
             if pf.chats_dir is not None:
                 # skills.jsonl and work.jsonl are appended by the hook after
                 # meta.json is written; each feeds a table of its own.
-                for name in ("*/meta.json", "*/skills.jsonl", "*/work.jsonl"):
+                # usage.jsonl too: the chat viewer's turns carry it.
+                for name in ("*/meta.json", "*/skills.jsonl", "*/work.jsonl", "*/usage.jsonl"):
                     for f in pf.chats_dir.glob(name):
                         note(f)
             # The architecture page: markdown versions under the project,
@@ -673,20 +681,25 @@ class ViewStore:
             # with no mtime to show for it (a settings change). A rebuild
             # that found nothing new keeps it: the browser reads the stamp
             # to know whether to ask again, and every ETag hangs off it.
+            # A table rebuilt from a file whose mtime did not grow (a backup
+            # restored with its archived times, a file replaced by an older
+            # copy) moves the stamp too: the rows changed, and a stamp that
+            # stays would keep answering 304 over them.
+            rebuilt = self._built_areas
             previous = self._view_mtime
             fresh = collected or (0.0 if previous else time.time())
             if fresh > previous:
                 self._view_mtime = fresh
-            elif rederived or not previous:
+            elif rederived or rebuilt or not previous:
                 self._view_mtime = previous + 1e-6
             stamp = self._view_mtime
-            # The same rule per area: a file moved, or the chats were
-            # re-derived without one.
+            # The same rule per area: a file moved, a table of the area was
+            # rebuilt, or the chats were re-derived without one.
             for area, m in stamps.items():
                 was = self._stamps.get(area, 0.0)
                 if m > was:
                     self._stamps[area] = m
-                elif area == "chats" and rederived:
+                elif area in rebuilt or (area == "chats" and rederived):
                     self._stamps[area] = was + 1e-6
                 else:
                     self._stamps.setdefault(area, was)
@@ -706,6 +719,14 @@ class ViewStore:
         """Every view and derived table on ``con``, which nobody reads yet."""
         errors: list[dict[str, str]] = []
         projects = self._discover_projects()
+        # The mtime snapshot is taken before any table is staged, not after:
+        # a write landing while a table is built must bump the next build's
+        # stamp, not be folded into this one's while the table predates it
+        # (the next build would then rebuild the table and move no stamp,
+        # and every ETag would say 304 over new rows).
+        stamps = self._collect_stamps(projects)
+        collected = max(stamps.values(), default=0.0)
+        self._built_areas = set()
 
         # One canonical view per registered entity. Each view unions the
         # mutual CSV at data_root with any per-project overlay CSVs
@@ -766,6 +787,7 @@ class ViewStore:
             errors = errors_all
             errors.extend(view_errors)
             self._built[ent.view], self._built_errors[ent.view] = sig, view_errors
+            self._built_areas.add(self._area(Path(ent.csv)))
 
         # Ledgers — append-only CSVs that are not full Entities (no MD
         # detail, no generic create) but need the same typed-empty view.
@@ -794,6 +816,7 @@ class ViewStore:
             self._stage(con, view_name, full_sql, empty_sql, ledger_csv, view_errors)
             errors.extend(view_errors)
             self._built[view_name], self._built_errors[view_name] = sig, view_errors
+            self._built_areas.add(self._area(Path(csv_name)))
 
         # scans view — one CSV that all projects/agents append to.
         scans_csv = self._scans_csv()
@@ -806,17 +829,13 @@ class ViewStore:
             self._stage(con, "scans", scans_sql, _empty_scans_sql(), scans_csv, view_errors)
             errors.extend(view_errors)
             self._built["scans"], self._built_errors["scans"] = sig, view_errors
+            self._built_areas.add("scans")
         # (scans_mutual, the alias call sites use, is a view made at the swap.)
 
         # agents + sessions: parsed only when the transcripts themselves
         # moved. Everything above is a view over CSVs and costs
         # milliseconds; the parse reads every chat log, so it runs on its
-        # own signal and its rows are kept for the builds in between. The
-        # mtime snapshot is taken before the parse, not after: a hook write
-        # landing during the parse must bump the next build's ETag, not be
-        # folded into this one's while the tables predate it.
-        stamps = self._collect_stamps(projects)
-        collected = max(stamps.values(), default=0.0)
+        # own signal and its rows are kept for the builds in between.
         chats_sig = self._chats_signature(projects)
         with self._lock:
             agents = self._agents_cache
@@ -836,6 +855,7 @@ class ViewStore:
             self._materialize_sessions(con, derived)
             for table in self._DERIVED_TABLES:
                 self._built[table], self._built_errors[table] = ("derived", id(derived)), []
+            self._built_areas.add("chats")
         return errors, projects, agents, derived, chats_sig, collected, stamps
 
     def _derive(self, agents: list[dict[str, Any]]) -> dict[str, list[tuple]]:
@@ -852,7 +872,11 @@ class ViewStore:
         # A chat imported from a tool's own log afterwards (sessionimport.py)
         # is read, never acted on: a #done or #vision in an old message must
         # not close a task or keep a vision weeks later.
-        imported = {str(a.get("agent_id") or "") for a in agents if a.get("capture") == "import"}
+        # A helper chat (a codex exec, a claude -p another chat started) the
+        # same: its messages were written by an agent, and a command in them
+        # is no operator's (hookshared.HELPER_KINDS).
+        imported = {str(a.get("agent_id") or "") for a in agents
+                    if a.get("capture") == "import" or a.get("helper") is True}
         chats = []
         for a in agents:
             chat_path = Path(a.get("_chat_path") or "")
@@ -1066,6 +1090,11 @@ class ViewStore:
                         obj = json.load(fh)
                 except (OSError, json.JSONDecodeError) as e:
                     log.warning("skip agent %s: %s", meta_path, e)
+                    continue
+                if not isinstance(obj, dict):
+                    # Valid JSON, not an object ("[]", "null"): one such file
+                    # must not stop every chat from loading.
+                    log.warning("skip agent %s: meta.json is not an object", meta_path)
                     continue
                 # Normalise + fill defaults so response models never explode.
                 obj.setdefault("agent_id", meta_path.parent.name)

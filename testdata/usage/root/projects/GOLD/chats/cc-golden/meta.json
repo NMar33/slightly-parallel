@@ -1,0 +1,10 @@
+{
+ "agent_id": "cc-golden",
+ "agent_name": "cc-golden",
+ "project": "GOLD",
+ "tool": "claude-code",
+ "session_ref": "sess-golden",
+ "chat_title": "Golden export",
+ "created_date": "22610-31",
+ "last_active": "2026-11-01T14:40:00"
+}

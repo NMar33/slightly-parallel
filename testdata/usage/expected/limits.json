@@ -1,0 +1,126 @@
+{
+ "limits": {
+  "claude-code": {
+   "five_hour": {
+    "used": 62.5,
+    "resets_at": "2026-11-01T16:40:00",
+    "in": "1 h 52 min",
+    "expired": false,
+    "span_s": 18000,
+    "resets_text": "16:40",
+    "expired_text": ""
+   },
+   "seven_day": {
+    "used": 31.0,
+    "resets_at": "2026-11-05T09:00:00",
+    "in": "3 d 18 h",
+    "expired": false,
+    "span_s": 604800,
+    "resets_text": "Thu 09:00",
+    "expired_text": ""
+   },
+   "read_at": "2026-11-01T14:40:00",
+   "read_at_text": "14:40",
+   "age_min": 8,
+   "stale": false,
+   "expired": false,
+   "plan": "",
+   "source": "statusline",
+   "series": [
+    {
+     "account": "2403ec81aa11",
+     "model": "claude-opus-4-5",
+     "five_hour": {
+      "used": 62.5,
+      "resets_at": "2026-11-01T16:40:00",
+      "in": "1 h 52 min",
+      "expired": false,
+      "span_s": 18000,
+      "resets_text": "16:40",
+      "expired_text": ""
+     },
+     "seven_day": {
+      "used": 31.0,
+      "resets_at": "2026-11-05T09:00:00",
+      "in": "3 d 18 h",
+      "expired": false,
+      "span_s": 604800,
+      "resets_text": "Thu 09:00",
+      "expired_text": ""
+     },
+     "read_at": "2026-11-01T14:40:00",
+     "read_at_text": "14:40",
+     "age_min": 8,
+     "stale": false,
+     "expired": false,
+     "plan": "",
+     "source": "statusline",
+     "session": "sess-gol"
+    }
+   ],
+   "accounts_n": 1,
+   "models_n": 2
+  },
+  "codex": {
+   "five_hour": {
+    "used": 9.0,
+    "resets_at": "2026-11-01T14:10:00",
+    "in": "",
+    "expired": true,
+    "span_s": 18000,
+    "resets_text": "14:10",
+    "expired_text": "Reset at 14:10. No reading since."
+   },
+   "seven_day": {
+    "used": 81.0,
+    "resets_at": "2026-11-03T06:00:00",
+    "in": "1 d 15 h",
+    "expired": false,
+    "span_s": 604800,
+    "resets_text": "Tue 06:00",
+    "expired_text": ""
+   },
+   "read_at": "2026-11-01T13:48:00",
+   "read_at_text": "13:48",
+   "age_min": 60,
+   "stale": true,
+   "expired": true,
+   "plan": "plus",
+   "source": "rollout",
+   "series": [
+    {
+     "account": "",
+     "model": "",
+     "five_hour": {
+      "used": 9.0,
+      "resets_at": "2026-11-01T14:10:00",
+      "in": "",
+      "expired": true,
+      "span_s": 18000,
+      "resets_text": "14:10",
+      "expired_text": "Reset at 14:10. No reading since."
+     },
+     "seven_day": {
+      "used": 81.0,
+      "resets_at": "2026-11-03T06:00:00",
+      "in": "1 d 15 h",
+      "expired": false,
+      "span_s": 604800,
+      "resets_text": "Tue 06:00",
+      "expired_text": ""
+     },
+     "read_at": "2026-11-01T13:48:00",
+     "read_at_text": "13:48",
+     "age_min": 60,
+     "stale": true,
+     "expired": true,
+     "plan": "plus",
+     "source": "rollout",
+     "session": ""
+    }
+   ],
+   "accounts_n": 1,
+   "models_n": 0
+  }
+ }
+}

@@ -1,0 +1,10 @@
+{
+ "agent_id": "cx-golden",
+ "agent_name": "cx-golden",
+ "project": "SIDE",
+ "tool": "codex",
+ "session_ref": "rollout-cx",
+ "chat_title": "Side job",
+ "created_date": "22611-01",
+ "last_active": "2026-11-01T13:45:00"
+}

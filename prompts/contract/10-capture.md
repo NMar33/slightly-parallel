@@ -34,12 +34,17 @@ it. The identity notice is the one exception: it opens with the project.
   write the eight-group form, or all groups `checked` (section 4).
 - **kept notice** — the user tagged the message `#vision`, `#rule`,
   `#problem` or `#entrypoint`: the server keeps it; write its interpretation with
-  `interpret` (section 4, Kept messages). For `#skill`, write the skill
+  `interpret` (section 4, Kept messages); for `#entrypoint`, after the
+  operator chose the topic (`entrypoint_ask` first, section 4, Entry
+  point). For `#skill`, write the skill
   from this chat with `skill_draft` (section 4, Skill).
 - **command notice** — the user typed a command (section 2): it names the
   skill with the steps and the tool to start with.
 - **evidence notice** — the user typed `#evidence`: it names the task
   (section 4, Finishing a task).
+- **commits notice** — commits of your last turn have no `Task:` line:
+  link each to its task with `task_commits {id, shas}`; a commit for no
+  task needs nothing (section 4, Agent task, Commits).
 - **capture-failure notice** — the hook could not write the turn: tell the
   user, and write nothing as an agent until it is fixed.
 
@@ -53,7 +58,8 @@ server does with a write that goes around them).
 Vocabulary the tools and the server enforce (a wrong value is refused with
 the allowed list, never a silent loss): task `status` ∈ unclassified ·
 backlog · next · agent · todo · parked · doing · review · review-later ·
-done · done-archived (`agent` is the only status you may create with —
+done · done-archived (`agent` is the status `#task` creates with, and the
+column the operator's `#now` names is the other one —
 section 4, `#task`); problem `status` ∈ open · resolved; architecture `op`
 ∈ add · change · remove over a closed set of entity types, with per-type
 required fields and path checks (section 4). A decision requires its

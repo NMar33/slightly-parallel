@@ -3,6 +3,7 @@ import { EmptyState, ErrorBanner, LoadingSkeleton } from '../../components/state
 import { ArchPagePanel } from '../architecture/page/ArchPagePanel'
 import { MapPanel } from '../architecture/map/MapPanel'
 import { ArchModeSwitch, useArchMode } from '../architecture/page/mode'
+import { CoresPanel } from '../architecture/cores/CoresPanel'
 import { useLedger } from '../architecture/ledger'
 import { OwesStrip } from '../architecture/ledgerParts'
 import { ArchViewSwitch, ArchitectureView, useArchView } from '../architecture/views'
@@ -33,7 +34,7 @@ function ArchitectureBody({ projectCode }: { projectCode: string }) {
 
   const modeSwitch = <ArchModeSwitch value={mode} onChange={setMode} />
 
-  if (mode === 'page' || mode === 'map') {
+  if (mode === 'page' || mode === 'map' || mode === 'cores') {
     return (
       <div className="flex flex-col gap-14 min-w-0">
         <div className="flex items-center gap-10 flex-wrap">
@@ -42,7 +43,7 @@ function ArchitectureBody({ projectCode }: { projectCode: string }) {
           </h2>
           <span className="ml-auto">{modeSwitch}</span>
         </div>
-        {mode === 'page' ? <ArchPagePanel projectCode={projectCode} /> : <MapPanel projectCode={projectCode} />}
+        {mode === 'page' ? <ArchPagePanel projectCode={projectCode} /> : mode === 'map' ? <MapPanel projectCode={projectCode} /> : <CoresPanel projectCode={projectCode} />}
       </div>
     )
   }

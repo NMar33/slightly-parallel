@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from backend import config, gitwork, termlib
 from backend.routers import setup as setup_router
 from backend.server import create_app
-from tests.conftest import git_env
+from tests.conftest import git_env, symlink_or_need
 
 
 @pytest.fixture()
@@ -245,6 +245,22 @@ def test_an_evidence_image_outside_its_folder_is_not_served(root: Path) -> None:
     with TestClient(create_app(data_root=root, watch=False)) as c:
         assert c.get("/api/tasks/evidence/te_in/file").status_code == 200
         assert c.get("/api/tasks/evidence/te_out/file").status_code == 404
+
+
+def test_a_tour_picture_that_links_out_of_its_folder_is_not_served(root: Path, tmp_path: Path) -> None:
+    """A symlink in tour_shots named like a shot was served whatever it
+    pointed at (found by tests/test_local_boundaries.py, 2026-11-10)."""
+    from backend.routers.tour import SHOTS_DIR
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(b"not a shot of this tour")
+    shots = root / SHOTS_DIR
+    shots.mkdir(parents=True)
+    (shots / "real.png").write_bytes(b"\x89PNG\r\n")
+    symlink_or_need(shots / "leak.png", secret)
+    with TestClient(create_app(data_root=root, watch=False)) as c:
+        assert c.get("/api/tour/shot/real.png").status_code == 200
+        r = c.get("/api/tour/shot/leak.png")
+        assert r.status_code == 404 and b"not a shot" not in r.content
 
 
 def test_the_tour_photographs_only_this_computer(client: TestClient) -> None:

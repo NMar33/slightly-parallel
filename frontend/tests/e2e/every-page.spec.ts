@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 
 /**
  * Every page opens — on the shipped demo data, without a crash.
@@ -9,8 +9,11 @@ import { test, expect, type APIRequestContext } from '@playwright/test'
  * The routes are read from App.tsx itself, so a page added there is tested
  * here with no one remembering to. A route's `:code` is a demo project,
  * `:id` a real agent or prompt where the route wants one. A page fails when
- * the browser throws (an uncaught error) or the app shows its crash screen;
- * an empty state or a "not found" page is an answer, not a failure.
+ * the browser throws (an uncaught error), the app shows its crash screen,
+ * the server answers one of its requests with a 5xx (an empty state drawn
+ * over a server error would pass otherwise), or the page logs an error to
+ * the console; an empty state or a "not found" page (a 404) is an answer,
+ * not a failure.
  *
  * The backend has its twin: backend/tests/test_every_get_answers.py.
  */
@@ -37,6 +40,25 @@ async function lookup(request: APIRequestContext): Promise<Ids> {
   return { code, agent, prompt }
 }
 
+/**
+ * What went wrong on a page while it opened: uncaught errors, 5xx answers,
+ * console errors. A 4xx is the browser's own console line for an answer
+ * ("not found" is a page), so it is left out; its 5xx twin is caught by the
+ * response itself.
+ */
+function watch(page: Page): { problems: string[] } {
+  const problems: string[] = []
+  page.on('pageerror', (e) => problems.push(`uncaught: ${String(e)}`))
+  page.on('response', (r) => { if (r.status() >= 500) problems.push(`${r.status()} ${r.request().method()} ${r.url()}`) })
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return
+    const text = m.text()
+    if (/^Failed to load resource: the server responded with a status of 4\d\d/.test(text)) return
+    problems.push(`console.error: ${text}`)
+  })
+  return { problems }
+}
+
 function fill(route: string, v: Ids): string {
   return route
     .replace(':code', encodeURIComponent(v.code))
@@ -54,13 +76,12 @@ test.describe('every page opens', () => {
     test(route, async ({ page, request }) => {
       ids ??= lookup(request)
       const url = fill(route, await ids)
-      const thrown: string[] = []
-      page.on('pageerror', (e) => thrown.push(String(e)))
+      const { problems } = watch(page)
       await page.goto(url, { waitUntil: 'domcontentloaded' })
       // Long enough for the page's first data to arrive and draw.
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
       await expect(page.getByTestId('crash-screen')).toHaveCount(0)
-      expect(thrown, `uncaught in ${url}`).toEqual([])
+      expect(problems, `in ${url}`).toEqual([])
     })
   }
 })
@@ -80,12 +101,11 @@ test.describe('the dark theme opens', () => {
       ids ??= lookup(request)
       const url = fill(route, await ids)
       await page.addInitScript(() => { try { localStorage.setItem('sp-theme', 'dark') } catch { /* fine */ } })
-      const thrown: string[] = []
-      page.on('pageerror', (e) => thrown.push(String(e)))
+      const { problems } = watch(page)
       await page.goto(url, { waitUntil: 'domcontentloaded' })
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
       await expect(page.getByTestId('crash-screen')).toHaveCount(0)
-      expect(thrown, `uncaught in ${url} (dark)`).toEqual([])
+      expect(problems, `in ${url} (dark)`).toEqual([])
       // The theme really applied: the app ground is the dark base, not white.
       const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
       expect(bg, `body ground in ${url}`).not.toBe('rgb(255, 255, 255)')
@@ -114,12 +134,11 @@ test.describe('every page opens in Russian', () => {
         ? r.fulfill({ json: { prefs: { 'sp-lang': 'ru' } } })
         : r.fulfill({ json: { ok: true } })))
       await page.addInitScript(() => { try { localStorage.setItem('sp-lang', 'ru') } catch { /* fine */ } })
-      const thrown: string[] = []
-      page.on('pageerror', (e) => thrown.push(String(e)))
+      const { problems } = watch(page)
       await page.goto(url, { waitUntil: 'domcontentloaded' })
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
       await expect(page.getByTestId('crash-screen')).toHaveCount(0)
-      expect(thrown, `uncaught in ${url} (ru)`).toEqual([])
+      expect(problems, `in ${url} (ru)`).toEqual([])
       const nav = await page.locator('nav').first().locator('a').allInnerTexts()
       const english = nav.map((s) => s.trim()).filter((s) => s && !CYRILLIC.test(s))
       expect(english, `sidebar entries not in Russian on ${url}`).toEqual([])

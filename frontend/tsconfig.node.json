@@ -1,20 +1,19 @@
 {
-  // Editor-only config for the Node-side config files (vite/tailwind/playwright).
-  // Not referenced by tsconfig.json: `tsc -b` (npm run typecheck) checks `src`
-  // only — checking these files would require @types/node, which is not a
-  // dependency of this package. `composite` was removed (it forced emit and
-  // produced stray vite.config.js/.d.ts/.tsbuildinfo artifacts next to the
-  // sources — TS6305); `noEmit` guarantees nothing is ever written.
+  // The Node-side files: the Vite, Tailwind and Playwright configs and the
+  // Playwright specs (tests/). `npm run typecheck` checks them after `src`
+  // (tsc -p, not -b: nothing is referenced or emitted). Before, they were
+  // editor-only, and a type error in a spec showed up only when it ran.
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"]
   },
-  "include": ["vite.config.ts", "tailwind.config.ts", "playwright.config.ts"]
+  "include": ["vite.config.ts", "tailwind.config.ts", "playwright.config.ts", "playwright.fresh.config.ts", "tests"]
 }

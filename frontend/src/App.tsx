@@ -27,6 +27,7 @@ const AboutPage = lazy(() => import('./pages/AboutPage'))
 const InternalsPage = lazy(() => import('./pages/InternalsPage'))
 const ImportantPage = lazy(() => import('./pages/ImportantPage'))
 const MonitorPage = lazy(() => import('./pages/MonitorPage'))
+const UsagePage = lazy(() => import('./pages/UsagePage'))
 const TerminalPageRoute = lazy(() => import('./pages/TerminalPage'))
 const StatsPage = lazy(() => import('./pages/StatsPage'))
 const TimePage = lazy(() => import('./pages/TimePage'))
@@ -57,6 +58,7 @@ const ArtifactsPage = lazy(() => import('./pages/ArtifactsPage'))
 const ScansPage = lazy(() => import('./pages/ScansPage'))
 const StandupsPage = lazy(() => import('./pages/StandupsPage'))
 const DecisionsPage = lazy(() => import('./pages/DecisionsPage'))
+const PublishPage = lazy(() => import('./pages/PublishPage'))
 const NotFoundPage = lazy(() =>
   import('./pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })),
 )
@@ -153,6 +155,7 @@ export function App() {
                 <Route path="/scans" element={<ScansPage />} />
                 <Route path="/standups" element={<StandupsPage />} />
                 <Route path="/decisions" element={<DecisionsPage />} />
+                <Route path="/publish" element={<PublishPage />} />
                 <Route path="/kanban" element={<KanbanPage />} />
                 <Route path="/sprints" element={<SprintsPage />} />
                 <Route path="/files" element={<FilesPage />} />
@@ -165,6 +168,7 @@ export function App() {
                 <Route path="/health" element={<ToMonitor />} />
                 <Route path="/important" element={<ImportantPage />} />
                 <Route path="/monitor" element={<MonitorPage />} />
+                <Route path="/usage" element={<UsagePage />} />
                 <Route path="/terminal" element={<TerminalPageRoute />} />
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/time" element={<TimePage />} />

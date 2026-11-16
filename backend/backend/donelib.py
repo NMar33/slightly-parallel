@@ -35,7 +35,7 @@ import threading
 from typing import Any
 
 from . import nowlib
-from .csvio import append_row, read_rows, rewrite_rows
+from .csvio import as_int, append_row, read_rows, rewrite_rows
 from .db import ViewStore
 from .entities import ENTITIES, is_done
 from .date_utils import now_iso
@@ -54,20 +54,9 @@ _lock = threading.Lock()
 
 
 
-def since(store: ViewStore) -> str:
+def since(store: ViewStore) -> str | None:
     """The moment #done became a command here; older tags are left alone."""
-    path = store.data_root / STATE
-    try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("since") or "")
-    except (OSError, ValueError):
-        pass
-    now = now_iso()
-    try:
-        path.write_text(json.dumps({"since": now}) + "\n", encoding="utf-8")
-    except OSError:
-        pass
-    return now
-
+    return nowlib.since_stamp(store.data_root / STATE, "#done")
 
 def rows(store: ViewStore) -> list[dict[str, str]]:
     return read_rows(store.data_root / DONE_CSV)
@@ -85,6 +74,8 @@ def adopt(store: ViewStore) -> list[dict[str, str]]:
 
 def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     start = since(store)
+    if start is None:
+        return []
     tags = store.query(
         "SELECT project, agent_id, session_id, turn, at_ts, excerpt, tasks FROM done_tags "
         "WHERE at_ts >= ? ORDER BY agent_id, turn", (start,))
@@ -93,11 +84,18 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     path = store.data_root / DONE_CSV
     ledger = read_rows(path)
     known = {r.get("id") for r in ledger}
+    # A tag with a row in the ledger is settled, whatever it closed: only the
+    # new ones are worked out, and only their chats are read. Without this
+    # every captured turn read every chat that ever typed #done.
+    settled = {(r.get("agent_id") or "", as_int(r.get("turn"))) for r in ledger}
+    tags = [t for t in tags if (str(t["agent_id"] or ""), as_int(t["turn"])) not in settled]
+    if not tags:
+        return []
     # Every resolved #done is a boundary, whichever task it closed.
     bounds: dict[str, list[int]] = {}
     for r in ledger:
         if r.get("result") in RESOLVED:
-            bounds.setdefault(r.get("agent_id") or "", []).append(int(r.get("turn") or 0))
+            bounds.setdefault(r.get("agent_id") or "", []).append(as_int(r.get("turn")))
     tasks = {str(t["id"]): t for t in store.query(
         "SELECT id, title, status, archived_at FROM tasks_mutual")}
     mentions: dict[str, list[tuple[int, str, str]]] = {}
@@ -109,27 +107,33 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
                 (int(m["turn"]), str(m["task_id"]), str(m["role"] or "")))
     # A task the operator started with #now is named by that message, though
     # the message carries no id: the agent wrote the card in that turn.
-    for agent, turn, tid in _started_with_now(store, {str(t["agent_id"] or "") for t in tags}):
+    for agent, turn, tid in nowlib.card_turns(store, {str(t["agent_id"] or "") for t in tags}, ("started",), skip_server=True):
         if tid in tasks:
             mentions.setdefault(agent, []).append((turn, tid, "user"))
     # The same for a #now card the server wrote because the agent did not.
     for r in nowlib.rows(store):
         if r.get("column") == "doing" and r.get("task_id") in tasks:
             mentions.setdefault(r.get("agent_id") or "", []).append(
-                (int(r.get("turn") or 0), str(r["task_id"]), "user"))
+                (as_int(r.get("turn")), str(r["task_id"]), "user"))
     for ms in mentions.values():
         ms.sort(key=lambda m: m[0])
 
     added: list[dict[str, str]] = []
     moves: list[tuple[str, str, int]] = []
     for tag in tags:
-        agent, turn = str(tag["agent_id"] or ""), int(tag["turn"] or 0)
+        agent, turn = str(tag["agent_id"] or ""), as_int(tag["turn"])
         prev = max((b for b in bounds.get(agent, []) if b < turn), default=0)
         given = [x for x in str(tag["tasks"] or "").split(",") if x]
         named = [x for x in given if x in tasks]
         window = [m for m in mentions.get(agent, []) if prev < m[0] <= turn]
-        # An id the operator typed that is no task (a typo) is no task named:
-        # it closed the last task named before it instead.
+        if not given and any(prev < t < turn for t in nowlib.pending(store.data_root, agent)):
+            # The card this #done would close is a #now the server could not
+            # write yet (nowlib tries again): this #done waits for it, or it
+            # would be recorded as "unnamed" for good.
+            continue
+        # An id the operator typed that is no task (a typo) names no task:
+        # the #done is recorded as unnamed and the agent asks (not closing
+        # the last task named before it, which may be the wrong one).
         if not named and not given:
             # The last task the operator named — not one an agent's answer
             # mentioned in passing ("done; tk_B depends on this").
@@ -173,38 +177,6 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     return added
 
 
-def _started_with_now(store: ViewStore, agents: set[str]) -> list[tuple[str, int, str]]:
-    """(agent, turn, task) for each card an agent wrote on the operator's #now:
-    the turn is the one the card was written in, read from its `started` event."""
-    from datetime import datetime
-
-    from .sessions import chat_path, parse_turns
-
-    rows = store.query(
-        "SELECT e.task_id, e.timestamp, t.agent_id FROM task_events_mutual e "
-        "JOIN tasks_mutual t ON t.id = e.task_id WHERE e.field = 'started'")
-    out: list[tuple[str, int, str]] = []
-    turns_of: dict[str, list] = {}
-    for r in rows:
-        agent = str(r["agent_id"] or "")
-        if agent not in agents:
-            continue
-        if agent not in turns_of:
-            path = chat_path(store, agent)
-            try:
-                turns_of[agent] = parse_turns(path) if path else []
-            except OSError:
-                turns_of[agent] = []
-        try:
-            at = datetime.fromisoformat(str(r["timestamp"]))
-        except ValueError:
-            continue
-        before = [t.number for t in turns_of[agent] if t.at.replace(tzinfo=None) <= at]
-        if before:
-            out.append((agent, before[-1], str(r["task_id"])))
-    return out
-
-
 def _iso_minute(day: str, hm: str) -> str:
     """YYMM-DD and HH:MM as 2026-09-27T14:02 (other shapes as they came)."""
     if len(day) == 7 and day[4] == "-":
@@ -224,7 +196,7 @@ def _row(rid: str, tid: str, tag: dict, turn: int, result: str, status: str, sta
 
 def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str, dict[str, str]]) -> None:
     """Every task to done, each change in its history as the operator's."""
-    from .routers.tasks_extra import after_status_change
+    from .tasklib import after_status_change
     from .taskevents import append_events as _append_events
 
     ent = ENTITIES["task"]
@@ -249,14 +221,20 @@ def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str
                     ch.append((stamp, r[stamp], ""))
                     r[stamp] = ""
             # The stack advances and a repeating task re-arms, as on the board.
-            after_status_change(store, rs, r, old, ch)
+            # Their events wait for the rewrite to land: a refused rewrite
+            # (a damaged file, a Windows replace that gave up) must not
+            # leave history lines for moves that never happened.
+            after_status_change(store, rs, r, old, ch, deferred=side_events)
             history[tid] = ch
             changed = True
         return changed
 
+    side_events: list[tuple[str, str, list[tuple[str, str, str]]]] = []
     rewrite_rows(store.data_root / ent.csv, ent.columns, mutate)
     for tid, ch in history.items():
         _append_events(store, tid, "operator", ch)
+    for other_id, other_actor, other_changes in side_events:
+        _append_events(store, other_id, other_actor, other_changes)
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +244,7 @@ def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str
 
 def stretches_raw(store: ViewStore, task_id: str) -> list[tuple[str, int, int]]:
     """(agent_id, first turn, #done turn) for each #done that closed this task."""
-    return [(r["agent_id"], int(r.get("start_turn") or 1), int(r.get("turn") or 0))
+    return [(r["agent_id"], as_int(r.get("start_turn"), 1), as_int(r.get("turn")))
             for r in rows(store) if r.get("task_id") == task_id and r.get("result") in RESOLVED]
 
 
@@ -276,7 +254,7 @@ def stretches(store: ViewStore, task_id: str) -> list[dict[str, Any]]:
     for r in rows(store):
         if r.get("task_id") != task_id or r.get("result") not in RESOLVED:
             continue
-        agent, lo, hi = r["agent_id"], int(r.get("start_turn") or 1), int(r.get("turn") or 0)
+        agent, lo, hi = r["agent_id"], as_int(r.get("start_turn"), 1), as_int(r.get("turn"))
         turns: list[tuple[str, str, str]] = []   # (session, day, hh:mm)
         for s in store.query(
                 "SELECT id, created_date, turns_json FROM sessions WHERE agent_id = ? ORDER BY chat_start_line",
@@ -285,15 +263,15 @@ def stretches(store: ViewStore, task_id: str) -> list[dict[str, Any]]:
                 ts = json.loads(s.get("turns_json") or "[]")
             except ValueError:
                 continue
-            for t in ts:
-                if lo <= int(t.get("n") or 0) <= hi:
+            for t in ts if isinstance(ts, list) else []:
+                if isinstance(t, dict) and lo <= as_int(t.get("n")) <= hi:
                     turns.append((str(s["id"]), str(s["created_date"]), str(t.get("at") or "")))
         minutes = 0
         by_session: dict[str, list[str]] = {}
         for sid, _, at in turns:
             by_session.setdefault(sid, []).append(at)
         for ats in by_session.values():
-            mins = [int(a[:2]) * 60 + int(a[3:5]) for a in ats if len(a) >= 5 and a[:2].isdigit()]
+            mins = [int(a[:2]) * 60 + int(a[3:5]) for a in ats if len(a) >= 5 and a[:2].isdigit() and a[3:5].isdigit()]
             if mins:
                 minutes += max(1, max(mins) - min(mins) + 1)
         out.append({

@@ -1,0 +1,113 @@
+{
+ "argv": [
+  "bun",
+  "/$bunfs/root/src/index.js",
+  "run",
+  "--variant",
+  "high",
+  "hello there"
+ ],
+ "env_names": [
+  "CLAUDECODE",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_EFFORT",
+  "CLAUDE_PID",
+  "OPENCODE",
+  "OPENCODE_PID"
+ ],
+ "chat_message_input": {
+  "sessionID": "ses_e38248c5effeQzUy1aOldkFUcq",
+  "variant": "high"
+ },
+ "user_message": {
+  "id": "msg_1c7db740e001EuhBO9j4VnE6zE",
+  "role": "user",
+  "sessionID": "ses_e38248c5effeQzUy1aOldkFUcq",
+  "time": {
+   "created": 1794354410510
+  },
+  "agent": "build",
+  "model": {
+   "providerID": "stub",
+   "modelID": "stub-model",
+   "variant": "high"
+  }
+ },
+ "messages": [
+  {
+   "id": "msg_1c7db740e001EuhBO9j4VnE6zE",
+   "sessionID": "ses_e38248c5effeQzUy1aOldkFUcq",
+   "role": "user",
+   "time": {
+    "created": 1794354410510
+   },
+   "summary": {
+    "diffs": []
+   },
+   "agent": "build",
+   "model": {
+    "providerID": "stub",
+    "modelID": "stub-model",
+    "variant": "high"
+   }
+  },
+  {
+   "id": "msg_1c7db77d4001abJWYuMfJkqiAB",
+   "sessionID": "ses_e38248c5effeQzUy1aOldkFUcq",
+   "role": "assistant",
+   "time": {
+    "created": 1794354411476,
+    "completed": 1794354412554
+   },
+   "parentID": "msg_1c7db740e001EuhBO9j4VnE6zE",
+   "modelID": "stub-model",
+   "providerID": "stub",
+   "mode": "build",
+   "agent": "build",
+   "path": {
+    "cwd": "/work/project",
+    "root": "/"
+   },
+   "cost": 0,
+   "tokens": {
+    "total": 15,
+    "input": 10,
+    "output": 5,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   },
+   "variant": "high",
+   "finish": "stop"
+  }
+ ],
+ "session_model": {
+  "id": "stub-model",
+  "providerID": "stub",
+  "variant": "high"
+ },
+ "session_permission": [
+  {
+   "permission": "question",
+   "pattern": "*",
+   "action": "deny"
+  },
+  {
+   "permission": "plan_enter",
+   "pattern": "*",
+   "action": "deny"
+  },
+  {
+   "permission": "plan_exit",
+   "pattern": "*",
+   "action": "deny"
+  }
+ ]
+}

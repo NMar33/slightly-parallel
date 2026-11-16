@@ -162,3 +162,61 @@ describe('MentionChat', () => {
     expect(screen.getByText('No chat id recorded.')).toBeInTheDocument()
   })
 })
+
+describe('MentionsPanel, full', () => {
+  const rows: Mention[] = [
+    { ...MENTION, at: '2026-09-14T16:15:00', turn: 12, role: 'user' },
+    { ...MENTION, at: '2026-09-14T16:15:00', turn: 12, role: 'agent' },
+    { ...MENTION, at: '2026-09-15T09:00:00', turn: 30, role: 'agent' },
+  ]
+  const turns = [
+    { ...MENTION, at: '2026-09-15T09:00:00', turn: 30, why: 'mention', roles: ['agent'], said: 'x'.repeat(4000), reply: 'later reply' },
+    { ...MENTION, at: '2026-09-14T16:15:00', turn: 12, why: 'mention', roles: ['user', 'agent'], said: 'first message', reply: 'first reply' },
+    { ...MENTION, at: '2026-09-14T16:20:00', turn: 13, why: 'done', roles: [], said: 'the work in between', reply: 'ok', session_id: '' },
+    { ...MENTION, at: '2026-09-15T09:05:00', turn: 31, why: 'next', roles: [], said: 'after the last mention', reply: 'ok' },
+  ]
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(
+      { total: rows.length, mentions: rows, turns, done_turns: 1, next_turns: 1, has_done: true }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })))
+  })
+
+  it('adds the #done stretch by default, the turns up to the next task on request', async () => {
+    const { MentionsPanel } = await import('./mentions')
+    wrap(<MentionsPanel taskId="tk_3f49b8bc" />)
+    fireEvent.click(await screen.findByRole('radio', { name: 'full' }))
+    expect(await screen.findAllByRole('article')).toHaveLength(3)
+    expect(screen.getByText('in the stretch up to #done')).toBeInTheDocument()
+    const next = screen.getByRole('checkbox', { name: 'up to the next task (1 turns)' })
+    expect(next).not.toBeChecked()
+    fireEvent.click(next)
+    expect(await screen.findAllByRole('article')).toHaveLength(4)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'up to #done (1 turns)' }))
+    expect(await screen.findAllByRole('article')).toHaveLength(3)
+  })
+
+  it('offers no chat to open for a turn in no recorded session', async () => {
+    const { MentionsPanel } = await import('./mentions')
+    wrap(<MentionsPanel taskId="tk_3f49b8bc" />)
+    fireEvent.click(await screen.findByRole('radio', { name: 'full' }))
+    const opens = await screen.findAllByRole('button', { name: 'open in chat' })
+    expect(opens.map((b) => (b as HTMLButtonElement).disabled)).toEqual([false, true, false])
+    expect(opens[1]).toHaveAttribute('title', 'This turn is in no recorded session')
+  })
+
+  it('reads each turn once, oldest first, a long message folded to its start', async () => {
+    const { MentionsPanel } = await import('./mentions')
+    wrap(<MentionsPanel taskId="tk_3f49b8bc" />)
+    fireEvent.click(await screen.findByRole('radio', { name: 'full' }))
+    const cards = (await screen.findAllByRole('article')).filter((c) => !c.textContent?.includes('in the stretch'))
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toHaveTextContent('first message')
+    expect(cards[0]).toHaveTextContent('◆ in the message · ◇ in the reply')
+    expect(cards[1]).toHaveTextContent('whole message (4,000 characters)')
+    expect(cards[1]?.textContent ?? '').not.toContain('x'.repeat(2000))
+    fireEvent.click(screen.getByRole('radio', { name: 'newest first' }))
+    expect((await screen.findAllByRole('article'))[0]).toHaveTextContent('turn 30')
+  })
+})

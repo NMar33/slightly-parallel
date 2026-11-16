@@ -94,6 +94,12 @@ class Agent(_Model):
     agent_group: str = ""
     project: str = ""
     parent_agent_id: str | None = None
+    # A run another program started (a codex exec, a claude -p): recorded,
+    # its commands not acted on, listed under the chat that started it
+    # (``helper_of``, "" when not known). See docs/logging.md.
+    helper: bool = False
+    helper_kind: str = ""
+    helper_of: str = ""
     created_date: str = ""
     last_active: str = ""
     message_count: int = 0

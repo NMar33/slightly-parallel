@@ -22,7 +22,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from common import REPO, WINDOWS, Report, Space, eventually, get, http, rows, wait_for
+from common import PLANTED_KEY, REPO, WINDOWS, Report, Space, eventually, fetch_bytes, get, http, rows, wait_for
 
 FRONTEND = REPO / "frontend"
 #: npx is npx.cmd on Windows, which a program list does not find by its bare name.
@@ -473,6 +473,170 @@ def disconnect(space: Space, report: Report, code: str) -> None:
     report.add(s, "nothing Setup wrote is left in its folder", not left, ", ".join(left))
     report.add(s, "the files that were there are untouched", (folder / "notes.md").read_text(encoding="utf-8").startswith("# notes"))
     report.add(s, "its data is kept", (space.data / "projects" / code).is_dir())
+
+
+# ------------------------------------------------- backup, report, own files
+
+def _contents(space: Space) -> dict[str, list]:
+    """What a person checks after a restore: the projects, their chats and tasks."""
+    projects = sorted(str(p.get("code")) for p in rows(get(space, "/api/snapshot"), "projects"))
+    chats = sorted([str(c.get("project")), str(c.get("agent_id")), str(c.get("id")), int(c.get("turns_n") or 0)]
+                   for code in projects for c in rows(get(space, f"/api/sessions?project={urllib.parse.quote(code)}&limit=5000"), "sessions"))
+    tasks = sorted([str(t.get("id")), str(t.get("project")), str(t.get("title")), str(t.get("status"))]
+                   for t in rows(get(space, "/api/stats/tasks"), "tasks"))
+    return {"projects": projects, "chats": chats, "tasks": tasks}
+
+
+def backup_restore(space: Space, report: Report, code: str) -> None:
+    """Settings › Backups › Back up now, the archive downloaded, then
+    restored into a new data folder: the projects, chats and tasks are there.
+    Leaves the server on the data folder Setup chose."""
+    s = "backup"
+    http(space.url + "/api/tasks", {"project": code, "title": "Kept by the backup", "status": "todo", "actor": "operator"})
+    before = _contents(space)
+    report.add(s, "there is something to keep: projects, chats and tasks",
+               bool(before["projects"]) and bool(before["chats"]) and bool(before["tasks"]),
+               f"{len(before['projects'])} projects, {len(before['chats'])} chats, {len(before['tasks'])} tasks")
+    try:
+        taken = http(space.url + "/api/backup/run", {"label": "fresh user"}, timeout=300)
+        name = str(taken["archive"]["name"])
+    except Exception as exc:
+        report.add(s, "Back up now makes an archive", False, str(exc)[:300])
+        return
+    report.add(s, f"Back up now makes an archive ({name})", bool(name))
+
+    # A new data folder, as on another machine: the archive is downloaded and
+    # put where that folder's backups are kept (beside it, "<name>-backups").
+    fresh = space.root / "restored data"
+    fresh.mkdir()
+    shelf = fresh.parent / f"{fresh.name}-backups"
+    shelf.mkdir()
+    archive = fetch_bytes(f"{space.url}/api/backup/{urllib.parse.quote(name)}/download")
+    (shelf / f"{name}.tar.gz").write_bytes(archive)
+    report.add(s, f"the archive downloads ({len(archive) // 1024} KB)", len(archive) > 1024)
+    try:
+        http(space.url + "/api/setup/data-root", {"path": str(fresh)})
+        done = http(space.url + f"/api/backup/{urllib.parse.quote(name)}/restore", {"confirm": name}, timeout=300)
+        report.add(s, "it restores into the new data folder", bool(done.get("restored")), json.dumps(done.get("restored"))[:300])
+        health = get(space, "/api/health")
+        report.add(s, "the server reads the new folder", health.get("data_root") == str(fresh), str(health.get("data_root")))
+        # The views follow the files through a watcher.
+        eventually(lambda: _contents(space) == before, 30)
+        after = _contents(space)
+        for what in ("projects", "chats", "tasks"):
+            missing = [x for x in before[what] if x not in after[what]]
+            extra = [x for x in after[what] if x not in before[what]]
+            report.add(s, f"the {what} are the same ({len(before[what])})", not missing and not extra,
+                       f"missing {missing[:5]}; not there before {extra[:5]}")
+        report.add(s, "the data check finds nothing damaged", not get(space, "/api/health").get("load_errors"),
+                   json.dumps(get(space, "/api/health").get("load_errors"))[:300])
+    except Exception as exc:
+        report.add(s, "it restores into the new data folder", False, str(exc)[:300])
+    finally:
+        http(space.url + "/api/setup/data-root", {"path": str(space.data)})
+    report.add(s, "the server is back on the data folder Setup chose", get(space, "/api/health").get("data_root") == str(space.data))
+
+
+def server_report(space: Space, report: Report, code: str) -> None:
+    """Monitor › Server › Download report: no chat text, no secrets, the
+    home folder written as ~. `code` is the second project. A chat that holds a key and a marked sentence,
+    a search for the sentence and a key in the server's environment
+    (common.PLANTED_KEY) are planted first."""
+    s = "report"
+    words = "fresh-report-sentinel-91c3"
+    in_chat = "sk-ant-api03-freshChatKey55d0b7e2"
+    session = "f0e1d2c3-0000-4000-8000-000000000009"
+    # In the second project: the first one's newest chat is the one the terminal stage resumes.
+    folder = space.root / code
+    fire_hook(space, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(folder),
+                      "prompt": f"Keep this in mind: {words}. My key is {in_chat}."}, folder=folder)
+    fire_hook(space, {"hook_event_name": "Stop", "session_id": session, "cwd": str(folder),
+                      "last_assistant_message": f"Noted: {words}."}, folder=folder)
+    chat = space.data / "projects" / code / "chats" / f"cc-{session[:8]}" / "chat.md"
+    report.add(s, "the planted chat is recorded", chat.is_file() and words in chat.read_text(encoding="utf-8"), str(chat))
+    try:
+        get(space, f"/api/search?q={words}")
+    except Exception:
+        pass
+    text = str(get(space, "/api/diagnostics/report"))
+    report.add(s, f"the report downloads ({len(text) // 1024} KB)", "## Machine" in text and "## Data" in text and "## Server log" in text, text[:300])
+    # The data folder a new install starts in is in the home folder
+    # (~/.slightly-parallel): the report is read there too, then the server
+    # goes back to the folder Setup chose.
+    first = space.home / ".slightly-parallel"
+    if first.is_dir():
+        try:
+            http(space.url + "/api/setup/data-root", {"path": str(first)})
+            text += str(get(space, "/api/diagnostics/report"))
+        finally:
+            http(space.url + "/api/setup/data-root", {"path": str(space.data)})
+    (space.root / "server-report.md").write_text(text, encoding="utf-8")
+    report.add(s, "no chat text in it", words not in text and "Keep this in mind" not in text)
+    leaked = [k for k in (PLANTED_KEY, in_chat) if k in text]
+    report.add(s, "no secret in it: the key in the environment, the key in a chat", not leaked, ", ".join(leaked))
+    home = str(space.home)
+    report.add(s, "paths in the home folder start from ~", home not in text and ("~/" in text or "~\\" in text),
+               f"{home} is written in full" if home in text else "no path starts from ~")
+
+
+def disconnect_own(space: Space, report: Report) -> None:
+    """Disconnect through the API, in a folder with the user's own files that
+    Setup also writes: AGENTS.md, CLAUDE.md, a hook of their own and an MCP
+    server of their own. Their text and hooks are kept; the folder is
+    otherwise as it was before Setup."""
+    s = "disconnect"
+    code = "own"
+    folder = space.root / "own files"
+    (folder / ".claude").mkdir(parents=True)
+    (folder / "README.md").write_text("# own\n\nA project that had its own agent files.\n", encoding="utf-8")
+    (folder / "AGENTS.md").write_text("# Our agents\n\nRun the tests before every commit.\n", encoding="utf-8")
+    (folder / "CLAUDE.md").write_text("# Notes for Claude\n\nKeep commits small.\n", encoding="utf-8")
+    own_hooks = {
+        "permissions": {"allow": ["Bash(ls:*)"]},
+        "hooks": {
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "echo own-prompt-hook"}]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo own-tool-hook"}]}],
+        },
+    }
+    (folder / ".claude" / "settings.local.json").write_text(json.dumps(own_hooks, indent=2) + "\n", encoding="utf-8")
+    (folder / ".mcp.json").write_text(json.dumps({"mcpServers": {"own": {"command": "own-mcp"}}}, indent=2) + "\n", encoding="utf-8")
+    env = space.env()
+    for args in (["git", "init", "-q"], ["git", "config", "user.name", "Fresh User"], ["git", "config", "user.email", "fresh@example.com"],
+                 ["git", "add", "-A"], ["git", "commit", "-qm", "first commit"]):
+        sh(args, folder, env)
+
+    def files() -> dict[str, bytes]:
+        return {p.relative_to(folder).as_posix(): p.read_bytes() for p in sorted(folder.rglob("*"))
+                if p.is_file() and ".git" not in p.relative_to(folder).parts}
+
+    was = files()
+    try:
+        http(space.url + "/api/setup/integrate", {"project_code": code, "project_dir": str(folder)})
+    except Exception as exc:
+        report.add(s, "a folder with its own agent files is integrated", False, str(exc)[:300])
+        return
+    settings = json.loads((folder / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
+    commands = json.dumps(settings.get("hooks", {}))
+    agents_md = (folder / "AGENTS.md").read_text(encoding="utf-8")
+    report.add(s, "a folder with its own agent files is integrated: ours added beside theirs",
+               "own-prompt-hook" in commands and "own-tool-hook" in commands and "claude-code-capture" in commands
+               and "Run the tests before every commit." in agents_md and "slightly-parallel:begin" in agents_md
+               and '"own"' in (folder / ".mcp.json").read_text(encoding="utf-8"), commands[:300])
+
+    row = next((i for i in get(space, "/api/setup/info").get("integrations", []) if i.get("project") == code), {})
+    try:
+        gone = http(space.url + "/api/setup/forget", {"project_code": code, "path": row.get("path") or str(folder)})
+    except Exception as exc:
+        report.add(s, "Disconnect through the API", False, str(exc)[:300])
+        return
+    report.add(s, "Disconnect through the API", gone.get("forgotten") == code, json.dumps(gone)[:300])
+    now = files()
+    changed = sorted(k for k in set(was) | set(now) if was.get(k) != now.get(k))
+    report.add(s, "their own hooks, AGENTS.md and CLAUDE.md text and MCP server are kept, byte for byte",
+               not changed, "; ".join(f"{k}: {'gone' if k not in now else 'new' if k not in was else now[k].decode('utf-8', 'replace')[:200]}"
+                                      for k in changed))
+    status = sh(["git", "status", "--porcelain", "--untracked-files=all"], folder, env).stdout.strip()
+    report.add(s, "git sees the folder as it was before Setup", not status, status[:300])
 
 
 # ---------------------------------------------------- stopping and starting again

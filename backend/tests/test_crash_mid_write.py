@@ -70,8 +70,15 @@ def test_the_server_killed_mid_write_and_mid_backup_loses_nothing_acknowledged(t
                 pass
 
         writers = [threading.Thread(target=write) for _ in range(2)] + [threading.Thread(target=back_up)]
+        start = len(acked)
         for w in writers:
             w.start()
+        # The crash comes after some writes were acknowledged (a condition: a
+        # loaded machine once acknowledged none in the fixed pause), then at
+        # a random moment while they go on.
+        deadline = time.monotonic() + 60
+        while len(acked) - start < 3 and time.monotonic() < deadline and any(w.is_alive() for w in writers[:2]):
+            time.sleep(0.05)
         time.sleep(rng.uniform(0.3, 2.0))
         server.proc.kill()                # no clean exit: a crash
         server.proc.wait()

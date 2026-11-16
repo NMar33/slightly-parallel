@@ -161,7 +161,18 @@ def _translator(client: TestClient, agent: str = "cc-writer01"):
     return mcp_mod.Translator(FakeApi(), "/tmp"), calls
 
 
-def test_an_agent_posts_a_version_with_doc_version(client: TestClient) -> None:
+@pytest.fixture()
+def start_of_a_minute():
+    """The test asks for "the same minute" twice: a minute's tick between the
+    two asks made a second version (CI, 2026-11-10; docs/testing.md case 7).
+    The clock starts at the minute's first second and runs on."""
+    import time_machine
+    from datetime import datetime
+    with time_machine.travel(datetime.now().replace(second=0, microsecond=0).astimezone(), tick=True):
+        yield
+
+
+def test_an_agent_posts_a_version_with_doc_version(client: TestClient, start_of_a_minute) -> None:
     from backend.mcp import ApiError
     did = client.post("/api/docs", json={"project": "alpha", "kind": "post", "title": "Launch post"}).json()["doc"]["id"]
     tr, calls = _translator(client)

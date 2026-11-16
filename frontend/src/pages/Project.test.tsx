@@ -10,13 +10,25 @@
  *   6. Cyrillic strings render (project name, headline)
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import ProjectPage, { type ProjectPayload } from './Project'
 import { setTabShown } from '../features/project/tabs'
+
+// The tabs are lazy modules: their first import (Vite transforms them on
+// demand) took longer than a test's 5 s on a loaded machine and the chats and
+// agents tests timed out. Loaded once before the tests, which then wait on
+// the render only.
+beforeAll(async () => {
+  await Promise.all([
+    import('../features/project/SessionsTab'),
+    import('../features/project/AgentsTab'),
+    import('../features/project/TasksKanban'),
+  ])
+}, 120_000)
 
 // ---------------------------------------------------------------------------
 // Fixture factory

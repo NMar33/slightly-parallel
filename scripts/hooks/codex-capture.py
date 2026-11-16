@@ -16,6 +16,12 @@ Codex calls ``notify`` legacy now; its hooks system (``UserPromptSubmit``
 and ``Stop`` on stdin, the same shape as Claude Code's) is served by
 ``claude-code-capture.py --tool codex`` and installed per project by the
 Setup page. This adapter stays for installs that predate hooks.
+
+The event carries only the turn's end: its start and its shell calls that
+may make a commit are read from the session file (rollout-…-<thread>.jsonl
+under $CODEX_HOME/sessions), so the work stamp has the real window. The
+turn's tokens (usage.jsonl) and the plan limits (.usage/limits.jsonl) come
+from the same file.
 """
 
 from __future__ import annotations
@@ -98,8 +104,26 @@ def main() -> int:
     )
     try:
         cap = TurnCapture(data_root, project, f"codex-{shared.session_key('codex', session)}")
-        cap.note_origin("codex", session, str(event.get("cwd") or ""))
-        cap.full_turn(user_text, agent_text)
+        # The turn arrives only at its end: its start and its commit calls
+        # come from the session file, so the work stamp has the real window.
+        rollout = shared.codex_rollout(thread_id)
+        # A codex exec or a subagent is a helper (its first line says so):
+        # marked before the turn is recorded, so nothing in it acts.
+        kind, parent_thread = shared.codex_helper_kind(shared.codex_session_meta(rollout)) if rollout else ("", "")
+        parent, by = "", ""
+        if parent_thread:
+            parent, by = f"codex-{shared.session_key('codex', parent_thread)}", "session"
+        elif kind:
+            parent = shared.helper_parent("codex", session, data_root=data_root)
+            by = "env" if parent else ""
+        cap.note_origin("codex", session, str(event.get("cwd") or ""),
+                        helper_kind=kind, helper_of=parent, helper_of_by=by)
+        started, calls = shared.codex_last_turn(rollout, "" if turn_id == "session" else turn_id) if rollout else ("", None)
+        # The turn's tokens and the plan limits Codex reported with them.
+        usage, limits = shared.codex_turn_usage(rollout, "" if turn_id == "session" else turn_id) if rollout else ([], None)
+        shared.limits_append(data_root, limits)
+        cap.full_turn(user_text, agent_text, turn_started=started or None,
+                      commit_calls=calls if rollout else None, usage=usage)
     except Exception as exc:  # noqa: BLE001 — capture must never break the host tool
         record_failure(data_root, project, f"codex-{shared.session_key('codex', session)}", "codex", f"{type(exc).__name__}: {exc}")
         return 0

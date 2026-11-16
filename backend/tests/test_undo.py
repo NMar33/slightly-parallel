@@ -145,3 +145,37 @@ def test_an_unknown_or_archived_id_is_refused(env) -> None:
     assert r.status_code == 409 and "not an entry" in r.json()["detail"]
     r = c.post("/api/undo/propose", json={"agent_id": AGENT, "ids": ["vs_00000000"]})
     assert r.status_code == 409 and "no such" in r.json()["detail"]
+
+
+def test_a_now_card_taken_back_with_undo_is_not_written_again(env) -> None:
+    """A pasted reply said #now: the agent's card goes with #undo, and the
+    server's fallback does not write another for that turn."""
+    from datetime import datetime, timedelta
+    c, root = env
+    (root / "now.json").write_text('{"since": "2000-01-01T00:00:00"}', encoding="utf-8")
+    d = root / "projects" / "alpha" / "chats" / AGENT
+
+    def chat(turns: list[tuple[int, str]]) -> None:
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "meta.json").write_text(json.dumps({"agent_id": AGENT, "agent_name": "lead", "project": "alpha",
+                                                 "created_date": "2609-01"}), encoding="utf-8")
+        at = lambda m: (datetime.now() + timedelta(minutes=m)).isoformat(timespec="seconds")  # noqa: E731
+        (d / "chat.md").write_text(f"# Chat log — {AGENT}\n" + "".join(
+            f"\n## Turn {i} · {at(m)}\n**User**: {said}\n**Agent**: ok\n" for i, (m, said) in enumerate(turns, 1)),
+            encoding="utf-8")
+
+    turns = [(-5, "explain <pasted_content>the #now card</pasted_content>")]
+    chat(turns)
+    c.app.state.store.rebuild()
+    tid = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "10:01", "project": "alpha",
+                                     "agent_id": AGENT, "title": "the #now card", "tags": "ag_idea"}).json()["metadata"]["id"]
+    turns += [(1, "#undo the card from the paste")]
+    chat(turns)
+    r = c.post("/api/undo/propose", json={"agent_id": AGENT, "ids": [tid]})
+    assert r.status_code == 200, r.text
+    chat(turns + [(2, "#undo-yes")])
+    r = c.post("/api/undo/apply", json={"agent_id": AGENT})
+    assert r.status_code == 200 and r.json()["archived"], r.text
+    c.app.state.store.rebuild()
+    live = [t for t in c.get("/api/tasks?project=alpha").json()["tasks"] if not t.get("archived_at")]
+    assert [(t["id"], t["title"]) for t in live] == []

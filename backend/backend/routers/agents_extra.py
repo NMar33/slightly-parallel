@@ -98,6 +98,86 @@ _int = to_int  # a whole number out of a query value (deps)
 
 
 # ---------------------------------------------------------------------------
+# Helpers — the runs a chat started (a codex exec, a claude -p, …)
+# ---------------------------------------------------------------------------
+
+
+def _first_prompt(text: str) -> tuple[str, str]:
+    """(when the chat's first message came, its first line), as chat.md
+    holds them."""
+    lines = text.split("\n")
+    started = ""
+    for i, line in enumerate(lines):
+        if not started and line.startswith("## Turn "):
+            started = line.split(" · ", 1)[1].strip()[:19] if " · " in line else ""
+        if line.startswith("**User**:"):
+            first = line[len("**User**:"):].strip()
+            if not first:
+                first = next((m.strip() for m in lines[i + 1:i + 40] if m.strip()), "")
+            return started, first[:200]
+    return started, ""
+
+
+def helper_row(a: dict[str, Any]) -> dict[str, Any]:
+    """One helper chat as its parent's page lists it: when, the tool, the
+    first line of its prompt, its messages, and its tokens (new input and
+    output, helpers included) and cost (dollars at API prices) when its
+    usage was recorded."""
+    from .. import usagelib
+    from .deps import parsed_file
+    chat = Path(str(a.get("_chat_path") or ""))
+    started, first = parsed_file(chat if chat.name else None, "first-prompt", _first_prompt, ("", ""))
+    tokens = cost = 0
+    priced = False
+    try:
+        cu = usagelib.chat_usage(chat.parent / usagelib.USAGE_FILE) if chat.name else None
+    except Exception:  # noqa: BLE001 — a usage file that cannot be read shows no tokens
+        cu = None
+    for t in (cu or {}).get("turns", {}).values():
+        for part in (t["main"], t["helpers"]):
+            tokens += part["new"] + part["output"]
+            spent = sum(part[k] for k in ("cost_new", "cost_rebuilt", "cost_warm", "cost_output"))
+            cost += spent
+            priced = priced or bool(spent)
+    return {
+        **_brief(a),
+        "project": a.get("project", ""),
+        "tool": a.get("tool", ""),
+        "helper_kind": a.get("helper_kind", ""),
+        "helper_of": a.get("helper_of", ""),
+        "helper_of_by": a.get("helper_of_by", ""),
+        "started": started,
+        "first_line": first,
+        "message_count": _int(a.get("message_count")),
+        "tokens": tokens,
+        "cost_usd": round(cost / 1e6, 4) if priced else None,
+    }
+
+
+def _helpers_by_parent(agents: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """parent id → its helper chats, oldest first."""
+    from ..sessions import is_helper
+    out: dict[str, list[dict[str, Any]]] = {}
+    for a in agents:
+        parent = str(a.get("helper_of") or "")
+        if is_helper(a) and parent and parent != a.get("agent_id"):
+            out.setdefault(parent, []).append(a)
+    return out
+
+
+def orphan_helpers(agents: list[dict[str, Any]], project: str) -> list[dict[str, Any]]:
+    """The project's helper chats whose parent is not known, or is no chat
+    that was recorded: the board folds them into one group."""
+    from ..sessions import is_helper
+    known = {str(a.get("agent_id") or "") for a in agents}
+    rows = [a for a in agents if a.get("project") == project and is_helper(a)
+            and (str(a.get("helper_of") or "") in ("", str(a.get("agent_id") or ""))
+                 or str(a.get("helper_of") or "") not in known)]
+    rows.sort(key=lambda x: str(x.get("last_active") or ""), reverse=True)
+    return [helper_row(a) for a in rows]
+
+
+# ---------------------------------------------------------------------------
 # Profile — the join
 # ---------------------------------------------------------------------------
 
@@ -182,11 +262,14 @@ def profile_rows(store: ViewStore, agent_ids: list[str]) -> dict[str, dict[str, 
 def build_profile(
     store: ViewStore, raw: dict[str, Any],
     pre: dict[str, dict[str, list[dict]]] | None = None,
+    helpers_of: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """One agent's profile. ``pre`` is ``profile_rows`` for a whole roster,
-    read once by the caller; without it this agent's rows are read here."""
+    read once by the caller; without it this agent's rows are read here.
+    ``helpers_of`` (_helpers_by_parent), the same for its helper chats."""
     aid = str(raw.get("agent_id") or "")
     agents = store.agents()
+    mine_helpers = (helpers_of if helpers_of is not None else _helpers_by_parent(agents)).get(aid, [])
     got = pre if pre is not None else profile_rows(store, [aid])
 
     def mine(table: str) -> list[dict]:
@@ -233,6 +316,8 @@ def build_profile(
         "parent": _brief(parent) if parent else None,
         "children": [_brief(c) for c in children],
         "group": {"name": group, "members": members},
+        # The runs this chat started (a codex exec, a claude -p, …), each a chat of its own.
+        "helpers": sorted((helper_row(h) for h in mine_helpers), key=lambda h: (h["started"], h["agent_id"])),
     }
 
 
@@ -312,16 +397,23 @@ def agents_profiles(
     project: str = Query(...),
     store: ViewStore = Depends(get_store),
 ) -> Response:
-    """Every agent of a project with its profile — the roster in one read."""
+    """Every agent of a project with its profile — the roster in one read.
+
+    Helper chats (a codex exec, a claude -p another chat started) are not in
+    the roster: each is in its parent's ``helpers``, and those whose parent
+    is not known (or was not recorded) are in ``orphans``."""
+    from ..sessions import is_helper
     etag = etag_for(f"agents:profiles:{project}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
-    roster = [a for a in store.agents() if a.get("project") == project]
+    agents = store.agents()
+    roster = [a for a in agents if a.get("project") == project and not is_helper(a)]
     # One read of each table for the whole roster, not one per agent.
     pre = profile_rows(store, [str(a.get("agent_id") or "") for a in roster])
-    rows = [build_profile(store, a, pre) for a in roster]
+    helpers_of = _helpers_by_parent(agents)
+    rows = [build_profile(store, a, pre, helpers_of) for a in roster]
     rows.sort(key=lambda p: (p["agent"].get("created_date") or "", p["agent"].get("agent_id") or ""))
-    return json_response({"total": len(rows), "profiles": rows}, etag)
+    return json_response({"total": len(rows), "profiles": rows, "orphans": orphan_helpers(agents, project)}, etag)
 
 
 @router.get("/api/agents/links")

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+from tests.conftest import need
 
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
 HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
@@ -18,8 +18,11 @@ SERIOUS = ("undefined name", "redefinition of unused", "used before assignment",
 
 
 def test_no_undefined_or_shadowed_names() -> None:
-    api = pytest.importorskip("pyflakes.api")
-    reporter_mod = pytest.importorskip("pyflakes.reporter")
+    try:
+        import pyflakes.api as api
+        import pyflakes.reporter as reporter_mod
+    except ImportError:
+        need("pyflakes")
     import io
 
     out = io.StringIO()

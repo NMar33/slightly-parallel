@@ -45,14 +45,19 @@ def test_a_read_does_not_wait_for_a_build(tmp_path, monkeypatch):
     builder = threading.Thread(target=store.rebuild)
     builder.start()
     assert building.wait(10), "the build never started"
-    t0 = time.perf_counter()
-    rows = store.query("SELECT count(*) AS n FROM sessions")
-    waited = time.perf_counter() - t0
+    # The read runs while the build is held; it must come back before the
+    # build is let go. The condition is the order, not a number of seconds:
+    # a read that waits on the build never returns until hold is set.
+    rows: list = []
+    read = threading.Thread(target=lambda: rows.extend(store.query("SELECT count(*) AS n FROM sessions")))
+    read.start()
+    read.join(25)
+    returned_during_build = not read.is_alive() and not hold.is_set()
     hold.set()
     builder.join()
+    read.join()
+    assert returned_during_build, "a read waited on a build in progress"
     assert rows[0]["n"] == 1
-    # The build holds for up to 30 s; a read that waited on it shows here.
-    assert waited < 5.0, f"a read waited {waited:.2f}s on a build in progress"
 
 
 def test_a_rebuild_asked_during_a_build_is_one_more_build_and_returns_after_it(tmp_path, monkeypatch):
@@ -82,10 +87,21 @@ def test_a_rebuild_asked_during_a_build_is_one_more_build_and_returns_after_it(t
         store.rebuild()
         returned.append(time.perf_counter())
 
+    with store._build_cv:
+        before = store._requested
     askers = [threading.Thread(target=ask) for _ in range(3)]
     for t in askers:
         t.start()
-    time.sleep(0.5)  # the askers reach the store while the first build holds
+    # The askers have reached the store (each counted its request) while the
+    # first build holds: a condition, not a sleep that a slow machine outruns.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        with store._build_cv:
+            if store._requested == before + 3:
+                break
+        time.sleep(0.01)
+    with store._build_cv:
+        assert store._requested == before + 3, f"the askers never reached the store ({store._requested - before} of 3)"
     gate.set()
     first.join()
     for t in askers:

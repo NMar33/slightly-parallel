@@ -1,4 +1,4 @@
-![Slightly Parallel](brand/kit/files/readme-banner.svg)
+![Slightly Parallel](docs/media/readme/banner.svg)
 
 # Slightly Parallel
 
@@ -133,7 +133,7 @@ This is the project's diary, written without you.
 
 A command is one word anywhere in a message to an agent. The agent does the writing; you read the pages.
 
-![The commands](brand/kit/files/readme-commands.svg)
+![The commands](docs/media/readme/commands.svg)
 
 **`#scan`** — a checkpoint. Type it when a stage is shipped, while the agent still holds the context. The agent writes what changed since the last scan, the important files with why they matter + the architecture form.
 
@@ -165,7 +165,7 @@ A command is one word anywhere in a message to an agent. The agent does the writ
 
 The lane goes in braces right after the tag: `#now {ui} fix the login timeout`, `#task {Kanban Board} cards do not sort`. The server reads the lane from the message, not the agent, so there is nothing to guess. A lane that is not on the board is refused with the list of those that are; the agent asks in one line. New lanes are made on the board. Without braces `#task` lands in `unassigned`, `#now` in Now (the name is a setting).
 
-**`#entrypoint`** — the way into a topic. Say the topic, and the agent writes what it is, where its files and links are, how to run it, where the work stopped and what is next. Repeat it on the same topic and the state is replaced. Coming back to a project after three weeks starts here.
+**`#entrypoint`** — the way into a topic you come back to. Say the topic, and the agent writes its record (what it is, where its files and links are, how to run it, where the work stopped, what is next) and adds the ways in it used: the pages, sites and files you open, each with its start command, folder and port. Type it with the topic's name in any chat of the project and that chat's agent writes a new version of the record, adding what it used and where the work stopped; each version shows the chat that wrote it. Coming back to a project after three weeks starts here.
 
 **If a tag made an entry by mistake** (a pasted text that mentions `#vision`, a `#rule` typed by accident): **type `#undo` and say what was the mistake. The agent lists the entries by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is archived without `#undo-yes`, and nothing is deleted.**
 
@@ -187,7 +187,7 @@ An example. Claude Code started writing the help texts and descriptions in my ow
 
 ### Entry points
 
-Notes per topic, written by the agent on `#entrypoint`: what the topic is, where its files are, how to run it, where the work stopped, what is next. The open topics stay at the top of the page with their State line. This is what you read first when you come back.
+One card per topic, kept from `#entrypoint`. A topic has a state (active, paused, dead), its ways in, screenshots of each way in over time, and a feed of where it stopped: the agent adds a line at `#done` for the task's topic, and you can add one by hand. What is next is the topic's open tasks. When the page opens it checks each way in's port on this computer and shows the start command of one that is down; it starts nothing itself. Below the card are the chats that worked on the topic, with the command to resume each, and its done tasks, decisions, commits and spend. Copy to agent copies the whole topic as a briefing for a new chat. The topics are a list beside the card or shelves of tiles.
 
 ### Your hours
 

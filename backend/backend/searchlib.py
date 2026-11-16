@@ -41,6 +41,7 @@ from .db import ViewStore
 from .docs_md import read_detail
 from .entities import ENTITIES
 from . import repomap
+from .viewrows import rows_or_empty
 
 log = logging.getLogger("sp.search")
 
@@ -161,7 +162,6 @@ def build(store: ViewStore) -> Index:
         words = (rid + " " + title + " " + raw) if by_title else (rid + " " + raw)
         rows.append(Row(kind, rid, title, project, date, words.lower(), raw, meta or {}, by_title))
 
-    from .routers.deps import rows_or_empty
     for name, ent in ENTITIES.items():
         # A view may be absent (no file yet). Any other failure is logged
         # and costs this kind only: the rest stays searchable.

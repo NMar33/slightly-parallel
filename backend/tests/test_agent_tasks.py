@@ -140,12 +140,13 @@ def test_now_starts_the_task_in_doing_in_its_own_lane_today(tmp_path: Path) -> N
     c = _board(root, "#now fix the login timeout")
     wrong = _post(c, expect=422, status="agent", description="")
     assert "doing" in wrong["detail"]
+    today = date.today().isoformat()
     out = _post(c, created_time="21:11", description="")
     meta = out["metadata"]
     # The text is the operator's message, as written; the agent only titles it.
     assert out["description"] == "#now fix the login timeout"
     assert meta["status"] == "doing" and meta["lane"] == "Now" and meta["assignee"] == "Now"
-    assert meta["today_on"] == date.today().isoformat()
+    assert meta["today_on"] in (today, date.today().isoformat())
     events = c.get(f"/api/tasks/{meta['id']}/events").json()
     started = [e for e in (events.get("events") if isinstance(events, dict) else events) if e.get("field") == "started"]
     assert started and "#now" in started[0]["new_value"] and "cc-a" in started[0]["new_value"]
@@ -158,6 +159,10 @@ def test_now_with_a_lane_and_the_lane_from_settings(tmp_path: Path) -> None:
     c = _board(root, "#now {kanban board} the cards do not sort")
     assert _post(c, description="")["metadata"]["lane"] == "Kanban Board"
     c.__exit__(None, None, None)
+    # A second board (the first chat's turn 1 already has its card: a chat
+    # rewritten in place would read the new #now as written).
+    root = tmp_path / "data2"
+    root.mkdir()
     app_settings.save(root, {"tasks.now_lane": "Chat"})
     c = _board(root, "#now fix the login timeout", lanes=())
     assert _post(c, created_time="21:12", description="")["metadata"]["lane"] == "Chat"
@@ -251,3 +256,79 @@ def test_a_column_suffix_belongs_to_now_only() -> None:
     assert task_command("look later #task-done") == ("", "", "")
     assert task_command("look later #now-done {ui}") == ("now", "ui", "done")
     assert task_command("#task {ui} the cards") == ("task", "ui", "agent")
+
+
+def test_comments_go_after_the_operators_text_which_stays_as_written(tmp_path: Path) -> None:
+    c = _board(tmp_path / "data", "#now fix the login timeout")
+    tid = _post(c, description="", title="Login timeout")["metadata"]["id"]
+    up = lambda body: c.post(f"/api/tasks/{tid}/update", json={"actor": "cc-a", **body})  # noqa: E731
+    assert up({"comment": "the timeout is in auth/session.py"}).status_code == 200
+    assert up({"comment": "fixed: 30 min, a test added"}).status_code == 200
+    assert c.get(f"/api/tasks/{tid}").json()["description"] == (
+        "#now fix the login timeout\n\n--- comment from agent:\nthe timeout is in auth/session.py"
+        "\n\n--- comment from agent:\nfixed: 30 min, a test added")
+    refused = up({"description": "my own words"})
+    assert refused.status_code == 422 and "comment" in refused.json()["detail"]
+    assert up({"comment": "  "}).status_code == 422
+    c.__exit__(None, None, None)
+
+
+def test_the_same_task_twice_is_one_task_answered_200(client: TestClient) -> None:
+    """tasklib.create_task: a repeat finds the task (existing, 200), for the
+    board and for an agent's /task alike."""
+    board = {"created_date": "2609-01", "created_time": "09:00", "project": "alpha",
+             "agent_id": "operator", "title": "Same", "status": "todo"}
+    first = client.post("/api/tasks", json=board)
+    again = client.post("/api/tasks", json=board)
+    assert (first.status_code, again.status_code) == (201, 200)
+    assert again.json()["existing"] is True and again.json()["metadata"]["id"] == first.json()["metadata"]["id"]
+    mine = _post(client)
+    assert _post(client, expect=200)["metadata"]["id"] == mine["metadata"]["id"]
+
+
+# ---------------------------------------------------------- tags as agents send them
+# Claude Code sent ``"tags": ["ag_followup"]`` eight times in two paid runs
+# and was told ``unknown tag(s) ['ag_followup'] — 1–3 of: …, ag_followup, …``
+# (round 5, docs/testing.md case 5). A list of names is the same tags; any
+# other shape is refused by its shape, and no refusal names a refused value
+# among the allowed ones.
+
+
+def _refusal_contradicts(detail: str, sent: object) -> bool:
+    allowed = detail.split(" of: ", 1)[1] if " of: " in detail else ""
+    names = sent if isinstance(sent, list) else [sent]
+    return any(isinstance(n, str) and n and n in detail.split(" of: ")[0] and n in allowed for n in names)
+
+
+def test_tags_as_a_list_of_names_are_the_same_tags(client: TestClient) -> None:
+    one = _post(client, tags=["ag_followup"])
+    assert one["metadata"]["tags"] == "ag_followup"
+    two = _post(client, created_time="21:11", tags=["ag_bug", " ag_debt"])
+    assert two["metadata"]["tags"] == "ag_bug,ag_debt"
+
+
+@pytest.mark.parametrize("tags", [["ag_followup", 5], 5, {"ag_bug": 1}, True, [["ag_bug"]]])
+def test_tags_of_another_shape_are_refused_by_their_shape(client: TestClient, tags: object) -> None:
+    before = client.get("/api/tasks?project=alpha").json()
+    out = _post(client, expect=422, tags=tags)
+    assert "tags is text" in out["detail"], out
+    assert "unknown tag" not in out["detail"]
+    assert client.get("/api/tasks?project=alpha").json() == before
+
+
+@pytest.mark.parametrize("tags", [["urgent"], "urgent", ["ag_followup", "urgent"], "AG_BUG"])
+def test_a_tag_refusal_never_lists_the_refused_tag_as_allowed(client: TestClient, tags: object) -> None:
+    out = _post(client, expect=422, tags=tags)
+    assert not _refusal_contradicts(out["detail"], tags), out["detail"]
+
+
+def test_an_agent_changes_its_tags_with_a_list(client: TestClient) -> None:
+    tid = _post(client)["metadata"]["id"]
+    r = client.post(f"/api/tasks/{tid}/update", json={"agent_id": "cc-a", "tags": ["ag_bug"]})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/tasks/{tid}").json()["metadata"]["tags"] == "ag_bug"
+    bad = client.post(f"/api/tasks/{tid}/update", json={"agent_id": "cc-a", "tags": ["ag_bug", 3]})
+    assert bad.status_code == 422 and "tags is text" in bad.json()["detail"]
+    unknown = client.post(f"/api/tasks/{tid}/update", json={"agent_id": "cc-a", "tags": ["urgent"]})
+    assert unknown.status_code >= 400 and "unknown tag(s) urgent" in unknown.json()["detail"]
+    assert client.get(f"/api/tasks/{tid}").json()["metadata"]["tags"] == "ag_bug"

@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { toast } from '../components/primitives'
 import { getJson, postJson } from './getJson'
 import { SETTINGS_QUERY_KEY, saveSettings, useSettingsValues } from './settings'
 import { dayMonth } from './months'
@@ -198,6 +199,7 @@ export function useMonitorSettings() {
       void qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY })
       void qc.invalidateQueries({ queryKey: ['monitor'] })
     },
+    onError: (e: Error) => toast.error(t('Could not save the monitor setting'), { description: e.message }),
   })
   return { values, save: save.mutate, saving: save.isPending, error: save.error as Error | null }
 }
@@ -207,6 +209,7 @@ export function useSeenAll() {
   return useMutation({
     mutationFn: (id?: number) => postJson(id == null ? '/api/monitor/events/seen' : `/api/monitor/events/${id}/seen`, { actor: 'operator' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['monitor'] }),
+    onError: (e: Error) => toast.error(t('Could not mark the events as seen'), { description: e.message }),
   })
 }
 

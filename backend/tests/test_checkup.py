@@ -108,10 +108,10 @@ def test_a_recipe_is_served_by_its_reason(client: TestClient) -> None:
 
 def test_the_hook_checked_is_the_one_of_this_chats_tool(monkeypatch, tmp_path: Path) -> None:
     """A folder wired for Claude Code only is not fine for a Codex chat."""
-    from backend.routers import setup
-    monkeypatch.setattr(setup, "_integration_status", lambda p: "fresh")
-    monkeypatch.setattr(setup, "_missing_hook_scripts", lambda p: [])
-    monkeypatch.setattr(setup, "_tools_wired", lambda p: {"claude": True, "codex": False, "opencode": False, "cursor": False})
+    from backend import folderstate
+    monkeypatch.setattr(folderstate, "integration_status", lambda p: "fresh")
+    monkeypatch.setattr(folderstate, "missing_hook_scripts", lambda p: [])
+    monkeypatch.setattr(folderstate, "tools_wired", lambda p: {"claude": True, "codex": False, "opencode": False, "cursor": False})
     hooks = lambda aid: next(f for f in checkup.integration("alpha", str(tmp_path), aid) if f["id"] == "hooks")  # noqa: E731
     assert hooks("cc-1234abcd")["status"] == "ok"
     codex = hooks("codex-1234abcd")

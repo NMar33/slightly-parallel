@@ -22,28 +22,40 @@ import re
 from typing import Any
 import string
 import subprocess
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from .. import example
 from ..config import Settings
-from ..contract_parts import CONTRACT_FILE
 from ..csvio import append_if_absent, read_rows, rewrite_rows
 from ..project_admin import (
     delete_project_data, known_projects, remove_block, remove_bridge, strip_file,
 )
 from ..date_utils import today_yymm_dd
 from ..db import ViewStore
-from ..file_safety import write_in_place
-from ..hookshared import codex_home
-from ..integration_text import (
-    BEGIN_MARK, BRIDGE_LINE, END_MARK, MCP_SERVER, _CODEX_MCP_RE, _TOML_TABLE_RE, _drop_json_key,
-    _hook_commands, _insert_top_level, _is_sp_hook, _marks_in, _ours, _remove_cursor_hooks,
-    _remove_hooks, _upsert_block, _upsert_bridge, _upsert_codex_mcp, _upsert_cursor_hooks,
-    _upsert_hooks, _upsert_json_key,
+from ..file_safety import atomic_write_json, write_in_place
+from ..hookshared import (
+    codex_home, is_sp_statusline, read_statusline_then, statusline_key, statusline_then_path,
 )
-from .deps import get_store
+from ..integration_text import (
+    BEGIN_MARK, BRIDGE_LINE, CLAUDE_EVENTS, END_MARK, MCP_SERVER, _CODEX_MCP_RE, _TOML_TABLE_RE, _drop_json_key,
+    _insert_top_level, _marks_in, _ours, _remove_cursor_hooks,
+    _remove_hooks, _upsert_block, _upsert_bridge, _upsert_codex_mcp, _upsert_cursor_hooks,
+    _upsert_hooks, _upsert_json_key, _remove_statusline, _upsert_statusline, our_hook_command,
+    statusline_key_of,
+)
+from .deps import get_store, windows_reserved
+# What Setup left in a project folder, read by this page and by #sp alike
+# (folderstate.py: a library, so the checkup imports no router).
+from ..folderstate import (  # noqa: E402,F401
+    HOOK_FILES as _HOOK_FILES, OPENCODE_PLUGIN as _OPENCODE_PLUGIN, TOOLS, contract_path,
+    hooks_file_has as _hooks_file_has,
+    hooks_installed as _hooks_installed, integration_status as _integration_status,
+    missing_hook_scripts as _missing_hook_scripts, tools_wired as _tools_wired,
+    statusline_installed as _statusline_installed,
+)
 
 router = APIRouter()
 
@@ -54,11 +66,13 @@ _PROJECT_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 #: The project's note is one line in AGENTS.md.
 NOTES_MAX = 300
 
-_INTEGRATIONS_COLUMNS = ("project", "path", "created_date")
-
-
-def contract_path() -> Path:
-    return _REPO_ROOT / CONTRACT_FILE
+#: ``statusline``: "off" when the operator chose no status line for the
+#: folder (Setup's box cleared); the server's start then adds none.
+_INTEGRATIONS_COLUMNS = ("project", "path", "created_date", "statusline")
+#: Setup's edits of a project folder's settings and the server's start-up
+#: pass over them (ensure_statuslines) take turns: the pass must not add a
+#: status line a Setup post meanwhile takes out.
+_FOLDER_LOCK = threading.Lock()
 
 
 _AGENTS_BLOCK_TEMPLATE = _REPO_ROOT / "templates" / "agents-block.md"
@@ -87,7 +101,6 @@ def _compose_block(
 # ---------------------------------------------------------------------------
 
 _OPENCODE_TEMPLATE = _REPO_ROOT / "scripts" / "hooks" / "slightly-parallel-opencode.js"
-_OPENCODE_PLUGIN = "slightly-parallel.js"
 _CAPTURE_CLI = _REPO_ROOT / "scripts" / "hooks" / "capture-cli.py"
 
 
@@ -155,6 +168,22 @@ def _arg(path: Path) -> str:
     return str(path).replace("\\", "/") if _windows() else str(path)
 
 
+#: Characters sh reads inside double quotes: a folder named with one was
+#: another folder (``$HOME``), or ran a command (`` `x` ``), in every hook line.
+_SH_SPECIAL = set('$`\\"!')
+
+
+def _q(path: Path) -> str:
+    """A path as one word of a hook line: in double quotes, as always (an
+    unchanged line is an unchanged install), unless sh would read something
+    in it; then in single quotes, which sh reads as written (round 5)."""
+    text = _arg(path)
+    if not _windows() and _SH_SPECIAL & set(text):
+        import shlex
+        return shlex.quote(text)
+    return f'"{text}"'
+
+
 def _hook_command(project_code: str, data_root: Path, tool: str = "claude-code") -> str:
     """The hook line. It ends in ``|| exit 0`` (read the same by sh and
     cmd): when the script is gone — the repository moved, renamed or
@@ -167,13 +196,179 @@ def _hook_command(project_code: str, data_root: Path, tool: str = "claude-code")
         # string, not a command, without the call operator, and Windows
         # PowerShell 5.1 has no ||. The hook failed on every prompt.
         return (
-            f'& {_hook_python()} "{_arg(_CAPTURE_SCRIPT)}" '
-            f'--project {project_code} --data-root "{_arg(data_root)}"{suffix}; exit 0'
+            f'& {_hook_python()} {_q(_CAPTURE_SCRIPT)} '
+            f'--project {project_code} --data-root {_q(data_root)}{suffix}; exit 0'
         )
     return (
-        f'{_hook_python()} "{_arg(_CAPTURE_SCRIPT)}" '
-        f'--project {project_code} --data-root "{_arg(data_root)}"{suffix} || exit 0'
+        f'{_hook_python()} {_q(_CAPTURE_SCRIPT)} '
+        f'--project {project_code} --data-root {_q(data_root)}{suffix} || exit 0'
     )
+
+
+_STATUSLINE_SCRIPT = _REPO_ROOT / "scripts" / "hooks" / "statusline.py"
+#: The user's Claude Code settings (where an operator's own status line
+#: usually is). Tests point it at a temporary file (conftest).
+CLAUDE_USER_SETTINGS: Path | None = None
+
+
+def _claude_user_settings() -> Path:
+    if CLAUDE_USER_SETTINGS is not None:
+        return CLAUDE_USER_SETTINGS
+    # CLAUDE_CONFIG_DIR moves the home-folder settings (docs: settings, "Find or create").
+    base = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (Path(base) if base else Path.home() / ".claude") / "settings.json"
+
+
+def _statusline_base(data_root: Path) -> str:
+    """Our status line command without the one it wraps."""
+    return f'{_hook_python()} {_q(_STATUSLINE_SCRIPT)} --data-root {_q(data_root)}'
+
+
+def _inherited_statusline(project_dir: Path) -> dict | None:
+    """The status line this folder shows without ours: the shared project
+    settings' (.claude/settings.json), else the user's. Ours outranks both
+    from the local file, so it runs this one after itself."""
+    for path in (project_dir / ".claude" / "settings.json", _claude_user_settings()):
+        try:
+            entry = json.loads(path.read_text(encoding="utf-8-sig")).get("statusLine")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(entry, dict) and str(entry.get("command") or "").strip() and not is_sp_statusline(entry):
+            return entry
+    return None
+
+
+_DATA_ROOT_ARG_RE = re.compile(r'--data-root\s+"([^"]+)"')
+
+
+def _data_root_of(command: str) -> str:
+    """The data folder a hook or status line names, in double or single quotes."""
+    m = _DATA_ROOT_ARG_RE.search(command or "")
+    if m:
+        return m.group(1)
+    import shlex
+    try:
+        words = shlex.split(command or "")
+    except ValueError:
+        return ""
+    return next((words[i + 1] for i, w in enumerate(words[:-1]) if w == "--data-root"), "")
+
+
+def _side_record(command: str, data_root: Path, key: str) -> dict | None:
+    """The side file of ``key``: in this data root, else in the one the line
+    itself names (Setup run again after the data folder moved)."""
+    got = read_statusline_then(data_root, key)
+    if got is None:
+        named = _data_root_of(command)
+        if named and Path(named) != Path(data_root):
+            got = read_statusline_then(Path(named), key)
+    return got
+
+
+def _statusline_plan(text: str, project_dir: Path, data_root: Path) -> tuple[str, str, tuple[Path, dict] | None]:
+    """Our status line in a folder's local settings text: (new text, action,
+    the side file to write first — or None when the one there stands). The
+    side file holds the operator's own line (integration_text, "Claude
+    Code's status line"): kept whole when it stood in this file, else read
+    at every run from the shared project settings or the user's."""
+    key = statusline_key(project_dir)
+    command = f"{_statusline_base(data_root)} --then-key {key}"
+    try:
+        current = json.loads(text.lstrip("\ufeff") or "{}").get("statusLine")
+    except (ValueError, AttributeError):
+        current = None
+    new_text, action, own = _upsert_statusline(text, command, _inherited_statusline(project_dir), windows=_windows())
+    current_cmd = str(current.get("command", "")) if isinstance(current, dict) else ""
+    kept = _side_record(current_cmd, data_root, statusline_key_of(current_cmd) or key) \
+        if is_sp_statusline(current) else read_statusline_then(data_root, key)
+    here = read_statusline_then(data_root, key)
+    user = str(_claude_user_settings())
+    if own is not None:
+        rec = {"from": "local", "command": str(own.get("command") or ""), "entry": own,
+               "folder": str(project_dir), "user_settings": user}
+    elif kept and kept.get("from") == "local" and is_sp_statusline(current):
+        rec = kept               # ours already, wrapping this file's own line: it stays
+    else:
+        inherited = _inherited_statusline(project_dir)
+        shared_file = project_dir / ".claude" / "settings.json"
+        try:
+            in_project = isinstance(json.loads(shared_file.read_text(encoding="utf-8-sig")).get("statusLine"), dict)
+        except (OSError, ValueError, AttributeError):
+            in_project = False
+        rec = {"from": "project" if in_project and inherited is not None else "user",
+               "command": str((inherited or {}).get("command") or ""), "folder": str(project_dir), "user_settings": user}
+    path = statusline_then_path(data_root, key)
+    return new_text, action, ((path, rec) if path is not None and rec != here else None)
+
+
+def _write_side(side: tuple[Path, dict] | None) -> None:
+    if side is not None:
+        side[0].parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(side[0], side[1])
+
+
+def _statusline_restore(text: str, data_root: Path) -> tuple[dict | None, Path | None]:
+    """(the operator's own entry to put back, our side file) for the status
+    line of ours in a folder's local settings text."""
+    try:
+        entry = json.loads(text.lstrip("\ufeff") or "{}").get("statusLine")
+    except (ValueError, AttributeError):
+        return None, None
+    if not is_sp_statusline(entry):
+        return None, None
+    key = statusline_key_of(str(entry.get("command", "")))
+    if not key:
+        return None, None
+    rec = _side_record(str(entry.get("command", "")), data_root, key)
+    own = rec.get("entry") if isinstance(rec, dict) and rec.get("from") == "local" else None
+    return (own if isinstance(own, dict) else None), statusline_then_path(data_root, key)
+
+
+def ensure_statuslines(data_root: Path) -> list[str]:
+    """Bring every registered folder that has our hooks up to date, so Claude
+    Code's plan limits are read without the operator pressing anything
+    again: our status line beside the hooks (Claude Code gives those limits
+    only to the status line — docs: statusline, rate_limits), moved to the
+    side file when an older Setup wrote the wrapped command into the line;
+    and the SessionEnd and StopFailure hooks. A folder whose status line was
+    turned off in Setup (integrations.csv ``statusline`` "off") gets none.
+    Run once at the server's start, under the lock Setup's edits take;
+    idempotent; a folder it cannot read or write is skipped and logged,
+    never raised. Answers the folders it changed."""
+    import logging
+    log = logging.getLogger("sp.setup")
+    changed: list[str] = []
+    with _FOLDER_LOCK:
+        try:
+            rows = read_rows(data_root / "integrations.csv")
+        except Exception as exc:  # noqa: BLE001 — a damaged list changes nothing
+            log.warning("status line not checked: %s", exc)
+            return changed
+        for r in rows:
+            raw = str(r.get("path") or "").strip()
+            if not raw or not _hooks_installed(raw):
+                continue
+            project_dir = Path(raw)
+            hooks_path = project_dir / ".claude" / "settings.local.json"
+            try:
+                existing = hooks_path.read_text(encoding="utf-8")
+                new_text, action = existing, "unchanged"
+                ours = our_hook_command(existing)
+                if ours:
+                    new_text, action = _upsert_hooks(existing, ours, events=CLAUDE_EVENTS)
+                side = None
+                if str(r.get("statusline") or "").strip() != "off":
+                    new_text, sl_action, side = _statusline_plan(new_text, project_dir, data_root)
+                    action = "updated" if "unchanged" != sl_action or action != "unchanged" else "unchanged"
+                if action != "unchanged" or side is not None:
+                    _write_side(side)
+                    if new_text != existing:
+                        write_in_place(hooks_path, new_text)
+                    changed.append(raw)
+                    log.info("hooks and status line brought up to date in %s", raw)
+            except (OSError, ValueError, UnicodeDecodeError) as exc:
+                log.warning("status line not added in %s: %s", raw, exc)
+    return changed
 
 
 _CURSOR_SCRIPT = _REPO_ROOT / "scripts" / "hooks" / "cursor-capture.py"
@@ -184,37 +379,9 @@ def _cursor_hook_command(project_code: str, data_root: Path) -> str:
     reads on stdout. The same ``|| exit 0`` tail as the other hooks: Cursor
     reads exit 2 as "block", and a moved repository must never block a prompt."""
     return (
-        f'{_hook_python()} "{_arg(_CURSOR_SCRIPT)}" '
-        f'--data-root "{_arg(data_root)}" --project {project_code} || exit 0'
+        f'{_hook_python()} {_q(_CURSOR_SCRIPT)} '
+        f'--data-root {_q(data_root)} --project {project_code} || exit 0'
     )
-
-
-_HOOK_SCRIPT_RE = re.compile(r'"([^"]*(?:claude-code-capture|cursor-capture)\.py)"')
-_HOOK_FILES = (
-    Path(".claude") / "settings.local.json", Path(".codex") / "hooks.json", Path(".cursor") / "hooks.json",
-)
-
-
-def _missing_hook_scripts(path_raw: str) -> list[str]:
-    """The capture scripts our installed hooks (Claude Code, Codex and
-    Cursor) name that no longer exist: the repository was moved, renamed
-    or deleted after Setup wrote the hook. Such a hook records nothing."""
-    missing: list[str] = []
-    for rel in _HOOK_FILES:
-        try:
-            settings = json.loads((Path(path_raw) / rel).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        hooks = settings.get("hooks") if isinstance(settings, dict) else None
-        if not isinstance(hooks, dict):
-            continue
-        for entries in hooks.values():
-            for e in entries if isinstance(entries, list) else []:
-                for command in _hook_commands(e):
-                    m = _HOOK_SCRIPT_RE.search(command)
-                    if m and m.group(1) not in missing and not Path(m.group(1)).is_file():
-                        missing.append(m.group(1))
-    return missing
 
 
 def _write_or_remove(path: Path, text: str) -> None:
@@ -247,7 +414,7 @@ def _validated_dir(raw: str, label: str = "project_dir") -> Path:
         )
     try:
         p = p.resolve()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"cannot resolve path: {exc}")
     if not p.is_dir():
         raise HTTPException(status_code=422, detail=f"not an existing directory: {p}")
@@ -262,50 +429,6 @@ def _api_url(request: Request) -> str:
     """
     settings: Settings = request.app.state.settings
     return f"http://{settings.host}:{settings.port}"
-
-
-def _hooks_installed(path_raw: str) -> bool:
-    """Are our Claude Code capture hooks present in this folder's local settings?"""
-    hooks_path = Path(path_raw) / ".claude" / "settings.local.json"
-    try:
-        settings = json.loads(hooks_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    hooks = settings.get("hooks") if isinstance(settings, dict) else None
-    if not isinstance(hooks, dict):
-        return False
-    return all(
-        any(_is_sp_hook(e) for e in hooks.get(ev, []) if isinstance(e, dict))
-        for ev in ("UserPromptSubmit", "Stop")
-    )
-
-
-def _hooks_file_has(path_raw: str, rel: str, script: str) -> bool:
-    """Does this folder's hooks file (``rel``) hold an entry that runs ``script``?"""
-    try:
-        data = json.loads((Path(path_raw) / rel).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    hooks = data.get("hooks") if isinstance(data, dict) else None
-    if not isinstance(hooks, dict):
-        return False
-    return any(script in c for entries in hooks.values() if isinstance(entries, list)
-               for e in entries for c in _hook_commands(e))
-
-
-#: The tools Setup can wire a project to, in the order the page lists them.
-TOOLS = ("claude", "codex", "opencode", "cursor")
-
-
-def _tools_wired(path_raw: str, codex_global: bool = False) -> dict[str, bool]:
-    """Which tools record their chats in this folder. Codex counts as wired
-    by the global notify hook too, which serves every integrated project."""
-    return {
-        "claude": _hooks_installed(path_raw),
-        "codex": codex_global or _hooks_file_has(path_raw, ".codex/hooks.json", "claude-code-capture.py"),
-        "opencode": (Path(path_raw) / ".opencode" / "plugin" / _OPENCODE_PLUGIN).is_file(),
-        "cursor": _hooks_file_has(path_raw, ".cursor/hooks.json", "cursor-capture.py"),
-    }
 
 
 def tools_installed(home: Path | None = None) -> dict[str, bool]:
@@ -340,18 +463,6 @@ def _is_git_repo(path_raw: str) -> bool:
     return proc.returncode == 0
 
 
-def _integration_status(path_raw: str) -> str:
-    """fresh | stale | missing — is the recorded AGENTS.md block current?"""
-    agents = Path(path_raw) / "AGENTS.md"
-    try:
-        text = agents.read_text(encoding="utf-8")
-    except OSError:
-        return "missing"
-    if _marks_in(text) is None:
-        return "missing"
-    return "fresh" if BEGIN_MARK in text and str(contract_path()) in text else "stale"
-
-
 @router.get("/api/setup/info")
 def setup_info(
     request: Request,
@@ -369,6 +480,10 @@ def setup_info(
             "created_date": r.get("created_date", ""),
             "status": _integration_status(r.get("path", "")),
             "hooks": _hooks_installed(r.get("path", "")),
+            # Our status line, which reads Claude Code's plan limits.
+            "statusline": _statusline_installed(r.get("path", "")),
+            # The operator cleared the status line for this folder in Setup.
+            "statusline_off": (r.get("statusline") or "").strip() == "off",
             # Which tools record their chats here; a tool this computer has
             # and the project lacks loses its chats without a word.
             "tools": _tools_wired(r.get("path", ""), codex_global=codex["state"] == "installed"),
@@ -438,7 +553,7 @@ def _switch(kind: str, on: bool) -> list[str]:
         if on:
             return autostart.enable(AUTOSTART_ROOT, kind, home=AUTOSTART_HOME)
         return autostart.disable(AUTOSTART_ROOT, kind)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"{kind}: {exc}") from exc
 
 
@@ -463,6 +578,11 @@ def integrate(
     ``dry_run: true`` returns the exact planned content without touching
     disk — the page shows this as the preview.
     """
+    with _FOLDER_LOCK:
+        return _integrate(request, body, store)
+
+
+def _integrate(request: Request, body: dict, store: ViewStore) -> dict:
     project_code = str(body.get("project_code") or "").strip()
     if not _PROJECT_CODE_RE.match(project_code):
         raise HTTPException(
@@ -472,10 +592,22 @@ def integrate(
                 "(letters, digits, '-', '_'; max 64 chars)"
             ),
         )
+    if windows_reserved(project_code):
+        raise HTTPException(
+            status_code=422,
+            detail=(f"project_code {project_code} is a name Windows keeps for a device "
+                    "(con, prn, aux, nul, com1–com9, lpt1–lpt9): choose another"),
+        )
     project_dir = _validated_dir(str(body.get("project_dir") or ""))
     write_agents = bool(body.get("write_agents", True))
     write_bridge = bool(body.get("write_claude_bridge", True))
     write_hooks = bool(body.get("write_claude_hooks", True))
+    # The status line that reads the plan limits, with the Claude Code hooks;
+    # cleared, ours is taken out and the server's start adds none.
+    write_statusline = write_hooks and bool(body.get("write_claude_statusline", True))
+    statusline_off = write_hooks and not write_statusline
+    side_write: tuple[Path, dict] | None = None
+    side_drop: Path | None = None
     write_opencode = bool(body.get("write_opencode_plugin", False))
     write_codex = bool(body.get("write_codex_hooks", False))
     write_cursor = bool(body.get("write_cursor_hooks", False))
@@ -496,7 +628,7 @@ def integrate(
         agents_path = project_dir / "AGENTS.md"
         try:
             existing = agents_path.read_text(encoding="utf-8") if agents_path.exists() else ""
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {agents_path}: {exc}")
         new_text, action = _upsert_block(existing, block)
         if not dry_run and action != "unchanged":
@@ -509,7 +641,7 @@ def integrate(
         claude_path = project_dir / "CLAUDE.md"
         try:
             existing = claude_path.read_text(encoding="utf-8") if claude_path.exists() else ""
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {claude_path}: {exc}")
         new_text, action = _upsert_bridge(existing)
         if not dry_run and action != "unchanged":
@@ -526,17 +658,35 @@ def integrate(
                 if hooks_path.exists()
                 else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(
                 status_code=422, detail=f"cannot read {hooks_path}: {exc}"
             )
         command = _hook_command(
             project_code, request.app.state.settings.data_root
         )
-        new_text, action = _upsert_hooks(existing, command)
+        new_text, action = _upsert_hooks(existing, command, events=CLAUDE_EVENTS)
+        data_root = request.app.state.settings.data_root
+        if write_statusline:
+            try:
+                new_text, sl_action, side_write = _statusline_plan(new_text, project_dir, data_root)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+            if action == "unchanged" and sl_action != "unchanged":
+                action = "updated"
+        elif statusline_off:
+            restore, side_drop = _statusline_restore(new_text, data_root)
+            new_text, sl_action = _remove_statusline(new_text, windows=_windows(), restore=restore)
+            if action == "unchanged" and sl_action != "unchanged":
+                action = "updated"
+        if not dry_run:
+            # The side file first: the line never names one that is not there.
+            _write_side(side_write)
         if not dry_run and action != "unchanged":
             hooks_path.parent.mkdir(parents=True, exist_ok=True)
             write_in_place(hooks_path, new_text)
+        if not dry_run and side_drop is not None:
+            side_drop.unlink(missing_ok=True)
         results.append(
             {"file": str(hooks_path), "action": action, "content": new_text}
         )
@@ -548,7 +698,7 @@ def integrate(
             existing = (
                 codex_path.read_text(encoding="utf-8") if codex_path.exists() else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {codex_path}: {exc}")
         command = _hook_command(
             project_code, request.app.state.settings.data_root, tool="codex"
@@ -565,7 +715,7 @@ def integrate(
         # can write nothing it asks for.
         try:
             config = CODEX_CONFIG_PATH.read_text(encoding="utf-8") if CODEX_CONFIG_PATH.exists() else ""
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {CODEX_CONFIG_PATH}: {exc}")
         block = codex_mcp_block(_api_url(request))
         new_config, mcp_action = _upsert_codex_mcp(config, block)
@@ -581,7 +731,7 @@ def integrate(
             existing = (
                 cursor_path.read_text(encoding="utf-8") if cursor_path.exists() else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=422, detail=f"cannot read {cursor_path}: {exc}")
         new_text, action = _upsert_cursor_hooks(
             existing, _cursor_hook_command(project_code, request.app.state.settings.data_root)
@@ -604,7 +754,7 @@ def integrate(
                 if plugin_path.exists()
                 else ""
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise HTTPException(
                 status_code=422, detail=f"cannot read {plugin_path}: {exc}"
             )
@@ -645,16 +795,26 @@ def integrate(
         # Record (or refresh) the integration registry entry.
         # The look and the append are one locked step: two Setup posts at
         # once both found no row and wrote one each.
-        append_if_absent(
+        statusline = "off" if statusline_off else "" if write_statusline else None
+        same = lambda r: r.get("project") == project_code and r.get("path") == str(project_dir)  # noqa: E731
+        stored = append_if_absent(
             store.data_root / "integrations.csv",
             _INTEGRATIONS_COLUMNS,
             {
                 "project": project_code,
                 "path": str(project_dir),
                 "created_date": today_yymm_dd(),
+                "statusline": statusline or "",
             },
-            lambda r: r.get("project") == project_code and r.get("path") == str(project_dir),
+            same,
         )
+        if stored is not None and statusline is not None and (stored.get("statusline") or "") != statusline:
+            def mark(rows: list[dict[str, str]]) -> bool:
+                for r in rows:
+                    if same(r):
+                        r["statusline"] = statusline
+                return True
+            rewrite_rows(store.data_root / "integrations.csv", _INTEGRATIONS_COLUMNS, mark)
         store.rebuild()
         # A project set up now gets the rules for all agents like every other.
         from .integrate import sync_all_rules
@@ -690,6 +850,11 @@ def forget(
     """Disconnect: drop the registry row and undo every file Setup wrote in
     the project folder (the Claude Code, Codex and Cursor hooks, the OpenCode
     plugin, AGENTS.md block, CLAUDE.md bridge, the MCP server). Slightly Parallel's own data for the project is not touched."""
+    with _FOLDER_LOCK:
+        return _forget(body, store)
+
+
+def _forget(body: dict, store: ViewStore) -> dict:
     project_code = str(body.get("project_code") or "").strip()
     path = str(body.get("path") or "").strip()
     csv_path = store.data_root / "integrations.csv"
@@ -718,8 +883,8 @@ def forget(
         if plugin_path.exists() and _ours(plugin_path.read_text(encoding="utf-8")):
             plugin_path.unlink()
             _rmdir_if_empty(plugin_path.parent, plugin_path.parent.parent)
-    except OSError:
-        pass
+    except (OSError, UnicodeDecodeError):
+        pass   # a plugin file that is not UTF-8 is not ours: left in place
 
     # Uninstall our capture hooks from the project's local settings too:
     # Claude Code's, Codex's and Cursor's. A file left with nothing in it
@@ -730,12 +895,21 @@ def forget(
         remove = _remove_cursor_hooks if rel.parts[0] == ".cursor" else _remove_hooks
         try:
             if hooks_path.exists():
-                new_text, action = remove(hooks_path.read_text(encoding="utf-8"))
+                text = hooks_path.read_text(encoding="utf-8")
+                new_text, action = remove(text)
+                side: Path | None = None
+                if rel.parts[0] == ".claude":
+                    # Our status line goes too; the one it wrapped comes back.
+                    restore, side = _statusline_restore(text, store.data_root)
+                    new_text, sl_action = _remove_statusline(new_text, windows=_windows(), restore=restore)
+                    action = "updated" if "updated" in (action, sl_action) else action
                 if action == "updated":
                     hooks_action = action
                     _write_or_remove(hooks_path, new_text)
                     _rmdir_if_empty(hooks_path.parent)
-        except OSError:
+                if side is not None:
+                    side.unlink(missing_ok=True)
+        except (OSError, UnicodeDecodeError):
             hooks_action = "unreadable"
 
     # And the MCP server Setup wired in: .mcp.json for Claude Code,
@@ -757,7 +931,7 @@ def forget(
                     mcp_action = action
                     _write_or_remove(mcp_path, new_text)
                     _rmdir_if_empty(mcp_path.parent)
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             mcp_action = "unreadable"
 
     agents_action = strip_file(
@@ -831,9 +1005,13 @@ def _upsert_env_line(env_path: Path, key: str, value: str, *, replaces: str = ""
     file written before a rename does not end up saying two things."""
     line = f'{key}="{value}"'
     try:
-        text = env_path.read_text(encoding="utf-8")
-    except OSError:
-        text = ""
+        text = env_path.read_text(encoding="utf-8-sig") if env_path.exists() else ""
+    except UnicodeDecodeError as exc:
+        # Never rewrite a file that could not be read: every other setting
+        # in it would be gone.
+        raise HTTPException(status_code=422, detail=f"{env_path} is not UTF-8 (byte {exc.start}): save it as UTF-8 first")
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail=f"cannot read {env_path}: {exc}")
     lines = text.splitlines()
     prefixes = tuple(f"{k}=" for k in (key, replaces) if k)
     replaced = False
@@ -930,7 +1108,7 @@ def mcp_server_entry(api_url: str) -> dict:
 def _write_mcp_file(path: Path, top: str, entry: dict, *, dry_run: bool, also=None) -> dict:
     try:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"cannot read {path}: {exc}")
     new_text, action = _upsert_json_key(existing, top, MCP_SERVER, entry)
     if also:
@@ -1030,6 +1208,8 @@ def codex_status() -> dict:
         text = CODEX_CONFIG_PATH.read_text(encoding="utf-8")
     except OSError:
         return {"state": "absent", "config": str(CODEX_CONFIG_PATH)}
+    except UnicodeDecodeError:
+        return {"state": "foreign", "config": str(CODEX_CONFIG_PATH)}   # a file Codex itself could not read
     m = _NOTIFY_RE.search(text)
     if not m:
         return {"state": "absent", "config": str(CODEX_CONFIG_PATH)}
@@ -1060,7 +1240,7 @@ def setup_codex(
             if CODEX_CONFIG_PATH.exists()
             else ""
         )
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(
             status_code=422, detail=f"cannot read {CODEX_CONFIG_PATH}: {exc}"
         )

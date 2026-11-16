@@ -13,11 +13,16 @@ before any list read has adopted it, so this route adopts before it looks.
 
 from __future__ import annotations
 
+from typing import Callable
+
 from fastapi import APIRouter, Body, Depends, HTTPException
 
+from .. import entrypointlib as E
 from .. import examples, keeplib
 from ..db import ViewStore
 from ..entities import ENTITIES
+from ..promptlib import Version
+from ..actors import identity_of, is_agent
 from .deps import create_answer, get_store, refuse_agent, written_by_agent
 from .integrate import sync_all_rules
 
@@ -39,6 +44,19 @@ def _register(kind: str) -> None:
         if row is None:
             keeplib.adopt(store)
             row = store.query_one(sql, (item_id,))
+        command: dict | None = None
+        if kind == "entrypoint":
+            # The id the hook named may be a command that opened a new
+            # version of the topic the operator chose: it writes that topic.
+            topic, cmd = E.resolve(store, item_id)
+            if topic is not None:
+                row = store.query_one(sql, (topic["id"],)) or row
+            elif cmd is not None and cmd.get("how") in ("pending", "dropped"):
+                raise HTTPException(status_code=409, detail=(
+                    f"{item_id} is an #entrypoint the operator has not chosen a topic for"
+                    + (": call the MCP tool entrypoint_ask, show its line, then entrypoint_answer with their "
+                       "answer. Nothing was written" if cmd.get("how") == "pending"
+                       else "; their answer chose none. Nothing was written")))
         if row is None:
             raise HTTPException(
                 status_code=404,
@@ -55,17 +73,34 @@ def _register(kind: str) -> None:
                     f"interpretation — change its text with the MCP tool update_entry"
                 ),
             )
+        who = identity_of(body)
+        on_version: Callable[[Version], None] | None = None
+        if kind == "entrypoint":
+            # The record follows the operator's #entrypoint: the chat of the
+            # topic's last command writes it (a later command in another chat
+            # of the project hands it on); elsewhere an agent writes a stop, a
+            # way in or a shot. Every version keeps the chat that wrote it.
+            if is_agent(who):
+                try:
+                    command = E.may_write_record(store, row, who)
+                except E.EntryRefused as exc:
+                    refuse_agent(str(exc))
+            ep_id, cmd_id = str(row["id"]), str((command or {}).get("id") or "") if is_agent(who) else ""
+
+            def keep_author(v: Version) -> None:
+                E.note_version(store, ep_id, v.n, v.at, who, cmd_id)
+            on_version = keep_author
         try:
             keeplib.interpret(
                 store, kind, row,
                 str(body.get("text") or ""), str(body.get("note") or ""),
-                by_agent=written_by_agent(body),
+                by_agent=written_by_agent(body), on_version=on_version,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if kind == "rule":
             sync_all_rules(store)
-        fresh = store.query_one(sql, (item_id,)) or row
+        fresh = store.query_one(sql, (str(row["id"]),)) or row
         return {"metadata": fresh, "kept": keeplib.record(store, kind, fresh)}
 
     interpretation.__doc__ = (

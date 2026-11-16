@@ -397,7 +397,9 @@ def _apply_order(store: ViewStore, doc_id: str, order: list[str]) -> None:
 @router.post("/api/docs/{doc_id}/reorder")
 def items_reorder(doc_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
     _doc(store, doc_id)
-    order = [str(x) for x in (body.get("item_ids") or []) if str(x)]
+    if not isinstance(body.get("item_ids"), list):
+        raise HTTPException(status_code=422, detail="item_ids is a list of item ids")
+    order = [str(x) for x in body["item_ids"] if str(x)]
     if not order:
         raise HTTPException(status_code=422, detail="item_ids is required")
     _apply_order(store, doc_id, order)

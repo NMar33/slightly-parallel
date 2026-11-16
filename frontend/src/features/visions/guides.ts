@@ -97,7 +97,7 @@ export const ENTRYPOINTS_GUIDE: Guide = {
     [t('Close the topic'), t('mark the topic as done; it stays readable.')],
   ],
   steps: [
-    t('You type #entrypoint in the chat, naming the topic. Slightly Parallel keeps your message.'),
+    t('You type #entrypoint in the chat about a topic. The agent shows the topics it may be, numbered, with a new one last; you answer with a number.'),
     t('The agent writes the five sections from the chat: What, Where, How, State, Next.'),
     t('Type #entrypoint again on the same topic when the work moved: State and Next are rewritten, Where and How grow.'),
     t('Coming back to a topic, read its entry point first; an agent does the same.'),
@@ -266,17 +266,18 @@ export const FILES_GUIDE: Guide = {
 
 export const ARCHITECTURE_GUIDE: Guide = {
   intro: [
-    t('This page shows the architecture of one project, in three views. Page: what the project is. Map: every part of the program in one table. Changes: what each scan changed.'),
+    t('This page shows the architecture of one project, in four views. Page: what the project is. Map: every part of the program in one table. Cores: the parts you keep in view. Changes: what each scan changed.'),
     t('The page and the changes are written at the end of a scan. The map is written by a helper agent when you choose it. Each can be asked for alone: #page, #map, #architecture.'),
   ],
   parts: [
     [t('Project'), t('pick the project. The number is how many changes it holds.')],
-    [t('Page, map and changes'), t('the switch next to the picker. Your choice is remembered.')],
+    [t('Page, map, cores and changes'), t('the switch next to the picker. Your choice is remembered.')],
     [t('Computed by Slightly Parallel'), t('the top band of the page. It comes from the folder, with no agent: active or dormant, size, folders, recent commits.')],
     [t('Claim'), t('one item of the page. It says where the thing is, how the agent knows, who made it and who checked it.')],
     [t('Marks'), t('red: the path was not found. Amber: the file changed after the page was written.')],
     [t('Map'), t('one row per part of the program: runtime, entries, surfaces, modules, stores, outside services, build, deploy, tests. Under it, what connects to what. Written by a helper agent that reads up to 40 files, so the agent asks first.')],
     [t('Changes'), t('what each scan changed, in eight groups, read three ways. Debts and actions stay on top.')],
+    [t('Cores'), t('the parts of the program you keep in view: a feature, a store, an integration. Each has notes, tasks and commits. Three views: tiles, roadmap, map. An open core shows its notes, tasks, agents and files as a graph. Type #core-new in a chat, or press New core.')],
   ],
   steps: [
     t('You type #scan. The agent writes the scan, then the architecture form, then a new version of the page when the scan changed what the project is.'),
@@ -351,6 +352,7 @@ export const AGENTS_GUIDE: Guide = {
     [t('Find'), t('one search over names, ids and headlines.')],
     [t('Groups'), t('chips that show only the agents of one group.')],
     [t('Card'), t('click a card to open the agent: its chats, its tasks and its work.')],
+    [t('Helpers'), t('runs another chat started (codex exec, claude -p, opencode run) are on that chat\'s page; those with no known parent are folded at the end of their project.')],
   ],
   steps: [
     t('Setup connects a project: the hook that records chats, the agent tools and a section of AGENTS.md.'),
@@ -472,6 +474,23 @@ export const MONITOR_GUIDE: Guide = {
     t('The monitor reads the computer in the background.'),
     t('A reading past a limit, or far from usual, becomes an event.'),
     t('Old readings are thinned out. Events are kept longer.'),
+  ],
+}
+
+export const USAGE_GUIDE: Guide = {
+  intro: [
+    t('This page shows how many tokens your agents used, and how much of your plan\'s limits is used.'),
+    t('Numbers come from the tools\' own logs. The limits come from Claude Code and Codex.'),
+  ],
+  parts: [
+    [t('Limits'), t('the 5-hour and weekly limit of each plan, and when each resets. The mark on a bar is even pace.')],
+    [t('Totals'), t('new and output tokens, cache, and cache share, against your usual day.')],
+    [t('Chats and tasks'), t('those that used the most. Click one to open it.')],
+  ],
+  steps: [
+    t('Each reply of an agent is recorded with its tokens and model.'),
+    t('New counts tokens the model read for the first time. Cache counts tokens it read again from cache.'),
+    t('Claude Code sends its limits only while a chat is open. The page shows the last reading and its time.'),
   ],
 }
 

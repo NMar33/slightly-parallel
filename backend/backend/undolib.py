@@ -39,6 +39,7 @@ from .csvio import append_row, read_rows, rewrite_rows
 from .date_utils import now_iso, today_yymm_dd
 from .db import ViewStore
 from .entities import ENTITIES
+from .hookshared import command_text, plain_text
 from .sessions import Turn, _operator_text, parse_turns
 
 UNDO_CSV = "undo.csv"
@@ -57,12 +58,12 @@ UNDO_TAG_RE = re.compile(r"(?<![\w#])#undo(-yes)?(?![\w-])", re.IGNORECASE)
 # prefix: an id is an artifact only when the artifacts ledger holds it.
 KINDS: dict[str, str] = {
     "vs_": "vision", "rl_": "rule", "pb_": "problem", "ep_": "entrypoint",
-    "sk_": "skill", "ar_": "artifact", "pm_": "prompt", "tk_": "task",
+    "sk_": "skill", "ar_": "artifact", "pm_": "prompt", "tk_": "task", "pu_": "publish",
 }
 # Kinds whose own status has an archived value, shown and restored on their page.
 STATUS_ARCHIVED = ("rule", "skill", "artifact", "prompt")
 # Kinds hidden by archived_at alone: the list reads leave them out.
-HIDDEN_BY_DATE = ("vision", "problem", "entrypoint")
+HIDDEN_BY_DATE = ("vision", "problem", "entrypoint", "publish")
 
 CONFIRM = "#undo-yes"
 MAX_CANDIDATES = 30
@@ -83,7 +84,10 @@ def _rid(agent_id: str, turn: int) -> str:
 
 def _turns(store: ViewStore, agent_id: str) -> list[Turn]:
     from .keeplib import _chat_path
+    from .sessions import helper_ids
 
+    if agent_id in helper_ids(store):
+        return []    # a helper chat: an #undo in its prompt is no operator's
     path = _chat_path(store, agent_id)
     return parse_turns(path) if path is not None else []
 
@@ -93,11 +97,11 @@ def _tags(t: Turn) -> set[str]:
     text = _operator_text(t)
     if "#undo" not in text.lower():
         return set()
-    return {"yes" if m.group(1) else "ask" for m in UNDO_TAG_RE.finditer(text)}
+    return {"yes" if m.group(1) else "ask" for m in UNDO_TAG_RE.finditer(command_text(text))}
 
 
 def _hint(t: Turn) -> str:
-    body = UNDO_TAG_RE.sub("", _operator_text(t)).strip()
+    body = UNDO_TAG_RE.sub("", plain_text(_operator_text(t))).strip()
     return " ".join(body.split())[:300]
 
 
@@ -196,7 +200,7 @@ def candidates(store: ViewStore, agent_id: str) -> dict[str, Any]:
     promptlib.adopt(store)
     project = req.get("project") or ""
     found: list[dict[str, Any]] = []
-    for kind in ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "prompt", "task"):
+    for kind in ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "publish", "prompt", "task"):
         ent = ENTITIES[kind]
         rows = store.query(
             f"SELECT * FROM {ent.view} WHERE project = ? AND (agent_id = ? OR created_date >= ?) "
@@ -301,7 +305,7 @@ def apply(store: ViewStore, agent_id: str) -> dict[str, Any]:
 
 def _archive(store: ViewStore, kind: str, eid: str, actor: str) -> None:
     if kind == "task":
-        from .routers.tasks_extra import _set_archived
+        from .tasklib import _set_archived
         _set_archived(store, eid, today_yymm_dd(), actor)
         return
     ent = ENTITIES[kind]
@@ -319,12 +323,22 @@ def _archive(store: ViewStore, kind: str, eid: str, actor: str) -> None:
 
 
 def restore(store: ViewStore, eid: str, actor: str) -> dict[str, Any]:
-    """Bring one archived entry back, with the status it had."""
+    """Bring one archived entry back, with the status it had. An agent
+    brings back only what #undo archived in its own chat; the operator's
+    page brings back anything."""
+    from .actors import is_agent
+
     kind = _kind_of(store, eid)
     if not kind:
         raise UndoRefused(f"{eid}: not an entry #undo archives")
+    if is_agent(actor) and not any(
+        r.get("agent_id") == actor and r.get("state") == "done"
+        and any(a.get("id") == eid for a in json.loads(r.get("archived") or "[]"))
+        for r in _ledger(store)
+    ):
+        raise UndoRefused(f"{eid}: not archived by #undo in this chat — the operator brings it back")
     if kind == "task":
-        from .routers.tasks_extra import _set_archived
+        from .tasklib import _set_archived
         _set_archived(store, eid, "", actor)
         return {"restored": eid, "kind": kind}
     before = ""

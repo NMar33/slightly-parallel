@@ -1,5 +1,5 @@
 /**
- * The Slightly Parallel identity as outlines (brand/kit/metrics.json: Schibsted Grotesk 700,
+ * The Slightly Parallel identity as outlines (wordmark-metrics.json beside it: Schibsted Grotesk 700,
  * per-glyph paths in em units). Nothing here needs a font. Written by brand/kit/build.py from the kit; do not edit, rebuild.
  */
 export const SP_METRICS = { asc: 0.7324, xh: 0.5273, desc: -0.1904 }

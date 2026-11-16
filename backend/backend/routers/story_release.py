@@ -36,7 +36,7 @@ from ..entities import (
     STORY_IMAGE_COLUMNS, STORY_REQUEST_COLUMNS, TASK_NOTE_COLUMNS, TASK_NOTE_TYPES,
 )
 from ..file_safety import atomic_write, edit_json, safe_read_json
-from .deps import create_answer, get_store, mint_id, not_found, rewrite_one, task_brief
+from .deps import create_answer, get_store, identity_of, mint_id, not_found, rewrite_one, task_brief
 from ..taskevents import append_events as _append_events
 from ..date_utils import now_iso
 
@@ -248,10 +248,11 @@ def story_prompts_delete(preset_id: str, store: ViewStore = Depends(get_store)) 
             if len(data["parts"][part]) != before:
                 gone.append(part)
                 return
+        # Raised inside the edit: an unknown id is a 404 that writes nothing
+        # (the file was rewritten as it was; round 5, the fuzzer).
+        raise not_found("preset", preset_id)
 
     _edit_presets(store, change)
-    if not gone:
-        raise not_found("preset", preset_id)
     return {"deleted": preset_id, "part": gone[0]}
 
 
@@ -438,7 +439,7 @@ def story_post(task_id: str, body: dict = Body(...), store: ViewStore = Depends(
         raise HTTPException(status_code=422, detail=f"request {rid} belongs to task {req.get('task_id')}")
     if str(req.get("status")) != "open":
         raise HTTPException(status_code=409, detail=f"request {rid} is {req.get('status')} — ask the operator for a new one")
-    agent_id = str(body.get("agent_id") or "").strip()
+    agent_id = identity_of(body)
     if not agent_id:
         raise HTTPException(status_code=422, detail="agent_id is required")
     text = str(body.get("body") or "").strip()

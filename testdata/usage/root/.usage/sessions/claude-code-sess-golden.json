@@ -1,0 +1,1 @@
+{"at": "2026-11-01T14:47:00", "session_id": "sess-golden", "model": "claude-opus-4-5", "context": {"used_pct": 61, "size": 200000}, "prompt_cache": {"warm": true, "expires_at": "2026-11-01T14:51:00"}}

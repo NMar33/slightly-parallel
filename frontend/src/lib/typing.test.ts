@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isTypingElement, isTypingTarget } from './typing'
+import { isTypingElement, isTypingTarget, letter } from './typing'
 
 function make(html: string): HTMLElement {
   const host = document.createElement('div')
@@ -32,5 +32,21 @@ describe('isTypingTarget', () => {
     const e = new KeyboardEvent('keydown', { key: '1' })
     Object.defineProperty(e, 'target', { value: input })
     expect(isTypingTarget(e)).toBe(true)
+  })
+})
+
+describe('letter', () => {
+  it('is the Latin letter typed, else the place on the board', () => {
+    expect(letter({ key: 's', code: 'KeyS' })).toBe('s')
+    expect(letter({ key: 'S', code: 'KeyS' })).toBe('s')
+    // Cyrillic: Ctrl+S arrives as ы, t as е.
+    expect(letter({ key: 'ы', code: 'KeyS' })).toBe('s')
+    expect(letter({ key: 'е', code: 'KeyT' })).toBe('t')
+    // Dvorak: the character wins; the key labelled S on QWERTY types o.
+    expect(letter({ key: 'o', code: 'KeyS' })).toBe('o')
+    // Not a letter: the key as it is.
+    expect(letter({ key: 'Enter', code: 'Enter' })).toBe('Enter')
+    expect(letter({ key: '`', code: 'Backquote' })).toBe('`')
+    expect(letter({ key: 'ArrowLeft', code: 'ArrowLeft' })).toBe('ArrowLeft')
   })
 })

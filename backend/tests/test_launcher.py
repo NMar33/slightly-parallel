@@ -42,6 +42,37 @@ def test_env_set_replaces_one_line_and_keeps_the_rest(launcher) -> None:
     assert launcher.read_env() == {"A": "1", "B": "2", "SP_ENABLE_TERMINAL": "1"}
 
 
+def test_two_env_writers_at_once_never_take_each_others_temp_file(launcher, monkeypatch) -> None:
+    """env.tmp was one name for every writer: the second os.replace found the
+    first one's file moved, or moved a file still being written (round 5)."""
+    import threading
+    launcher.ENV_FILE.write_text('A="1"\n', encoding="utf-8")
+    real_write = Path.write_text
+    gate = threading.Barrier(2)
+
+    def write_text(self, *a, **k):
+        out = real_write(self, *a, **k)
+        if self.name.endswith(".tmp"):
+            gate.wait(timeout=5)   # both temp files written before either replace
+        return out
+    monkeypatch.setattr(Path, "write_text", write_text)
+    errors: list[BaseException] = []
+
+    def run(key: str) -> None:
+        try:
+            launcher.env_set(key, "1")
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+    threads = [threading.Thread(target=run, args=(k,)) for k in ("B", "C")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors
+    assert not list(launcher.STATE.glob("*.tmp"))
+    assert launcher.read_env()["A"] == "1"
+
+
 def test_the_venv_python_is_where_each_system_puts_it(launcher, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(launcher, "WINDOWS", True)
     assert launcher.venv_python().parts[-2:] == ("Scripts", "python.exe")
@@ -386,3 +417,56 @@ def test_the_environment_is_made_with_a_python_the_packages_are_built_for(launch
     have.clear()
     with pytest.raises(SystemExit):
         launcher.base_python((3, 15))
+
+
+def test_too_old_a_python_says_how_to_get_one_on_this_system(launcher, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Ubuntu 22.04 ships 3.10, macOS's own python3 is 3.9: the refusal names
+    the install command for the system, not only "a newer Python"."""
+    monkeypatch.setattr(launcher, "WINDOWS", True)
+    assert "python.org/downloads/windows" in launcher.python_hint()
+    monkeypatch.setattr(launcher, "WINDOWS", False)
+    monkeypatch.setattr(launcher.sys, "platform", "darwin")
+    assert "brew install python@3.12" in launcher.python_hint()
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
+    release = tmp_path / "os-release"
+    real = launcher.Path
+    monkeypatch.setattr(launcher, "Path", lambda p, *a: release if p == "/etc/os-release" else real(p, *a))
+    release.write_text('ID=ubuntu\nVERSION_ID="22.04"\n', encoding="utf-8")
+    assert "sudo apt install python3.12 python3.12-venv" in launcher.python_hint()
+    assert "deadsnakes" in launcher.python_hint()
+    release.write_text("ID=arch\n", encoding="utf-8")
+    assert "python.org/downloads" in launcher.python_hint()
+
+
+def test_an_env_with_a_byte_order_mark_or_in_another_encoding(launcher) -> None:
+    """Notepad's BOM made the first key "\\ufeffSP_DATA_ROOT", which nothing
+    read; an "ANSI" .env crashed every command with a traceback."""
+    launcher.ENV_FILE.write_bytes("\ufeffSP_DATA_ROOT=/data\n".encode("utf-8"))
+    assert launcher.read_env() == {"SP_DATA_ROOT": "/data"}
+    launcher.ENV_FILE.write_bytes("SP_DATA_ROOT=C:\\Users\\Jörg\\sp\n".encode("cp1252"))
+    with pytest.raises(SystemExit, match=r"^\[sp\] \.env is not UTF-8"):
+        launcher.read_env()
+
+
+def test_sp_sh_skips_an_interpreter_that_does_not_run(tmp_path: Path) -> None:
+    """A pyenv shim is on PATH for every version pyenv knows and fails for
+    one not installed; it used to be taken on its name alone."""
+    import os
+    import shutil
+    if os.name == "nt":
+        pytest.skip("sp.sh is the POSIX launcher; Windows has sp.py")
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    shim = bin_ / "python3.14"
+    shim.write_text("#!/bin/sh\necho 'pyenv: python3.14: command not found' >&2\nexit 127\n")
+    shim.chmod(0o755)
+    real = bin_ / "python3.12"
+    real.write_text("#!/bin/sh\necho python3.12\n")
+    real.chmod(0o755)
+    (bin_ / "dirname").symlink_to(shutil.which("dirname"))
+    shutil.copy(root / "sp.sh", tmp_path / "sp.sh")
+    got = subprocess.run(["/bin/bash", str(tmp_path / "sp.sh")], env={"PATH": str(bin_)},
+                         capture_output=True, text=True, timeout=10)
+    assert got.stdout.strip() == "python3.12" and got.returncode == 0

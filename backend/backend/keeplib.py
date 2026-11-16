@@ -28,9 +28,9 @@ import hashlib
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from .csvio import append_if_absent, append_row, read_rows, rewrite_rows
+from .csvio import append_if_absent, read_rows, rewrite_rows
 from . import limits
 from .db import ViewStore
 from .docs_md import build_detail, read_detail, resolve_under, safe_ref_part
@@ -40,16 +40,17 @@ from .promptlib import Version, _stamp, parse_doc, render_doc
 from .sessions import Turn, parse_turns
 
 # The tags that are adopted, each into the entity of the same name.
-KINDS: tuple[str, ...] = ("vision", "rule", "problem", "entrypoint", "skill", "artifact")
+KINDS: tuple[str, ...] = ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "publish")
 
 # What a kept row starts as beyond the shared columns. A rule is in force
 # from the moment the operator writes it; a problem is open until solved.
 _DEFAULTS: dict[str, dict[str, str]] = {
     "vision": {},
+    "publish": {},
     "rule": {"status": "active"},
     "problem": {"status": "open"},
     # An entry point is open while the topic is worked on; closed when it is done.
-    "entrypoint": {"status": "open"},
+    "entrypoint": {"status": "open", "state": "active"},
     # A skill is a draft until the operator has read it (skilllib.py).
     "skill": {"status": "draft"},
     # An artifact is a draft until the agent has written the folder and
@@ -58,6 +59,9 @@ _DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 MAX_TEXT = limits.MAX_TEXT
+# An entry point's record has no word limit and the briefing carries it
+# whole; only the file size guard of a document version stands.
+MAX_RECORD = limits.MAX_ENTRYPOINT_RECORD
 MAX_NOTE = limits.MAX_NOTE
 CONTEXT_TURNS = 3
 VERSIONS_DIR = "kept_versions"
@@ -124,40 +128,66 @@ def _adopt_locked(store: ViewStore) -> list[str]:
         ids = {str(r["id"]) for r in store.query(f"SELECT id FROM {ent.view}")}
         ids |= {str(r.get("id") or "") for r in read_rows(store.data_root / ent.csv)}
         known[kind] = ids
+    # An #entrypoint makes no row when it is adopted: its command is kept
+    # until the operator chooses the topic (entrypointask.py), and the
+    # command is the record that it was seen.
+    from . import entrypointlib
+    known["entrypoint"] |= {str(c.get("id") or "") for c in entrypointlib.commands(store)}
 
     added: list[str] = []
     for m in marks:
         kind = str(m["kind"])
-        ent = ENTITIES[kind]
         project, agent = str(m["project"] or ""), str(m["agent_id"] or "")
         turn = int(m["turn"] or 0)
         kid = keep_id(kind, project, agent, turn)
         body = str(m["body"] or "").strip()
-        if kid in known[kind] or not body:
+        # The command alone (no words) is an entry point's too: the agent
+        # proposes the name and the operator chooses.
+        if kid in known[kind] or (not body and kind != "entrypoint"):
             continue
-        date, time = _stamp(str(m["at_ts"]))
-        md_ref = (
-            f"{ent.detail_dir}/{safe_ref_part(date.replace('-', ''), 'nodate')}-"
-            f"{safe_ref_part(time.replace(':', ''), '0000')}__"
-            f"{safe_ref_part(project.lower())}__{safe_ref_part(agent.lower())}__{kid}.md"
-        )
-        row: dict[str, Any] = {
-            "created_date": date, "created_time": time, "project": project,
-            "agent_id": agent, "l1": str(m["title"] or "")[:limits.MAX_TITLE],
-            **_DEFAULTS[kind],
-            "md_ref": md_ref, "source": "captured",
-            "session_id": str(m["session_id"] or ""), "source_turn": turn,
-            "versions_n": 0,
-        }
-        path = store.data_root / md_ref
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(path, build_detail({**row, "l4": body}, kid))
-        append_row(store.data_root / ent.csv, ent.columns, {"id": kid, **row})
+        if kind == "entrypoint":
+            entrypointlib.take_command(
+                store, kid=kid, project=project, agent=agent, session_id=str(m["session_id"] or ""),
+                turn=turn, at=str(m["at_ts"] or ""), name=str(m["title"] or ""))
+            known[kind].add(kid)
+            added.append(kid)
+            continue
+        make_row(store, kind, kid, m)
         known[kind].add(kid)
         added.append(kid)
     if added:
         store.rebuild()
     return added
+
+
+def make_row(store: ViewStore, kind: str, kid: str, mark: dict[str, Any], *, title: str = "",
+             fields: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The kept row of one tagged turn and its document (the message as L4).
+    Idempotent: the same id is written once. ``title`` replaces the line
+    taken from the message (an entry point made from the command alone)."""
+    ent = ENTITIES[kind]
+    project, agent = str(mark["project"] or ""), str(mark["agent_id"] or "")
+    body = str(mark["body"] or "").strip()
+    date, time = _stamp(str(mark["at_ts"]))
+    md_ref = (
+        f"{ent.detail_dir}/{safe_ref_part(date.replace('-', ''), 'nodate')}-"
+        f"{safe_ref_part(time.replace(':', ''), '0000')}__"
+        f"{safe_ref_part(project.lower())}__{safe_ref_part(agent.lower())}__{kid}.md"
+    )
+    row: dict[str, Any] = {
+        "created_date": date, "created_time": time, "project": project,
+        "agent_id": agent, "l1": (title or str(mark["title"] or ""))[:limits.MAX_TITLE],
+        **_DEFAULTS[kind], **(fields or {}),
+        "md_ref": md_ref, "source": "captured",
+        "session_id": str(mark["session_id"] or ""), "source_turn": int(mark["turn"] or 0),
+        "versions_n": 0,
+    }
+    path = store.data_root / md_ref
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(path, build_detail({**row, "l4": body or title}, kid))
+    append_if_absent(store.data_root / ent.csv, ent.columns, {"id": kid, **row})
+    return {"id": kid, **row}
 
 
 # ---------------------------------------------------------------------------
@@ -180,18 +210,21 @@ def read_versions(store: ViewStore, kid: str) -> list[Version]:
 def interpret(
     store: ViewStore, kind: str, row: dict[str, Any], text: str, note: str = "",
     *, by_agent: bool, now: datetime | None = None,
+    on_version: Callable[[Version], None] | None = None,
 ) -> list[Version]:
     """Write the interpretation: a new version, and the entry's L2.
 
     A write identical to the current one is not a version — the history
     answers "what changed", and a no-op entry in it is a lie. The message
-    (L4) is never touched.
+    (L4) is never touched. ``on_version`` is called with a new version under
+    the same lock (an entry point keeps who wrote it).
     """
     body = (text or "").strip()
     if not body:
         raise ValueError("an interpretation cannot be empty")
-    if len(body) > MAX_TEXT:
-        raise ValueError(f"an interpretation is at most {MAX_TEXT} characters")
+    most = MAX_RECORD if kind == "entrypoint" else MAX_TEXT
+    if len(body) > most:
+        raise ValueError(f"an interpretation is at most {most} characters")
     kid = str(row["id"])
     doc = resolve_under(store.data_root, str(row.get("md_ref") or ""))
     if doc is None:
@@ -223,6 +256,8 @@ def interpret(
         fields["versions_n"] = len(versions)
         atomic_write(doc, build_detail({**fields, "l2": body, "l3": l3, "l4": l4}, kid))
         _set_fields(store, kind, kid, {"versions_n": len(versions)})
+        if on_version is not None:
+            on_version(versions[-1])
     return versions
 
 
@@ -277,13 +312,19 @@ def record(store: ViewStore, kind: str, row: dict[str, Any]) -> dict[str, Any]:
         ) or row
     _l2, _l3, message = read_detail(store.data_root, str(origin.get("md_ref") or ""))
     versions = read_versions(store, kid)
+    shown = [v.as_dict() for v in versions]
+    if kind == "entrypoint":
+        # Many chats write one topic's record: each version names its chat.
+        from . import entrypointlib
+        known = entrypointlib.authors(store, row)
+        shown = [{**v, **entrypointlib.by_of(row, v, known)} for v in shown]
     out: dict[str, Any] = {
         "kind": kind,
         "from": str(origin["id"]) if origin is not row else None,
         "message": message,
         "turn": None, "before": [], "after": [],
-        "versions": [v.as_dict() for v in versions],
-        "current": versions[-1].as_dict() if versions else None,
+        "versions": shown,
+        "current": shown[-1] if shown else None,
     }
     if str(origin.get("source") or "") == "demo":
         # An example has no chat log; examples.py holds the turns around it.

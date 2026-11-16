@@ -100,9 +100,12 @@ export function useLanes({
     )
     const failed = results.filter((r) => r.status === 'rejected').length
     if (failed > 0) {
-      // Roll back the optimistic update
-      setTasks(putBack(prevTasks, new Set(affected.map((t) => t.id))))
-      saveExtraLanes(prevLanes)
+      // Put back only the cards that did not save: the saved ones carry the
+      // new name on the server, and showing them under the old one was wrong
+      // until the next refresh.
+      const lost = new Set(affected.filter((_, i) => results[i]!.status === 'rejected').map((t) => t.id))
+      setTasks(putBack(prevTasks, lost))
+      if (lost.size === affected.length) saveExtraLanes(prevLanes)
       toast.error(t('Couldn\'t rename lane "{name}"', { name: oldName }), {
         description: t('{failed} of {total} task updates failed.', { failed, total: affected.length }),
       })

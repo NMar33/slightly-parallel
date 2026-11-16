@@ -1,0 +1,2 @@
+{"turn": 1, "at": "2026-11-01T13:30:40", "id": "cx-1001", "tool": "codex", "model": "gpt-5-codex", "new": 6000, "cache_write": 0, "cache": 20000, "output": 800, "thinking": 300, "ttl": "", "helper": "", "limit": {"five_hour": 8.0, "seven_day": 80.0}}
+{"turn": 2, "at": "2026-11-01T13:46:00", "id": "cx-1002", "tool": "codex", "model": "gpt-5-codex", "new": 3000, "cache_write": 0, "cache": 26000, "output": 1200, "thinking": 500, "ttl": "", "helper": "", "limit": {"five_hour": 9.0, "seven_day": 81.0}}

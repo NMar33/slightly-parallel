@@ -32,8 +32,12 @@ class FakeMsvcrt:
 
 def test_the_lock_uses_msvcrt_where_there_is_no_fcntl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeMsvcrt()
-    monkeypatch.setattr(file_safety, "fcntl", None)
-    monkeypatch.setattr(file_safety, "msvcrt", fake)
+    # The one-try lock lives in hookshared (the hook shares it); acquire_flock
+    # also asks file_safety's own names which platform it is on.
+    from backend import hookshared
+    for mod in (file_safety, hookshared):
+        monkeypatch.setattr(mod, "fcntl", None)
+        monkeypatch.setattr(mod, "msvcrt", fake)
     p = tmp_path / "x.lock"
     with file_safety.acquire_flock(p) as fh:
         fh.write("a")

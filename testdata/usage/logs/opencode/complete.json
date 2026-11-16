@@ -1,0 +1,7 @@
+{"text": "ok", "usage": [
+ {"id": "msg_oc1", "at": 1793534402000, "model": "claude-sonnet-4-5", "input": 211, "output": 8, "reasoning": 40, "cache_read": 9216, "cache_write": 5, "helper": ""},
+ {"id": "msg_oc1", "at": 1793534403000, "model": "claude-sonnet-4-5", "input": 211, "output": 9, "reasoning": 40, "cache_read": 9216, "cache_write": 5, "helper": ""},
+ {"id": "msg_oc2", "at": 1793534404000, "model": "claude-haiku-4-5", "input": 30, "output": 12, "reasoning": 0, "cache_read": 100, "cache_write": 0, "helper": "ses_child01"},
+ {"id": "msg_oc3", "at": 1e999, "model": "m", "input": "x", "output": 1e999, "reasoning": null, "cache_read": -5, "cache_write": true, "helper": ""},
+ {"no": "id"}
+]}

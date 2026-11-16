@@ -36,6 +36,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -85,7 +86,13 @@ def read_env() -> dict[str, str]:
     out: dict[str, str] = {}
     if not ENV_FILE.exists():
         return out
-    for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+    try:
+        # utf-8-sig: Notepad's byte-order mark made the first key "\ufeffSP_DATA_ROOT",
+        # which nothing read, and the server opened the demo folder.
+        text = ENV_FILE.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        sys.exit(f"[sp] .env is not UTF-8 (byte {exc.start}): save it as UTF-8 and run sp again")
+    for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -109,9 +116,22 @@ def env_set(key: str, value: str) -> None:
     lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
     lines = [ln for ln in lines if not ln.startswith(f"{key}=")]
     lines.append(f'{key}="{value}"')
-    tmp = STATE / "env.tmp"
+    # This process's own temp name: two launchers at once (start and a
+    # stop, or two terminals) shared env.tmp, and one replace found none.
+    tmp = STATE / f"env.{os.getpid()}.{threading.get_ident()}.tmp"
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(tmp, ENV_FILE)
+    # Windows refuses to replace a file another replace or a reader holds
+    # for a moment (PermissionError): try again for a second, as
+    # hookshared.replace_file does.
+    for attempt in range(40):
+        try:
+            os.replace(tmp, ENV_FILE)
+            return
+        except PermissionError:
+            if attempt == 39:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.025)
 
 
 def settings() -> dict[str, str]:
@@ -193,6 +213,11 @@ def spawn(args: list[str], **kw) -> subprocess.Popen:
     what it started too (npm → sh → node vite → esbuild)."""
     if WINDOWS:
         kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        if Path(sys.executable).name.lower() == "pythonw.exe":
+            # Started without a console (at login, from the shortcut): a
+            # console child would open its own window, and closing that
+            # window killed the server.
+            kw["creationflags"] |= subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
     else:
         kw["process_group"] = 0
     # Its own group is not the terminal's foreground group, so a read of the
@@ -225,7 +250,10 @@ def proc_start(pid: int) -> str:
     except (OSError, IndexError):
         pass
     try:
-        got = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+        # In the C locale: the stamp is compared with one written by a
+        # LaunchAgent (no locale), and ps spells the date by the locale.
+        got = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                             timeout=5, env={**os.environ, "LC_ALL": "C"})
         return " ".join(got.stdout.split())
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -339,7 +367,8 @@ def port_free(host: str, port: int) -> bool:
     finds a listener on 0.0.0.0 that macOS lets a 127.0.0.1 bind share."""
     import socket
     target = "127.0.0.1" if host in ("", "0.0.0.0") else host
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as c:
+    family = socket.AF_INET6 if ":" in target else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as c:
         c.settimeout(0.5)
         try:
             if c.connect_ex((target, port)) == 0:
@@ -388,16 +417,38 @@ def builds_ui(dev: bool) -> bool:
     return (settings().get("SP_REBUILD_UI") or "").lower() in ("1", "true", "yes", "on")
 
 
+def python_hint() -> str:
+    """How to get a supported Python on this system, in one clause. The
+    launcher picks it up by itself afterwards (sp.sh, sp.cmd look for
+    python3.14 … python3.11 first)."""
+    if WINDOWS:
+        return "install Python 3.12 from https://www.python.org/downloads/windows/ and start again"
+    if sys.platform == "darwin":
+        return ("install it with brew install python@3.12, or from https://www.python.org/downloads/macos/, "
+                "and start again")
+    try:
+        release = Path("/etc/os-release").read_text(encoding="utf-8").lower()
+    except OSError:
+        release = ""
+    if "ubuntu" in release or "debian" in release:
+        # Ubuntu 22.04 ships 3.10: python3.12 comes from the deadsnakes PPA there.
+        return ("install it with sudo apt install python3.12 python3.12-venv (on Ubuntu 22.04 first: "
+                "sudo add-apt-repository ppa:deadsnakes/ppa), and start again")
+    if "fedora" in release or "rhel" in release:
+        return "install it with sudo dnf install python3.12, and start again"
+    return "install Python 3.12 (https://www.python.org/downloads/) and start again"
+
+
 def preflight(dev: bool) -> None:
     """What a first start needs, checked before minutes are spent installing:
     each miss is one line that says what to do."""
     if sys.version_info < (3, 11):
-        fail(f"Python 3.11+ is needed, this is {sys.version.split()[0]} — install a newer Python and run this with it")
+        fail(f"Python 3.11+ is needed, this is {sys.version.split()[0]} — {python_hint()}")
     import tarfile
     if not hasattr(tarfile, "data_filter"):
         # Restoring a backup unpacks it with tarfile's safety filter, which
         # Python 3.11.0–3.11.3 does not have.
-        fail(f"Python 3.11.4+ is needed, this is {sys.version.split()[0]} — install a newer Python and run this with it")
+        fail(f"Python 3.11.4+ is needed, this is {sys.version.split()[0]} — {python_hint()}")
     if not venv_python().exists():
         import importlib.util
         # `python -m venv` needs ensurepip to give the environment its pip.
@@ -453,11 +504,14 @@ def base_python(version: tuple[int, int] | None = None) -> list[str]:
     if OLDEST_PYTHON <= (version or tuple(sys.version_info[:2])) <= NEWEST_PYTHON:
         return [sys.executable]
     versions = [(3, m) for m in range(NEWEST_PYTHON[1], OLDEST_PYTHON[1] - 1, -1)]
+    py = shutil.which("py") if os.name == "nt" else None
     for major, minor in versions:
-        found = ([shutil.which("py"), f"-{major}.{minor}"] if os.name == "nt" and shutil.which("py")
-                 else [shutil.which(f"python{major}.{minor}")])
-        if found[0] and subprocess.run([*found, "-c", "import venv, ensurepip"], capture_output=True).returncode == 0:
-            return [str(x) for x in found]
+        exe = py or shutil.which(f"python{major}.{minor}")
+        if not exe:
+            continue
+        found = [exe, f"-{major}.{minor}"] if py else [exe]
+        if subprocess.run([*found, "-c", "import venv, ensurepip"], capture_output=True).returncode == 0:
+            return found
     fail(f"Python {sys.version.split()[0]} is newer than the backend's packages are built for "
          f"(DuckDB has none past {NEWEST_PYTHON[0]}.{NEWEST_PYTHON[1]}). Install Python "
          f"{NEWEST_PYTHON[0]}.{NEWEST_PYTHON[1]} from https://www.python.org and start again: "
@@ -715,7 +769,7 @@ def cmd_down(_: list[str] | None = None) -> None:
     # The supervisor leads its own group: stopping the group stops it, the
     # run, and both servers.
     stop_tree(pid)
-    for _ in range(10):
+    for _wait in range(10):
         if not alive(pid):
             break
         time.sleep(1)

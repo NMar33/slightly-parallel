@@ -80,7 +80,9 @@ def last_prompt(transcript: Path, tail_bytes: int = 400_000) -> float | None:
             fh.seek(0, 2)
             size = fh.tell()
             fh.seek(max(0, size - tail_bytes))
-            lines = fh.read().decode("utf-8", "replace").splitlines()
+            # At the newline only: str.splitlines also splits at U+2028
+            # and \x85, which a JSON string may hold unescaped.
+            lines = fh.read().decode("utf-8", "replace").split("\n")
     except OSError:
         return None
     for line in reversed(lines):
@@ -167,7 +169,9 @@ def _codex_prompt(rollout: Path, tail_bytes: int = 400_000) -> float | None:
             fh.seek(0, 2)
             size = fh.tell()
             fh.seek(max(0, size - tail_bytes))
-            lines = fh.read().decode("utf-8", "replace").splitlines()
+            # At the newline only: str.splitlines also splits at U+2028
+            # and \x85, which a JSON string may hold unescaped.
+            lines = fh.read().decode("utf-8", "replace").split("\n")
     except OSError:
         return None
     for line in reversed(lines):

@@ -297,7 +297,7 @@ def test_the_structured_kinds_have_closed_vocabularies(client: TestClient) -> No
 def test_task_work_is_empty_without_captured_turns(client: TestClient) -> None:
     tid = _mk_task(client, "No chat named me")
     work = client.get(f"/api/tasks/{tid}/work").json()["work"]
-    assert work == {"files": [], "commits": 0, "add": 0, "del": 0, "sessions": 0}
+    assert work == {"files": [], "commits": 0, "add": 0, "del": 0, "sessions": 0, "commit_list": [], "signed": 0, "chat": 0}
 
 
 def test_the_repositorys_account_sits_beside_the_agents(client: TestClient, data_root) -> None:
@@ -457,3 +457,16 @@ def test_built_in_skills_go_into_all_projects_once(client: TestClient, tmp_path,
     assert not copy.exists()
     skilllib.autoinstall_builtin(store)
     assert not copy.exists()
+
+
+def test_a_bad_image_is_refused_with_its_slot_named(client: TestClient) -> None:
+    """The refusals story_images.checked_image gives, word for word."""
+    tid = _mk_task(client, "bad images")
+    for item, detail in (
+        ({"ext": "bmp", "data_base64": PNG}, "item 0: ext must be one of gif, jpeg, jpg, png, webp"),
+        ({"ext": "png", "data_base64": "not base64!"}, "item 0: data_base64 is not valid base64"),
+        ({"ext": "png", "data_base64": ""}, "item 0: image is empty"),
+    ):
+        r = client.post(f"/api/tasks/{tid}/evidence", json={
+            "agent_id": "cc-test", "items": [{"kind": "image", "title": "x", **item}]})
+        assert (r.status_code, r.json()["detail"]) == (422, detail)

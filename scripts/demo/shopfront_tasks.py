@@ -310,7 +310,7 @@ def setup(sim, w) -> None:
         if stack:
             _stacks.setdefault(stack, []).append((pos or 0, key))
     # Stacks: the first step's id names the stack; the rest queue behind it.
-    for name, members in _stacks.items():
+    for _name, members in _stacks.items():
         members.sort()
         head = members[0][1]
         for _, key in members:

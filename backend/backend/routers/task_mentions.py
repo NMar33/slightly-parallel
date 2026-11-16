@@ -6,6 +6,7 @@ import time
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from .. import taskthread
 from ..db import ViewStore
 from .deps import (
     DONE_SQL, agents_by_id, attach_agent, etag_for, get_store, iso_moment, json_response,
@@ -49,6 +50,7 @@ def tasks_mentions_summary(
 def tasks_mentions(
     task_id: str,
     request: Request,
+    full: bool = Query(False, description="also `turns`: each turn once, with its whole text"),
     store: ViewStore = Depends(get_store),
 ) -> Response:
     """Every captured turn that names this task, newest first.
@@ -56,8 +58,17 @@ def tasks_mentions(
     Each row carries the agent behind it under ``agent`` (``null`` when the
     chat is gone): the names a reader shows instead of the raw id, and the
     tool, folder and session id a resume command is built from.
+
+    With ``full=1`` the answer also has the task's thread (taskthread.py):
+    ``turns``, each once, with ``why`` it is there (``mention``, ``done`` —
+    inside a #done stretch — or ``next`` — up to the next task), the sides
+    that named it (``roles``), the operator's message (``said``) and the
+    agent's reply (``reply``) whole; and ``done_turns`` / ``next_turns``,
+    how many turns each adds, and ``has_done``.
     """
-    etag = etag_for(f"tasks:mentions:{task_id}", store, "tasks", "chats")
+    # The thread also reads done.csv and now.csv, which sit in "rest".
+    areas = ("tasks", "chats", "rest") if full else ("tasks", "chats")
+    etag = etag_for(f"tasks:mentions:{task_id}:{int(full)}", store, *areas)
     if (r := maybe_304(request, etag)) is not None:
         return r
     rows = store.query(
@@ -65,7 +76,10 @@ def tasks_mentions(
         "FROM task_mentions WHERE task_id = ? ORDER BY at_ts DESC", (task_id,)
     )
     attach_agent(store, rows)
-    return json_response({"total": len(rows), "mentions": rows}, etag)
+    out: dict = {"total": len(rows), "mentions": rows}
+    if full:
+        out.update(taskthread.thread(store, task_id, rows))
+    return json_response(out, etag)
 
 
 _DONE_SQL = DONE_SQL  # a finished task in SQL, from the one list of done statuses (deps)

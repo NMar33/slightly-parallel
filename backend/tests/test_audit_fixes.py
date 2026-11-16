@@ -38,10 +38,11 @@ def test_an_agent_cannot_replace_a_later_round(client: TestClient) -> None:
     assert r.status_code == 200, r.text
 
 
-def test_two_identical_edits_in_one_second_are_two_events(client: TestClient) -> None:
+def test_two_edits_in_one_second_are_two_events(client: TestClient) -> None:
+    # Two edits of the text (an unchanged text sent again is no edit).
     tid = make_task(client, "t")
-    for _ in range(2):
-        assert client.post(f"/api/tasks/{tid}/update", json={"description": "same"}).status_code == 200
+    for text in ("one", "two"):
+        assert client.post(f"/api/tasks/{tid}/update", json={"description": text}).status_code == 200
     events = [e for e in client.get(f"/api/tasks/{tid}/events").json()["events"] if e["field"] == "description"]
     assert len(events) == 2 and len({e["event_id"] for e in events}) == 2
 
@@ -209,3 +210,26 @@ def test_the_timelapse_reads_git_again_only_for_a_new_head(tmp_path: Path, monke
     subprocess.run(["git", "commit", "-qm", "three"], cwd=repo, check=True)
     third = timelapse._git_part(str(repo), *span)
     assert len(reads) == 2 and third is not None and len(third[0]["commits"]) == len(first[0]["commits"]) + 1
+
+
+def test_a_chat_that_names_no_folder_has_no_repository(tmp_path: Path, monkeypatch) -> None:
+    """``Path("")`` is ``.``: a meta.json with no ``cwd`` read the server's own
+    checkout as the chat's repository, and its commits as the chat's work."""
+    import json as _json
+    import subprocess
+    from backend import gitwork
+    from backend.file_safety import given_path
+    from backend.skilllib import _dests
+    gitwork.forget()
+    here = tmp_path / "server"
+    here.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=here, check=True)
+    monkeypatch.chdir(here)                  # the server runs inside a repository
+    for meta in ({}, {"cwd": ""}, {"cwd": "  "}):
+        chat = tmp_path / f"chat{len(meta)}{meta.get('cwd', '-')!r}" / "chat.md"
+        chat.parent.mkdir()
+        (chat.parent / "meta.json").write_text(_json.dumps(meta), encoding="utf-8")
+        assert gitwork.repo_for_chat(chat) is None
+    assert given_path("") is None and given_path(None) is None
+    assert _dests("", "plan") == [] and _dests(None, "plan") == []
+    gitwork.forget()

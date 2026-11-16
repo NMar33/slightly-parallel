@@ -1,0 +1,996 @@
+{
+ "note": "Titles of the operator's open merkhet board on 2026-11-11 (titles only), proposals an agent might write, and real pairs of one task filed twice. Built for similarlib; see docs/next-tasks.md.",
+ "board": [
+  {
+   "id": "tk_634026ba",
+   "title": "Architecture form without a scan"
+  },
+  {
+   "id": "tk_220381a5",
+   "title": "Start with one command, without git clone: a pip / pipx package"
+  },
+  {
+   "id": "tk_932e4c9b",
+   "title": "Reliability pass: MCP write test, hook error log, pyright in CI"
+  },
+  {
+   "id": "tk_f9408de8",
+   "title": "AST guard for Path(str(x or \"\")) (audit pattern P01)"
+  },
+  {
+   "id": "tk_66d8cef1",
+   "title": "Split the oversized backend functions"
+  },
+  {
+   "id": "tk_c80af7e4",
+   "title": "Frontend: one way for prefs, styles and ratings; dead code in runs.tsx"
+  },
+  {
+   "id": "tk_c239649a",
+   "title": "POST /api/tasks is registered twice"
+  },
+  {
+   "id": "tk_6c67fc93",
+   "title": "Frontend: English text outside t() and radiogroups without arrow keys"
+  },
+  {
+   "id": "tk_99ae57f3",
+   "title": "Terminal forks from the multi-threaded server"
+  },
+  {
+   "id": "tk_804df527",
+   "title": "Tests: shared fixtures, no sleeps, a fixed clock"
+  },
+  {
+   "id": "tk_ca1267b1",
+   "title": "Type-check scripts/ with pyright"
+  },
+  {
+   "id": "tk_54406e4e",
+   "title": "Typed request bodies for the write routes"
+  },
+  {
+   "id": "tk_b8c5619c",
+   "title": "skills.jsonl has two writers and neither takes the lock"
+  },
+  {
+   "id": "tk_1c1c9a39",
+   "title": "Calendar quick-add on a fresh install sends project 'all' and gets a scope error"
+  },
+  {
+   "id": "tk_a4576fab",
+   "title": "skill_draft makes an agent's draft the current version of any skill"
+  },
+  {
+   "id": "tk_103fef81",
+   "title": "Lens creates take any project string; a same-minute re-post drops the fix"
+  },
+  {
+   "id": "tk_cfcbab0c",
+   "title": "Test suite leftovers: sleeps as synchronisation, sp.py restart untested"
+  },
+  {
+   "id": "tk_5d76d8bf",
+   "title": "Setup leftovers: $ in hook paths, IPv6 URLs, Disconnect and a user's @AGENTS.md"
+  },
+  {
+   "id": "tk_9cf834cf",
+   "title": "A backup restore takes no ledger locks: a write in flight overwrites it"
+  },
+  {
+   "id": "tk_4fd7cea4",
+   "title": "GET /api/prompts is registered twice: the prompt lens routes never answer"
+  },
+  {
+   "id": "tk_ef617e99",
+   "title": "Public text: made-up entry point, demo perf numbers, synthetic monitor GIF"
+  },
+  {
+   "id": "tk_9a138757",
+   "title": "Release check: scan pushed history, identities, binaries and all home paths"
+  },
+  {
+   "id": "tk_677100ca",
+   "title": "#decision entry: why missing on the Decisions page, file still in L1–L4"
+  },
+  {
+   "id": "tk_035f5b19",
+   "title": "Task: line not read when Co-Authored-By sits in its own paragraph"
+  },
+  {
+   "id": "tk_b8f9175b",
+   "title": "Task work counts untracked Setup files as the task's uncommitted work"
+  },
+  {
+   "id": "tk_8c94f004",
+   "title": "Finish and publish the site monitoring video"
+  },
+  {
+   "id": "tk_be0e1df9",
+   "title": "Task update: the document is written inside the row rewrite, not after it"
+  },
+  {
+   "id": "tk_4541b6c1",
+   "title": "donelib: a #done's moves, history and ledger rows are not one operation"
+  },
+  {
+   "id": "tk_e5ca6059",
+   "title": "MCP writes: a timeout reads as server down; report and comment repeat on retry"
+  },
+  {
+   "id": "tk_ff3b6c47",
+   "title": "Task surfaces: untranslated strings, status row idiom, three task readers"
+  },
+  {
+   "id": "tk_83f634ed",
+   "title": "Task code: private names across modules, two paste regexes, task_work too long"
+  },
+  {
+   "id": "tk_f1f51c69",
+   "title": "Task window: late read overwrites typing; archive drops edits; archived blocks"
+  },
+  {
+   "id": "tk_58e96ef1",
+   "title": "A task tag that lets the agent move the card to review and other columns"
+  },
+  {
+   "id": "tk_3e5d38a7",
+   "title": "A feed of the agent's autonomous work: each task a message, moves, comments"
+  },
+  {
+   "id": "tk_86f05d8c",
+   "title": "Codex limits read: an API-key login reads as 'not signed in'"
+  },
+  {
+   "id": "tk_b3d06598",
+   "title": "macOS terminal test: a screen of one line after the command, not explained"
+  },
+  {
+   "id": "tk_7bdb5b94",
+   "title": "Stop hook reads usage.jsonl and limits.jsonl whole on every reply"
+  },
+  {
+   "id": "tk_ddfa8dbe",
+   "title": "Prune facts.jsonl and insights.json, which grow without end"
+  },
+  {
+   "id": "tk_e252779f",
+   "title": "A 5-hour limit that runs out after the day's feed waits a day for its message"
+  },
+  {
+   "id": "tk_3a363c87",
+   "title": "Timer durations go negative in the autumn DST hour"
+  },
+  {
+   "id": "tk_ec0e3880",
+   "title": "Real Codex and OpenCode CLIs against a local stub model"
+  },
+  {
+   "id": "tk_1d93ff25",
+   "title": "DNS for www.getbewrite.com: domain in Firebase Hosting and a Namecheap record"
+  },
+  {
+   "id": "tk_d859301f",
+   "title": "At #done the agent may offer next tasks, only when they truly follow"
+  },
+  {
+   "id": "tk_b2fb999a",
+   "title": "Video: Codex agents dashboard + Slightly Parallel, from a reference video"
+  },
+  {
+   "id": "tk_e870c9c4",
+   "title": "короче, я думаю сделать первый пост пока без статьи, сделаю презентационное…"
+  },
+  {
+   "id": "tk_1c65f464",
+   "title": "A couple of YouTube channels with simple, potentially viral content"
+  },
+  {
+   "id": "tk_809fb734",
+   "title": "закончить и выложить это видео сейчас оно халф дан. 9плохой вординг, смешанный…"
+  },
+  {
+   "id": "tk_fae345dc",
+   "title": "Понял, по памяти этого разговора. Тема одна: серия про игру Lantern Sums…"
+  },
+  {
+   "id": "tk_beb38fc6",
+   "title": "Lantern Sums part 3 (Halloween): finish and publish the video"
+  },
+  {
+   "id": "tk_5ac62cf8",
+   "title": "Мониторинг лимитов и токенов: что осталось по подписке, что потрачено"
+  },
+  {
+   "id": "tk_b94782fa",
+   "title": "Product presentation film/GIF: terminals → SP, tags, board, data-flow diagram"
+  },
+  {
+   "id": "tk_33301190",
+   "title": "Tasks: refactoring and audit, with Codex; then the b-and-p-2611-01 chat"
+  },
+  {
+   "id": "tk_52b142ad",
+   "title": "Chat capture: the last reply of a turn with several replies is not in chat.md"
+  },
+  {
+   "id": "tk_51b87348",
+   "title": "Entry points update: what the user opens to read; commands only from the user"
+  },
+  {
+   "id": "tk_6451c65b",
+   "title": "A briefing file written by SP that brings an agent up to speed on a project"
+  },
+  {
+   "id": "tk_caf2b06a",
+   "title": "Smart Healt / Regular task / pomodoro"
+  },
+  {
+   "id": "tk_00899968",
+   "title": "New Axis for the Radar"
+  },
+  {
+   "id": "tk_948c010b",
+   "title": "Task presentation update"
+  },
+  {
+   "id": "tk_60b3d970",
+   "title": "Secretaty Update"
+  },
+  {
+   "id": "tk_08225017",
+   "title": "Architecture Evolution"
+  },
+  {
+   "id": "tk_6cf8a81f",
+   "title": "Secretary first message"
+  },
+  {
+   "id": "tk_f64e73ca",
+   "title": "Killer  future timer update"
+  },
+  {
+   "id": "tk_db6665ae",
+   "title": "Global testing"
+  },
+  {
+   "id": "tk_efb445d3",
+   "title": "Автозапуск."
+  },
+  {
+   "id": "tk_8d57ac45",
+   "title": "Memory and latency audit (with Codex); a diagnostics file the user can send"
+  },
+  {
+   "id": "tk_de97db3a",
+   "title": "Prompts: the Task axis is misleading — find out the logic behind it"
+  },
+  {
+   "id": "tk_70a44f6f",
+   "title": "Agents: check every section from every entry point; tabs instead of the rail?"
+  },
+  {
+   "id": "tk_61fa619b",
+   "title": "Skills: what happens on edits on disk; skill files the page cannot edit"
+  },
+  {
+   "id": "tk_aa5522ba",
+   "title": "Plans for 2.0: X Code support, LinkedIn newsletter, MCP for the To do column"
+  },
+  {
+   "id": "tk_150d85a8",
+   "title": "#now: an optional short agent note under the operator's message"
+  },
+  {
+   "id": "tk_97472454",
+   "title": "Skills: check how installed skills are found, brought in and added to projects"
+  },
+  {
+   "id": "tk_1f29f661",
+   "title": "Importing a project's old chats after install: the logic, to discuss"
+  },
+  {
+   "id": "tk_af95b39f",
+   "title": "Terminal on Windows through ConPTY (pywinpty), after this release"
+  },
+  {
+   "id": "tk_b084edc0",
+   "title": "Kanban crashes on unticking Unclassified (3-col); old names in Task analytics"
+  },
+  {
+   "id": "tk_65717b00",
+   "title": "Agents page: sorting, filters, chat order, compact view, status; features file"
+  },
+  {
+   "id": "tk_85ad4675",
+   "title": "Tasks: a basic kind (bug, feature…), set from the chat, findable by agents"
+  },
+  {
+   "id": "tk_ff6807e8",
+   "title": "Reader ideas: web-chat connector (yes), stored variables (maybe), CI tools (no)"
+  },
+  {
+   "id": "tk_664140d5",
+   "title": "Check spawned agents, track chat branching, highlight new tasks with fading"
+  },
+  {
+   "id": "tk_ce3e49b7",
+   "title": "Разобраться с папками проекта в integrations.csv"
+  },
+  {
+   "id": "tk_0cd62ed8",
+   "title": "Поиск багов и рефакторинг — разрастающийся скилл"
+  },
+  {
+   "id": "tk_3f36fa52",
+   "title": "Аудит: подумать про это, тут есть что-то интересное"
+  },
+  {
+   "id": "tk_5d087243",
+   "title": "Доработать, как выглядят чаты: своя прокрутка, сессии не мешают скроллу"
+  },
+  {
+   "id": "tk_100e3f16",
+   "title": "так а я правильно понял ччто таски простреливают сквозь чат целиком без учета…"
+  },
+  {
+   "id": "tk_24be6269",
+   "title": "Retroactive task: agent writes it from done work, with its stretch and approve"
+  },
+  {
+   "id": "tk_2534d219",
+   "title": "#task-plan and #task-execute: agent plans lanes and cards, then works them"
+  },
+  {
+   "id": "tk_dc004c9f",
+   "title": "Cores: a helper links each commit to its core, then task and chat follow"
+  },
+  {
+   "id": "tk_a0187e8e",
+   "title": "Plan the English launch: dev.to, Show HN, Reddit, Product Hunt and the rest"
+  },
+  {
+   "id": "tk_259d907e",
+   "title": "Project code: rename to project name, check which names are allowed (upper case)"
+  },
+  {
+   "id": "tk_b72c86f1",
+   "title": "Ask on Habr how best to show the architecture"
+  },
+  {
+   "id": "tk_986d728d",
+   "title": "Make a page for SP, set up releases and tags properly"
+  },
+  {
+   "id": "tk_fb098657",
+   "title": "Agent crew: mark key agents as crew, manage their memory, tag to keep chat parts"
+  },
+  {
+   "id": "tk_3e67a26a",
+   "title": "Workflow tag: save a working example A to Z, make a skill after several runs"
+  },
+  {
+   "id": "tk_348cfff5",
+   "title": "Keep a task's chat and code, and a base of solved tasks agents can search"
+  },
+  {
+   "id": "tk_32a86895",
+   "title": "Project knowledge base and research pages: agents feed one place"
+  },
+  {
+   "id": "tk_50046b12",
+   "title": "Agent memory and handover: layered quote-based records, a memory dashboard"
+  },
+  {
+   "id": "tk_e0579f11",
+   "title": "A #pin tag and a running task log the agent adds to every turn"
+  },
+  {
+   "id": "tk_9e11b497",
+   "title": "Token, limit and context tracking per agent; a memory session before handover"
+  },
+  {
+   "id": "tk_cbb860dc",
+   "title": "A nature channel built on Fourier series"
+  },
+  {
+   "id": "tk_592928d5",
+   "title": "A network of Telegram channels and a curated learning-resources site"
+  },
+  {
+   "id": "tk_10fbbc4d",
+   "title": "Fourier circles idea: work on it more, and make a logic app from it too"
+  },
+  {
+   "id": "tk_a9282c33",
+   "title": "League: fix video bugs, clearer rules, NN-trained racers, more sports"
+  },
+  {
+   "id": "tk_db083fd5",
+   "title": "Comedy show in the style of late-90s fantasy strategy games (pixel, old-school)"
+  },
+  {
+   "id": "tk_479fe721",
+   "title": "#now refused when the same message pastes text with other #tags"
+  },
+  {
+   "id": "tk_9b7c65cc",
+   "title": "YouTube channel ideas: shortlist, multi-channel rules, books, life hacks, magic"
+  },
+  {
+   "id": "tk_ac63c3bc",
+   "title": "Next Lantern Sums videos: multiplayer, 30-minute arcade speedrun, desktop app"
+  },
+  {
+   "id": "tk_059fe9f7",
+   "title": "Память чата и статус задачи от агента: оценка сообщений, возобновление, граф"
+  },
+  {
+   "id": "tk_1fdcb2bf",
+   "title": "Переработать дизайн программы: текущий слабый, продавать тяжело"
+  },
+  {
+   "id": "tk_0a03877f",
+   "title": "Expand Slightly Parallel promotion to niche platforms (imgur and the like)"
+  },
+  {
+   "id": "tk_a611cca5",
+   "title": "#monitor: helper agent finds CPU/memory hogs and leaks; hook suggests it"
+  },
+  {
+   "id": "tk_1a2270b1",
+   "title": "Agent commands: list lanes, move a task to a lane; highlight tasks on the board"
+  },
+  {
+   "id": "tk_4500ee6a",
+   "title": "Red flags column; a tag to move to review; a feed of the agent's autonomous work"
+  },
+  {
+   "id": "tk_45eef036",
+   "title": "Cores: an animated core (an atom) with the open threads floating around it"
+  },
+  {
+   "id": "tk_a5dc8b0c",
+   "title": "A #now task's stretch reaches back to the previous named task, not to its #now"
+  },
+  {
+   "id": "tk_34adc26a",
+   "title": "Agent triage of the board: review, risks, grouping into a batch; work in waves"
+  },
+  {
+   "id": "tk_f42ec5b3",
+   "title": "Publish page: think it through, check it works, run the tests, design"
+  },
+  {
+   "id": "tk_bd39207f",
+   "title": "короч вот ответ от прайза и я набросал свои черновики в него, все перемешанно (…"
+  },
+  {
+   "id": "tk_c0420802",
+   "title": "Setup: pick the project folder from a file and folder menu"
+  },
+  {
+   "id": "tk_5731bf0e",
+   "title": "A separate doc or core with the logic of the tests"
+  },
+  {
+   "id": "tk_6edd2253",
+   "title": "Viral channels: a parody sketch show engine, and Pixel Ninja"
+  },
+  {
+   "id": "tk_38df1685",
+   "title": "Twitch content farm: generated video streamed through a camera on a screen"
+  },
+  {
+   "id": "tk_214bd734",
+   "title": "Version and edition names (SP: Ultra v2.0, Aqua v1.0), a more advanced design"
+  },
+  {
+   "id": "tk_260b8e6e",
+   "title": "Move agent cards from the terminal; click a task id in the terminal to copy it"
+  },
+  {
+   "id": "tk_7854c35c",
+   "title": "Studio: timelapse films of agent work; experimental pages hidden in releases"
+  },
+  {
+   "id": "tk_be9bd238",
+   "title": "Features tab, Logic tab, and a first-run choice: standard or advanced sidebar"
+  },
+  {
+   "id": "tk_177f5c7d",
+   "title": "LinkedIn archive extension: collect feed, media, links into a graph"
+  },
+  {
+   "id": "tk_3d063aee",
+   "title": "Publish: the agent links a card to tasks, commits, files, with comments"
+  },
+  {
+   "id": "tk_42421a0f",
+   "title": "Keep the cache warm: automatic short messages for large open chats"
+  },
+  {
+   "id": "tk_1dfa6dbe",
+   "title": "CI: real Codex limit percentages through a separate ChatGPT account"
+  },
+  {
+   "id": "tk_0defbd63",
+   "title": "A diary in Slightly Parallel: what I did, events, people, moods"
+  },
+  {
+   "id": "tk_a86109c5",
+   "title": "Usage: more data for the month's analysis (helpers, after a warning, Codex)"
+  },
+  {
+   "id": "tk_8a88c687",
+   "title": "#done: check which task it closes without an id; the logic may be off"
+  },
+  {
+   "id": "tk_3feb8112",
+   "title": "Deeper logging of helpers and subagents, to audit what they did and how"
+  },
+  {
+   "id": "tk_1e748fed",
+   "title": "Periodic field audits of the projects SP watches: patterns, anomalies, fixes"
+  },
+  {
+   "id": "tk_f207e1ec",
+   "title": "Entry points: think again about the open questions from round 1"
+  },
+  {
+   "id": "tk_58153e85",
+   "title": "Worktrees: SP does not show which copy of a project is the real one"
+  },
+  {
+   "id": "tk_8c8f9b56",
+   "title": "Sidebar: Projects heading opens a projects page; 5 newest agents, fold toggle"
+  },
+  {
+   "id": "tk_1f88a75b",
+   "title": "Briefing file page: choose what goes in, hand-written about and where to look"
+  },
+  {
+   "id": "tk_8df7e7e7",
+   "title": "Meaning-based search (across languages and synonyms) for similar tasks"
+  },
+  {
+   "id": "tk_c80c9fd9",
+   "title": "Undo a #done: extend #undo or add #undone, back to the column it came from"
+  },
+  {
+   "id": "tk_cbf81a7e",
+   "title": "#done closes a task of another project when its id is only mentioned"
+  },
+  {
+   "id": "tk_13318a92",
+   "title": "Check in two weeks: how many next tasks offered at #done were taken or dropped"
+  },
+  {
+   "id": "tk_f2ab4789",
+   "title": "Raw collapsed"
+  },
+  {
+   "id": "tk_315d8ed6",
+   "title": "Estimation the final result of the sprint"
+  },
+  {
+   "id": "tk_5da155e3",
+   "title": "Prompts for Tasks"
+  },
+  {
+   "id": "tk_e6311c25",
+   "title": "Site monitoring tutorial: what youtube-guy needs from the SEO agent"
+  },
+  {
+   "id": "tk_dad60d16",
+   "title": "Scan fix and Update"
+  },
+  {
+   "id": "tk_6003778d",
+   "title": "Timeline Update 2608-14"
+  },
+  {
+   "id": "tk_c413c5a9",
+   "title": "Session integration with git 2608-14"
+  },
+  {
+   "id": "tk_b8e2ecbc",
+   "title": "Update of the tabs info"
+  },
+  {
+   "id": "tk_d7b8a582",
+   "title": "Поиск хакатонов"
+  },
+  {
+   "id": "tk_74b8aca8",
+   "title": "note"
+  },
+  {
+   "id": "tk_5b68c2e2",
+   "title": "Разрулить логику записи через терминал. баги с созданием задач"
+  },
+  {
+   "id": "tk_d1115502",
+   "title": "Сайт Подарков !"
+  },
+  {
+   "id": "tk_da198fa9",
+   "title": "Реальная ниша Микротеплицы Огуру Перец"
+  },
+  {
+   "id": "tk_3ea2db91",
+   "title": "Вижн сайта с новоятями"
+  },
+  {
+   "id": "tk_249817f5",
+   "title": "Интеграция Музыки"
+  },
+  {
+   "id": "tk_c0c30609",
+   "title": "Links, Scratchpad, .."
+  },
+  {
+   "id": "tk_3a0844d9",
+   "title": "Ideas Broad"
+  },
+  {
+   "id": "tk_4f93ab7f",
+   "title": "YTB"
+  }
+ ],
+ "same": [
+  {
+   "title": "Register POST /api/tasks only once",
+   "line": "two routes answer the same create path",
+   "same_as": "tk_c239649a"
+  },
+  {
+   "title": "Check the scripts folder with pyright",
+   "line": "scripts are not type-checked in CI",
+   "same_as": "tk_ca1267b1"
+  },
+  {
+   "title": "Lock skills.jsonl for both of its writers",
+   "line": "the hook and the backfill append without a lock",
+   "same_as": "tk_b8c5619c"
+  },
+  {
+   "title": "Negative timer durations at the DST change",
+   "line": "the autumn clock change gives minus minutes",
+   "same_as": "tk_3a363c87"
+  },
+  {
+   "title": "Prune the facts file, it grows forever",
+   "line": "facts.jsonl and insights.json have no size limit",
+   "same_as": "tk_ddfa8dbe"
+  },
+  {
+   "title": "Stop hook reads the whole usage log on each reply",
+   "line": "read only the tail of usage.jsonl",
+   "same_as": "tk_7bdb5b94"
+  },
+  {
+   "title": "Set up the www DNS record for getbewrite.com",
+   "line": "add the domain in Firebase Hosting and a CNAME at Namecheap",
+   "same_as": "tk_1d93ff25"
+  },
+  {
+   "title": "The done command without an id may close the wrong task",
+   "line": "check which task it picks",
+   "same_as": "tk_8a88c687"
+  },
+  {
+   "title": "Codex API-key login shown as not signed in",
+   "line": "the limits reader misreads API-key accounts",
+   "same_as": "tk_86f05d8c"
+  },
+  {
+   "title": "Windows terminal through ConPTY",
+   "line": "use pywinpty for the terminal on Windows",
+   "same_as": "tk_af95b39f"
+  },
+  {
+   "title": "Backup restore should take the ledger locks",
+   "line": "a write during a restore overwrites the restored file",
+   "same_as": "tk_9cf834cf"
+  },
+  {
+   "title": "Task trailer missed after a Co-Authored-By paragraph",
+   "line": "git trailers read only the last paragraph",
+   "same_as": "tk_035f5b19"
+  },
+  {
+   "title": "Typed bodies for the write routes instead of dict",
+   "line": "pydantic models for the POST bodies",
+   "same_as": "tk_54406e4e"
+  },
+  {
+   "title": "Kanban crashes when Unclassified is unticked",
+   "line": "the three-column board throws",
+   "same_as": "tk_b084edc0"
+  },
+  {
+   "title": "Install with pipx in one command",
+   "line": "publish a pip package so no git clone is needed",
+   "same_as": "tk_220381a5"
+  },
+  {
+   "title": "Undo a done command, back to the column it came from",
+   "line": "an undone tag",
+   "same_as": "tk_c80c9fd9"
+  },
+  {
+   "title": "The done command closes another project's task",
+   "line": "an id only mentioned in the message moves a task of a different project",
+   "same_as": "tk_cbf81a7e"
+  },
+  {
+   "title": "Frontend strings outside t()",
+   "line": "radiogroups need arrow keys",
+   "same_as": "tk_6c67fc93"
+  },
+  {
+   "title": "Search for similar tasks by meaning across languages",
+   "line": "find duplicates written in Russian and in English",
+   "same_as": "tk_8df7e7e7"
+  },
+  {
+   "title": "Split mcp.call into a dispatch table",
+   "line": "the oversized backend functions",
+   "same_as": "tk_66d8cef1"
+  },
+  {
+   "title": "MCP timeout reported as the server being down",
+   "line": "a retry repeats the report",
+   "same_as": "tk_e5ca6059"
+  },
+  {
+   "title": "Check after two weeks how the offered next tasks were taken",
+   "line": "count the offers taken and dropped",
+   "same_as": "tk_13318a92"
+  },
+  {
+   "title": "A worktree copy is not told apart from the real project",
+   "line": "worktrees show as the project itself",
+   "same_as": "tk_58153e85"
+  },
+  {
+   "title": "Setup: choose the project folder in a folder menu",
+   "line": "a file dialog instead of typing a path",
+   "same_as": "tk_c0420802"
+  },
+  {
+   "title": "The stretch of a #now task starts at the previous named task",
+   "line": "it should begin at its #now message",
+   "same_as": "tk_a5dc8b0c"
+  },
+  {
+   "title": "Мониторинг токенов и лимитов подписки",
+   "line": "сколько осталось и сколько потрачено",
+   "same_as": "tk_5ac62cf8"
+  },
+  {
+   "title": "Разобраться с папкой проекта в integrations.csv",
+   "line": "какие папки там записаны",
+   "same_as": "tk_ce3e49b7"
+  },
+  {
+   "title": "Доработать прокрутку чатов",
+   "line": "сессии мешают скроллу",
+   "same_as": "tk_5d087243"
+  },
+  {
+   "title": "Проверить, какую задачу закрывает done без номера",
+   "line": "логика может быть нарушена",
+   "same_as": "tk_8a88c687"
+  },
+  {
+   "title": "Таймер уходит в минус при переводе часов",
+   "line": "осенний переход на зимнее время",
+   "same_as": "tk_3a363c87"
+  }
+ ],
+ "pairs": [
+  {
+   "from": "tk_280816f9",
+   "proposal": "#done: check which task it closes without an id; the logic may be off",
+   "same_as": "tk_8a88c687",
+   "title": "#done: check which task it closes without an id; the logic may be off",
+   "on_board": true,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_edc25f2c",
+   "proposal": "At #done the agent may offer next tasks, only when they truly follow",
+   "same_as": "tk_d859301f",
+   "title": "At #done the agent may offer next tasks, only when they truly follow",
+   "on_board": true,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_6b3c670a",
+   "proposal": "Кросспроектные задачи: тег и API для чтения и создания задач в других проектах",
+   "same_as": "tk_627c8353",
+   "title": "добавить фичи для кросспроектной работы. специальный тег (и вероятно апи)…",
+   "on_board": false,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_be2a25ed",
+   "proposal": "Проверить редакторскую правку статьи об ИИ-линтере",
+   "same_as": "tk_1f9ee354",
+   "title": "Проверить правку статьи: авторский текст, ошибки и оформление",
+   "on_board": false,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_843c3f12",
+   "proposal": "Sprints evolution",
+   "same_as": "tk_941b5d34",
+   "title": "Sprints and Goals Evolution",
+   "on_board": false,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_fb0287c6",
+   "proposal": "Backfill the replies the capture dropped after a helper's wake-up (28 turns)",
+   "same_as": "tk_52b142ad",
+   "title": "Chat capture: the last reply of a turn with several replies is not in chat.md",
+   "on_board": true,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_f64e73ca",
+   "proposal": "Killer  future timer update",
+   "same_as": "tk_aec45751",
+   "title": "Timer Update",
+   "on_board": false,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_4500ee6a",
+   "proposal": "Red flags column; a tag to move to review; a feed of the agent's autonomous work",
+   "same_as": "tk_58e96ef1",
+   "title": "A task tag that lets the agent move the card to review and other columns",
+   "on_board": true,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_4500ee6a",
+   "proposal": "Red flags column; a tag to move to review; a feed of the agent's autonomous work",
+   "same_as": "tk_3e5d38a7",
+   "title": "A feed of the agent's autonomous work: each task a message, moves, comments",
+   "on_board": true,
+   "same_project": true,
+   "language": "same"
+  },
+  {
+   "from": "tk_9e11b497",
+   "proposal": "Token, limit and context tracking per agent; a memory session before handover",
+   "same_as": "tk_5ac62cf8",
+   "title": "Мониторинг лимитов и токенов: что осталось по подписке, что потрачено",
+   "on_board": true,
+   "same_project": true,
+   "language": "other"
+  },
+  {
+   "from": "tk_1d93ff25",
+   "proposal": "DNS for www.getbewrite.com: domain in Firebase Hosting and a Namecheap record",
+   "same_as": "tk_659c3b2e",
+   "title": "DNS для www.getbewrite.com: домен в Firebase Hosting + запись в Namecheap",
+   "on_board": false,
+   "same_project": false,
+   "language": "other"
+  }
+ ],
+ "different": [
+  {
+   "title": "Rotate the operator token after a backup restore",
+   "line": "the token survives a restore"
+  },
+  {
+   "title": "Check the capture hook under Windows PowerShell 5",
+   "line": "fixed on Linux, not checked on Windows"
+  },
+  {
+   "title": "Redirect http to https on the docs site",
+   "line": "the docs site answers on plain http"
+  },
+  {
+   "title": "Name the effort field in docs/api.md",
+   "line": "the API reference does not list it"
+  },
+  {
+   "title": "Playwright spec for the helpers section on an agent's page",
+   "line": "the e2e flow never opens a helper"
+  },
+  {
+   "title": "Split the vendor chunk of the frontend build",
+   "line": "the bundle is past 2 MB"
+  },
+  {
+   "title": "Migrate done.csv rows written before start_turn existed",
+   "line": "old rows have no start turn"
+  },
+  {
+   "title": "Filter decisions by weight on the Decisions page",
+   "line": "the filter lists status only"
+  },
+  {
+   "title": "macOS Gatekeeper blocks sp.sh after a download",
+   "line": "the launcher is quarantined"
+  },
+  {
+   "title": "Rate-limit the doctor call",
+   "line": "an agent calls it in a loop"
+  },
+  {
+   "title": "Export the board to CSV for a sprint review",
+   "line": "one row per card with its column"
+  },
+  {
+   "title": "Protect the release branch on GitHub",
+   "line": "anyone with push rights can force-push it"
+  },
+  {
+   "title": "Retry the stub model job when its port is taken",
+   "line": "CI fails when 8124 is busy"
+  },
+  {
+   "title": "Проверить установку на чистом Маке",
+   "line": "на Linux проверено, на macOS нет"
+  },
+  {
+   "title": "Russian plural forms on the Usage page",
+   "line": "1 токенов instead of 1 токен"
+  },
+  {
+   "title": "Measure task_done on a board of 2000 open tasks",
+   "line": "the time of one call"
+  },
+  {
+   "title": "Index task_mentions by turn",
+   "line": "the adoption reads the whole table"
+  },
+  {
+   "title": "Write the release notes for 1.3",
+   "line": "what changed since 1.2"
+  },
+  {
+   "title": "Import a chat of 10 000 turns",
+   "line": "check memory and time"
+  },
+  {
+   "title": "Set up DNS for the docs site",
+   "line": "docs subdomain at the registrar"
+  },
+  {
+   "title": "Timer page: show the week's total",
+   "line": "hours per day summed for the week"
+  },
+  {
+   "title": "Kanban: drag a card between lanes on a touch screen",
+   "line": "touch events do not start a drag"
+  },
+  {
+   "title": "Show the reasoning effort on the agent's page",
+   "line": "next to the model name"
+  },
+  {
+   "title": "Contract text: one example per command in #help",
+   "line": "the help lists commands without examples"
+  },
+  {
+   "title": "Сделать сайт для курса по математике",
+   "line": "лендинг и запись"
+  }
+ ]
+}

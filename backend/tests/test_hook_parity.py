@@ -43,6 +43,8 @@ def test_setting_defaults_match() -> None:
     specs = {s.key: s for s in app_settings.SPECS}
     for key, default in capture._SETTING_DEFAULTS.items():
         assert specs[f"agent.{key}"].default == default, key
+    for key, default in capture._USAGE_SETTING_DEFAULTS.items():
+        assert specs[f"usage.{key}"].default == default, key
     assert specs["standup.model"].default == "opus" and specs["standup.ask"].default is True
 
 

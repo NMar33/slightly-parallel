@@ -19,8 +19,10 @@ which is exactly what /api/whoami needs.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import pathlib
 import re
 import sys
 import urllib.error
@@ -52,7 +54,9 @@ TOOLS: dict[str, str] = {
     "tasks": "The open board of a project.",
     "task_update": "Edit a task. Status is the operator's.",
     "task_report": "Say a task is done, in your opinion.",
-    "task_done": "After #done: what the operator's #done moved, and each task's stretch of the chat.",
+    "task_commits": "Link commits that have no Task: line to the task they were made for.",
+    "task_done": "After #done: what the operator's #done moved, and each task's stretch of the chat; with proposals, offers next tasks.",
+    "next_tasks": "After the operator answered the next tasks offered at #done: make the ones they chose by number.",
     "undo_find": "After #undo: the operator's request and the entries it could mean, numbered.",
     "undo_propose": "Send the entries the operator chose to archive; answers the confirmation to show.",
     "undo_apply": "After #undo-yes: archive the confirmed entries. Refused without the operator's #undo-yes.",
@@ -61,6 +65,20 @@ TOOLS: dict[str, str] = {
     "task_evidence": "Attach evidence to a task.",
     "task_work": "The files the repository saw this task touch.",
     "task_story": "Post a piece on a task, under a request id the operator gave.",
+    "cores": "The project's cores: the core elements the operator keeps in view, with each one's latest note.",
+    "core_new": "After #core-new: a new core — a short name, a type, the files you know; the message is its first note.",
+    "core_note": "After #core-note, or when finished work changes a tracked core: one note on a core.",
+    "core_attach": "After #core: attach this message, and this chat's task, to the matching core.",
+    "core_off": "After #core-off, confirmed by the operator: remove a core from view; its notes and links are kept.",
+    "publish_attach": "After the operator's #publish: attach screenshots and links to the card; its text is the operator's.",
+    "entrypoints": "The project's entry points: the topics the operator comes back to, with their ways in.",
+    "entrypoint_stop": "One line of where a topic stopped: at #done for a task of the topic.",
+    "entrypoint_way": "Add a way in to a topic (a page, a site, an app, a file …), or change one an agent wrote.",
+    "entrypoint_shot": "Attach a screenshot of a way in you made or changed, while it is up.",
+    "entrypoint_offer": "Before offering a new entry point: the topics like it, and the line to show the operator.",
+    "entrypoint_ask": "After #entrypoint: the topics it may mean, numbered, and the line to show; nothing is made yet.",
+    "entrypoint_answer": "After the operator answered the entrypoint_ask line: the topic they chose, opened or made.",
+    "task_topic": "Set the topic (entry point) of a task of this project.",
     "architecture_status": "After #architecture: which of the form, the page and the map are out of date, and why.",
     "architecture_material": "What the architecture page is written from: computed facts, the current page, instructions.",
     "architecture_page": "Write the next version of the project's architecture page.",
@@ -78,6 +96,9 @@ TOOLS: dict[str, str] = {
     "project": "One project's facts.",
     "doctor": "Check the data for damage.",
     "checkup": "After #sp: is Slightly Parallel working for this chat and folder — each check ok, note, concern or unknown.",
+    "usage": "This chat's tokens, the plan limits and the project's day: the #usage text, and the numbers behind it.",
+    "usage_prices_material": "After #usage-price: the models the chats used, the API prices now, the pages to read, instructions.",
+    "usage_prices_write": "After #usage-price: one update of the API prices, read from the providers' own pages.",
 }
 
 
@@ -132,6 +153,19 @@ class Api:
 
     def post(self, path: str, body: dict) -> Any:
         return self._call("POST", path, body)
+
+
+def _list(args: dict, key: str) -> list[str]:
+    """A list argument as a list of strings: one string is a one-item list
+    (a bare "abc1234" was posted as seven one-letter hashes)."""
+    raw = args.get(key)
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if not isinstance(raw, list):
+        raise ApiError(f"{key} is a list of strings")
+    return [str(x) for x in raw]
 
 
 def _id(args: dict) -> str:
@@ -222,6 +256,13 @@ class Translator:
     def _check_vocab(self, lens: str, payload: dict) -> None:
         for field, allowed in self.vocab.get(lens, {}).items():
             v = payload.get(field)
+            if isinstance(v, (list, dict, bool)):
+                # str(["agent"]) is "['agent']": refused with a list that
+                # names "agent" as allowed. Say the shape instead.
+                raise ApiError(
+                    f"{lens}.{field} is one text value, not {type(v).__name__} — "
+                    f"use one of: {', '.join(allowed)}"
+                )
             if v not in (None, "") and str(v) not in allowed:
                 raise ApiError(
                     f"{lens}.{field} {v!r} is not a known value — "
@@ -272,7 +313,7 @@ class Translator:
         # picker never offers a lens the server refuses.
         lens_names = sorted(n for n, l in self.lenses.items() if l.get("agent_write", True))
         mutable = sorted(n for n, l in self.lenses.items()
-                         if l["mutable"] and l.get("agent_write", True))
+                         if l["mutable"] and l.get("agent_update", l.get("agent_write", True)))
         task_status = self.vocab.get("task", {}).get("status", [])
         evidence_max = ((self.schema or {}).get("limits") or {}).get("evidence_items", 8)
         return [
@@ -354,14 +395,49 @@ class Translator:
                  },
                  "required": ["id", "summary"],
              }},
+            {"name": "task_commits",
+             "description": (
+                 "Link commits to the task they were made for, when their message has no "
+                 "`Task: tk_…` line (the contract asks for that line in every commit made for a "
+                 "task). The same as the line: the commit then counts for this task and for no "
+                 "other task's stretch of the chat. Only commits you made."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string", "description": "the task"},
+                     "shas": {"type": "array", "items": {"type": "string"}, "description": "commit hashes, 7 to 40 hex"},
+                 },
+                 "required": ["id", "shas"],
+             }},
             {"name": "task_done",
              "description": (
                  "The operator typed #done: the server moves the task to done as the operator's "
                  "verdict and gives it its stretch of the chat. This returns what moved (or "
                  "unnamed: ask which task), each with its stretch counted, and `next`: your "
                  "one-line task_report and any evidence (the skill finish-a-task). You never "
-                 "change a status yourself."),
-             "inputSchema": {"type": "object", "properties": {}}},
+                 "change a status yourself. Call it once without arguments; then, only when a next "
+                 "step truly follows (without it the work stays unfinished), call it again with "
+                 "`proposals`: at most three {title, line}. The answer gives each its similar open "
+                 "tasks on the board and the line to show the operator."),
+             "inputSchema": {"type": "object", "properties": {
+                 "proposals": {"type": "array", "maxItems": 3, "items": {
+                     "type": "object",
+                     "properties": {
+                         "title": {"type": "string", "description": "the task's title, at most 80 characters"},
+                         "line": {"type": "string", "description": "one line: what is left and why it follows"},
+                     },
+                     "required": ["title"]}},
+             }}},
+            {"name": "next_tasks",
+             "description": (
+                 "The operator answered the line 'Make these tasks? 1) … 2) …' that task_done gave. "
+                 "Send the numbers they chose ([] when they chose none). The server checks them "
+                 "against the operator's next message and makes the tasks in the agent column; "
+                 "a retry answers the same tasks."),
+             "inputSchema": {"type": "object", "properties": {
+                 "numbers": {"type": "array", "items": {"type": "integer"},
+                             "description": "the numbers the operator chose, such as [1, 3]"}},
+                 "required": ["numbers"]}},
             {"name": "undo_find",
              "description": (
                  "The operator typed #undo and said what was a mistake. This returns their request "
@@ -389,6 +465,63 @@ class Translator:
              "description": "Bring back one entry archived with #undo, with the status it had.",
              "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
                              "required": ["id"]}},
+            {"name": "cores",
+             "description": (
+                 "The project's cores (Architecture › cores): id, name, type, reason, tracking, "
+                 "the latest note. Read it before core_note, core_attach and core_off to choose "
+                 "the matching core; if two match, ask the operator to choose by number."),
+             "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}}},
+            {"name": "core_new",
+             "description": (
+                 "After the operator's #core-new: a new core. `name` is short (at most 60 "
+                 "characters), in the operator's words; `type` is one of capability, feature, "
+                 "interface, store, integration, internals, workflow, experiment; `reason` one line "
+                 "on why it is kept in view when the message says; `anchors` the files or "
+                 "file:symbol paths this core is in, as far as you know; `text` the operator's "
+                 "message as typed (its first note). The same name again answers with the existing core."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "name": {"type": "string"}, "type": {"type": "string"},
+                     "reason": {"type": "string"}, "text": {"type": "string"},
+                     "comment": {"type": "string", "description": "your one line under the operator's text"},
+                     "anchors": {"type": "array", "items": {"type": "string"}},
+                     "task_id": {"type": "string"},
+                 },
+                 "required": ["name", "type", "text"],
+             }},
+            {"name": "core_note",
+             "description": (
+                 "One note on a core. After #core-note: `text` is the operator's message "
+                 "as typed and `comment` your one line (what you did with it, or what it means). "
+                 "When finished work changes a core the operator tracks (the hook's notice "
+                 "names them): `kind: \"auto\"`, `comment` only — one line on what changed, "
+                 "with the task. The operator's notes count as approved; yours wait for approval."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string"}, "text": {"type": "string"}, "comment": {"type": "string"},
+                     "kind": {"type": "string", "enum": ["note", "auto"]}, "task_id": {"type": "string"},
+                 },
+                 "required": ["id"],
+             }},
+            {"name": "core_attach",
+             "description": (
+                 "After #core in a message: attach that message to the matching core "
+                 "(`turn`: the message's turn number), and this chat's task when it has one "
+                 "(`task_id`). A thing attached twice is attached once."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {"id": {"type": "string"}, "turn": {"type": "integer"},
+                                "task_id": {"type": "string"}, "note": {"type": "string"}},
+                 "required": ["id"],
+             }},
+            {"name": "core_off",
+             "description": (
+                 "After #core-off, once the operator confirmed which core with a number: "
+                 "remove it from view. Its notes and links are kept; the operator can restore it "
+                 "on its page."),
+             "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
             {"name": "architecture_status",
              "description": (
                  "The operator typed #architecture: which of the three parts are out of "
@@ -476,6 +609,120 @@ class Translator:
                  "Follow them, then call task_evidence."),
              "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
                              "required": ["id"]}},
+            {"name": "publish_attach",
+             "description": (
+                 "After the operator's #publish (the hook names the card, pu_…): attach what the "
+                 "operator may need to tell about it — 1–3 screenshots of what it is about "
+                 "(png/jpg/webp/gif: give the file's `path` on this machine, or `data_base64`; "
+                 "each with a one-line title) and links. The card's "
+                 "text is the operator's; you attach, you do not write. The same image again is "
+                 "the existing attachment."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string"},
+                     "images": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"title": {"type": "string"},
+                                        "path": {"type": "string", "description": "the image file on this machine; read by the tool"},
+                                        "ext": {"type": "string", "enum": ["png", "jpg", "jpeg", "webp", "gif"]},
+                                        "data_base64": {"type": "string"}},
+                         "required": []}},
+                     "links": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
+                         "required": ["url"]}},
+                 },
+                 "required": ["id"]}},
+            {"name": "entrypoints",
+             "description": (
+                 "The project's entry points: each topic's id, name, state, what it is, its ways in "
+                 "and the last messages of where it stopped. Read it to find the topic of your work. "
+                 "With `id` (the one the #entrypoint notice named): what the operator's command opened — "
+                 "a new topic, a new version of the record of the topic they chose, or nothing yet "
+                 "(pending: entrypoint_ask first) — with the record as it is and what to write."),
+             "inputSchema": {"type": "object", "properties": {
+                 "project": {"type": "string"},
+                 "id": {"type": "string", "description": "ep_… from the #entrypoint notice"}}}},
+            {"name": "entrypoint_stop",
+             "description": (
+                 "One message of where a topic stopped, in one or two plain sentences: what is done, "
+                 "what is not, what waits for whom. At #done, once for the task's topic (the task_done "
+                 "answer names it, with `task_id`). Never the record, never a list of everything."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the entry point, ep_…"},
+                 "text": {"type": "string", "description": "at most 1000 characters"},
+                 "task_id": {"type": "string", "description": "the task of this topic it is about"}},
+                 "required": ["id", "text"]}},
+            {"name": "entrypoint_way",
+             "description": (
+                 "Add a way in to a topic: what the operator opens to look at the work — a page, a "
+                 "site, an app, a file, a folder, a script, an artifact — with where it opens, the "
+                 "command that starts it, its folder and port. Only when you made it or a way to open "
+                 "it changed (port, command, folder). `way_id` changes one an agent wrote; one the "
+                 "operator wrote is theirs."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the entry point, ep_…"},
+                 "way_id": {"type": "string"},
+                 "way": {"type": "object", "properties": {
+                     "name": {"type": "string", "description": "a few words, what the operator calls it"},
+                     "kind": {"type": "string", "enum": ["page", "site", "app", "file", "folder", "script", "artifact"]},
+                     "url": {"type": "string"}, "path": {"type": "string"},
+                     "command": {"type": "string", "description": "the start command, run in `folder`"},
+                     "folder": {"type": "string"}, "port": {"type": "integer"},
+                     "note": {"type": "string", "description": "one line the reader needs"}},
+                     "required": ["name", "kind"]}},
+                 "required": ["id", "way"]}},
+            {"name": "entrypoint_shot",
+             "description": (
+                 "A screenshot of a way in you made or changed, taken while it is up: the image file's "
+                 "`path` on this machine (PNG, JPEG, GIF or WebP; read by the tool) and a one-line "
+                 "caption of what it shows. `replaces`: a shot of yours it takes the place of."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string"}, "way_id": {"type": "string"},
+                 "path": {"type": "string"}, "caption": {"type": "string"},
+                 "replaces": {"type": "string"}},
+                 "required": ["id", "way_id", "path"]}},
+            {"name": "entrypoint_offer",
+             "description": (
+                 "Only when something new to open appeared (a page, a server, a site, a dashboard, an "
+                 "artifact with a link) or a way to open one changed, and it is not a one-off result: "
+                 "`name` (a few words) and `why`. Answers the topics like it and `next`: add the way in "
+                 "to the match, or the one line that offers a new entry point to the operator. Writes "
+                 "nothing; the operator keeps it with #entrypoint."),
+             "inputSchema": {"type": "object", "properties": {
+                 "name": {"type": "string"}, "why": {"type": "string"}},
+                 "required": ["name"]}},
+            {"name": "entrypoint_ask",
+             "description": (
+                 "Right after the operator's #entrypoint (the id the notice named). Nothing is made yet: "
+                 "the operator chooses the topic. Send `name`, your proposal for a new topic, about four "
+                 "words, from their words or this chat. Answers the topics of this project the command may "
+                 "mean, numbered, with a last line for a new topic, and `show`: the line to give the operator "
+                 "as it is, as the last line of your reply. When the operator typed a topic's exact name, it "
+                 "answers instead that a new version of that topic was opened."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the id from the #entrypoint notice"},
+                 "name": {"type": "string", "description": "a name for a new topic, at most 80 characters"}},
+                 "required": ["id", "name"]}},
+            {"name": "entrypoint_answer",
+             "description": (
+                 "The operator answered the entrypoint_ask line. Send `number`, the line they chose (0 when "
+                 "none), and `name` only when they wrote one, as they wrote it. The server checks both "
+                 "against their next message; an existing topic opens a new version of its record for this "
+                 "chat, the new-topic line makes the topic. Answers the topic, its record and what to write; "
+                 "a retry answers the same."),
+             "inputSchema": {"type": "object", "properties": {
+                 "number": {"type": "integer", "description": "the number the operator chose, 0 when none"},
+                 "name": {"type": "string", "description": "the name the operator wrote, if any"},
+                 "id": {"type": "string", "description": "the #entrypoint's id, when the chat asked about two"}},
+                 "required": ["number"]}},
+            {"name": "task_topic",
+             "description": "Set the topic of a task: the entry point (ep_…) its work belongs to; \"\" clears.",
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the task, tk_…"},
+                 "topic": {"type": "string", "description": "the entry point, ep_…"}},
+                 "required": ["id", "topic"]}},
             {"name": "task_evidence",
              "description": (
                  "Attach evidence to a task. Follow the operator's instructions: "
@@ -561,7 +808,11 @@ class Translator:
                      "today_on": {"type": "string",
                                   "description": "ISO date to plan it for that day; empty clears"},
                      "description": {"type": "string",
-                                     "description": "the task's text: what is wrong or wanted, and where"},
+                                     "description": "the task's text: what is wrong or wanted, and where "
+                                                    "(not on a #now card: its text is the operator's message)"},
+                     "comment": {"type": "string",
+                                 "description": "a note of yours, added after the task's text under "
+                                                "'--- comment from agent:'; each call adds one"},
                  },
                  "required": ["id"],
              }},
@@ -570,7 +821,10 @@ class Translator:
                  "Write the interpretation of a kept #vision, #rule, #problem or "
                  "#entrypoint (the id the [slightly-parallel] notice named): the "
                  "message read with the conversation around it, in plain words. "
-                 "An entry point has five sections: What, Where, How, State, Next. "
+                 "An entry point's record has five sections: What, Where, How, State, Next; it is written "
+                 "only right after the operator's #entrypoint in this chat, once they chose the topic "
+                 "(entrypoint_ask, entrypoint_answer): a new one, or an existing one, which opens a new "
+                 "version of its record. "
                  "Each write is a version; the current one is what the page shows."),
              "inputSchema": {
                  "type": "object",
@@ -654,6 +908,29 @@ class Translator:
                             "the server's memory and errors. Each finding: ok, note, concern or unknown, with its "
                             "evidence and next step. Reads only.",
              "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "usage",
+             "description": (
+                 "The tokens this chat used, the plan limits and the project's day. `block` is the text "
+                 "#usage prints: give it as it is, in a code block, and add nothing but one line when "
+                 "something stands out (a cache rebuild, a limit over 80%). `summary` holds the numbers "
+                 "of the Usage page for `project` (this chat's project, or all) over `range` (today, "
+                 "7d or 30d). Reads only."),
+             "inputSchema": {"type": "object", "properties": {
+                 "project": {"type": "string", "description": "a project code, or all"},
+                 "range": {"type": "string", "enum": ["today", "7d", "30d"]}}}},
+            {"name": "usage_prices_material",
+             "description": ("Only after the operator's #usage-price: the models the chats used, the API prices "
+                             "now, the pages to read and the instructions. Then usage_prices_write."),
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "usage_prices_write",
+             "description": ("Only after the operator's #usage-price: one update of the API prices, dollars per "
+                             "million tokens, read from the providers' own pages. The days before keep their "
+                             "prices. Answers what changed, and warnings."),
+             "inputSchema": {"type": "object", "properties": {
+                 "models": {"type": "object", "description": "{model: {input, write_5m, write_1h, read, output, over_tokens?, over?}}; write_5m and write_1h may be null"},
+                 "sources": {"type": "array", "items": {"type": "string"}, "description": "the https pages the prices were read from"},
+                 "note": {"type": "string", "description": "one line: what you left out, and why"}},
+                 "required": ["models", "sources"]}},
         ]
 
     def call(self, name: str, args: dict) -> Any:
@@ -696,6 +973,8 @@ class Translator:
             if spec is None:
                 allowed = sorted(n for n, l in self.lenses.items() if l.get("agent_write", True))
                 raise ApiError(f"unknown lens {lens!r} — one of: {', '.join(allowed)}")
+            if args.get("fields") is not None and not isinstance(args.get("fields"), dict):
+                raise ApiError("fields is an object: the entry's fields by name")
             # Identity last, over anything of the same name in `fields`.
             payload = {**(args.get("fields") or {}), **self._stamp()}
             # Fields by name only: the numbered storage slots (l1…l4) are not
@@ -741,13 +1020,20 @@ class Translator:
             return self.api.get(q)
         if name == "task_done":
             who = self.identity()
-            return self.api.get(f"/api/done-tags?agent_id={urllib.parse.quote(str(who['agent_id']))}")
+            raw = args.get("proposals")
+            if raw is None or raw == "" or raw == []:
+                # Without proposals: the answer it always was.
+                return self.api.get(f"/api/done-tags?agent_id={urllib.parse.quote(str(who['agent_id']))}")
+            return self.api.post("/api/done-tags", {"agent_id": who["agent_id"], "proposals": raw})
+        if name == "next_tasks":
+            return self.api.post("/api/next-tasks/make",
+                                 {"agent_id": self.identity()["agent_id"], "numbers": args.get("numbers")})
         if name in ("undo_find", "undo_propose", "undo_apply", "undo_restore"):
             who = self.identity()["agent_id"]
             if name == "undo_find":
                 return self.api.get(f"/api/undo/candidates?agent_id={urllib.parse.quote(str(who))}")
             if name == "undo_propose":
-                return self.api.post("/api/undo/propose", {"agent_id": who, "ids": list(args.get("ids") or [])})
+                return self.api.post("/api/undo/propose", {"agent_id": who, "ids": _list(args, "ids")})
             if name == "undo_apply":
                 return self.api.post("/api/undo/apply", {"agent_id": who})
             return self.api.post("/api/undo/restore", {"agent_id": who, "id": _id(args)})
@@ -800,6 +1086,32 @@ class Translator:
                 {"agent_id": self.identity()["agent_id"],
                  "items": args.get("items") or []},
             )
+        if name == "publish_attach":
+            # An image given by `path` is read here, on the agent's machine:
+            # base64 through a tool call is tens of thousands of characters.
+            images = []
+            for i, item in enumerate(args.get("images") or [], 1):
+                if not isinstance(item, dict):
+                    raise ApiError(f"image {i}: an object with title and path (or data_base64)")
+                if item.get("path") and not item.get("data_base64"):
+                    p = pathlib.Path(str(item["path"])).expanduser()
+                    if not p.is_file():
+                        raise ApiError(f"image {i}: {p} is not a file")
+                    if p.stat().st_size > 12 * 1024 * 1024:
+                        raise ApiError(f"image {i}: {p.name} is over 12MB")
+                    item = {**item, "data_base64": base64.b64encode(p.read_bytes()).decode("ascii"),
+                            "ext": str(item.get("ext") or p.suffix.lstrip(".").lower() or "png"),
+                            "title": str(item.get("title") or p.stem)}
+                    item.pop("path", None)
+                images.append(item)
+            return self.api.post(
+                f"/api/publishing/cards/{_id(args)}/attach",
+                {"agent_id": self.identity()["agent_id"],
+                 "images": images, "links": args.get("links") or []},
+            )
+        if name in ("entrypoints", "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_offer",
+                    "entrypoint_ask", "entrypoint_answer", "task_topic"):
+            return self._entrypoint(name, args)
         if name == "task_story":
             return self.api.post(
                 f"/api/tasks/{_id(args)}/story",
@@ -807,6 +1119,46 @@ class Translator:
                  "request_id": str(args.get("request_id") or ""),
                  "body": str(args.get("body") or ""),
                  "images": args.get("images") or []},
+            )
+        if name == "cores":
+            code = args.get("project") or self.identity()["project"]
+            return self.api.get(f"/api/cores?project={urllib.parse.quote(str(code))}")
+        if name == "core_new":
+            who = self.identity()
+            return self.api.post("/api/cores", {
+                "project": who["project"], "agent_id": who["agent_id"],
+                "name": str(args.get("name") or ""), "type": str(args.get("type") or ""),
+                "reason": str(args.get("reason") or ""), "text": str(args.get("text") or ""),
+                "comment": str(args.get("comment") or ""),
+                "anchors": [a for a in _list(args, "anchors") if a.strip()],
+                "task_id": str(args.get("task_id") or ""),
+            })
+        if name == "core_note":
+            return self.api.post(f"/api/cores/{_id(args)}/notes", {
+                "agent_id": self.identity()["agent_id"],
+                "text": str(args.get("text") or ""), "comment": str(args.get("comment") or ""),
+                "kind": str(args.get("kind") or "note"), "task_id": str(args.get("task_id") or ""),
+            })
+        if name == "core_attach":
+            who = self.identity()
+            out: dict[str, Any] = {"attached": []}
+            if args.get("turn") is not None:
+                out["attached"].append(self.api.post(f"/api/cores/{_id(args)}/links", {
+                    "agent_id": who["agent_id"], "kind": "message",
+                    "target": f"{who['agent_id']}#{int(args['turn'])}", "note": str(args.get("note") or "")}))
+            if args.get("task_id"):
+                out["attached"].append(self.api.post(f"/api/cores/{_id(args)}/links", {
+                    "agent_id": who["agent_id"], "kind": "task", "target": str(args["task_id"]),
+                    "note": str(args.get("note") or "")}))
+            if not out["attached"]:
+                raise ApiError("core_attach needs the message's turn, a task_id, or both")
+            return out
+        if name == "core_off":
+            return self.api.post(f"/api/cores/{_id(args)}/off", {"agent_id": self.identity()["agent_id"]})
+        if name == "task_commits":
+            return self.api.post(
+                f"/api/tasks/{_id(args)}/commits",
+                {"agent_id": self.identity()["agent_id"], "shas": _list(args, "shas")},
             )
         if name == "task_report":
             return self.api.post(
@@ -840,9 +1192,91 @@ class Translator:
             q = urllib.parse.urlencode({"cwd": self.cwd, "agent_id": str(who.get("agent_id") or ""),
                                         "identity": str(who.get("identity_source") or "")})
             return self.api.get(f"/api/checkup?{q}")
+        if name == "usage_prices_material":
+            return self.api.get("/api/usage/prices/material")
+        if name == "usage_prices_write":
+            who = self.identity()
+            return self.api.post("/api/usage/prices", {
+                "agent_id": who["agent_id"], "models": args.get("models") if isinstance(args.get("models"), dict) else {},
+                "sources": _list(args, "sources"), "note": args.get("note") or ""})
+        if name == "usage":
+            rng = str(args.get("range") or "today")
+            if rng not in ("today", "7d", "30d"):
+                raise ApiError("range must be today, 7d or 30d")
+            # A chat the hook never saw has no block of its own: the summary
+            # still answers (for the project asked, else all).
+            try:
+                who = self.identity()
+            except ApiError:
+                who = {}
+            block = ""
+            if who.get("agent_id"):
+                try:
+                    chat = self.api.get(f"/api/usage/chat/{urllib.parse.quote(str(who['agent_id']))}?block=true")
+                    block = str(chat.get("block") or "")
+                except ApiError:
+                    block = ""
+            q = urllib.parse.urlencode({"project": str(args.get("project") or who.get("project") or "all"),
+                                        "range": rng})
+            return {"block": block, "summary": self.api.get(f"/api/usage?{q}")}
         raise ApiError(f"unknown tool: {name}")
 
     # -- resources ---------------------------------------------------------
+
+    def _entrypoint(self, name: str, args: dict) -> Any:
+        """The entry point tools. Text arguments are text: a list or an
+        object where a sentence is meant is refused here, before a request."""
+        def text(key: str, required: bool = False) -> str:
+            v = args.get(key)
+            if v is None or v == "":
+                if required:
+                    raise ApiError(f"{key} is required")
+                return ""
+            if not isinstance(v, str):
+                raise ApiError(f"{key} is text, not {'a list' if isinstance(v, list) else type(v).__name__}")
+            return v
+        who = self.identity()
+        if name == "entrypoint_ask":
+            return self.api.post("/api/entrypoints/ask",
+                                 {"agent_id": who["agent_id"], "id": text("id", True), "name": text("name")})
+        if name == "entrypoint_answer":
+            return self.api.post("/api/entrypoints/answer", {
+                "agent_id": who["agent_id"], "number": args.get("number"), "name": text("name"),
+                "id": text("id")})
+        if name == "entrypoints":
+            if text("id"):
+                return self.api.get(f"/api/entrypoints/{_id(args)}/command")
+            project = text("project") or who["project"]
+            got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(str(project))}")
+            return {"topics": [{k: t.get(k) for k in ("id", "name", "title", "state", "what", "ways", "stops", "open_tasks")}
+                               for t in got.get("topics") or []]}
+        if name == "entrypoint_offer":
+            words = " — ".join(x for x in (text("name", True), text("why")) if x)
+            q = urllib.parse.urlencode({"project": who["project"], "text": words})
+            return self.api.get(f"/api/entrypoints/similar?{q}")
+        if name == "task_topic":
+            return self.api.post(f"/api/tasks/{_id(args)}/topic",
+                                 {"agent_id": who["agent_id"], "entrypoint_id": text("topic")})
+        if name == "entrypoint_stop":
+            return self.api.post(f"/api/entrypoints/{_id(args)}/stops",
+                                 {"agent_id": who["agent_id"], "text": text("text", True), "task_id": text("task_id")})
+        if name == "entrypoint_way":
+            way = args.get("way")
+            if not isinstance(way, dict):
+                raise ApiError("way is an object: {name, kind, url?, path?, command?, folder?, port?, note?}")
+            body: dict[str, Any] = {"agent_id": who["agent_id"], "way": way}
+            if text("way_id"):
+                body["id"] = text("way_id")
+            return self.api.post(f"/api/entrypoints/{_id(args)}/ways", body)
+        # entrypoint_shot: the image is read here, on the agent's machine.
+        p = pathlib.Path(text("path", True)).expanduser()
+        if not p.is_file():
+            raise ApiError(f"{p} is not a file")
+        if p.stat().st_size > 12 * 1024 * 1024:
+            raise ApiError(f"{p.name} is over 12MB")
+        return self.api.post(f"/api/entrypoints/{_id(args)}/shots", {
+            "agent_id": who["agent_id"], "way_id": text("way_id", True), "caption": text("caption") or p.stem,
+            "replaces": text("replaces"), "data_base64": base64.b64encode(p.read_bytes()).decode("ascii")})
 
     def resource_defs(self) -> list[dict]:
         return [
@@ -964,6 +1398,8 @@ def handle(tr: Translator, msg: dict) -> dict | None:
         name = str(params.get("name") or "")
         args = params.get("arguments") or {}
         try:
+            if not isinstance(args, dict):
+                raise ApiError("arguments is an object")
             out = tr._by_name(tr.call(name, args))
             return _result(msg_id, {"content": [
                 {"type": "text", "text": json.dumps(out, ensure_ascii=False, indent=1)}
@@ -971,6 +1407,12 @@ def handle(tr: Translator, msg: dict) -> dict | None:
         except ApiError as exc:
             return _result(msg_id, {"content": [
                 {"type": "text", "text": str(exc)}
+            ], "isError": True})
+        except (TypeError, ValueError, AttributeError, KeyError) as exc:
+            # An argument of the wrong shape (a number for a text, a text for a
+            # list) is the tool's answer, not a protocol error that ends the call.
+            return _result(msg_id, {"content": [
+                {"type": "text", "text": f"{name}: an argument has the wrong shape ({exc}); see the tool's schema"}
             ], "isError": True})
     if method == "resources/list":
         return _result(msg_id, {"resources": tr.resource_defs()})

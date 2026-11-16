@@ -1,0 +1,2 @@
+{"at": "2026-11-01T10:00:06", "tool": "codex", "account": "98e3c2da4e92", "model": "gpt-5-codex", "session": "ffff0001", "five_hour": {"used": 10.0, "resets_at": "2026-11-01T20:20:00"}, "seven_day": {"used": 81.0, "resets_at": "2026-11-06T06:00:00"}, "plan": "plus", "source": "rollout"}
+{"at": "2026-11-01T10:01:06", "tool": "codex", "account": "98e3c2da4e92", "model": "gpt-5.1-codex", "session": "ffff0001", "five_hour": {"used": 12.5, "resets_at": "2026-11-01T20:20:00"}, "seven_day": {"used": 81.0, "resets_at": "2026-11-06T06:00:00"}, "plan": "plus", "source": "rollout"}

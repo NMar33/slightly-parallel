@@ -326,9 +326,14 @@ def test_creates_look_under_the_lock(client: TestClient, root: Path) -> None:
     assert len(_rows(root / "task_links.csv")) == 1
 
     # The same note twice is one note, and the same evidence twice one item.
+    # "The same" is the same minute: the clock is held, or two posts that
+    # straddle a minute's tick are two notes (CI on Windows, 2026-11-10).
+    from backend.routers import story
     note = {"type": "report", "body": "what shipped"}
-    assert client.post(f"/api/tasks/{a}/notes", json=note).status_code == 201
-    assert client.post(f"/api/tasks/{a}/notes", json=note).json()["existing"] is True
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(story, "now_iso", lambda: "2026-11-10T08:30:59")
+        assert client.post(f"/api/tasks/{a}/notes", json=note).status_code == 201
+        assert client.post(f"/api/tasks/{a}/notes", json=note).json()["existing"] is True
     assert len(_rows(root / "task_notes.csv")) == 1
     ev = {"agent_id": "cc-one", "items": [{"kind": "text", "title": "t", "body": "proof"}]}
     assert client.post(f"/api/tasks/{a}/evidence", json=ev).status_code == 201

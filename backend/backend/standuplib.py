@@ -146,10 +146,13 @@ def material(store: ViewStore, project: str, day: str, clip: bool = False) -> di
     (the operator's choice when the day is large) keeps the start and the end
     of each, as before. ``chars`` is the size either way, for the next ask.
     """
-    rows = store.query(
+    # Helper chats (a codex exec, a claude -p) are left out: what one did
+    # came back to the chat that started it, which is in the material.
+    hidden = sessions.helper_ids(store)
+    rows = [r for r in store.query(
         "SELECT * FROM sessions WHERE project = ? AND created_date = ? ORDER BY start_time",
         (project, day),
-    )
+    ) if str(r.get("agent_id") or "") not in hidden]
     names = {str(a.get("agent_id") or ""): a for a in store.agents()}
     chats: list[dict[str, Any]] = []
     messages = 0
@@ -196,8 +199,10 @@ def day_record(store: ViewStore, project: str, day: str, tasks_changed: list[dic
     with no model: the tasks of the day (moved, or named in a chat), the
     agents of the day (what each chat was, when, how many turns, the commits
     it made, how to resume it) and what the day created."""
-    rows = store.query(
+    hidden = sessions.helper_ids(store)
+    rows = [r for r in store.query(
         "SELECT * FROM sessions WHERE project = ? AND created_date = ? ORDER BY start_time", (project, day))
+        if str(r.get("agent_id") or "") not in hidden]
     agents_by_id = {str(a.get("agent_id") or ""): a for a in store.agents()}
     named: dict[str, set[str]] = {}
     per_agent: dict[str, dict[str, Any]] = {}

@@ -10,6 +10,7 @@ import { ExternalLink } from 'lucide-react'
 import { CopyButton } from '../../components/CopyButton'
 import { Button } from '../../components/primitives'
 import { Markdown } from '../../components/Markdown'
+import { stepWord } from '../promptlib/taskstyle'
 
 import { t } from '../../i18n/scope/views'
 /** What a prompt-scoped host knows about a turn that carried the prompt. */
@@ -38,7 +39,7 @@ export function PromptTag({ mark }: { mark: PromptMark }) {
         {mark.version ? `v${mark.version}` : 'reworded'}
       </span>
       {mark.version && <span className="text-tertiary">{mark.exact ? 'exact' : ''}</span>}
-      {r?.task_success && <span className="text-secondary">{r.task_success}</span>}
+      {r?.task_success && <span className="text-secondary">{stepWord('task_success', r.task_success)}</span>}
       {r?.score != null && <span className="text-secondary">{r.score}/10</span>}
       <a href={`/prompts/${mark.promptId}`} className="ml-auto text-tertiary hover:text-brand inline-flex items-center gap-4" title={t('open the prompt')}>
         {t('the prompt')}{' '}<ExternalLink size={10} aria-hidden />

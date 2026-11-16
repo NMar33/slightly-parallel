@@ -22,7 +22,10 @@ test('the agent has its page, with the chat', async ({ page }) => {
 })
 
 test('the board shows the task', async ({ page }) => {
-  test.skip(TASK === '', 'the agent made no task')
+  // No task is a failure, not a skip: the agent's refused tags list was
+  // read as the agent's mistake twice (docs/testing.md case 5). Read its
+  // turn log; a refusal is a product bug until shown otherwise.
+  expect(TASK, 'the agent made no task').not.toBe('')
   await page.goto(`/project/${CODE}#tasks`)
   await expect(page.getByText(/unit tests|tests for calc/i).first()).toBeVisible()
 })

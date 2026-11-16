@@ -170,6 +170,36 @@ def _chat_at(root: Path, turns: list[tuple[str, str]]) -> None:
     (d / "chat.md").write_text("".join(body), encoding="utf-8")
 
 
+def test_a_card_event_stamped_with_a_zone_finds_its_turn(env) -> None:
+    """An event written as ``…+00:00`` is the same moment in local time: the
+    card's turn is found, nothing raises (it compared naive with zoned)."""
+    import csv
+    from datetime import datetime, timedelta, timezone
+
+    from backend import nowlib
+    c, root, _ids = env
+    now = datetime.now().replace(microsecond=0)
+    _chat_at(root, [((now - timedelta(minutes=30)).isoformat(), "look"),
+                    ((now - timedelta(minutes=20)).isoformat(), "#now build the export")])
+    c.app.state.store.rebuild()
+    tid = c.post("/api/tasks", json={
+        "created_date": "2609-01", "created_time": "10:00", "project": "alpha",
+        "agent_id": AGENT, "title": "Build the export", "tags": "ag_idea",
+    }).json()["metadata"]["id"]
+    path = root / "task_events.csv"
+    with path.open(encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    for r in rows:
+        if r["task_id"] == tid:
+            r["timestamp"] = (now - timedelta(minutes=10)).astimezone(timezone.utc).isoformat()
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    c.app.state.store.rebuild()
+    assert (AGENT, 2, tid) in nowlib.card_turns(c.app.state.store, {AGENT}, ("started",))
+
+
 def test_done_closes_the_task_the_operator_started_with_now(env) -> None:
     # #now names no id; the card the agent wrote in that turn is the one named.
     from datetime import datetime, timedelta

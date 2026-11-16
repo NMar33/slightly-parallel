@@ -41,7 +41,7 @@ from ..csvio import read_rows
 from ..db import ViewStore
 from ..docs_md import read_detail
 from ..entities import ENTITIES
-from ..file_safety import edit_json, safe_read_json, write_in_place
+from ..file_safety import edit_json, given_path, safe_read_json, write_in_place
 from .deps import get_store
 from .sets import _find as find_set
 from .sets import _read as read_sets
@@ -206,7 +206,7 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=f"cannot read {path}: {exc}") from exc
 
 
@@ -263,7 +263,7 @@ def sync_all_rules(store: ViewStore) -> list[dict[str, str]]:
                 action = "removed" if removed else "unchanged"
             if new != existing:
                 write_in_place(path, new)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             results.append({"project": project, "action": "failed", "error": str(exc)})
             continue
         if block:
@@ -284,9 +284,12 @@ def _set_for(store: ViewStore, set_id: str, sets: dict[str, dict[str, Any]]) -> 
 
 
 def status_of(store: ViewStore, s: dict[str, Any] | None, entry: dict[str, Any]) -> str:
+    folder = given_path(entry.get("path"))
+    if folder is None:
+        return "missing"
     try:
-        text = (Path(str(entry.get("path") or "")) / "AGENTS.md").read_text(encoding="utf-8")
-    except OSError:
+        text = (folder / "AGENTS.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return "missing"
     block = block_in(text, str(entry["set_id"]))
     if block is None:

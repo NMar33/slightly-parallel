@@ -7,8 +7,8 @@ import { AGENTS_GUIDE } from '../features/visions/guides'
 import { PageGuide } from '../features/visions/parts'
 import { LoadingSkeleton } from '../components/states'
 import { AgentCard } from '../features/agents/AgentCard'
-import { FleetStrip, projectRange, useDrawer } from '../features/agents/parts'
-import { fetchProfiles, fmtMinutes, profileHeadline, profileLabel, type AgentProfile } from '../features/agents/profile'
+import { FleetStrip, HelperRows, projectRange, useDrawer } from '../features/agents/parts'
+import { fetchRoster, fmtMinutes, profileHeadline, profileLabel, type AgentProfile, type HelperRow } from '../features/agents/profile'
 import { api, qk } from '../lib/api'
 import { projectColor } from '../utils/projectColor'
 import { useHashState } from '../hooks/useHashState'
@@ -23,10 +23,15 @@ import { t, tn } from '../i18n/scope/pages'
  * project by project, most recently active first, with the fleet totals
  * on top and one search box over names, ids and headlines. A click on a
  * card opens the agent's own page.
+ *
+ * Helper chats (a codex exec, a claude -p another chat started) are on the
+ * page of the chat that started them; those whose parent is not known are
+ * folded at the end of their project.
  */
-/** Each roster's profiles; recombined only when one of the reads changes. */
-const rosterData = (results: Array<{ data?: AgentProfile[]; isLoading: boolean }>) => ({
-  data: results.map((r) => r.data ?? []),
+/** Each roster's profiles and helpers with no parent; recombined only when one of the reads changes. */
+const rosterData = (results: Array<{ data?: { profiles: AgentProfile[]; orphans: HelperRow[] }; isLoading: boolean }>) => ({
+  data: results.map((r) => r.data?.profiles ?? []),
+  orphans: results.map((r) => r.data?.orphans ?? []),
   loading: results.some((r) => r.isLoading && !r.data),
 })
 
@@ -36,10 +41,10 @@ export default function AgentsIndexPage() {
   const { open: openDrawer, drawer } = useDrawer()
   const snapshot = useQuery({ queryKey: qk.snapshot(), queryFn: ({ signal }) => api.snapshot(signal) })
   const codes = useMemo(() => (snapshot.data?.projects ?? []).map((p) => p.code), [snapshot.data])
-  const { data: rosters, loading: rostersLoading } = useQueries({
+  const { data: rosters, orphans, loading: rostersLoading } = useQueries({
     queries: codes.map((code) => ({
-      queryKey: ['agents', 'profiles', code],
-      queryFn: ({ signal }: { signal: AbortSignal }) => fetchProfiles(code, signal),
+      queryKey: ['agents', 'roster', code],
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchRoster(code, signal),
       staleTime: 15_000,
     })),
     combine: rosterData,
@@ -64,9 +69,10 @@ export default function AgentsIndexPage() {
       const members = all.filter(match).sort((a, b) =>
         Number(starred('agent', b.agent.agent_id)) - Number(starred('agent', a.agent.agent_id))
         || (b.agent.last_active || '').localeCompare(a.agent.last_active || ''))
-      return { code, all, members, range: projectRange(all), peak: Math.max(1, ...all.flatMap((p) => p.by_day.map((d) => d.turns))) }
+      const loose = (orphans[i] ?? []).filter((h) => !group && (!needle || `${h.agent_id} ${h.first_line} ${h.chat_title ?? ''}`.toLowerCase().includes(needle)))
+      return { code, all, members, loose, range: projectRange(all), peak: Math.max(1, ...all.flatMap((p) => p.by_day.map((d) => d.turns))) }
     }).sort((a, b) => (b.members[0]?.agent.last_active || '').localeCompare(a.members[0]?.agent.last_active || ''))
-  }, [codes, rosters, needle, group, starred])
+  }, [codes, rosters, orphans, needle, group, starred])
   const everyone = useMemo(() => sections.flatMap((s) => s.all), [sections])
   const groups = useMemo(() => {
     const n = new Map<string, number>()
@@ -113,7 +119,7 @@ export default function AgentsIndexPage() {
       {!loading && everyone.length === 0 && (
         <div className="text-12 text-tertiary italic">{t('No agents yet. Start an agent in a connected project.')}</div>
       )}
-      {sections.filter((s) => s.members.length > 0).map((s) => (
+      {sections.filter((s) => s.members.length > 0 || s.loose.length > 0).map((s) => (
         <section key={s.code} className="flex flex-col gap-8 min-w-0">
           <h2 className="text-12 font-mono text-secondary flex items-center gap-8">
             <span aria-hidden className="inline-block w-8 h-8 rounded-pill" style={{ backgroundColor: projectColor(s.code) }} />
@@ -135,6 +141,15 @@ export default function AgentsIndexPage() {
               />
             ))}
           </div>
+          {s.loose.length > 0 && (
+            <details className="rounded-card border border-border-subtle bg-base/40 px-10 py-6">
+              <summary className="text-11 font-mono text-secondary cursor-pointer">
+                {t('Helpers with no known parent · {n}', { n: s.loose.length })}
+              </summary>
+              <div className="text-11 text-tertiary mt-4 mb-6">{t('Runs started from a terminal, or by a chat that was not recorded. Each opens as a chat.')}</div>
+              <HelperRows rows={s.loose} />
+            </details>
+          )}
         </section>
       ))}
       {!loading && needle && sections.every((s) => s.members.length === 0) && everyone.length > 0 && (

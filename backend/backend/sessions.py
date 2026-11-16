@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .hookshared import NOT_OPERATOR, yymm_dd as _yymm_dd
+from .hookshared import NOT_OPERATOR, command_text, plain_text, yymm_dd as _yymm_dd
 
 _TURN_RE = re.compile(r"^## Turn (\d+) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 # Quoted structure inside captured content is escaped at write time.
@@ -158,9 +158,9 @@ _BOILERPLATE_RE = re.compile(
 # The other things an operator keeps by tagging a message. Same rules as
 # #prompt, plus one: ``#problem solved <id>`` asks the agent to close a
 # problem, so it is a command and not a new problem.
-KEEP_KINDS = ("vision", "rule", "problem", "entrypoint", "skill", "artifact")
+KEEP_KINDS = ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "publish")
 KEEP_TAG_RE = re.compile(
-    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact)(?:\(([^)\n]{1,80})\))?(?![\w-])(?!\s+solved\b)",
+    r"(?<![\w#])#(vision|rule|problem|entrypoint|skill|artifact|publish)(?:\(([^)\n]{1,80})\))?(?![\w-])(?!\s+solved\b)",
     re.IGNORECASE,
 )
 
@@ -194,7 +194,10 @@ def task_command(text: str) -> tuple[str, str, str]:
     hits = list(TASK_CMD_RE.finditer(text or ""))
     if not hits:
         return "", "", ""
-    m = hits[-1]
+    # Both in one message ("#now fix it, and #task the docs later"): the
+    # #now is the task this chat starts on, so it is the one the card is
+    # for; the hook names both, and the agent writes the #task one as well.
+    m = next((h for h in hits if h.group(1).lower().split("-")[0] == "now"), hits[-1])
     command, _, suffix = m.group(1).lower().partition("-")
     column = NOW_COLUMNS[suffix] if command == "now" else "agent"
     return command, " ".join((m.group(2) or "").split()), column
@@ -387,10 +390,10 @@ def _prompts_of(
             "body": text.strip(),
             "shingles": shingles(text),
         })
-        m = PROMPT_TAG_RE.search(text)
+        m = PROMPT_TAG_RE.search(command_text(text))
         if m is None:
             continue
-        body = prompt_body(text)
+        body = prompt_body(plain_text(text))
         if not body:
             continue
         marks.append({
@@ -414,21 +417,23 @@ def _keeps_of(
         if not text or "#" not in text:
             continue
         named: dict[str, str] = {}
-        for m in KEEP_TAG_RE.finditer(text):
+        for m in KEEP_TAG_RE.finditer(command_text(text)):
             kind = m.group(1).lower()
             if not named.get(kind):
                 named[kind] = m.group(2) or ""
         if not named:
             continue
-        body = keep_body(text)
+        body = keep_body(plain_text(text))
         if not body:
-            continue
+            # #entrypoint alone is a command too: the agent proposes the
+            # topic's name and the operator chooses (the hook's _kept agrees).
+            named = {k: v for k, v in named.items() if k == "entrypoint"}
         for kind, name in named.items():
             out.append({
                 "kind": kind, "project": project, "agent_id": agent_id,
                 "session_id": session_id, "turn": t.number,
                 "at": t.at.strftime("%Y-%m-%dT%H:%M:%S"),
-                "title": prompt_title(name, body),
+                "title": prompt_title(name, body) if body or name.strip() else "",
                 "body": body,
             })
     return out
@@ -443,14 +448,14 @@ def _importants_of(
         text = _operator_text(t)
         if not text or "#important" not in text.lower():
             continue
-        kinds = {(m.group(1) or "all").lower() for m in IMPORTANT_TAG_RE.finditer(text)}
+        kinds = {(m.group(1) or "all").lower() for m in IMPORTANT_TAG_RE.finditer(command_text(text))}
         if not kinds:
             continue
         named = []
         for m in _TASK_ID_RE.finditer(text):
             if m.group(1).startswith("tk_") and m.group(1) not in named:
                 named.append(m.group(1))
-        body = IMPORTANT_TAG_RE.sub("", text).strip()
+        body = IMPORTANT_TAG_RE.sub("", plain_text(text)).strip()
         head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         for kind in sorted(kinds):
             out.append({
@@ -469,13 +474,13 @@ def _dones_of(
     out: list[dict] = []
     for t in block:
         text = _operator_text(t)
-        if not text or "#done" not in text.lower() or not DONE_TAG_RE.search(text):
+        if not text or "#done" not in text.lower() or not DONE_TAG_RE.search(command_text(text)):
             continue
         named: list[str] = []
         for m in _TASK_ID_RE.finditer(text):
             if m.group(1).startswith("tk_") and m.group(1) not in named:
                 named.append(m.group(1))
-        body = DONE_TAG_RE.sub("", text).strip()
+        body = DONE_TAG_RE.sub("", plain_text(text)).strip()
         head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         out.append({
             "project": project, "agent_id": agent_id, "session_id": session_id,
@@ -486,7 +491,7 @@ def _dones_of(
 
 
 def _nows_of(
-    session_id: str, project: str, agent_id: str, block: list[Turn]
+    session_id: str, project: str, agent_id: str, block: list[Turn], answered_later: bool = False
 ) -> list[dict]:
     """One row per user turn carrying #now (or #now-todo …): the column, the
     lane named in braces, the whole message, and whether the agent answered."""
@@ -495,7 +500,7 @@ def _nows_of(
         text = _operator_text(t)
         if not text or "#now" not in text.lower():
             continue
-        command, lane, column = task_command(text)
+        command, lane, column = task_command(command_text(text))
         if command != "now":
             continue
         out.append({
@@ -504,7 +509,7 @@ def _nows_of(
             # Answered, or a later turn was: a message sent while the agent
             # still worked does not end the agent's chance.
             "column_": column, "lane": lane,
-            "answered": "1" if any((x.agent_summary or "").strip() for x in block[i:]) else "",
+            "answered": "1" if answered_later or any((x.agent_summary or "").strip() for x in block[i:]) else "",
             "body": text,
         })
     return out
@@ -661,7 +666,12 @@ def group_sessions(
         return []
     sessions: list[Session] = []
     block: list[Turn] = [turns[0]]
-    for turn in turns[1:]:
+    # answered_from[i]: a turn at or after i has an answer (one reverse pass:
+    # a scan of the rest at every boundary was quadratic on a long chat).
+    answered_from = [False] * (len(turns) + 1)
+    for i in range(len(turns) - 1, -1, -1):
+        answered_from[i] = answered_from[i + 1] or bool((turns[i].agent_summary or "").strip())
+    for i, turn in enumerate(turns[1:], start=1):
         # Helpers still working after the last answer are recorded on this
         # turn's line, before its prompt: they belong to the block before.
         before = [(a, min(b, turn.at)) for a, b in (turn.busy or []) if a < turn.at]
@@ -670,7 +680,9 @@ def group_sessions(
         last = max([block[-1].end or block[-1].at, *(b for _, b in before)])
         gap = (turn.at - last).total_seconds() / 60
         if gap > gap_minutes or turn.at.date() != block[-1].at.date():
-            sessions.append(_close(project, agent_id, block, turn.line - 1, before, gap_minutes))
+            # A #now cut off before any answer is answered by the chat's
+            # next session, not left waiting for a card forever.
+            sessions.append(_close(project, agent_id, block, turn.line - 1, before, gap_minutes, answered_from[i]))
             block = [turn]
         else:
             block.append(turn)
@@ -682,6 +694,7 @@ def _close(
     project: str, agent_id: str, block: list[Turn], end_line: int,
     before: list[tuple[datetime, datetime]] | None = None,
     gap_minutes: int = 30,
+    answered_later: bool = False,
 ) -> Session:
     first, last = block[0], block[-1]
     seed = f"{project}|{agent_id}|{first.at.isoformat()}"
@@ -736,7 +749,7 @@ def _close(
         keep_marks=_keeps_of(sid, project, agent_id, block),
         important_tags=_importants_of(sid, project, agent_id, block),
         done_tags=_dones_of(sid, project, agent_id, block),
-        now_tags=_nows_of(sid, project, agent_id, block),
+        now_tags=_nows_of(sid, project, agent_id, block, answered_later),
     )
 
 
@@ -783,6 +796,19 @@ def chat_path(store: Any, agent_id: str) -> Path | None:
     return chat_paths(store).get(agent_id)
 
 
+def is_helper(agent: Any) -> bool:
+    """A helper chat: a run another program started (a codex exec, a
+    claude -p, an opencode run), marked by the hook in meta.json. Its
+    messages are recorded; no command in them acts, and the lists the
+    operator reads leave it out (hookshared.HELPER_KINDS)."""
+    return isinstance(agent, dict) and agent.get("helper") is True
+
+
+def helper_ids(store: Any) -> set[str]:
+    """The agent ids of every helper chat."""
+    return {str(a.get("agent_id") or "") for a in store.agents() if is_helper(a)}
+
+
 def turns_with_work(store: Any, row: dict[str, Any]) -> list[dict[str, Any]]:
     """One chat's turns, each carrying what it changed when git knows."""
     from . import gitwork
@@ -800,3 +826,42 @@ def turns_with_work(store: Any, row: dict[str, Any]) -> list[dict[str, Any]]:
             if changed:
                 turn["work"] = changed
     return turns
+
+
+def turns_with_usage(store: Any, row: dict[str, Any],
+                     memo: dict[str, dict[int, dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
+    """One chat's turns with their work, each also carrying ``usage`` (the
+    tokens of that turn, usagelib.TurnUsage) when the chat recorded them.
+    ``memo`` (agent → its turns' usage) lets a request over many sessions
+    of one chat read its usage once."""
+    from . import usagelib
+
+    turns = turns_with_work(store, row)
+    agent = str(row.get("agent_id") or "")
+    path = chat_path(store, agent)
+    if path is None or not turns:
+        return turns
+    if memo is not None and agent in memo:
+        used = memo[agent]
+    else:
+        used = usagelib.turns_in(path.parent, Path(store.data_root))
+        if memo is not None:
+            memo[agent] = used
+    if used:
+        for turn in turns:
+            got = used.get(usagelib._int(turn.get("n")))
+            if got is not None:
+                turn["usage"] = got
+    return turns
+
+
+def usage_signature(store: Any, agents: Any) -> str:
+    """What the usage on these chats' turns depends on outside the store
+    (the limits, each chat's status-line file, settings): for their ETags."""
+    from . import usagelib
+
+    parts = []
+    for agent in sorted({str(a) for a in agents}):
+        path = chat_path(store, agent)
+        parts.append(usagelib.signature(Path(store.data_root), path.parent if path is not None else None))
+    return ";".join(parts)

@@ -95,6 +95,47 @@ SPECS: tuple[SettingSpec, ...] = (
         ),
         type="bool", default=True, group="Agent signals",
     ),
+    SettingSpec(
+        key="agent.usage_show",
+        label="Show usage after each reply",
+        description=(
+            "After each reply the terminal and the chat viewer show the turn's "
+            "tokens: → new ↑ output ↓ (cache). Tokens are recorded either way. "
+            "#usage-on and #usage-off in a chat change this for that chat."
+        ),
+        type="bool", default=False, group="Agent signals",
+    ),
+    SettingSpec(
+        key="usage.warnings",
+        label="Usage warnings in the chat",
+        description=(
+            "Under a Claude Code reply, a warning when the chat is about to be "
+            "compacted or costs much of the 5-hour limit: its context is 70k tokens "
+            "short of the context window, where Claude Code compacts it; its "
+            "context passed 300k, 500k or 800k tokens; a reply "
+            "read the whole chat again after a break of more than an hour; the "
+            "chat used more than 25% of the current 5-hour limit. Each is shown "
+            "once. #usage-warnings-on and #usage-warnings-off in a chat change "
+            "this for that chat."
+        ),
+        type="bool", default=True, group="Agent signals",
+    ),
+    SettingSpec(
+        key="usage.codex_poll",
+        label="Read Codex's plan limits in the background",
+        description=(
+            "When Codex is on this machine, its plan limits are read through "
+            "codex app-server on a schedule, without a chat and without tokens. "
+            "Off: they come only from Codex chats in integrated folders."
+        ),
+        type="bool", default=True, group="Agent signals",
+    ),
+    SettingSpec(
+        key="usage.codex_poll_hours",
+        label="Read Codex's limits every",
+        description="Hours between two scheduled readings. The Usage page asks for a fresh one on its own when the last is older than 15 minutes.",
+        type="int", default=6, group="Agent signals", unit="hours", minimum=1, maximum=168,
+    ),
     # ---------------------------------------------------------- dashboard ---
     SettingSpec(
         key="ui.default_project_tab",

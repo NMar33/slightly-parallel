@@ -13,8 +13,12 @@ import { fmtDay } from './parts'
 import { approx, fmtMinutes, type ProfileSession } from './profile'
 import { useSessionTurns } from './sessionTurns'
 import { WorkLine } from './workLine'
+import { Switch } from '../../components/Switch'
+import { UsageLine } from '../usage/UsageLine'
+import type { TurnUsage } from '../usage/data'
 import { PromptTag, TurnMsg, type PromptMark } from './chatMessage'
 import { TEXT_SIZES, useReadingPrefs, useStretches, type ReadingPrefs } from './chatReaderHooks'
+import { isTypingTarget } from '../../lib/typing'
 
 import { t } from '../../i18n/scope/views'
 export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, position, onPrev, onNext, find: findProp, onFind, extra, markTurn, promptMarks, reading, turnExtra }: {
@@ -64,8 +68,23 @@ export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, pos
   // responsive while a large history re-filters in the background.
   const deferredFind = useDeferredValue(find)
   const setFind = controlled ? (onFind ?? (() => {})) : setOwnFind
-  const { md, reverse, size, showWork, flipMd, flipOrder, pickSize } = useReadingPrefs(reading)
+  const { md, reverse, size, showWork, showUsage, flipMd, flipOrder, pickSize, pickUsage } = useReadingPrefs(reading)
   const [expandedTurns, setExpandedTurns] = useState<Set<string>>(new Set())
+  // U shows and hides the tokens line — here only while the reader owns its
+  // switch; a host with its own settings binds the key itself.
+  const ownsUsage = reading?.usage === undefined
+  const usageRef = useRef({ showUsage, pickUsage })
+  usageRef.current = { showUsage, pickUsage }
+  useEffect(() => {
+    if (!ownsUsage) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'u' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || isTypingTarget(e)) return
+      e.preventDefault()
+      usageRef.current.pickUsage(!usageRef.current.showUsage)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ownsUsage])
   // Stable across renders, so the memo'd TurnMsg is not re-rendered by a
   // fresh closure every time the reader re-renders.
   const toggleMsg = useCallback((mk: string) => {
@@ -92,6 +111,19 @@ export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, pos
     scrolledFor.current = markKey
   })
 
+  // Each turn's previous usage reading with a limit, so a line built here
+  // (an answer without the server's `line`) says when the 5-hour limit passed a ten.
+  const prevLimit = useMemo(() => {
+    const out = new Map<string, TurnUsage>()
+    sessions.forEach((s, i) => {
+      let last: TurnUsage | null = null
+      for (const it of details[i]?.data?.turns ?? []) {
+        if (last) out.set(`${s.id}:${it.n}`, last)
+        if (it.usage?.limit) last = it.usage
+      }
+    })
+    return out
+  }, [sessions, details])
   const loading = details.some((d) => d.isLoading)
   const failed = details.find((d) => d.error)
   const needle = deferredFind.trim().toLowerCase()
@@ -171,6 +203,7 @@ export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, pos
           className="ml-auto w-[160px] rounded-input border border-border-subtle bg-surface px-8 py-3 text-12 text-primary placeholder:text-tertiary focus:outline-none focus:border-brand"
         />
         {!reading && <ReaderButtons md={md} size={size} reverse={reverse} onMd={flipMd} onSize={pickSize} onOrder={flipOrder} />}
+        {ownsUsage && <Switch on={showUsage} onChange={pickUsage} label={t('Show the tokens of each reply')} text={t('usage')} title={t('Show the tokens of each reply (U)')} />}
         {viewing && (
           <button type="button" onClick={() => onOpenLens('sessions', viewing.id)} className="inline-flex items-center gap-4 text-11 font-mono text-secondary hover:text-primary rounded-input px-6 py-3 hover:bg-hover" title={t('Open this chat on the Chats page')}>
             <ExternalLink size={11} aria-hidden /> {t('open')}
@@ -229,6 +262,7 @@ export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, pos
                         {allOpen ? t('collapse turn') : t('whole turn')}
                       </Button>
                     )}
+                    {showUsage && it.usage && <span className="ml-auto"><UsageLine usage={it.usage} at={it.at} turn={it.n} prev={prevLimit.get(tk)} /></span>}
                     {turnExtra?.(g.session, it.n, sides.find(([w]) => w === 'user')?.[1] ?? '')}
                   </div>
                   {promptMarks?.[g.session.id]?.[it.n] && <PromptTag mark={promptMarks[g.session.id]![it.n]!} />}

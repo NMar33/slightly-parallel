@@ -23,6 +23,15 @@ def lock_path(csv_path: Path) -> Path:
     return csv_path.with_name(csv_path.name + ".lock")
 
 
+def as_int(value: Any, default: int = 0) -> int:
+    """A ledger cell as a whole number; ``default`` for an empty or damaged
+    one (a hand-edited row never takes a whole reader down)."""
+    try:
+        return int(str(value or "").strip() or default)
+    except (TypeError, ValueError):
+        return default
+
+
 def csv_escape(value: Any) -> str:
     """RFC-4180 minimal-quoting single-field encoder."""
     if value is None:
@@ -84,7 +93,12 @@ def read_rows(csv_path: Path) -> list[dict[str, str]]:
     if not csv_path.exists():
         return []
     with open(csv_path, encoding="utf-8-sig", newline="") as fh:
-        return list(csv.DictReader(fh))
+        rd = csv.DictReader(fh)
+        # A header cell with spaces around it ("id, title") names the same
+        # column as the stripped header the writers use; keyed raw, every
+        # r.get("title") read "" and the first rewrite emptied the column.
+        rd.fieldnames = [f.strip() for f in rd.fieldnames or []]
+        return list(rd)
 
 
 def append_row(csv_path: Path, columns: Sequence[str], row: dict[str, Any]) -> None:

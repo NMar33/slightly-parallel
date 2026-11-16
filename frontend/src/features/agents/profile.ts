@@ -26,6 +26,11 @@ interface ProfileAgent {
   agent_group?: string
   project: string
   parent_agent_id?: string | null
+  /** A run another chat started (codex exec, claude -p, opencode run). */
+  helper?: boolean
+  helper_kind?: string
+  /** The chat that started it; '' when not known. */
+  helper_of?: string
   created_date: string
   last_active: string
   message_count: number
@@ -139,6 +144,27 @@ export interface AgentBrief {
   last_active?: string
 }
 
+/** A helper chat as its parent's page lists it (GET /api/agents/profiles). */
+export interface HelperRow {
+  agent_id: string
+  agent_name?: string
+  chat_title?: string
+  project: string
+  tool: string
+  /** codex-exec · codex-subagent · claude-print · opencode-run */
+  helper_kind: string
+  helper_of: string
+  helper_of_by?: string
+  /** When its first message came: YYYY-MM-DDTHH:MM:SS. */
+  started: string
+  first_line: string
+  message_count: number
+  /** New input plus output, its own helpers included. */
+  tokens: number
+  /** Dollars at API prices; null when nothing was priced. */
+  cost_usd: number | null
+}
+
 export interface AgentProfile {
   agent: ProfileAgent
   origin: { tool: string; cwd: string; session_ref: string; capture: string; chat_path: string }
@@ -158,11 +184,19 @@ export interface AgentProfile {
   parent: AgentBrief | null
   children: AgentBrief[]
   group: { name: string; members: AgentBrief[] }
+  /** The runs this chat started, each a chat of its own. */
+  helpers?: HelperRow[]
 }
 
 export async function fetchProfiles(project: string, signal?: AbortSignal): Promise<AgentProfile[]> {
   const d = await getJson<{ profiles?: AgentProfile[] }>(`/api/agents/profiles?project=${encodeURIComponent(project)}`, signal)
   return Array.isArray(d?.profiles) ? d.profiles : []
+}
+
+/** The roster and the project's helpers with no known parent, in one read. */
+export async function fetchRoster(project: string, signal?: AbortSignal): Promise<{ profiles: AgentProfile[]; orphans: HelperRow[] }> {
+  const d = await getJson<{ profiles?: AgentProfile[]; orphans?: HelperRow[] }>(`/api/agents/profiles?project=${encodeURIComponent(project)}`, signal)
+  return { profiles: Array.isArray(d?.profiles) ? d.profiles : [], orphans: Array.isArray(d?.orphans) ? d.orphans : [] }
 }
 
 async function fetchProfile(agentId: string, signal?: AbortSignal): Promise<AgentProfile> {

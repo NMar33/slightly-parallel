@@ -136,7 +136,8 @@ def build_detail(body: dict, eid: str) -> str:
     return "\n".join(lines)
 
 
-_UNSAFE_REF_CHARS = re.compile(r"[^A-Za-z0-9_.:-]+")
+# No colon: Windows refuses it in a file name (and reads "a:b" as a stream).
+_UNSAFE_REF_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def safe_ref_part(value: str, fallback: str = "unknown") -> str:

@@ -95,8 +95,18 @@ def times(chat_dir: Path) -> dict[int, Timed]:
         if isinstance(rec.get("busy"), list):
             pairs = ((_parse(x[0]), _parse(x[1])) for x in rec["busy"] if isinstance(x, list) and len(x) == 2)
             busy = [(a, b) for a, b in pairs if a and b]
-        out[rec["turn"]] = Timed(at, int(active) if isinstance(active, (int, float)) else None,
-                                 busy, int(rec.get("helper_sec") or 0))
+        timed = Timed(at, int(active) if isinstance(active, (int, float)) else None,
+                      busy, int(rec.get("helper_sec") or 0))
+        before = out.get(rec["turn"])
+        if before is not None and before.busy is not None and before.end <= at:
+            # A second hook stamp for the turn: the reply after the tool woke
+            # the agent itself (a helper's report). The turn's answer ran on:
+            # its stretches add up, its end is the later one.
+            timed.busy = before.busy + (busy or [])
+            if before.active_sec is not None or timed.active_sec is not None:
+                timed.active_sec = (before.active_sec or 0) + (timed.active_sec or 0)
+            timed.helper_sec += before.helper_sec
+        out[rec["turn"]] = timed
     return out
 
 
@@ -338,6 +348,7 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
     """Time every Claude Code turn the hook did not, from its transcript.
     Rewrites a chat's turns.jsonl only when its answer changed; answers how
     many turns were written."""
+    from .file_safety import acquire_flock, lock_path, replace_file
     from .sessions import parse_turns
 
     claude_dir = claude_dir or Path.home() / ".claude" / "projects"
@@ -378,15 +389,24 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
         old = [r for r in lines if r.get("source") == "transcript" or (r.get("source") == "hook" and "busy" not in r)]
         if fresh == old:
             continue
-        # The hook may have timed a turn meanwhile: take its lines as they are now.
-        hook = [r for r in _lines(folder / FILE) if r.get("source") == "hook" and "busy" in r]
-        fresh = [r for r in fresh if r["turn"] not in {h.get("turn") for h in hook}]
-        body = "".join(json.dumps(r) + "\n" for r in [*hook, *fresh])
-        tmp = folder / (FILE + ".tmp")
+        # The hook may have timed a turn meanwhile: take its lines as they are
+        # now, under the lock its append takes, so none lands between the
+        # read and the replace.
         try:
-            tmp.write_text(body, encoding="utf-8")
-            tmp.replace(folder / FILE)
-        except OSError as exc:
+            with acquire_flock(lock_path(folder / FILE), timeout_s=2.0):
+                now = [r for r in _lines(folder / FILE) if r.get("source") == "hook"]
+                hook = [r for r in now if "busy" in r]
+                fresh = [r for r in fresh if r["turn"] not in {h.get("turn") for h in hook}]
+                # A hook line without busy stretches is measured again from
+                # the transcript; where the transcript has nothing for its
+                # turn, the hook's end is still the only one and is kept.
+                replaced = {r["turn"] for r in fresh}
+                kept = [r for r in now if "busy" not in r and r.get("turn") not in replaced]
+                body = "".join(json.dumps(r) + "\n" for r in [*hook, *kept, *fresh])
+                tmp = folder / (FILE + ".tmp")
+                tmp.write_text(body, encoding="utf-8")
+                replace_file(tmp, folder / FILE)
+        except OSError as exc:   # FileSafetyError too: the hook holds it, next start
             log.info("turn times for %s: %s", folder, exc)
             continue
         written += len(fresh)

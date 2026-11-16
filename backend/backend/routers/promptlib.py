@@ -144,6 +144,8 @@ def prompts_list(
         out.append({
             **_clean(row),
             "preview": text[:400],
+            # The whole current wording, for copying it from the list.
+            "text": text,
             "chars": len(text),
             "words": len(text.split()),
             "metrics": metrics,

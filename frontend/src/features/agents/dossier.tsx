@@ -16,6 +16,7 @@ import {
   DaySpark,
   DidChips,
   EntryRows,
+  HelperRows,
   HourStrip,
   LinkRows,
   OriginLine,
@@ -36,7 +37,7 @@ export { TaskChips, type PromptMark } from './chatMessage'
 export { useSessionTurns, type SessionTurn } from './sessionTurns'
 export { WorkLine } from './workLine'
 
-export type SectionId = 'overview' | 'chats' | 'files' | 'decisions' | 'tasks' | 'work' | 'links'
+export type SectionId = 'overview' | 'chats' | 'files' | 'decisions' | 'tasks' | 'work' | 'links' | 'helpers'
 
 interface Section {
   id: SectionId
@@ -45,7 +46,8 @@ interface Section {
   render: () => ReactNode
 }
 
-export const SECTION_IDS: SectionId[] = ['overview', 'chats', 'files', 'decisions', 'tasks', 'work', 'links']
+// Helpers last: an agent with none has no such section, and the digits of the others stay.
+export const SECTION_IDS: SectionId[] = ['overview', 'chats', 'files', 'decisions', 'tasks', 'work', 'links', 'helpers']
 
 export function AgentDossier({
   p, range, peak, byId, onOpenLens, onOpenTask, initial = 'overview', header, section, onSectionChange, hotkeys = false,
@@ -95,7 +97,11 @@ export function AgentDossier({
     { id: 'decisions', label: t('decisions'), count: tot.decisions_n, render: () => <Decisions p={p} onOpenLens={onOpenLens} /> },
     { id: 'tasks', label: t('tasks'), count: tot.tasks_n, render: () => <TaskRows tasks={p.tasks} onOpen={onOpenTask} /> },
     { id: 'work', label: t('features & fixes'), count: tot.architecture_n + tot.problems_n + tot.rules_n, render: () => <Work p={p} onOpenLens={onOpenLens} /> },
-    { id: 'links', label: t('links and subagents'), count: tot.links_n + p.children.length + (p.parent ? 1 : 0) + p.group.members.length, render: () => <LinkRows p={p} byId={byId} /> },
+    { id: 'links', label: t('links and subagents'), count: tot.links_n + p.children.length + (p.parent ? 1 : 0) + p.group.members.length + (p.agent.helper ? 1 : 0), render: () => <LinkRows p={p} byId={byId} /> },
+    // The runs this chat started (codex exec, claude -p, opencode run): each opens as a chat.
+    ...((p.helpers?.length ?? 0) > 0
+      ? [{ id: 'helpers' as const, label: t('helpers'), count: p.helpers!.length, render: () => <HelperRows rows={p.helpers!} /> }]
+      : []),
   ]
 
   const nav = (
@@ -119,7 +125,8 @@ export function AgentDossier({
       })}
     </div>
   )
-  const body = <div className="min-w-0 flex-1 h-full">{sections.find((s) => s.id === active)?.render()}</div>
+  // A section this agent does not have (helpers, walking to an agent with none) shows the overview.
+  const body = <div className="min-w-0 flex-1 h-full">{(sections.find((s) => s.id === active) ?? sections[0]!).render()}</div>
 
   return (
     <div className="flex flex-col gap-12 min-w-0 h-full min-h-0">

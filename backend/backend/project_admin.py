@@ -77,7 +77,7 @@ def strip_file(path: Path, transform) -> str:
     up blank (Setup created it, so nothing of the user's is lost)."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return "absent"
     new, action = transform(text)
     if action == "unchanged":
@@ -87,7 +87,7 @@ def strip_file(path: Path, transform) -> str:
             path.unlink()
             return "deleted"
         write_in_place(path, new)  # the operator's own file: never half written, links kept
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return "unwritable"
     return action
 
@@ -240,7 +240,7 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     shutil.move(str(folder), str(dest))
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     continue  # left in place, as a detail document that will not move is
                 evidence_moved += 1
         if evidence_moved:
@@ -255,7 +255,7 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     shutil.move(str(folder), str(dest))
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     continue
                 story_moved += 1
         if story_moved:

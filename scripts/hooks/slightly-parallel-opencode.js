@@ -14,7 +14,8 @@
  *
  * At the end of a turn it also hands over the times in the session's
  * messages and in its child sessions (the helpers a task tool starts), so
- * Slightly Parallel can tell the agent's working time from its wait on you.
+ * Slightly Parallel can tell the agent's working time from its wait on you,
+ * and each message's tokens (Usage).
  *
  * When OpenCode starts (`config`), the standup and map helpers become
  * subagents, sp-standup and sp-map, on the models Settings give.
@@ -43,6 +44,12 @@ const SP = {
 
 const OPEN_WAIT_MS = 15000
 
+// `opencode run` is a run another program (or a script) started, not a chat
+// the operator types in: Slightly Parallel records it as a helper, and no
+// command in its messages acts. The plugin runs inside that process:
+// argv is [runtime, script, 'run', …].
+const HELPER = (typeof process !== 'undefined' && Array.isArray(process.argv) && process.argv[2] === 'run') ? 'opencode-run' : ''
+
 export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   const seen = new Set()
   const cwd = directory || ((typeof process !== 'undefined' && process.cwd) ? process.cwd() : '')
@@ -58,12 +65,16 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   // are the time (ses_eb5cc9…, ses_eb5cc1…): sessions minutes apart shared
   // them and became one agent. Lower case: the rest are letters of both
   // cases, and on macOS and Windows a folder name ignores case.
-  const run = async (phase, sessionID, text, extra = []) => {
+  const run = async (phase, sessionID, text, extra = [], more = null) => {
     try {
       const sid = String(sessionID || 'unknown')
-      // The text on stdin: as an argument a long paste passed the system's
-      // limit, the process never started, and the message was lost.
-      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --text-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(text)}`.quiet()
+      // Everything on stdin, as one JSON: as arguments a long paste, and
+      // later the times of a long session (every message's, and every
+      // helper's), passed the system's limit on a command line — 32 767
+      // characters on Windows — the process never started, and the message
+      // or the reply was lost without a word.
+      const input = JSON.stringify({ text: String(text || ''), ...(more || {}), ...(HELPER ? { helper: HELPER } : {}) })
+      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --json-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(input)}`.quiet()
       return out.text().trim()
     } catch {
       /* capture must never break the session */
@@ -102,9 +113,57 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
     }
     return out
   }
+  // The shell calls since the last user message that may make a commit
+  // (commit, merge, cherry-pick, revert, rebase, am, pull), as [start, end]
+  // in epoch ms: Slightly Parallel gives a commit several chats saw to the one
+  // whose call was running when it was made.
+  const MAKES_COMMIT = /\bgit\b[^;&|\n]*?\s(?:commit|merge|cherry-pick|revert|rebase|am|pull)\b/
+  const commitCallsOf = (list, sinceMs, out) => {
+    for (const m of list || []) {
+      const info = (m && (m.info || m)) || {}
+      const at = info.time && typeof info.time.created === 'number' ? info.time.created : 0
+      if (at && at < sinceMs) continue
+      for (const p of m.parts || info.parts || []) {
+        if (!p || p.type !== 'tool' || String(p.tool || '') !== 'bash') continue
+        const input = (p.state && p.state.input) || {}
+        const time = (p.state && p.state.time) || {}
+        if (!MAKES_COMMIT.test(String(input.command || ''))) continue
+        if (typeof time.start === 'number') out.push([time.start, typeof time.end === 'number' ? time.end : Date.now()])
+      }
+    }
+    return out
+  }
+  // The tokens of each assistant message since the last user message, as
+  // OpenCode reports them (info.tokens): Slightly Parallel's usage of the
+  // turn, per message, the helpers' (child sessions) named apart.
+  const num = (x) => (typeof x === 'number' && isFinite(x) && x > 0 ? Math.round(x) : 0)
+  // ``variant``: the reasoning variant the reply ran with (`--variant high`,
+  // the model picker's): the assistant message's, else its prompt's.
+  const usageOf = (list, sinceMs, helper, out) => {
+    let asked = ''
+    for (const m of list || []) {
+      const info = (m && (m.info || m)) || {}
+      if (info.role === 'user') asked = String((info.model && info.model.variant) || info.variant || '')
+      const t = info.tokens
+      if (info.role !== 'assistant' || !t || typeof t !== 'object' || !info.id) continue
+      const time = info.time || {}
+      const at = typeof time.created === 'number' ? time.created : 0
+      if (at && at < sinceMs) continue
+      const cache = (t.cache && typeof t.cache === 'object') ? t.cache : {}
+      out.push({
+        id: String(info.id), at: typeof time.completed === 'number' ? time.completed : at,
+        model: String(info.modelID || (info.model && info.model.modelID) || ''),
+        input: num(t.input), output: num(t.output), reasoning: num(t.reasoning),
+        cache_read: num(cache.read), cache_write: num(cache.write), helper,
+        variant: String(info.variant || asked || ''),
+      })
+    }
+    return out
+  }
   const listOf = (res) => (Array.isArray(res) ? res : (res && Array.isArray(res.data) ? res.data : []))
   const sessionTimes = async (sessionID) => {
-    const times = { points: [], helpers: [], touched: [] }
+    const times = { points: [], helpers: [], touched: [], usage: [] }
+    const calls = []
     try {
       const own = listOf(await client.session.messages({ path: { id: sessionID } }))
       times.points = timesOf(own)
@@ -114,6 +173,8 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         if (info.role === 'user' && info.time && typeof info.time.created === 'number') since = Math.max(since, info.time.created)
       }
       touchedOf(own, since, times.touched)
+      commitCallsOf(own, since, calls)
+      usageOf(own, since, '', times.usage)
       const children = listOf(await client.session.children({ path: { id: sessionID } }))
       for (const c of children) {
         const id = c && (c.id || (c.info && c.info.id))
@@ -121,7 +182,11 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         const theirs = listOf(await client.session.messages({ path: { id } }))
         times.helpers.push(timesOf(theirs))
         touchedOf(theirs, since, times.touched)
+        commitCallsOf(theirs, since, calls)
+        usageOf(theirs, since, String(id), times.usage)
       }
+      // Only when the session was read: an empty list says "no commit call".
+      times.commit_calls = calls
     } catch {
       /* an older OpenCode without these calls: the turn keeps start and end */
     }
@@ -211,8 +276,12 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         seen.add(key)
         const times = await sessionTimes(sessionID)
         const touched = times.touched
+        const commit_calls = times.commit_calls
+        const usage = times.usage
         delete times.touched
-        await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing', '--times', JSON.stringify(times), '--touched', JSON.stringify(touched)])
+        delete times.commit_calls
+        delete times.usage
+        await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing'], commit_calls ? { times, touched, commit_calls, usage } : { times, touched, usage })
       } catch {
         /* never throw into the host */
       }

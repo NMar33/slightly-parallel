@@ -7,7 +7,9 @@ enabled: true
 ---
 
 When the user types one of these, act as described. Commands start with
-`#` and may stand anywhere in the message.
+`#` and may stand anywhere in the message. One written with three hashes
+(`###now-todo`) is the message's only command: the other tags in it are
+silenced, and the notice names only that one.
 
 <!-- commands -->
 

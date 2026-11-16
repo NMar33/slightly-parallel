@@ -14,7 +14,7 @@ from backend import keeplib
 from backend.db import ViewStore
 from backend.docs_md import read_detail
 from backend.server import create_app
-from tests.conftest import make_chat
+from tests.conftest import choose_new_topic, make_chat
 
 AGENT = "cc-abc12345"
 TEXT = (
@@ -32,30 +32,32 @@ def _hook():
     return mod
 
 
-def _kept(data_root: Path) -> ViewStore:
-    make_chat(data_root, "ALPHA", AGENT, [
-        ("2026-09-01T10:00:00", "one", "a1"),
-        ("2026-09-01T10:01:00", "#entrypoint the install film: put the video work and the launch page in", "noted"),
-        ("2026-09-01T10:02:00", "three", "a3"),
-    ])
+TURNS = [
+    ("2026-09-01T10:00:00", "one", "a1"),
+    ("2026-09-01T10:01:00", "#entrypoint the install film: put the video work and the launch page in", "noted"),
+    ("2026-09-01T10:02:00", "three", "a3"),
+]
+
+
+def test_the_tag_makes_nothing_until_the_operator_chooses_then_an_open_entry_point_the_hook_named(
+        data_root: Path) -> None:
+    make_chat(data_root, "ALPHA", AGENT, TURNS)
     store = ViewStore(data_root=data_root)
     store.rebuild()
-    return store
-
-
-def test_the_tag_makes_an_open_entry_point_the_hook_can_name(data_root: Path) -> None:
-    store = _kept(data_root)
-    assert len(keeplib.adopt(store)) == 1
+    kid = _hook().keep_id("entrypoint", "ALPHA", AGENT, 2)
+    assert keeplib.adopt(store) == [kid]
+    assert not (data_root / "entrypoints.csv").exists()          # nothing is made yet
+    assert choose_new_topic(store, data_root, "ALPHA", AGENT, TURNS) == kid
     row = store.query_one("SELECT * FROM entrypoints_mutual WHERE source = 'captured'")
-    assert row["id"].startswith("ep_") and row["status"] == "open" and row["source_turn"] == 2
+    assert row["id"] == kid and row["status"] == "open" and row["source_turn"] == 2
     assert row["l1"] == "the install film: put the video work and the launch page in"
-    assert _hook().keep_id("entrypoint", "ALPHA", AGENT, 2) == row["id"]
+    assert row["topic"] == "the install film"                     # the name proposed from the message's head
     assert (data_root / "entrypoints.csv").is_file()
 
 
 def test_the_agent_writes_the_text_in_versions_and_the_operator_closes_it(data_root: Path) -> None:
-    _kept(data_root)
     with TestClient(create_app(data_root=data_root, watch=False)) as client:
+        choose_new_topic(client.app.state.store, data_root, "ALPHA", AGENT, TURNS)  # type: ignore[attr-defined]
         listed = client.get("/api/entrypoints?project=ALPHA").json()
         rows = listed.get("entrypoints") or listed.get("items") or []
         assert len(rows) == 1 and rows[0]["status"] == "open"

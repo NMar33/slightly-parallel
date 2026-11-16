@@ -33,3 +33,17 @@ describe('useBoardColumns', () => {
     expect(localStorage.getItem('sp-kanban-sort:alpha')).toBeNull()
   })
 })
+
+describe('a hidden fallback column', () => {
+  it('leaves out the cards it would have held instead of crashing the board', () => {
+    // Before: `map['unclassified']!.push` threw when Unclassified was unticked
+    // and a card had a status no visible column shows (review in the classic view).
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })))
+    localStorage.setItem('sp-kanban-cols:b', JSON.stringify({ unclassified: true }))
+    const qc = new QueryClient()
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    const tasks = [{ id: 'tk_1', title: 'x', status: 'review', project: 'b' } as unknown as TaskRow]
+    const { result } = renderHook(() => useBoardColumns({ ...props('b'), tasks }), { wrapper })
+    expect(Object.values(result.current.tasksByStatus).flat()).toHaveLength(0)
+  })
+})

@@ -13,7 +13,7 @@ export function SettingsButton({ open, onToggle }: { open: boolean; onToggle: ()
       onClick={onToggle}
       aria-label={t('Page settings')}
       aria-expanded={open}
-      title={t('Page settings — order, text, commits')}
+      title={t('Page settings — order, text, commits, usage')}
       className={`h-20 w-20 inline-flex items-center justify-center rounded-input transition-colors ${
         open ? 'text-brand bg-brand/12' : 'text-tertiary hover:text-primary hover:bg-hover'
       }`}
@@ -26,7 +26,7 @@ export function SettingsButton({ open, onToggle }: { open: boolean; onToggle: ()
 /**
  * The settings strip: text size for the list and for the chat, how the
  * the order of turns, markdown, and whether a turn shows
- * what it committed. The same strip the task window opens under its gear.
+ * what it committed and the tokens it used. The same strip the task window opens under its gear.
  */
 export function ChatSettings({ prefs, onChange }: {
   prefs: ChatsPrefs
@@ -47,6 +47,13 @@ export function ChatSettings({ prefs, onChange }: {
         <PrefChip on={prefs.work} onClick={() => set({ work: true })}>{t('show')}</PrefChip>
         <PrefChip on={!prefs.work} onClick={() => set({ work: false })}>{t('hide')}</PrefChip>
       </PrefRow>
+      <span className="inline-flex flex-col gap-2">
+        <PrefRow label={t('Usage on a turn')}>
+          <PrefChip on={prefs.usage} onClick={() => set({ usage: true })} title={t('Show the tokens of each reply (U)')}>{t('show')}</PrefChip>
+          <PrefChip on={!prefs.usage} onClick={() => set({ usage: false })} title={t('Hide the tokens of each reply (U)')}>{t('hide')}</PrefChip>
+        </PrefRow>
+        <span className="text-10 text-tertiary">{t('Tokens of each reply. Hover the numbers for the detail.')}</span>
+      </span>
     </div>
   )
 }

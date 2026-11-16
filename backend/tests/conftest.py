@@ -35,11 +35,71 @@ os.environ.setdefault("SP_EXAMPLE", "0")
 
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.server import create_app
+
+@pytest.fixture(autouse=True)
+def _moved_clock():
+    """SP_TEST_CLOCK=<local ISO moment>: every test starts its clock there
+    and the clock runs on (the "clock" CI job: a minute before midnight at
+    the end of a month, and in the night the clocks go back). Two "now"s in
+    one test are a boundary (docs/testing.md case 7). Programs a test starts
+    keep the real clock."""
+    moment = os.environ.get("SP_TEST_CLOCK", "").strip()
+    if not moment:
+        yield
+        return
+    import time_machine
+    from datetime import datetime
+    at = datetime.fromisoformat(moment)
+    if at.tzinfo is None:
+        at = at.astimezone()          # a local moment, in the TZ of the run
+    with time_machine.travel(at, tick=True):
+        yield
+
+
+#: Tests that fail under a moved clock for a known product bug, with its card.
+#: Strict: the day the bug is fixed, the mark fails and is taken away.
+KNOWN_UNDER_CLOCK = {
+    # The timer keeps naive local times; in the hour the clocks go back a
+    # later moment reads earlier (tk_3a363c87).
+    "2026-11-01T01:59:58": ("tk_3a363c87", {
+        "test_working_on_an_auto_project_writes_its_own_entry_on_the_task",
+        "test_away_pauses_back_to_the_last_input_and_counting_it_gives_it_back",
+        "test_a_restart_closes_the_span_where_it_was_last_seen",
+    }),
+}
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    moment = os.environ.get("SP_TEST_CLOCK", "").strip()
+    card, names = KNOWN_UNDER_CLOCK.get(moment, ("", set()))
+    for item in items:
+        if item.name in names and os.environ.get("TZ") == "America/Los_Angeles":
+            item.add_marker(pytest.mark.xfail(strict=True, reason=f"known: {card}"))
+
+
+def need(what: str) -> NoReturn:
+    """A test that cannot run without ``what``: skipped on a laptop that
+    lacks it, failed on a CI machine, where a skip hides code that was never
+    tested (docs/testing.md case 2)."""
+    if os.environ.get("CI"):
+        pytest.fail(f"{what} is missing on this CI machine: install it or give the right")
+    pytest.skip(f"{what} is missing")
+
+
+def symlink_or_need(link: Path, target: Path) -> None:
+    """Make a symlink, or ``need`` the right to (Windows gives it to
+    administrators and developer mode; CI's runners have it)."""
+    try:
+        link.symlink_to(target)
+    except OSError:
+        need("the right to make a symlink")
+
 
 # The server answers only to a name of this computer (server.OwnPagesOnly).
 # Starlette's test client dials "testserver" unless told otherwise: every
@@ -91,6 +151,29 @@ def make_chat(root: Path, project: str, agent: str, turns: list[tuple[str, str, 
     (d / "chat.md").write_text("".join(body), encoding="utf-8")
 
 
+def choose_new_topic(store, root: Path, project: str, agent: str, turns: list[tuple[str, str, str]],
+                     name: str = "") -> str:
+    """The operator's #entrypoint in ``turns`` (the last turn that has it),
+    the agent's question, and the operator's answer choosing the new-topic
+    line, as in a chat (entrypointask.py). The new topic's id."""
+    from datetime import datetime, timedelta
+
+    from backend import entrypointask, keeplib
+    make_chat(root, project, agent, turns)
+    store.rebuild()
+    keeplib.adopt(store)
+    n = max(i for i, (_at, user, _said) in enumerate(turns, start=1) if "#entrypoint" in user)
+    cmd = keeplib.keep_id("entrypoint", project, agent, n)
+    asked = entrypointask.ask(store, agent, cmd, name or None)
+    k = len(asked["lines"])
+    at = (datetime.fromisoformat(turns[-1][0]) + timedelta(minutes=1)).isoformat(timespec="seconds")
+    make_chat(root, project, agent, [*turns, (at, str(k), "made")])
+    store.rebuild()
+    got = entrypointask.answer(store, agent, k)
+    assert got["id"] == cmd, got
+    return cmd
+
+
 def make_task(client: TestClient, title: str, status: str = "todo", **more: str) -> str:
     """An operator's task in project alpha, made over the API; its id."""
     r = client.post("/api/tasks", json={
@@ -101,19 +184,74 @@ def make_task(client: TestClient, title: str, status: str = "todo", **more: str)
     return r.json()["metadata"]["id"]
 
 
+def lines_run(fn, module_file: str) -> int:
+    """How many lines of one module a call runs (sys.settrace), the same on
+    every machine: a test of "this stays fast" counts work, not seconds a
+    busy runner stretches."""
+    import sys
+    count = 0
+
+    def tracer(frame, event, _arg):
+        nonlocal count
+        if frame.f_code.co_filename != module_file:
+            return None
+        if event == "line":
+            count += 1
+        return tracer
+
+    old = sys.gettrace()
+    sys.settrace(tracer)
+    try:
+        fn()
+    finally:
+        sys.settrace(old)
+    return count
+
+
+def _git_home() -> str:
+    """One empty home for every git the run starts (it was one folder per
+    call, never removed: thousands under /tmp), gone when the run ends."""
+    import atexit
+    import shutil
+    import tempfile
+    global _GIT_HOME
+    if _GIT_HOME is None:
+        _GIT_HOME = tempfile.mkdtemp(prefix="sp-git-home-")
+        atexit.register(shutil.rmtree, _GIT_HOME, True)
+    return _GIT_HOME
+
+
+_GIT_HOME: str | None = None
+
+# Every git the suite runs, through git_env or not (thirteen test files call
+# `git commit` directly), sees no user or system config — a developer's
+# commit.gpgsign asked for a key and failed nine tests — and has an identity.
+os.environ.update({
+    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+})
+
+
 def git_env(**overrides: str) -> dict[str, str]:
     """The environment for a git the tests run: the machine's own, with
     every GIT_* variable dropped (a run from inside a git hook would
     otherwise act on the outer repository), no user or system config
     (a developer's commit.gpgsign would ask for a key), and the
     overrides on top."""
-    import os
-    import tempfile
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    home = tempfile.mkdtemp(prefix="sp-git-home-")
-    env.update({"HOME": home, "USERPROFILE": home, "GIT_CONFIG_NOSYSTEM": "1"})
+    home = _git_home()
+    env.update({"HOME": home, "USERPROFILE": home, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull})
     env.update(overrides)
     return env
+
+
+def free_port() -> int:
+    """A port nothing listens on right now, for a test that starts a server
+    of its own (the helper lived in three files)."""
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def git_repo(repo: Path) -> Path:
@@ -332,3 +470,5 @@ def _codex_config_in_tmp(tmp_path, monkeypatch):
     # Start at login and the shortcut: never the real login or desktop.
     monkeypatch.setattr(setup_router, "AUTOSTART_HOME", tmp_path / "home")
     monkeypatch.setattr(setup_router, "AUTOSTART_ROOT", tmp_path / "app")
+    # The user's Claude Code settings (an operator's own status line): never the real one.
+    monkeypatch.setattr(setup_router, "CLAUDE_USER_SETTINGS", tmp_path / "claude-home" / "settings.json")

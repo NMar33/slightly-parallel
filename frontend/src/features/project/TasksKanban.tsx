@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { openTaskRow } from '../calendar/tasks'
 import { SprintStrip } from './SprintStrip'
 import { Storyboard } from './Storyboard'
 import { useMarkToggle } from '../../lib/marks'
@@ -40,6 +41,7 @@ import type { KanbanBoard, SortMode, TaskRow } from './kanban/model'
 export * from './kanban/model'
 export * from './kanban/notes'
 import { t } from '../../i18n/scope/project'
+import { decodeSafe } from '../../hooks/useHashState'
 
 
 /**
@@ -209,7 +211,7 @@ export function TasksKanban({
     if (deepLinked.current || loading) return
     deepLinked.current = true
     const wanted = /(?:^|&)task=([^&]+)/.exec(window.location.hash)?.[1]
-    const hit = wanted ? tasks.find((t) => t.id === decodeURIComponent(wanted)) : undefined
+    const hit = wanted ? tasks.find((t) => t.id === decodeSafe(wanted)) : undefined
     if (hit) {
       setEditingTask(hit)
       const url = new URL(window.location.href)
@@ -389,8 +391,10 @@ export function TasksKanban({
           }}
           onLinksChanged={() => void reloadLinks()}
           onOpenOther={(id) => {
+            // A linked task of another project is not on this board: read it.
             const t = tasks.find((x) => x.id === id)
             if (t) { setAddingStatus(null); setEditingTask(t) }
+            else void openTaskRow(id, (row) => { setAddingStatus(null); setEditingTask(row) })
           }}
           onRelease={(t) => {
             // One window at a time: the release window takes the editor's place.

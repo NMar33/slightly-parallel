@@ -387,6 +387,7 @@ def test_the_list_harvests_on_the_way_past(client):
     row = body["prompts"][0]
     assert row["title"] == "sweep"
     assert row["preview"] == "Review every changed file."
+    assert row["text"] == "Review every changed file."
     assert row["metrics"]["uses"] == 1
 
 

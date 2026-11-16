@@ -16,7 +16,7 @@ import { useDayBookEntries } from './daybook/shared'
 import { Lead } from './parts'
 import { StandupFocus } from './focus/Focus'
 import { t, tn } from '../../i18n/scope/system'
-import { isTypingTarget } from '../../lib/typing'
+import { letter, isTypingTarget } from '../../lib/typing'
 
 /**
  * The diary — the body of /standups (chosen in the Lab on 2026-09-23 from v04)
@@ -57,7 +57,7 @@ export function StandupsDayBook({ guide, project: inProject }: { guide?: ReactNo
   const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   onKeyRef.current = (e: KeyboardEvent) => {
     if (isTypingTarget(e)) return
-    if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey && canFocus && !focus) { e.preventDefault(); setHash({ focus: '1' }) }
+    if (letter(e) === 'f' && !e.metaKey && !e.ctrlKey && !e.altKey && canFocus && !focus) { e.preventDefault(); setHash({ focus: '1' }) }
   }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => onKeyRef.current(e)

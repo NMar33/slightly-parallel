@@ -28,7 +28,7 @@ import { Who } from '../parts'
 import { DayMap } from './DayMap'
 import { bulletsOf, needsOf, sectionsOf, type SectionKind } from './sections'
 import { t, tn } from '../../../i18n/scope/system'
-import { isTypingTarget } from '../../../lib/typing'
+import { letter, isTypingTarget } from '../../../lib/typing'
 
 const PREF = 'sp-standup-focus'
 /** The days list is narrower than the chats list: a date and a summary. */
@@ -430,12 +430,12 @@ function FocusLook(p: LookProps) {
     if (isTypingTarget(e)) return
     if (e.metaKey || e.ctrlKey || e.altKey) return
     if (e.key === 'Escape') { e.preventDefault(); if (gear) setGear(false); else leave() }
-    else if (e.key === 'j') { e.preventDefault(); step(1) }
-    else if (e.key === 'k') { e.preventDefault(); step(-1) }
+    else if (letter(e) === 'j') { e.preventDefault(); step(1) }
+    else if (letter(e) === 'k') { e.preventDefault(); step(-1) }
     else if (e.key === ']' && older) openDay(older)
     else if (e.key === '[' && newer) openDay(newer)
-    else if (e.key === 'c') { e.preventDefault(); set({ drawer: !prefs.drawer }) }
-    else if (e.key === 'a') { e.preventDefault(); setScope(all ? 'one' : 'all') }
+    else if (letter(e) === 'c') { e.preventDefault(); set({ drawer: !prefs.drawer }) }
+    else if (letter(e) === 'a') { e.preventDefault(); setScope(all ? 'one' : 'all') }
   })
 
   const summary = byDay.get(day)?.[0]?.summary ?? ''

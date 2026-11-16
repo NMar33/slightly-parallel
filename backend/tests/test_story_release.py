@@ -57,7 +57,7 @@ def _request(client: TestClient, tid: str, **extra) -> dict:
     return r.json()
 
 
-def test_presets_have_builtins_and_operator_ones(client: TestClient):
+def test_presets_have_builtins_and_operator_ones(client: TestClient, root: Path):
     d = client.get("/api/story/prompts").json()
     assert [p["id"] for p in d["parts"]["brief"]] == ["brief-default"]
     assert [p["id"] for p in d["parts"]["style"]] == ["style-default"]
@@ -78,6 +78,11 @@ def test_presets_have_builtins_and_operator_ones(client: TestClient):
     r = client.post("/api/story/prompts", json={"part": "brief", "id": "brief-default", "name": "Mine", "text": "write it"})
     assert r.status_code == 200
     assert client.post(f"/api/story/prompts/{pid}/delete").json()["deleted"] == pid
+    # An unknown preset is a 404 that rewrites nothing (round 5).
+    kept = root / "story_prompts.json"
+    stamp = (kept.read_bytes(), kept.stat().st_mtime_ns)
+    assert client.post(f"/api/story/prompts/{pid}/delete").status_code == 404
+    assert (kept.read_bytes(), kept.stat().st_mtime_ns) == stamp
     assert client.post("/api/story/prompts", json={"part": "nope", "name": "x", "text": "y"}).status_code == 422
     assert client.post("/api/story/prompts", json={"part": "focus", "name": "", "text": "y"}).status_code == 422
 

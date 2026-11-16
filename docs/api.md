@@ -60,6 +60,11 @@ noted writes.
   `load_errors`).
 - `GET /api/snapshot` — the Overview payload: KPIs, per-project summaries
   with task counts, recent chats and decisions, open tasks in play, every agent.
+  Helper chats (a `codex exec`, a `claude -p`, an `opencode run` another chat
+  started; `helper` in their `meta.json`, see [logging.md](logging.md)) are
+  left out of the agents, the counts, the hours and the recent chats here, in
+  `GET /api/project/{code}` and in `GET /api/timeline`; search answers no
+  helper as an agent (its turns are still found).
 - `GET /api/search?q=&types=&limit=` — one word over everything
   (`searchlib.py`): every entity in the registry, every scan, every agent,
   every row of a project's map, and every captured **turn** of every chat —
@@ -107,15 +112,24 @@ noted writes.
   the ends stay. Answers: `link`.
 - `POST /api/agents/links/{link_id}/delete` — answers: `deleted`.
 - `GET /api/agents/profiles?project=` — every agent of a project with its
-  profile: the roster in one read.
-- `GET /api/agents/{agent_id}/profile` — everything one agent left behind.
+  profile: the roster in one read. Helper chats are not in `profiles`: each
+  is in its parent's `helpers`, and `orphans` lists the project's helpers
+  whose parent is not known or was not recorded. A helper row:
+  `{agent_id, agent_name, chat_title, project, tool, helper_kind, helper_of,
+  helper_of_by, started, first_line, message_count, tokens, cost_usd}` —
+  `tokens` new input plus output, helpers included; `cost_usd` dollars at
+  API prices, null when nothing was priced.
+- `GET /api/agents/{agent_id}/profile` — everything one agent left behind,
+  `helpers` (the runs it started) included. A helper's own profile carries
+  `helper`, `helper_kind` and `helper_of` in `agent`.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
   Answers: `agent_id`, `agent_group`.
 - `POST /api/agents/{agent_id}/rename` — body: `name`, stored as
   `agent_name` in the agent's `meta.json`. Answers: `agent_id`, `agent_name`.
   Both of these are presentation only; the ids never change.
 - `GET /api/chat/{agent_id}?range=a-b` — a raw `chat.md` line slice.
-- `GET /api/sessions?project=` — the chats, newest first. Each row carries `chat_end_line`, the chat's last line in chat.md, which grows with every captured line (a page's cue to fetch that chat's turns again). Read from the
+- `GET /api/sessions?project=` — the chats, newest first. Helper chats are
+  left out unless `agent_id` names one or `helpers=1`. Each row carries `chat_end_line`, the chat's last line in chat.md, which grows with every captured line (a page's cue to fetch that chat's turns again). Read from the
   captured turns; agents never write these. The pages call them chats; the
   route keeps the name it was published under, and one chat with a long
   pause in it is read as two.
@@ -161,7 +175,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/activity` · `/api/activity/{id}` | `goal_id`, `activity_type`, `min_duration`, `max_duration` | — | for external pipelines; agents never post it |
 | `/api/architecture` · `/api/architecture/{id}` | — | — | see **Architecture** |
 | `/api/artifacts` · `/api/artifacts/{id}` · `/api/artifacts/{id}/update` | — | `status`, `tags` | see **Artifacts** |
-| `/api/decisions` · `/api/decisions/{id}` · `/api/decisions/{id}/update` | `source`, `related_goal_id` | `tags`, `weight` | — |
+| `/api/decisions` · `/api/decisions/{id}` · `/api/decisions/{id}/update` | `source`, `related_goal_id` | `tags`, `weight` | — . A new decision's answer carries `similar`: the project's one decision most like it (`id`, `decision`, `created`, `score`), with a line in `warnings`; never refused |
 | `/api/files` · `/api/files/{id}` · `/api/files/{id}/update` | `trigger_lens` | `files_ignored_n`, `files_important_n` | `paths` (see below) |
 | `/api/goals` · `/api/goals/{id}` · `/api/goals/{id}/update` | `status`, `parent_goal_id`, `sprint_id`, `root_only` | `confidence_pct`, `retro_outcome`, `sprint_id`, `status`, `success_comment`, `time_est` | `children`. **Retired**: the product no longer writes goals; the routes stay so pre-task data still reads, and sprints still join the rows they have |
 | `/api/ideas` · `/api/ideas/{id}` | `tag` | — | `body`. Legacy reader — the library retired in favour of tasks |
@@ -178,7 +192,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/tasks` · `/api/tasks/{id}` · `/api/tasks/{id}/update` | `status`, `assignee`, `priority`, `lane` | see **Tasks** | see **Tasks** |
 | `/api/time-entries` · `/api/time-entries/{id}` · `/api/time-entries/{id}/update` | `goal_id`, `sprint_id`, `running` | `duration_min`, `ended_at`, `goal_id`, `note`, `share_pct`, `sprint_id`, `started_at` | see **Operator-only admin** |
 | `/api/visions` · `/api/visions/{id}` · `/api/visions/{id}/update` | `tag`, `category`, `impact`, `search` | `category`, `effort`, `impact`, `tags` | see **Kept messages and skills** |
-| `/api/entrypoints` · `/api/entrypoints/{id}` · `/api/entrypoints/{id}/update` | `tag`, `status`, `search` | `topic`, `status` (`open`, `closed`), `tags` | see **Kept messages and skills** |
+| `/api/entrypoints` · `/api/entrypoints/{id}` · `/api/entrypoints/{id}/update` | `tag`, `status`, `search` | `topic`, `status` (`open`, `closed`), `tags`; an agent changes `topic` and `tags` only | see **Entry points** |
 
 Writes an agent may not make (422 with the reason): `sprints` (the operator
 plans them), `prompts` (harvested from the chat
@@ -211,18 +225,47 @@ The board, its blocks, and everything hung off a task.
   `status`, `turn` (which round to rewrite), plus the mutable columns
   (`assignee`, `priority`, `lane`, `sprint_id`, `remember`, `today_on`,
   `stack_id`, `resurface_on`, `resurface_to`, `resurface_every_days`, …).
-  Status is the operator's; an agent that sets it is refused.
+  Status is the operator's; an agent that sets it is refused, unless the
+  task has auto-manage on, or the agent drops its own card from the agent
+  column (`done-archived`). Lane, assignee, impact, effort, position,
+  projects, priority, due date and the switches are the operator's too;
+  an agent's tags are `ag_*`. `comment`
+  adds a note after the task's text, under `--- comment from agent:` (an
+  agent's) — each call adds one; on a #now card an agent's `description` is
+  refused, since its text is the operator's message.
 - `POST /api/tasks/{task_id}/turn` — the next round of instruction. Body:
   `text`, `actor`, `created_date`, `created_time`. Answers: `task`, `turn`,
   `turns`, `description`, `ref`.
 - `GET /api/tasks/{task_id}/events` — every field change appended by
-  `/update`, oldest first.
-- `GET /api/tasks/{task_id}/work` — what the repository saw in the turns
-  that named this task. Answers: `task_id`, `work`.
+  `/update`, newest first.
+- `GET /api/tasks/{task_id}/work` — the task's commits and files: the ones
+  signed (`Task:`) or linked to it, then what the repository saw in its
+  stretch of a chat. The operator opens a stretch — a message that names the
+  task, or the `#now` that started it — and closes it by naming another task;
+  an agent naming a task in its answer opens and closes nothing (the turn
+  still shows under the task's mentions). After a pause the stretch goes on
+  only into a session that names the task again. A commit several chats saw
+  appear is the chat's whose `git commit` call was running when it was made
+  (the hook records these calls for Claude Code, Codex and OpenCode), else
+  whose tools touched its files, else whose turn was running; when nothing
+  tells, it is nobody's until linked (stamps from before the calls were
+  recorded keep the chat that stamped it first). Answers: `task_id`, `work`.
+- `POST /api/tasks/{task_id}/commits` — `{shas: [sha …]}` (7–40 hex): the
+  agent (MCP `task_commits`) or the operator links commits that carry no
+  `Task:` line to this task. Answers `linked` (the new ones) and the task's
+  `work`. A commit's own `Task: tk_…` line does the same without a call.
+- `GET /api/commits/signed?project=&days=7` — per project with a repository:
+  commits in the last `days` days, how many carry a `Task:` line (`signed`),
+  how many were linked later (`linked`), and the same by the `Agent:` line.
 - `GET /api/tasks/{task_id}/mentions` — every captured turn naming this
   task, newest first. Copying a task puts its id in the text (`tk_… · Title`)
-  and the chat reading scans every turn for `tk_[0-9a-f]{8}`, so
-  mentions cost nothing extra and need no ledger.
+  and the chat reading scans every turn for task ids (`tk_…`, readable ids too), so
+  mentions cost nothing extra and need no ledger. `?full=1` adds the task's
+  thread: `turns`, each once, with `why` (`mention`; `done` — inside a
+  stretch a #done closed; `next` — after a mention no #done closed, up to
+  the next task the operator names), `roles` (which sides named it), the
+  operator's message `said` and the agent's `reply`, whole; and
+  `done_turns`, `next_turns`, `has_done`.
 - `GET /api/tasks/mentions/summary?project=` — per task: count and last
   mention.
 - `GET /api/tasks/mentions/by-agent?project=` — the same, per agent lane.
@@ -350,17 +393,17 @@ An agent reports; the operator judges. The report is never the verdict.
 
 ## Kept messages and skills
 
-A message tagged `#vision`, `#rule`, `#problem`, `#entrypoint`, `#skill` or `#artifact` is
-adopted into its ledger on the way past the next list or detail read. The
+A message tagged `#vision`, `#rule`, `#problem`, `#entrypoint`, `#skill`, `#artifact` or
+`#publish` is adopted into its ledger on the way past the next list or detail read. The
 kept text stays verbatim; the *interpretation* is what an agent or the
 operator writes about it, as a new version under `kept_versions/`.
 
 - `POST /api/visions/{item_id}/interpretation`
 - `POST /api/rules/{item_id}/interpretation`
 - `POST /api/problems/{item_id}/interpretation`
-- `POST /api/entrypoints/{item_id}/interpretation` — the entry point's text: What, Where, How, State, Next
+- `POST /api/entrypoints/{item_id}/interpretation` — the entry point's record: What, Where, How, State, Next; an agent writes it only from the chat that chose the topic last with `#entrypoint` (made it, chose it in answer to the question, or typed its exact name), and only on a topic of its chat's project. `item_id` may be the id the hook named for the command; 409 while the operator has not chosen its topic. Each version keeps its chat (`by`, `command` in `kept.versions`). No word limit: at most 200 000 characters (the file size guard), where the other lenses take 20 000
 - `POST /api/artifacts/{item_id}/interpretation`
-  — all five: body `text`, `note?`. Answers: `metadata`, `kept` (the
+  — all five: body `text` (at most 20 000 characters; an entry point's record 200 000), `note?`. Answers: `metadata`, `kept` (the
   versions). 422 if the entry was posted rather than kept, since then its
   text belongs to `update_entry`.
 - `POST /api/problems/{item_id}/rule` — the operator writes a rule on the
@@ -369,6 +412,30 @@ operator writes about it, as a new version under `kept_versions/`.
   ids: `present`, `removed`, `all`.
 - `POST /api/examples/remove` — take the examples out. Answers: `removed`.
 - `POST /api/examples/restore` — put them back. Answers: `added`.
+
+**Publish** (`#publish`, the operator's: what shipped, worth telling): the
+cards are the kept kind `publish` (`GET /api/publish`, `GET /api/publish/{id}`,
+`POST /api/publish/{id}/update` — `tags`; `POST /api/publish/{id}/interpretation` is
+the operator's edit of the text, the same as the page's `text` route); nothing is asked of the agent, and
+an agent's write is refused. The Publish page reads and writes under
+`/api/publishing` (docs/publish.md): `GET /api/publishing?project=` (the
+cards with their text versions, tasks, cores, commits, images and
+placements; the documents with their versions and items) ·
+`GET /api/publishing/cards/{card_id}` (with `history`) ·
+`POST /api/publishing/cards` (`project`, `text`: a card written by hand on the page) ·
+`POST /api/publishing/cards/{card_id}/text` (`text`, `note?`) ·
+`POST /api/publishing/docs` (`project`, `name`; the same name answers the
+existing document) · `POST /api/publishing/docs/{doc_id}/update` (`name?`,
+`archived?`) · `POST /api/publishing/docs/{doc_id}/versions` (`note?`; the
+current items copied) · `POST /api/publishing/docs/{doc_id}/items`
+(`card_id`, `text?`, `before?`) · `GET /api/publishing/docs/{doc_id}/markdown`
+(`n?`) · `POST /api/publishing/items/{item_id}/update` (`text?`, `before?`) ·
+`POST /api/publishing/items/{item_id}/remove` ·
+`POST /api/publishing/cards/{card_id}/attach` (`images[]` with `title`, `ext`,
+`data_base64`; `links[]` with `title`, `url` — the operator on the page, or
+the agent with MCP `publish_attach`; the same image again is the existing
+attachment) · `GET /api/publishing/attachments/{attachment_id}/file` ·
+`POST /api/publishing/attachments/{attachment_id}/remove` (the operator's).
 - `GET /api/example` — the example project: `enabled`, `present`, `building`
   and the last error.
 - `GET /api/example/source?agent_id=&date=&time=&kind=` — the chat message
@@ -650,6 +717,29 @@ more, a normal one its alternatives, a major one also what would undo it.
   what this agent's latest `#done` did: `tasks` (each with `result` moved ·
   already · archived and its `stretch`), or `unnamed` when no task was named
   since the previous `#done`, and `next`. The MCP tool `task_done` reads it.
+- `POST /api/done-tags` — the same answer, and the next tasks offered after it
+  (nextlib.py, [next-tasks.md](next-tasks.md)). Body: `agent_id`, `proposals`
+  (at most three `{title, line}`; absent, null or `[]` answers exactly as the
+  GET). Each proposal comes back with `n` and `similar` (up to three open tasks
+  of the project: `id`, `title`, `status`, `score`), with `offer` (its id) and
+  `show`, the line the agent gives the operator. A wrong shape or a fourth
+  proposal is 422 before anything is applied. No offer where it does not belong
+  (the `#done` closed nothing, the operator has written since, a helper chat,
+  an offer already made into tasks): `proposals_ignored` says why. The MCP tool
+  `task_done` posts here when it carries proposals.
+- `POST /api/next-tasks/make` — the operator answered the offer: makes the
+  tasks they chose in the `agent` column (tag `ag_followup`, the offer's
+  project). Body: `agent_id`, `numbers`. Checked against the operator's next
+  message in the chat: numbers only there must be the numbers sent; "yes" or
+  "all" means every one; a command or a question chooses nothing (`skipped`);
+  other text must contain each number sent. 409 when the operator has not
+  answered yet or did not write a number sent. A retry answers the same tasks
+  (`existing: true`). The MCP tool `next_tasks` posts here.
+- `GET /api/next-tasks?project=&agent_id=` — every offer (`next_tasks.csv`):
+  `state` offered · made · skipped, the proposals with their similar tasks,
+  the `#done` turn and the tasks it closed, `chosen`, `made`; an offer still
+  `offered` carries `answer_in_chat`, the operator's next message as read
+  (`turn`, `kind`, `numbers`), or null. Reads only.
 - `GET /api/undo/candidates?agent_id=` — `#undo` (undolib.py): this chat's live
   `#undo` request (`said`: the operator's words) and the entries it could mean,
   numbered, this chat's first. 409 when the chat has no `#undo` request. The MCP
@@ -704,7 +794,7 @@ Every command of the contract gets a `[slightly-parallel] #<command> — …` no
 the capture hook, naming the skill and the first tool: the kept tags,
 `#evidence` with its task, and `_COMMANDS` for the rest (`#scan`, `#page`,
 `#map`, `#architecture`, `#task`, `#now`, `#decision`, `#standup`, `#prompt`,
-`#problem solved`). The hook also keeps small copies of server facts — the
+`#problem solved`, `#core-new`, `#core-note`, `#core`, `#core-off`, `#mute`). The hook also keeps small copies of server facts — the
 task id pattern, the standup claim time, setting defaults, kept-tag routes,
 whether a standup is owed. `tests/test_hook_parity.py` holds each copy equal
 to its original, so a contract that gains a command the hook does not know
@@ -742,7 +832,8 @@ and the MCP prompt. The scan, file-entry and architecture parts do.
 The library:
 
 - `GET /api/prompt-library` — the library newest first, each row with its
-  use count. Harvests on the way past.
+  use count, `preview` (the first 400 characters) and `text` (the whole
+  current wording). Harvests on the way past.
 - `POST /api/prompt-library` — write one by hand. Body: `title`, `text`,
   `tags`, `project`.
 - `GET /api/prompt-library/{prompt_id}` — one prompt: every version, the
@@ -924,6 +1015,394 @@ block, and kept current.
   counts after all), `resume`, `stop`, `dismiss`.
 - The entries themselves are the `time-entries` lens (see **Entries**).
 
+### Cores
+
+The program's core elements the operator keeps in view (`corelib.py`,
+`routers/cores.py`): a capability, a feature, a store, a part of the interface, each with
+its story. Three ledgers at the data root: `cores.csv`, `core_notes.csv`,
+`core_links.csv`. Who writes: anyone makes a core and adds a note (the
+operator's `#core-new` and `#core-note` run through the agent); an agent's
+`auto` note needs tracking on; approving, tracking, changing and ordering
+are the operator's.
+
+- `GET /api/cores?project=` — every core of the project, in view first,
+  tracked first, by position: `name`, `type`, `reason`, `status` (view |
+  off), `tracking {on, until, days_left, expired}`, `notes_n`, `pending_n`
+  (notes awaiting approval), `last_note`, `tasks_n`, `open_n`, `anchors`,
+  `grid` (30 days: `{day, story, nearby}`). Also `types`.
+- `GET /api/cores/timeline?project=&days=` — the cores over the last `days`
+  days (7–120, default 30), one lane each: per ISO day the `notes` (yours and
+  agents', with `approved`), the linked tasks `made` and `done`, the `commits`
+  of those tasks and the `nearby` commits in the core's files that no linked
+  task made; `tracking_spans`; `totals`. Above them `standups` by day and the
+  project's release tags (`v…`) as `releases`.
+- `GET /api/cores/tasks?project=` — task id → the cores in view it belongs to
+  (`id`, `name`, `type`), for the board's cards.
+- `GET /api/cores/map?project=` — the current map's rows, each with the cores
+  that claim it and how: `linked` (a map link you set), `files` (an anchor of
+  the core under the row's path), `tasks` (two or more linked tasks changed
+  files under it); the cores with their row counts; `unclaimed`.
+- `GET /api/tasks/{task_id}/cores` — the cores the task belongs to.
+- `POST /api/tasks/{task_id}/cores` — operator only: `{cores: [id …]}` sets
+  them; links missing are added, the others removed.
+- `POST /api/cores` — body: `project`, `name` (≤ 60), `type` (capability ·
+  feature · interface · store · integration · internals · workflow · experiment),
+  `reason?`, `text` (the operator's message, kept as the founding note),
+  `comment?`, `anchors?` (file or `file:symbol` paths), `task_id?`,
+  `actor|agent_id`. The same name in view answers 200 with `existing: true`.
+  Answers: `core`.
+- `GET /api/cores/{core_id}` — the core with `notes` (oldest first, each with
+  `author`, `kind` founding | note | auto, `text`, `comment`, `approved`),
+  `links`, `tasks` (with status), `files` and `commits_n` of the linked
+  tasks, `events` (created, tracking on and off, out of view and back), `commits` (every commit
+  of the linked tasks: `how` signed · linked · chat, `agent`, `tasks`, `files`), `agents`
+  (who worked on it: `tasks`, `commits`, `notes`, `turns`, `sessions`, `last_at`), `nearby` (commits that touched an anchor's file — by path, not by
+  sense), `grid`.
+- `POST /api/cores/{core_id}/notes` — body: `text?`, `comment?`, `kind?`
+  (note | auto), `task_id?`, `actor|agent_id`. The operator's note is
+  approved as written; an agent's waits. `auto` from an agent with tracking
+  off is refused (422). A task named is linked. Answers: `note`, `core`.
+- `POST /api/cores/{core_id}/notes/{note_id}/approve` — operator only: the
+  author and the words stay, `approved_at` and `approved_by` are set.
+- `POST /api/cores/{core_id}/links` — body: `kind` (task · anchor · map ·
+  release · vision · decision · message), `target`, `note?`; or `{remove:
+  link_id}` (operator). A target twice is one link (`existing: true`).
+- `POST /api/cores/{core_id}/update` — operator only: any of `name`, `type`,
+  `reason`, `position`, `status` (view | off).
+- `POST /api/cores/{core_id}/tracking` — operator only: `{on, span?: day |
+  week, until?: YYYY-MM-DD}`; on with neither is tracking with no end.
+  Answers: `core`, `tracking`.
+- `POST /api/cores/{core_id}/off` — out of view (`#core-off`, run by the
+  agent once the operator confirmed); the story and the links stay.
+
+### Entry points
+
+The outside of a project: a topic the operator opens and comes back to
+(`entrypointlib.py`, `routers/entrypoints.py`). The kept `#entrypoint` row is
+its record (versions under `kept_versions/`); beside it four ledgers:
+`entrypoint_ways.csv` (ways in), `entrypoint_stops.csv` (where it stopped),
+`entrypoint_shots.csv` (screenshots, files under `entrypoint_shots/<ep>/`),
+`task_topics.csv` (a task's topic, one row per task). `state` is active ·
+paused · dead; a row with none reads it from `status` (closed → paused), and
+a `status` changed since through `/update` wins (closed → paused, open → active).
+`#entrypoint` (with a name, a description or nothing, in any chat of a
+project) makes nothing when it is seen: it is kept as a pending command in
+`entrypoint_commands.csv` until the operator chooses the topic
+(`entrypointask.py`). The agent asks (`POST /api/entrypoints/ask`): the
+server finds at most three topics of the chat's project — by the message's
+words, by what this chat wrote on (commands, versions, stops, ways in,
+shots), by the topics of the tasks named in this chat, one from each in
+turn — and a last line for a new topic, and keeps the numbered list in
+`entrypoint_asks.csv`. The operator's next message chooses
+(`POST /api/entrypoints/answer`): an existing topic opens a new version of
+its record, written by that chat's agent (an unnamed one takes the name
+given); the new-topic line makes the topic then, from the command's
+message, its id the command's. Only the exact name of one named topic
+(equal once case and punctuation are out; the head of the line before a
+colon or a dash counts) opens a version at once, without the question.
+Commands: `how` pending · name · chosen · new · dropped, `chosen_at` (the
+chat that chose last writes the record); `asked` was written before
+2026-11-15 only. The chat of each version is in `entrypoint_versions.csv`.
+Who writes: the operator everything; an agent, through the MCP tools, a stop,
+a way in (added, or changed when an agent wrote it), a shot and a task's
+topic, on a topic of its own chat's project (a chat with no recorded project
+writes nothing). Every write checks the shape
+first and a refusal writes nothing.
+
+- `GET /api/entrypoints/desk?project=` — every topic (all projects when
+  empty): `name`, `title` (the message's first line), `state`, `no_project`,
+  `home`, `what` (the record's What, first paragraph), `has_record`,
+  `versions`, `ways`, `stops` (the last five) and `stops_n`, `shots` (oldest
+  first, each with `src`), `open_tasks`, `chats`, `last_at`. Also `projects`.
+- `GET /api/entrypoints/similar?project=&text=` — the topics like `text`
+  (`similar`: `id`, `name`, `state`, `score`) and `next`: the line for an
+  agent's offer. Writes nothing.
+- `GET /api/entrypoints/{ep_id}/context` — `stops` (every message of where it
+  stopped, newest first); `chats` (oldest first: `id`,
+  `name`, `tool`, `session_ref`, `cwd`, `first`, `last`, `messages` and
+  `turns` — the topic's turns of that chat, each once: the #entrypoint turn,
+  turns where the operator named a task of the topic, #done stretches, turns
+  where a stop or a shot was written — `origin`, `did`, `tail`, `commits`,
+  `live`, `from` (handoff or branch, from a chat of this thread), `waiting`
+  and `waiting_text`); `open` (every open task) and `done` tasks (done with
+  `report` and `chat`); `decisions`, `made`
+  (artifacts and Publish cards) made in those turns; `commits` (each once)
+  and `files` (summed over those commits), with `commits_n`, `files_n`;
+  `spend` (`tokens`, `dollars`, `by_chat`) over those turns; `tasks_n`,
+  `tasks_truncated` (over 40 done tasks; the newest 40 are read); `briefing`. Only the topic's project:
+  a chat or task of another project never enters.
+- `GET /api/entrypoints/{ep_id}/briefing` — `{text}`: what Copy to agent gives:
+  the topic, the record's What, the ways in, then the record's Where, How,
+  State and Next (every section whole, as written; nothing is cut), where it
+  stopped, the open tasks, Resume and the rest.
+- `GET /api/entrypoints/{ep_id}/ports` — `ways`: `{id, port, up, why}` per way
+  in. A TCP connect on this computer only (localhost on 127.0.0.1 and ::1);
+  a host that is not a loopback name or address is never connected to
+  (`up: null`); at most a second for all.
+- `GET /api/entrypoints/{id}/command` — what an `#entrypoint` opened, by the
+  id the hook named (a topic's own id answers its last command): `id` (the
+  topic; "" while pending), `command`, `name`, `project`, `opened` (new,
+  version, pending: the operator has not chosen, or nothing: their answer
+  chose none), `writer` (the chat that writes the record), `versions`,
+  `record` (as it is) and `next` (what to write). Reads only; keeps a
+  message typed a moment ago first.
+- `POST /api/entrypoints/ask` — `{agent_id, id, name?}`: the question after
+  the command `id`, typed in this chat. `name` is the agent's proposal for a
+  new topic (≤ 80; without it, the head of the message). Answers `asked`,
+  `command`, `rev`, `lines` (`{n, kind: topic · new, id, name, named, why:
+  text · work · task, stop, stop_at}`), `show` (the line the agent shows:
+  `Is this one of the topics? 1) … — last stop 5 Nov: … 2) A new topic: «…»`,
+  or `A new topic: «…»?` alone) and `next`. Asked again before the operator
+  answered, it replaces the list (`rev` + 1); 409 once they answered and the
+  answer was not read, for another chat's command, in a helper chat, and
+  for a command with no words and no `name`. A command already answered
+  (or opened by its exact name) answers as `/command` with `asked: false`.
+- `POST /api/entrypoints/answer` — `{agent_id, number, name?, id?}`: the
+  operator answered. The server reads their next message after the
+  question: a command in it chooses nothing and drops the command; a
+  question chooses nothing yet (ask again); one number of the list chooses
+  that line and `number` must be the same, the text beside it is a name;
+  two numbers or one outside the list choose nothing (ask again); `yes`
+  alone chooses the only line, `no` alone nothing; with one line, text
+  without a number is the new topic's name when `number` is 1. `name` must
+  be written in their message. Answers as `/command`, with `state` (chosen
+  · question · unclear · dropped), `chosen` and `existing` (a retry: the
+  same answer, nothing written). 409 when the numbers or the name do not
+  match, or the operator has not answered yet; nothing is written. Agreement
+  is read in English and Russian with softeners and signs (`да`, `думаю да`,
+  `ok`, `I think so`, `+`, `👍`): it keeps the proposed name, and a name
+  written with it (`yes, call it Review feed`) takes that one; a no with
+  more words, or text that is neither a number nor a name, chooses nothing.
+  `next` names the steps after the record, in order: the ways in
+  (`entrypoint_way`), one stop (`entrypoint_stop`), a shot of each way that
+  is up (`entrypoint_shot`, with the ways up now), the topic of the tasks
+  this chat named (`task_topic`, with their ids).
+- `GET /api/entrypoints/asks?agent_id=` — every question with its lines and
+  answer, newest first; reads only.
+- `GET /api/entrypoints/shots/{shot_id}/file` — the screenshot.
+- `POST /api/entrypoints/{ep_id}/stops` — `text` (≤ 1000), `task_id?` (a task
+  of this topic). The same text by the same author for the same task is the
+  same message (200, `existing`).
+- `POST /api/entrypoints/{ep_id}/stops/{stop_id}/remove` — operator only.
+- `POST /api/entrypoints/{ep_id}/ways` — `way: {name, kind (page · site · app ·
+  file · folder · script · artifact), url?, path?, command?, folder?, port?,
+  note?}`, `id?` to change one.
+- `POST /api/entrypoints/{ep_id}/ways/{way_id}/remove` — operator only.
+- `POST /api/entrypoints/{ep_id}/shots` — `way_id`, `data_base64` (PNG, JPEG,
+  GIF or WebP, read from the bytes), `caption?`, `replaces?` (a shot of this
+  topic, then out of the series).
+- `POST /api/entrypoints/{ep_id}/state` — operator only: `state`.
+- `POST /api/entrypoints/{ep_id}/name` — operator only: `name`, `home?`,
+  `no_project?` (true or false).
+- `GET /api/tasks/{task_id}/topic` — the task's topic, or null.
+- `POST /api/tasks/{task_id}/topic` — `entrypoint_id` ("" clears): a topic of
+  the task's project.
+
+### Usage
+
+The tokens agents used and how much of each plan is used (`usagelib.py`,
+`routers/usage.py`). Read only; the hooks write the files, the server reads
+them. Per chat `projects/<p>/chats/<agent>/usage.jsonl`, one line per API
+message: `turn`, `at`, `id`, `tool`, `model`, `new` (read for the first
+time, cache writes included), `cache_write`, `cache` (read again from
+cache), `output` (thinking included), `thinking`, `ttl`, `helper` (the
+helper agent's id, or ""), `effort` (the reasoning effort the reply ran
+with: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; ""
+when the log does not say, and on every line written before 2026-11-11;
+see [logging.md](logging.md)), `limit?`, `compacted?` (on the turn's first
+line after a context compaction); the last line of an id wins. Account
+wide `.usage/limits.jsonl` (one line per limits reading: `at`, `tool`,
+`account` (12 hex characters naming the tool's config folder:
+`CLAUDE_CONFIG_DIR` of the status line, else `~/.claude`; Codex's
+`CODEX_HOME`, else `~/.codex`), `model` (the status line's `model.id`;
+Codex: the rollout's current model, else ""), `session` (the session's
+first 8 characters, Codex's last 8; for diagnosis), `five_hour` and
+`seven_day` as `{used, resets_at, window_minutes?}`, `plan`, `source`;
+read incrementally, only the bytes appended since). The limits are the
+account's, whatever the model: the readings of one (tool, account) are a
+series, and `model` and `session` are data. A line is written for its
+series when a window's `resets_at` is later than any written, when a
+window's `used` is higher than the highest written for that `resets_at`,
+when the plan changed, or when the series' last line is older than 5
+minutes (a heartbeat); an equal or lower reading of the same reset is
+skipped (an idle session's status line sends its last reading again).
+Lines written before `account` existed read as `""`, one series of their
+tool, given way to by any newer named one. And
+`.usage/sessions/<tool>-<session>.json`: an open chat's context and prompt
+cache, from Claude Code's status line. No money anywhere.
+
+One meaning of the numbers: `new_output` is the MAIN agent's new + output
+everywhere (totals, tools, models, chats, tasks, the line); helper agents
+count into the turn that started them and are kept apart on every row as
+`helpers {n, new_output, cache}`. Each message counts on its own day. A
+model the tool did not name is `""`. A percentage is the nearest whole
+number, a tie down; the ratio to the usual day is in tenths, a tie down; a
+duration is floored (`1 h 5 min`, `1 d 13 h`). The cases are in
+`testdata/usage/format-table.json`, which the Python and TypeScript tests
+both read.
+
+Test switch: with `SP_NOW=2026-11-01T14:48:00` (a local ISO moment) in the
+server's environment every clock read of the usage code — the routes, the
+turns of the sessions, the #usage block, the ETags' minute — uses that
+moment. The golden root `testdata/usage/root` and its snapshots
+`testdata/usage/expected/*` are read under it.
+
+- `GET /api/usage?project=<code|all>&range=today|7d|30d` — the Usage page:
+  `range`, `project`, `days` (YYMM-DD, oldest first), `limits` (as below),
+  `usual` (`new_output`, `cache`, `share`, `days_used`: the median over
+  the active days of the last 90 calendar days before today, at most the
+  30 most recent; an even count takes the mean of the two middle days; the
+  page and the block show "× your usual day" only from 3 days),
+  `totals` (`new`, `output`, `cache`, `cache_write`, `thinking`,
+  `rebuilt`, `new_output`, `share`, `turns`, `cost_usd`, `cost`,
+  `unpriced`, `chats`, `helpers {n, new_output, cache}`; `new` holds
+  `rebuilt`: an estimate of old context written to the cache again;
+  `cost_usd` the row at API prices with the helpers, `cost {new, rebuilt,
+  warm, output, helpers}` the same by kind, `unpriced` the tokens of
+  models with no price), `by_cause` (`cause` expired | model | other,
+  `rebuilt`, `cost_usd`, `events`: rebuilds over 20k tokens, `chats`),
+  `analysis` (backend usageanalysis.py; Claude Code's own replies only,
+  since the 5-hour window is Claude Code's: other tools' replies, an
+  OpenCode chat on a Claude model included, are left out of every part;
+  a percent is of one 5-hour window, and null where no rate was measured.
+  `window_now` — the 5-hour window open now: `used`, `resets_at`,
+  `read_at`, `pace_per_hour` over the last hour of readings, `runs_out_at`
+  at that pace or `lasts`, `spent_usd` in the window so far; the page reads
+  `used`, `resets_at`, `runs_out_at`, `lasts`. `units` — percent of the
+  window per dollar at API prices, per model, measured over the last 30
+  days in windows where one model made 85% of the dollars: `{models:
+  [{model, pct_per_usd, low, high, windows, window_usd}], windows, mixed,
+  days, fallback}`; `fallback` is the median over every window, used for
+  a model with no window of its own (null with none); the server keeps
+  `models` and `fallback` in `.usage/units.json` for the Stop hook's
+  warnings. `mix` — where the range's use of the window went: `{total_pct,
+  windows, helpers_n, parts: [{key, pct}]}`, `key` one of `helpers`,
+  `resumes`, `rebuilds`, `over_500k`, `200k_500k`, `under_200k`, and
+  `other` for a rest over 0.5; the parts do not overlap and each model is
+  counted at its own rate. `prices` — what one occurrence of a pattern
+  takes of the window, dearest first: `[{key, model?, each_pct, times,
+  total_pct}]`, `key` one of `resume`, `helper`, `message` (per model,
+  from 3 replies), `reply_over_500k`, `reply_200k_500k`,
+  `reply_100k_200k`, `reply_under_100k`. `history` — the past 5-hour
+  windows of the last 14 days, oldest first: `[{start, resets_at, peak,
+  capped, usd, model, model_share}]` (`capped`: it reached 99%; `model` the
+  one that made most of the dollars). `chats` — the 8 chats that took the
+  most of the window, each model of a chat at its own rate, helpers
+  included: `[{agent_id, title, model, pct, helpers_share, rebuilt_share,
+  rebuilds, turns}]`. `resumes` — replies after a break over an hour that
+  wrote the context again: `events, cost_usd, avg_context, avg_usd,
+  window_pct, after_s, chats`. `context` — the main agent's replies by the
+  size of the context they read: `{replies, bands: [{band, replies, share,
+  cost_usd, usd_per_reply}]}`. The page reads `window_now`, `units`, `mix`
+  and `prices`; the feed of insights reads `history`, `chats`, `resumes`
+  and `prices`; the MCP `usage` tool gives all of it),   `api_prices` (`as_of`, `sources`, `models`: the newest price of the
+  models in the range, dollars per million tokens, `missing`: models with
+  none; a message is priced as of its own day), `by_tool` (`tool`, the same sums, `share`, `turns`, `helpers`
+  and `models` with the same keys, `model` and `efforts` — `{effort: new
+  input + output}` of the model's replies and its helpers', "" for the
+  replies that named none; the parts add up to `new_output` plus the
+  helpers' — which the page shows under the model's name when a reply named
+  one), `chats` (top 40:
+  `agent_id`, `project`, `title`, `tool`, `model` (the last the main agent
+  used), `models` and `tools` (every one seen, helpers' included), the
+  sums, `new_output`, `share`, `turns`, `helpers`, `helpers_n`,
+  `task_id`), `chats_total` (before the cut), `tasks` (top 20: `id`,
+  `title`, `project`, `status`, `done_at`, the sums, `new_output`,
+  `share`, `helpers`, `chats`, `turns`, `models`, `tools`), `tasks_total`,
+  `coverage` (`chats_recorded`; `chats_without_usage`: chats with an
+  operator's turn in the range and nothing recorded; `chats_from_log`: of
+  the chats recorded, those whose earlier turns were filled afterwards
+  from the tool's own log (usagebackfill.py, meta.json `usage_backfill`);
+  `unreadable`: notes —
+  a file that could not be read, lines that were not JSON, lines without a
+  time, bad limits lines). A turn belongs to one task at most: the task the
+  operator named in that turn (a #now card first), else the #done stretch
+  that holds it, else the task named last before it until a #done closes
+  it; so the tasks never add up to more than the chats. ETag; the tag also
+  follows the minute and the limits file.
+- `GET /api/usage/limits` — `{limits: {tool: {five_hour, seven_day,
+  read_at, read_at_text, age_min, stale, expired, plan, source, series,
+  accounts_n, models_n}}, codex_poll: {found, exe, home, enabled,
+  every_hours, last_attempt, last_success, next_attempt, cause,
+  failures}}`. `codex_poll` is the background reading of Codex's limits
+  (`codex app-server`, no chat, no tokens; settings `usage.codex_poll`,
+  `usage.codex_poll_hours`): whether Codex is on this machine, when it
+  was last read, and the cause when it could not be. Such a reading's
+  `source` is `app-server`. `series` holds what each account holds,
+  newest first: `[{account, model, five_hour, seven_day, read_at,
+  read_at_text, age_min, stale, expired, plan, source, session}]` (`model`
+  and `session` of the reading it was read at); the tool's own fields are
+  the newest series entry's (what one reading answered before);
+  `accounts_n` counts the accounts, `models_n` the models the series'
+  lines named (information only). A series other than the newest whose
+  every window passed its reset is left out. Within one window — the same series, window and
+  `resets_at` — the percentage never goes down (an idle session's status
+  line sends its last, older reading again), so a window holds its highest
+  reading of its newest `resets_at`, and `read_at` is when the 5-hour value
+  (else the weekly one) was read. A turn's `limit` is what the series of
+  the newest reading from 30 minutes before the turn to a minute after
+  held then, by the same rule. With several accounts the #usage block
+  prints one part per account and the page one group per account, newest
+  first, named `Claude Code · account 2403ec81`; with one account only the
+  tool's name. A window is `{used,
+  resets_at, in, expired, span_s, resets_text, expired_text}` or null when
+  the tool did not give it: `used` is null when the reading had no number;
+  `span_s` the window's length (Codex's `window_minutes`, else 18000 and
+  604800); `in` the time to the reset (`1 h 52 min`, "" once passed);
+  `resets_text` `16:40`, or `Thu 09:00` on another day and always for the
+  weekly window; `expired`: the reset passed with no reading since, so the
+  percentage no longer holds, and `expired_text` says so (`Reset at
+  14:10. No reading since.`); `read_at_text` `14:40` (a weekday on another
+  day); `stale`: older than 15 minutes. The page shows these strings as
+  given.
+- `POST /api/usage/limits/refresh` — the operator's page asks for
+  Codex's limits now. `{refreshed: true}` at once, the reading runs in the
+  background (the page reads the limits again a few seconds later);
+  `{refreshed: false, why: "fresh"}` when the newest reading is younger
+  than 15 minutes, `why: "absent"` when Codex is not on this machine. An
+  agent's request is refused.
+- `GET /api/usage/insights` — the feed of insights: `{items: [{id, at,
+  kind, key, params, pinned, hidden_at}], hidden}`, pinned first, then
+  newest first. Writes the day's messages first when the day has none: one
+  ordinary message a day (`model`, `context`, `resume`, `helpers`, `chat`,
+  `cheap`; the heaviest kind not shown in the last 7 days) and one `cap`
+  for each 5-hour window that ran out in the last 3 days, at most two a day.
+  Kept in `.usage/insights.json`; the texts are the page's. A file that
+  cannot be read is never written over: the feed answers no items.
+- `POST /api/usage/insights/{id}/pin` — `{pinned}`. `POST
+  /api/usage/insights/{id}/hide` hides one. `POST /api/usage/insights/clear`
+  hides every message that is not pinned. An agent's request is refused;
+  409 when `.usage/insights.json` cannot be read (nothing is changed).
+- `GET /api/usage/prices/material` — `{models_used, prices_now, as_of,
+  pages, instructions}`: what an update of the API prices is written from
+  (MCP `usage_prices_material`, the command #usage-price).
+- `POST /api/usage/prices` — `{models: {model: {input, write_5m, write_1h,
+  read, output, over_tokens?, over?}}, sources: [https url], note?}`: one
+  update, appended to `.usage/api-prices.jsonl`. Answers `{at, changed,
+  new_models, unchanged, warnings}`; a price outside 0–1000 is refused,
+  and so is an `over` that is not an object (MCP `usage_prices_write`).
+- `GET /api/usage/chat/{agent_id}?block=` — one chat: `agent_id`,
+  `project`, `show` (the line after each reply is shown: the chat's
+  `#usage-on`/`#usage-off`, else the setting `agent.usage_show`), `turns`
+  (turn number → `{turn, at, tool, new, output, cache, cache_write,
+  thinking, model, models, messages, ttl, helpers {n, new_output, cache},
+  context_tokens, share, rebuild {cause, kind} | null, limit {five_hour?,
+  seven_day?} | null, compacted, line}`). `line` is `→ 1.9k ↑ 512 ↓ (108k)`
+  (new up, output down, cache in brackets) with its event words; `· 5-hour
+  70%` when the 5-hour percentage as shown passed a ten. A rebuild is a
+  turn whose first read of the cache fell below 20% of what the turn
+  before left cached (its last message's cache + cache_write) while that
+  was over 20k; the cause is Claude Code's own (within 2 minutes), else
+  `cache expired: N min since the last turn` when the gap (rounded up)
+  passed the last cache lifetime the chat asked for, else a model change,
+  else `context compacted`, else `cause not recorded`. With `block=true`
+  also `block`, the text `#usage` prints. 404 for an unknown chat or one
+  with no chat folder. The tag follows the chat's usage, meta and
+  status-line files, the limits and the settings. The turns of `GET
+  /api/sessions/turns` and `GET /api/sessions/{id}` carry the same record
+  as `usage`; their ETags follow the same files (`/api/sessions/turns` has
+  one now, and reads each chat's usage once per request).
+
 ### The tour
 
 - `GET /api/tour/scripts` — every saved script, in the operator's order.
@@ -1005,7 +1484,8 @@ these tools only; the POST routes in this document are what the tools and
 the operator's pages call. By purpose:
 
 - entries: `write_entry {lens, fields}`, `update_entry {lens, id, changes}`
-- tasks: `tasks`, `task_update`, `task_report`, `task_done`,
+- tasks: `tasks`, `task_update`, `task_report`, `task_done` (with `proposals`, the
+  next tasks offered after `#done`), `next_tasks`,
   `task_evidence_ask`, `task_evidence`, `task_work`, `task_story`
 - kept messages: `interpret`, `skill_draft`, `artifact_write`
 - entries made by mistake: `undo_find`, `undo_propose`, `undo_apply`,
@@ -1016,7 +1496,9 @@ the operator's pages call. By purpose:
   (and `standup_postpone`), `architecture_material`, `map_material`,
   `task_evidence_ask`
 - the architecture: `architecture_status`, `architecture_page`, `map_write`
-- readers: `search`, `project`, `deck`, `doctor`
+- readers: `search`, `project`, `deck`, `doctor`, `usage` (the `#usage`
+  text for this chat and the Usage page's numbers; from a chat the hook
+  never saw, `block` is "" and the summary is the project asked, else all)
 
 It also serves the contract, the schema, active rules and health as MCP
 resources, and every command of the contract as an MCP prompt, built from
@@ -1070,7 +1552,7 @@ An older data root loads without conversion.
 
 ---
 
-Checked against /openapi.json on 2026-10-09: 270 routes, 0 missing, 0 stale.
-Re-run it with `backend/.venv/bin/python scripts/check_api_doc.py`. The 270
+Checked against /openapi.json on 2026-11-01: 304 routes, 0 missing, 0 stale.
+Re-run it with `backend/.venv/bin/python scripts/check_api_doc.py`. The 304
 is route shapes: `/api/tasks/{item_id}` and `/api/tasks/{task_id}` are one
 shape, as are `/api/prompts/{item_id}` and `/api/prompts/{key}`.
