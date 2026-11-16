@@ -143,6 +143,16 @@ export function RecordView({ topic }: { topic: Topic }) {
           <CopyButton text={text} title={t('Copy the record')} label={t('copy')} className="inline-flex items-center gap-4 text-11 font-mono text-tertiary hover:text-brand shrink-0" />
         </span>
       </div>
+      {(kept?.renames ?? []).length > 0 && (
+        <ul className="m-0 p-0 list-none flex flex-col gap-2 min-w-0">
+          {(kept?.renames ?? []).map((r) => (
+            <li key={`${r.at}-${r.new}`} className="text-10 font-mono text-tertiary break-words">
+              {[r.old ? t('Renamed «{old}» → «{new}»', { old: r.old, new: r.new }) : t('Named «{new}»', { new: r.new }),
+                r.at.slice(0, 16).replace('T', ' '), writer({ n: 0, at: r.at, how: 'edited', note: '', text: '', by: r.agent_id })].filter(Boolean).join(' · ')}
+            </li>
+          ))}
+        </ul>
+      )}
       {as === 'text'
         ? <pre className="m-0 text-12 font-mono text-primary whitespace-pre-wrap break-words leading-relaxed">{text}</pre>
         : (

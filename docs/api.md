@@ -401,7 +401,7 @@ operator writes about it, as a new version under `kept_versions/`.
 - `POST /api/visions/{item_id}/interpretation`
 - `POST /api/rules/{item_id}/interpretation`
 - `POST /api/problems/{item_id}/interpretation`
-- `POST /api/entrypoints/{item_id}/interpretation` — the entry point's record: What, Where, How, State, Next; an agent writes it only from the chat that chose the topic last with `#entrypoint` (made it, chose it in answer to the question, or typed its exact name), and only on a topic of its chat's project. `item_id` may be the id the hook named for the command; 409 while the operator has not chosen its topic. Each version keeps its chat (`by`, `command` in `kept.versions`). No word limit: at most 200 000 characters (the file size guard), where the other lenses take 20 000
+- `POST /api/entrypoints/{item_id}/interpretation` — the entry point's record: What, Where, How, State, Next; an agent writes it only from the chat that chose the topic last with `#entrypoint` (made it, chose it in answer to the question, or typed its exact name), and only on a topic of its chat's project. `item_id` may be the id the hook named for the command; 409 while the operator has not chosen its topic. Each version keeps its chat (`by`, `command` in `kept.versions`); `kept.renames` lists each change of the topic's name, oldest first (`at`, `old`, `new`, `agent_id`, `command_id`). No word limit: at most 200 000 characters (the file size guard), where the other lenses take 20 000
 - `POST /api/artifacts/{item_id}/interpretation`
   — all five: body `text` (at most 20 000 characters; an entry point's record 200 000), `note?`. Answers: `metadata`, `kept` (the
   versions). 422 if the entry was posted rather than kept, since then its
@@ -1095,14 +1095,16 @@ shots), by the topics of the tasks named in this chat, one from each in
 turn — and a last line for a new topic, and keeps the numbered list in
 `entrypoint_asks.csv`. The operator's next message chooses
 (`POST /api/entrypoints/answer`): an existing topic opens a new version of
-its record, written by that chat's agent (an unnamed one takes the name
-given); the new-topic line makes the topic then, from the command's
+its record, written by that chat's agent (a name written beside its number
+becomes its name, a named topic renamed too); the new-topic line makes the topic then, from the command's
 message, its id the command's. Only the exact name of one named topic
 (equal once case and punctuation are out; the head of the line before a
 colon or a dash counts) opens a version at once, without the question.
 Commands: `how` pending · name · chosen · new · dropped, `chosen_at` (the
 chat that chose last writes the record); `asked` was written before
-2026-11-15 only. The chat of each version is in `entrypoint_versions.csv`.
+2026-11-15 only. The chat of each version is in `entrypoint_versions.csv`;
+each change of a topic's name (who, when, the old name and the new, the
+command whose answer gave it) in `entrypoint_names.csv`.
 Who writes: the operator everything; an agent, through the MCP tools, a stop,
 a way in (added, or changed when an agent wrote it), a shot and a task's
 topic, on a topic of its own chat's project (a chat with no recorded project
@@ -1110,7 +1112,8 @@ writes nothing). Every write checks the shape
 first and a refusal writes nothing.
 
 - `GET /api/entrypoints/desk?project=` — every topic (all projects when
-  empty): `name`, `title` (the message's first line), `state`, `no_project`,
+  empty): `name`, `title` (the first sentence of the record's What; with no
+  record, the message's first line: what an unnamed topic is shown by), `state`, `no_project`,
   `home`, `what` (the record's What, first paragraph), `has_record`,
   `versions`, `ways`, `stops` (the last five) and `stops_n`, `shots` (oldest
   first, each with `src`), `open_tasks`, `chats`, `last_at`. Also `projects`.
@@ -1150,9 +1153,15 @@ first and a refusal writes nothing.
   the command `id`, typed in this chat. `name` is the agent's proposal for a
   new topic (≤ 80; without it, the head of the message). Answers `asked`,
   `command`, `rev`, `lines` (`{n, kind: topic · new, id, name, named, why:
-  text · work · task, stop, stop_at}`), `show` (the line the agent shows:
-  `Is this one of the topics? 1) … — last stop 5 Nov: … 2) A new topic: «…»`,
-  or `A new topic: «…»?` alone) and `next`. Asked again before the operator
+  text · work · task, stop, stop_at}`), `lang` (en · ru: Russian when the
+  command's message has Cyrillic, else the app's language, `sp-lang` in
+  `ui_prefs.json`), `show` (the offer the agent gives exactly as it is, in
+  `lang`: a heading, then per topic its number, name (or No name), state
+  and project when another, the first paragraph of its What, its ways in,
+  the last stop with its date and author, the last chat with its date, the
+  open tasks and what choosing it does; the new topic; and how to answer,
+  with the real numbers; with no candidate one line, `Start the topic «…»?
+  Answer «yes» or give your own name.`) and `next`. Asked again before the operator
   answered, it replaces the list (`rev` + 1); 409 once they answered and the
   answer was not read, for another chat's command, in a helper chat, and
   for a command with no words and no `name`. A command already answered
@@ -1161,7 +1170,8 @@ first and a refusal writes nothing.
   operator answered. The server reads their next message after the
   question: a command in it chooses nothing and drops the command; a
   question chooses nothing yet (ask again); one number of the list chooses
-  that line and `number` must be the same, the text beside it is a name;
+  that line and `number` must be the same, the text beside it is a name (an
+existing topic takes it, its old name written to `entrypoint_names.csv`);
   two numbers or one outside the list choose nothing (ask again); `yes`
   alone chooses the only line, `no` alone nothing; with one line, text
   without a number is the new topic's name when `number` is 1. `name` must
@@ -1193,7 +1203,8 @@ first and a refusal writes nothing.
   topic, then out of the series).
 - `POST /api/entrypoints/{ep_id}/state` — operator only: `state`.
 - `POST /api/entrypoints/{ep_id}/name` — operator only: `name`, `home?`,
-  `no_project?` (true or false).
+  `no_project?` (true or false). A changed name is written to
+  `entrypoint_names.csv` (by the operator).
 - `GET /api/tasks/{task_id}/topic` — the task's topic, or null.
 - `POST /api/tasks/{task_id}/topic` — `entrypoint_id` ("" clears): a topic of
   the task's project.

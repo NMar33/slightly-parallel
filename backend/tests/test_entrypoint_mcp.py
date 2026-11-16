@@ -54,7 +54,8 @@ def env(tmp_path: Path, monkeypatch):
         store.rebuild()
         keeplib.adopt(store)
         eid = keeplib.keep_id("entrypoint", "alpha", AGENT, 1)
-        assert entrypointask.ask(store, AGENT, eid, "the install film")["show"] == "A new topic: «the install film»?"
+        show = entrypointask.ask(store, AGENT, eid, "the install film")["show"]
+        assert show == "Start the topic «the install film»? Answer «yes» or give your own name."
         _chat(root, ["#entrypoint the install film and its voice", "1"])
         store.rebuild()
         assert entrypointask.answer(store, AGENT, 1)["id"] == eid

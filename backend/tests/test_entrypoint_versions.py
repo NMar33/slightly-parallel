@@ -183,7 +183,7 @@ def test_a_different_name_asks_and_the_new_line_makes_a_new_entry_point(world) -
     c, root, eid = world
     got = _answer(c, root, "ALPHA", SECOND, [("2026-09-05T09:10:00", "#entrypoint the release notes", "noted")],
                   "1", 1, name="Release notes")
-    assert got["asked"]["show"] == "A new topic: «Release notes»?"
+    assert got["asked"]["show"] == "Start the topic «Release notes»? Answer «yes» or give your own name."
     topics = _topics(c)
     assert len(topics) == 2
     new = next(t for t in topics if t["id"] != eid)
@@ -202,7 +202,9 @@ def test_a_name_only_like_a_topic_offers_it_and_choosing_it_opens_a_version(worl
                   "1", 1)
     lines = got["asked"]["lines"]
     assert [(x["kind"], x.get("id"), x.get("why")) for x in lines] == [("topic", eid, "text"), ("new", None, None)]
-    assert got["asked"]["show"].startswith("Is this one of the topics? 1) Install film — no stop yet 2) A new topic:")
+    show = got["asked"]["show"]
+    assert show.startswith("Where should this entry point go?\n\n1) Install film · active\n")
+    assert "Where it stopped: no messages yet" in show and "\n\n2) New topic «" in show
     assert got["opened"] == "version" and got["id"] == eid and got["writer"] == SECOND
     assert [t["id"] for t in _topics(c)] == [eid]                 # nothing else was made
     assert _write(c, eid, SECOND, SECOND_RECORD).status_code == 200

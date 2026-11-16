@@ -57,6 +57,11 @@ const VERSIONS = [
   { n: 1, at: '2610-16 19:20', how: 'interpreted', note: '', text: '## What\nThe films.\n\n## State\nVoiced.', by: 'cc-c6939458' },
   { n: 2, at: '2611-05 18:40', how: 'interpreted', note: '', text: '## What\nThe films.\n\n## State\nUploaded.', by: 'cc-9da6becb' },
 ]
+// The topic was named from the first chat's answer, then renamed from the second's.
+const RENAMES = [
+  { at: '2026-10-16T19:21:00', old: '', new: 'The films', agent_id: 'cc-c6939458', command_id: 'ep_1' },
+  { at: '2026-11-05T18:41:00', old: 'The films', new: 'The films and the launch', agent_id: 'cc-9da6becb', command_id: 'ep_2' },
+]
 
 function serve(desk: Desk) {
   posts = []
@@ -70,7 +75,7 @@ function serve(desk: Desk) {
     if (url.startsWith('/api/entrypoints/desk')) return json(desk)
     if (url.endsWith('/context')) return json(url.includes('ep_thin') ? EMPTY_CX : CONTEXT)
     if (url.endsWith('/ports')) return json({ ways: [{ id: 'ew_1', port: 8120, up: false, why: '' }, { id: 'ew_2', port: null, up: null, why: 'not a local address' }] })
-    if (url.startsWith('/api/entrypoints/ep_')) return json({ kept: { message: 'с темой «видео и публикация»', versions: VERSIONS, current: VERSIONS[1] } })
+    if (url.startsWith('/api/entrypoints/ep_')) return json({ kept: { message: 'с темой «видео и публикация»', versions: VERSIONS, current: VERSIONS[1], renames: RENAMES } })
     if (url.startsWith('/api/tasks')) return json({ tasks: [{ id: 'tk_9', title: 'Pinned comment', status: 'todo' }] })
     return json({ detail: 'no' }, 404)
   }))
@@ -221,6 +226,9 @@ describe('Entry points, the desk on the real routes', () => {
     expect(within(card).getByRole('option', { name: 'version 1 · 2610-16 19:20 · cc-c6939458' })).toBeTruthy()
     fireEvent.change(within(card).getByLabelText('Version'), { target: { value: '1' } })
     expect(await within(card).findByText('written by cc-c6939458')).toBeTruthy()
+    // Each change of the name, with when and the chat whose answer gave it.
+    expect(within(card).getByText('Named «The films» · 2026-10-16 19:21 · cc-c6939458')).toBeTruthy()
+    expect(within(card).getByText('Renamed «The films» → «The films and the launch» · 2026-11-05 18:41 · cc-9da6becb')).toBeTruthy()
   })
 
   it('the briefing as text is the server\'s text', async () => {

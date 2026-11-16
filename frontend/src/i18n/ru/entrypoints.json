@@ -4,6 +4,8 @@
   "What is next": "Что дальше",
   "Copy the start command with its folder": "Скопировать команду запуска вместе с папкой",
   "active": "в работе",
+  "Renamed «{old}» → «{new}»": "Переименована: «{old}» → «{new}»",
+  "Named «{new}»": "Названа «{new}»",
   "dead": "закрыта",
   "yesterday": "вчера",
   "you": "вы",

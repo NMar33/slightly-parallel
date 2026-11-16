@@ -67,7 +67,7 @@ def test_the_desk_lists_the_topic_with_its_state_ways_and_counts(world) -> None:
     c, _root, eid, tid = world
     desk = c.get("/api/entrypoints/desk?project=ALPHA").json()
     (t,) = desk["topics"]
-    assert t["id"] == eid and t["state"] == "active" and t["name"] == "the install film" and t["title"] == "the install film"
+    assert t["id"] == eid and t["state"] == "active" and t["name"] == "the install film" and t["title"] == "The install film, the first how-to."
     assert t["what"] == "The install film, the first how-to." and t["ways"] == [] and t["stops_n"] == 0
     assert c.get("/api/entrypoints/desk?project=BETA").json()["topics"] == []
     # Static paths are not taken for an entry point id, and the lens still answers.

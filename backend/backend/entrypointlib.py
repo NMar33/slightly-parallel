@@ -60,7 +60,7 @@ from .date_utils import as_local, iso_moment, now_iso
 from .db import ViewStore
 from .docs_md import read_detail, resolve_under
 from .entities import (
-    ENTITIES, ENTRYPOINT_COMMAND_COLUMNS, ENTRYPOINT_SHOT_COLUMNS, ENTRYPOINT_STATES, ENTRYPOINT_STOP_COLUMNS,
+    ENTITIES, ENTRYPOINT_COMMAND_COLUMNS, ENTRYPOINT_NAME_COLUMNS, ENTRYPOINT_SHOT_COLUMNS, ENTRYPOINT_STATES, ENTRYPOINT_STOP_COLUMNS,
     ENTRYPOINT_VERSION_COLUMNS, ENTRYPOINT_WAY_COLUMNS, ENTRYPOINT_WAY_KINDS, TASK_TOPIC_COLUMNS, is_done,
 )
 from .file_safety import acquire_flock, atomic_write, lock_path
@@ -71,6 +71,7 @@ SHOTS_FILE = "entrypoint_shots.csv"
 TOPICS_FILE = "task_topics.csv"
 COMMANDS_FILE = "entrypoint_commands.csv"
 AUTHORS_FILE = "entrypoint_versions.csv"
+NAMES_FILE = "entrypoint_names.csv"
 SHOTS_DIR = "entrypoint_shots"
 
 NAME_MAX = 80
@@ -170,9 +171,30 @@ def sections(text: str) -> dict[str, str]:
 
 def what_of(record: str) -> str:
     """The first paragraph of the record's What, one line."""
-    body = sections(record).get("What", "")
-    first = body.split("\n\n", 1)[0]
-    return " ".join(first.split())[:600]
+    return what_paragraph(record)[:600]
+
+
+def what_paragraph(record: str) -> str:
+    """The first paragraph of the record's What, whole, on one line."""
+    body = sections(record).get("What", "").strip()
+    return " ".join(body.split("\n\n", 1)[0].split())
+
+
+_SENTENCE = re.compile(r"^(.+?[.!?…])(?=\s|$)")
+
+
+def what_sentence(record: str) -> str:
+    """The first sentence of the record's What: what an unnamed topic is
+    called by, instead of the first line of the message it was kept from."""
+    para = what_paragraph(record)
+    m = _SENTENCE.match(para)
+    return _clip(m.group(1) if m else para, 160)
+
+
+def label_of(store: ViewStore, row: dict[str, Any], record: str | None = None) -> str:
+    """The topic as a person reads it: its name; unnamed, the first sentence
+    of its record's What; with no record yet, the first line it was kept from."""
+    return name_of(row) or what_sentence(record_of(store, row) if record is None else record) or _title(row)
 
 
 def ways_of(store: Any, ep_id: str) -> list[dict[str, str]]:
@@ -233,7 +255,7 @@ def topic_of_task(store: ViewStore, task_id: str) -> dict[str, Any] | None:
     task = store.query_one("SELECT project, projects FROM tasks_mutual WHERE id = ?", (task_id,))
     if row is None or task is None or not in_project(task, str(row.get("project") or "")):
         return None
-    return {"id": ep_id, "name": name_of(row) or _title(row), "state": state_of(row)}
+    return {"id": ep_id, "name": label_of(store, row), "state": state_of(row)}
 
 
 def _title(row: dict[str, Any]) -> str:
@@ -508,15 +530,16 @@ def command_view(store: ViewStore, item_id: str) -> dict[str, Any]:
             "id": "", "command": str(cmd.get("id") or ""), "name": "", "project": cmd.get("project") or "",
             "opened": "pending" if pending else "nothing", "writer": "", "versions": 0, "record": "",
             "next": (f"Nothing is made until the operator chooses the topic. Call entrypoint_ask "
-                     f'{{id: "{cmd.get("id")}", name}} and show its line as the last line of your reply.'
+                     f'{{id: "{cmd.get("id")}", name}} and give its `show` exactly as given, every line, as the '
+                     "end of your reply."
                      if pending else "The operator's answer chose no topic: nothing was made. Write nothing."),
         }
     if row is None:
         raise LookupError(item_id)
     if cmd is None or cmd.get("id") == row["id"]:
         cmd = last_command(store, row)  # a topic's own id: its last command
-    name = name_of(row) or _title(row)
     record = record_of(store, row)
+    name = label_of(store, row, record)
     n = as_int(row.get("versions_n"))
     ep_id = row["id"]
     write = f'interpret {{lens: "entrypoint", id: "{ep_id}", text, note}}'
@@ -774,11 +797,32 @@ def set_state(store: ViewStore, ep_id: str, body: Any) -> dict[str, str]:
     return _rewrite_entry(store, ep_id, {"state": state, "status": "open" if state == "active" else "closed"})
 
 
+def rename(store: ViewStore, ep_id: str, name: str, *, who: str, at: str = "", command_id: str = "",
+           more: dict[str, str] | None = None) -> dict[str, str]:
+    """The topic's name, and a line in its history when the name changed:
+    who, when, the old name and the new (``entrypoint_names.csv``)."""
+    old = name_of(entry_of(store, ep_id) or {})
+    row = _rewrite_entry(store, ep_id, {"topic": name, **(more or {})})
+    if old != name:
+        when = at or now_iso()
+        append_row(store.data_root / NAMES_FILE, ENTRYPOINT_NAME_COLUMNS, {
+            "id": _mint("epn_", ep_id, when, old, name), "entrypoint_id": ep_id, "at": when, "old": old,
+            "new": name, "agent_id": who if is_agent(who) else "operator", "command_id": command_id})
+    return row
+
+
+def renames(store: Any, ep_id: str) -> list[dict[str, str]]:
+    """The topic's names, oldest first: {at, old, new, agent_id, command_id}."""
+    rows = [r for r in _rows(store, NAMES_FILE) if r.get("entrypoint_id") == ep_id]
+    return sorted(({k: str(r.get(k) or "") for k in ("at", "old", "new", "agent_id", "command_id")} for r in rows),
+                  key=lambda r: r["at"])
+
+
 def set_name(store: ViewStore, ep_id: str, body: Any) -> dict[str, str]:
     body = _body(body)
     _need(store, ep_id)
     name = " ".join(_text(body, "name", NAME_MAX, required=True).split())
-    fields = {"topic": name}
+    fields: dict[str, str] = {}
     if "home" in body:
         fields["home"] = _text(body, "home", PATH_MAX)
     if "no_project" in body:
@@ -786,7 +830,7 @@ def set_name(store: ViewStore, ep_id: str, body: Any) -> dict[str, str]:
         if not isinstance(raw, bool):
             raise EntryRefused("no_project is true or false")
         fields["no_project"] = "yes" if raw else ""
-    return _rewrite_entry(store, ep_id, fields)
+    return rename(store, ep_id, name, who=identity_of(body) or "operator", more=fields)
 
 
 def set_task_topic(store: ViewStore, task_id: str, body: Any) -> dict[str, Any]:
@@ -943,7 +987,7 @@ def summary(store: ViewStore, row: dict[str, str], *, ways: list[dict[str, str]]
     last = max([created] + [s.get("at") or "" for s in stops] + [s.get("at") or "" for s in shots]
                + [w.get("updated_at") or "" for w in ways if w.get("actor") != "migration"])
     return {
-        "id": row["id"], "project": row.get("project") or "", "name": name_of(row), "title": _title(row),
+        "id": row["id"], "project": row.get("project") or "", "name": name_of(row), "title": what_sentence(record) or _title(row),
         "state": state_of(row), "no_project": str(row.get("no_project") or "") == "yes",
         "home": row.get("home") or "", "what": what_of(record), "has_record": bool(record),
         "versions": as_int(row.get("versions_n")), "created": created, "agent_id": row.get("agent_id") or "",
@@ -1370,7 +1414,7 @@ def briefing(store: ViewStore, row: dict[str, Any], cx: dict[str, Any]) -> str:
     chats so far, what was done lately and the major decisions. English,
     Markdown, plain enough to paste."""
     ep_id = str(row["id"])
-    name = name_of(row) or _title(row) or ep_id
+    name = label_of(store, row) or ep_id
     home = home_of(store, row)
     lines = [f"# {name}", "",
              f"Slightly Parallel entry point {ep_id} · project {row.get('project') or ''}"
@@ -1468,7 +1512,7 @@ def similar(store: ViewStore, project: str, text: str, *, limit: int = 3) -> lis
     for hid, score in similarlib.rank(text, docs, limit=limit, threshold=SIMILAR_MIN):
         if hid in rows:
             r = rows[hid]
-            out.append({"id": hid, "name": name_of(r) or _title(r), "state": state_of(r), "score": round(score, 2)})
+            out.append({"id": hid, "name": label_of(store, r), "state": state_of(r), "score": round(score, 2)})
     return out
 
 

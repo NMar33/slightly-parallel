@@ -114,7 +114,7 @@ silenced, and the notice names only that one.
 | `#help` | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it) |
 | `#mute` | No command in the message runs, `###` ones too: every tag in it is plain text. Do nothing for its tags |
 | `#done` | MCP tool task_done: the server has moved the task; say what moved, then your task_report line; next tasks only when the work is unfinished without them (the skill finish-a-task) |
-| `#entrypoint` | Nothing is made until the operator chooses the topic: entrypoint_ask {id, name}, show its line; on their answer entrypoint_answer {number, name?}; then write the record (What, Where, How, State, Next), the ways in, one stop, shots of the ways that are up, the tasks' topic |
+| `#entrypoint` | Nothing is made until the operator chooses the topic: entrypoint_ask {id, name}, show its `show` exactly as given; on their answer entrypoint_answer {number, name?}; then write the record (What, Where, How, State, Next), the ways in, one stop, shots of the ways that are up, the tasks' topic |
 | `#undo <what was the mistake>` | MCP tool undo_find, list the candidates by number, then undo_propose with the operator's numbers and show its confirm text (the skill undo-a-mistake) |
 | `#undo-yes` | The operator confirmed: MCP tool undo_apply. The server archives only on this reply right after your proposal |
 | `#sp <what worries you>` | MCP tool checkup: say what works and what is a concern, in the fixed shape; with text, look into that too. Read freely; change nothing without the operator's yes (the skill sp-checkup) |
@@ -410,22 +410,28 @@ project.
    the topics of this project the command may mean — by the message's
    words, by what this chat already wrote on (stops, ways in, versions), by
    the topics of the tasks named in this chat — at most three, and always
-   a last line for a new topic. It answers `show`: give it as it is, as the
-   last line of your reply (`Is this one of the topics? 1) Site and SEO —
-   last stop 5 Nov: deploy, the text console 2) A new topic: «…»`); with no
-   candidate it is one line, `A new topic: «…»?`. Write nothing else for the
-   topic yet. The exact name of one named topic skips the question: the
-   answer says a new version of it was opened; say so in one line.
-2. The operator answers in their next message: a number; the new topic's
-   number and a name (`2 Консоль текстов`); `yes` when there is one line.
-   Call `entrypoint_answer {number, name?}`: the number they chose (0 when
+   a last line for a new topic. It answers `show`, the offer the server
+   wrote in the operator's language: a heading, each topic with its What,
+   its ways in, where it stopped, its last chat and open tasks and what
+   choosing it does, the new topic, and how to answer with the real
+   numbers; with no candidate, one line (`Start the topic «…»? Answer
+   «yes» or give your own name.`). It is long: give it exactly as given,
+   every line, as the end of your reply; never shorten, translate, reorder
+   or retell it. Write nothing else for the topic yet. The exact name of
+   one named topic skips the question: the answer says a new version of
+   it was opened; say so in one line.
+2. The operator answers in their next message: a number; a number and a
+   name (`2 Консоль текстов`: the new topic takes it, an existing topic is
+   renamed to it, its old name kept in its history); `yes` when there is
+   one line. Call `entrypoint_answer {number, name?}`: the number they chose (0 when
    none), the name only when they wrote one, as they wrote it. The server
    checks both against their message. A command or a question in it
    chooses nothing: answer the question and call `entrypoint_ask` again.
 3. An existing topic chosen opens a new version of its record, and you, in
-   this chat, write it (an unnamed topic takes the name given); the new
-   topic's line makes the topic then, with its name. The answer gives the
-   topic's id, the record as it is and `next`, the line of what to write.
+   this chat, write it (a name written beside its number becomes its
+   name); the new topic's line makes the topic then, with its name. The
+   answer gives the topic's id, the record as it is and `next`, the line
+   of what to write.
 
 Then write the record through `interpret {lens: "entrypoint", id, text,
 note}` — five sections as Markdown headings, no word limit: **What**

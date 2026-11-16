@@ -18,11 +18,15 @@ of that topic at once; the agent then says which topic it was.
      versions it wrote, its stops, its ways in, its shots; newest first;
    - the topics of the tasks named in this chat, the latest mention first.
 
-   The last line is always "A new topic: «name»". The numbered lines are
-   recorded in ``entrypoint_asks.csv`` with the chat's last turn; the
-   agent shows ``show`` as it is. With no candidate the line is one: "A new
-   topic: «name»?". Asked again before the operator answered, the question
-   is replaced; after an answer that was not read yet, it is refused.
+   The last line is always the new topic, with the agent's name. The
+   numbered lines are recorded in ``entrypoint_asks.csv`` with the chat's
+   last turn, and the server writes ``show``, the offer the agent gives as
+   it is (show_of): a heading, each topic with its What, ways in, where it
+   stopped, its last chat and open tasks and what choosing it does, the new
+   topic, and how to answer with the real numbers; in the operator's
+   language (lang_of). With no candidate it is one line: start the topic
+   «name»? Asked again before the operator answered, the question is
+   replaced; after an answer that was not read yet, it is refused.
 2. **the answer** — the operator's next message after the question. The
    agent calls ``entrypoint_answer {number, name?}``; the server reads the
    message from chat.md, which only the capture hook writes (as nextlib
@@ -40,7 +44,8 @@ of that topic at once; the agent then says which topic it was.
    - the agent's ``name`` must be written in the operator's message.
 
    An existing topic chosen opens a new version of its record for this
-   chat (an unnamed one takes the name given). The new-topic line chosen
+   chat; a name written beside its number becomes its name (a named one is
+   renamed, the old name kept in entrypoint_names.csv). The new-topic line chosen
    makes the topic then, from the command's message (its kept text, turn
    and chat), with the name given or the one proposed. A retry answers the
    same; the topic's id is the command's, so it is never made twice.
@@ -51,24 +56,23 @@ from __future__ import annotations
 import json
 import re
 import threading
-from datetime import datetime
 from typing import Any
 
 from . import entrypointlib as E
 from . import keeplib
+from .actors import is_agent
 from .csvio import append_row, as_int, read_rows, rewrite_rows
-from .date_utils import now_iso
+from .date_utils import as_local, iso_moment, now_iso
 from .db import ViewStore
-from .entities import ENTRYPOINT_ASK_COLUMNS
+from .entities import ENTRYPOINT_ASK_COLUMNS, is_done
+from .file_safety import safe_read_json
 from .hookshared import command_text, plain_text
 from .nextlib import _COMMAND_RE, _NUMBER_RE, _answer_turn, _said, _turns
 from .sessions import helper_ids
 
 ASKS_FILE = "entrypoint_asks.csv"
 CANDIDATES_MAX = 3
-STOP_SHOWN = 60
 OPEN = ("offered",)
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 _lock = threading.Lock()
 
@@ -117,19 +121,12 @@ def _mark(store: ViewStore, cmd: dict[str, str]) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def _day(at: str) -> str:
-    try:
-        d = datetime.fromisoformat(str(at or "")[:19])
-    except ValueError:
-        return ""
-    return f"{d.day} {_MONTHS[d.month - 1]}"
-
-
 def _worked_on(store: ViewStore, agent: str) -> list[str]:
     """The topics this chat wrote on, newest first."""
     seen: dict[str, str] = {}
 
     def add(ep_id: str, at: str) -> None:
+        at = _moment(at)
         if ep_id and at >= seen.get(ep_id, ""):
             seen[ep_id] = at
     for c in E.commands(store):
@@ -187,29 +184,184 @@ def candidates(store: ViewStore, project: str, agent: str, text: str) -> list[di
     for ep_id, why in picked:
         row = live[ep_id]
         stops = E.stops_of(store, ep_id)
-        out.append({"id": ep_id, "name": E.name_of(row) or E._title(row), "named": bool(E.name_of(row)),
+        out.append({"id": ep_id, "name": E.label_of(store, row), "named": bool(E.name_of(row)),
                     "why": why, "stop": " ".join(str(stops[0].get("text") or "").split()) if stops else "",
                     "stop_at": str(stops[0].get("at") or "") if stops else ""})
     return out
 
 
-def _clip(s: str, n: int) -> str:
-    return s if len(s) <= n else s[:n - 1].rstrip() + "…"
+# ---------------------------------------------------------------------------
+# The offer the operator reads
+# ---------------------------------------------------------------------------
+
+# Every word of the offer, in both languages, in one place. The offer is in
+# the operator's language: the command message's (Cyrillic is Russian), else
+# the app's language setting.
+TEXTS: dict[str, dict[str, Any]] = {
+    "en": {
+        "heading": "Where should this entry point go?",
+        "no_name": "No name",
+        "states": {"active": "active", "paused": "paused", "dead": "closed"},
+        "project": "project {project}",
+        "what": "What: {what}",
+        "no_record": "What: no record yet",
+        "ways": "Ways in: {ways}",
+        "no_ways": "Ways in: none yet",
+        "stop": "Where it stopped ({day}, {who}): {text}",
+        "no_stop": "Where it stopped: no messages yet",
+        "you": "you",
+        "chat": "Last chat: «{chat}», {day}",
+        "no_chat": "Last chat: none yet",
+        "tasks": "open tasks: {n}",
+        "choose_topic": "→ I add a new version of its record",
+        "new": "New topic «{name}»",
+        "choose_new": "→ I start a separate topic",
+        "footer": ("Answer with a number. You can give a name with it: «{first} Name» — topic {first} takes this "
+                   "name (or a new one, if it has one already); «{new} Your name» — the new topic is called that."),
+        "single": "Start the topic «{name}»? Answer «yes» or give your own name.",
+        "months": ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+    },
+    "ru": {
+        "heading": "Куда записать эту точку входа?",
+        "no_name": "Без названия",
+        "states": {"active": "в работе", "paused": "на паузе", "dead": "закрыта"},
+        "project": "проект {project}",
+        "what": "Что: {what}",
+        "no_record": "Что: записи пока нет",
+        "ways": "Входы: {ways}",
+        "no_ways": "Входы: пока нет",
+        "stop": "Где остановились ({day}, {who}): {text}",
+        "no_stop": "Где остановились: сообщений пока нет",
+        "you": "ты",
+        "chat": "Последний чат: «{chat}», {day}",
+        "no_chat": "Последний чат: пока нет",
+        "tasks": "открытых задач: {n}",
+        "choose_topic": "→ допишу новую версию её записи",
+        "new": "Новая тема «{name}»",
+        "choose_new": "→ заведу отдельную тему",
+        "footer": ("Ответь номером. Можно сразу дать название: «{first} Название» — тема {first} получит это "
+                   "название (или новое, если оно уже есть); «{new} Своё название» — новая тема будет называться "
+                   "так."),
+        "single": "Завести тему «{name}»? Ответь «да» или дай своё название.",
+        "months": ("янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"),
+    },
+}
+LANG_PREF = "sp-lang"
+PREFS_FILE = "ui_prefs.json"
+_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
-def _line(item: dict[str, Any]) -> str:
-    if item["kind"] == "new":
-        return f"A new topic: «{item['name']}»"
-    head = _clip(item["name"], E.NAME_MAX)
-    if item.get("stop"):
-        return f"{head} — last stop {_day(item['stop_at'])}: {_clip(item['stop'], STOP_SHOWN)}"
-    return f"{head} — no stop yet"
+def lang_of(store: ViewStore, text: str) -> str:
+    """ru when the operator's message has Cyrillic in it; else the app's
+    language setting (en when none is saved)."""
+    if _CYRILLIC.search(text or ""):
+        return "ru"
+    try:
+        prefs = safe_read_json(store.data_root / PREFS_FILE)
+    except (OSError, ValueError):
+        prefs = None
+    got = str(prefs.get(LANG_PREF) or "") if isinstance(prefs, dict) else ""
+    return got if got in TEXTS else "en"
 
 
-def show_of(lines: list[dict[str, Any]]) -> str:
+_SHORT = re.compile(r"^(\d{4}-\d{2}) (\d{2}:\d{2})")
+
+
+def _moment(at: str) -> str:
+    """A ledger's stamp as local ISO to the second: ``2026-11-16T10:56:00``
+    from ISO (a zone converted) or from a version's ``2611-16 10:56``."""
+    at = str(at or "").strip()
+    m = _SHORT.match(at)
+    if m:
+        return iso_moment(m.group(1), m.group(2))
+    d = as_local(at)
+    return d.strftime("%Y-%m-%dT%H:%M:%S") if d else ""
+
+
+def _day(at: str, lang: str) -> str:
+    d = as_local(_moment(at))
+    return f"{d.day} {TEXTS[lang]['months'][d.month - 1]}" if d else ""
+
+
+def _last_chat(store: ViewStore, row: dict[str, str]) -> tuple[str, str]:
+    """The chat that worked on the topic last, and when: its commands, the
+    versions it wrote, its stops, ways in and shots, the chat that kept it."""
+    ep_id = str(row["id"])
+    best = ("", "")
+
+    def add(agent: str, at: str) -> None:
+        nonlocal best
+        at = _moment(at)
+        if agent and is_agent(agent) and at and at > best[1]:
+            best = (agent, at)
+    add(str(row.get("agent_id") or ""), iso_moment(row.get("created_date"), row.get("created_time")))
+    for c in E.commands(store):
+        if c.get("entrypoint_id") == ep_id and c.get("how") != "dropped":
+            add(str(c.get("agent_id") or ""), str(c.get("chosen_at") or c.get("at") or ""))
+    for r in read_rows(store.data_root / E.AUTHORS_FILE):
+        if r.get("entrypoint_id") == ep_id:
+            add(str(r.get("agent_id") or ""), str(r.get("at") or ""))
+    for s in E.stops_of(store, ep_id):
+        add(str(s.get("author") or ""), str(s.get("at") or ""))
+    for w in E.ways_of(store, ep_id):
+        add(str(w.get("actor") or ""), str(w.get("updated_at") or w.get("created_at") or ""))
+    for s in E.shots_of(store, ep_id):
+        add(str(s.get("agent_id") or ""), str(s.get("at") or ""))
+    return best
+
+
+def _chat_names(store: ViewStore) -> dict[str, str]:
+    return {str(a.get("agent_id") or ""): E._chat_name(a, str(a.get("agent_id") or "")) for a in store.agents()}
+
+
+def _topic_block(store: ViewStore, item: dict[str, Any], lang: str, project: str,
+                 names: dict[str, str]) -> list[str]:
+    """One existing topic of the offer: its head, What, ways in, where it
+    stopped, its last chat and open tasks, and what choosing it does."""
+    tx = TEXTS[lang]
+    row = E.entry_of(store, str(item.get("id") or "")) or {"id": str(item.get("id") or "")}
+    name = E.name_of(row) or tx["no_name"]
+    head = [name, tx["states"].get(E.state_of(row), E.state_of(row))]
+    if row.get("project") and row.get("project") != project:
+        head.append(tx["project"].format(project=row["project"]))
+    out = [f"{item['n']}) " + " · ".join(head)]
+    what = E.what_paragraph(E.record_of(store, row))
+    out.append(tx["what"].format(what=what) if what else tx["no_record"])
+    ways = E.ways_of(store, str(row["id"]))
+    shown = [" — ".join(x for x in (str(w.get("name") or ""), str(w.get("url") or w.get("path") or "")) if x)
+             for w in ways]
+    out.append(tx["ways"].format(ways="; ".join(shown)) if shown else tx["no_ways"])
+    stops = E.stops_of(store, str(row["id"]))
+    if stops:
+        s = stops[0]
+        author = str(s.get("author") or "")
+        who = tx["you"] if author in ("", "operator") else names.get(author) or author
+        out.append(tx["stop"].format(day=_day(str(s.get("at") or ""), lang), who=who,
+                                     text=" ".join(str(s.get("text") or "").split())))
+    else:
+        out.append(tx["no_stop"])
+    agent, at = _last_chat(store, row)
+    chat = tx["chat"].format(chat=names.get(agent) or agent, day=_day(at, lang)) if agent else tx["no_chat"]
+    tasks = E.tasks_of_topic(store, row) if row.get("project") else []
+    n_open = sum(1 for t in tasks if not is_done(t.get("status")) and not str(t.get("archived_at") or "").strip())
+    out.append(f"{chat} · {tx['tasks'].format(n=n_open)}")
+    out.append(tx["choose_topic"])
+    return [out[0]] + ["   " + x for x in out[1:]]
+
+
+def show_of(store: ViewStore, lines: list[dict[str, Any]], lang: str, project: str) -> str:
+    """The offer, built by the server so its numbers are the ones recorded."""
+    tx = TEXTS[lang]
+    new = lines[-1]
     if len(lines) == 1:
-        return _line(lines[0]) + "?"
-    return "Is this one of the topics? " + " ".join(f"{x['n']}) {_line(x)}" for x in lines)
+        return tx["single"].format(name=new["name"])
+    names = _chat_names(store)
+    blocks = [tx["heading"]]
+    for item in lines[:-1]:
+        blocks.append("\n".join(_topic_block(store, item, lang, project, names)))
+    blocks.append(f"{new['n']}) {tx['new'].format(name=new['name'])}\n   {tx['choose_new']}")
+    blocks.append(tx["footer"].format(first=lines[0]["n"], new=new["n"]))
+    return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +421,7 @@ def ask(store: ViewStore, agent: str, cmd_id: str, name: Any = None) -> dict[str
         if not proposed:
             raise AskRefused("the command has no words: send name, the name you propose for a new topic "
                              "(about four words, from this chat). Nothing was asked")
+        lang = lang_of(store, f"{(mark or {}).get('title') or ''} {body}")
         found = candidates(store, str(cmd.get("project") or ""), agent, body)
         lines: list[dict[str, Any]] = [{"n": i, "kind": "topic", **c} for i, c in enumerate(found, 1)]
         lines.append({"n": len(lines) + 1, "kind": "new", "name": proposed})
@@ -284,13 +437,14 @@ def ask(store: ViewStore, agent: str, cmd_id: str, name: Any = None) -> dict[str
             append_row(store.data_root / ASKS_FILE, ENTRYPOINT_ASK_COLUMNS, row)
         else:
             _save(store, cmd_id, row)
-    show = show_of(lines)
-    how = ("a number, or yes" if len(lines) == 1 else "a number") + "; for a new topic, its number and a name"
+        show = show_of(store, lines, lang, str(cmd.get("project") or ""))
+    how = ("yes, or a name" if len(lines) == 1 else "a number, with a name beside it when they give one")
     return {
-        "asked": True, "command": cmd_id, "rev": rev, "lines": lines, "show": show,
-        "next": (f"Show the operator this line as it is, as the last line of your reply: {show} Nothing is "
-                 f"made until they answer ({how}). Then call entrypoint_answer {{number, name?}}: number the "
-                 f"line they chose, 0 when they chose none; name only when they wrote one, as they wrote it."),
+        "asked": True, "command": cmd_id, "rev": rev, "lines": lines, "show": show, "lang": lang,
+        "next": (f"Give the operator the text in `show` exactly as it is, as the end of your reply: every line, "
+                 f"in its language, nothing shortened, translated, reordered or retold. Nothing is made until "
+                 f"they answer ({how}). Then call entrypoint_answer {{number, name?}}: number the line they "
+                 f"chose, 0 when they chose none; name only when they wrote one, as they wrote it."),
     }
 
 
@@ -508,14 +662,16 @@ def _make_new(store: ViewStore, row: dict[str, str], name: str, at: str) -> str:
 
 
 def _open_existing(store: ViewStore, row: dict[str, str], line: dict[str, Any], name: str, at: str) -> str | None:
-    """A new version of the chosen topic, for this chat; the name given to
-    a topic that had none. None when the topic is gone from the project."""
+    """A new version of the chosen topic, for this chat; the name the
+    operator wrote beside its number becomes its name, a name it had
+    before kept in its history. None when the topic is gone from the
+    project."""
     ep_id = str(line.get("id") or "")
     topic = E.entry_of(store, ep_id)
     if topic is None or str(topic.get("archived_at") or "").strip() or topic.get("project") != row.get("project"):
         return None
-    if name and not E.name_of(topic):
-        E._rewrite_entry(store, ep_id, {"topic": name})
+    if name and name != E.name_of(topic):
+        E.rename(store, ep_id, name, who=str(row.get("agent_id") or ""), at=at, command_id=row["id"])
     E.resolve_command(store, row["id"], ep_id=ep_id, how="chosen", at=at)
     return ep_id
 
@@ -528,11 +684,11 @@ def _result(store: ViewStore, row: dict[str, str], lines: list[dict[str, Any]], 
     said = ""
     if line.get("kind") == "new":
         said = f"Say in one line that the new topic «{view['name']}» ({view['id']}) was made. "
-    elif row.get("name") and E.name_of(topic) == row.get("name") and not line.get("named"):
+    elif row.get("name") and E.name_of(topic) == row.get("name") and line.get("named"):
+        said = (f"Say in one line that «{view['name']}» ({view['id']}) was chosen and renamed, as the operator "
+                f"wrote (it was «{line.get('name')}»). ")
+    elif row.get("name") and E.name_of(topic) == row.get("name"):
         said = f"Say in one line that «{view['name']}» ({view['id']}) was chosen and now has this name. "
-    elif row.get("name"):
-        said = (f"Say in one line that «{view['name']}» ({view['id']}) was chosen; it keeps its name (the operator "
-                f"renames it on the Entry points page). ")
     else:
         said = f"Say in one line that «{view['name']}» ({view['id']}) was chosen. "
     return {**view, "state": "chosen", "chosen": chosen, "existing": again,

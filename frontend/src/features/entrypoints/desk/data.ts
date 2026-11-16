@@ -125,7 +125,9 @@ export interface PortState { id: string; port: number | null; up: boolean | null
 
 /** `by`: the chat that wrote the version (its agent id), or `operator`; `command`: the #entrypoint it answered. */
 export interface RecordVersion { n: number; at: string; how: string; note: string; text: string; by?: string; command?: string }
-export interface Kept { message: string; versions: RecordVersion[]; current: RecordVersion | null }
+/** One change of a topic's name: when, the old name and the new, who (a chat, or operator). */
+export interface Rename { at: string; old: string; new: string; agent_id: string; command_id: string }
+export interface Kept { message: string; versions: RecordVersion[]; current: RecordVersion | null; renames?: Rename[] }
 
 const KEY = ['entrypoints'] as const
 

@@ -139,9 +139,10 @@ def test_the_candidates_come_from_the_text_and_another_project_is_never_offered(
     assert ids["beta"] not in [x.get("id") for x in lines]
     assert lines[-1] == {"n": len(lines), "kind": "new", "name": "Text console"}
     show = r.json()["show"]
-    assert show.startswith("Is this one of the topics? 1) Site and SEO — last stop ")
-    assert ": Deployed; the text console is half done." in show and show.endswith("A new topic: «Text console»")
-    assert "Show the operator this line as it is" in r.json()["next"]
+    assert show.startswith("Where should this entry point go?\n\n1) Site and SEO · active\n")
+    assert "Deployed; the text console is half done." in show
+    assert f"{len(lines)}) New topic «Text console»\n   → I start a separate topic" in show
+    assert "`show` exactly as it is" in r.json()["next"]
 
 
 def test_the_candidates_come_from_the_chats_tasks(board) -> None:
@@ -164,8 +165,10 @@ def test_the_candidates_come_from_the_chats_past_work(board) -> None:
     _kid, r = _ask(c, ME, 2, "Store notes")
     lines = r.json()["lines"]
     assert [(x.get("id"), x.get("why")) for x in lines] == [(ids["notes"], "work"), (None, None)]
-    # An unnamed topic shows its first line.
-    assert r.json()["show"].startswith("Is this one of the topics? 1) release notes for the store — last stop ")
+    # An unnamed topic is «No name» with no record yet: never the first line of its old message.
+    show = r.json()["show"]
+    assert show.startswith("Where should this entry point go?\n\n1) No name · active\n   What: no record yet\n")
+    assert "release notes for the store" not in show
 
 
 def test_at_most_three_candidates_one_from_each_source_in_turn(board) -> None:
@@ -239,7 +242,8 @@ def test_yes_with_one_line_makes_the_proposed_topic_in_an_empty_project(app) -> 
     turns = [(CMD, "#entrypoint")]
     _say(c, root, ME, turns)
     kid, r = _ask(c, ME, 1, "Text console")
-    assert r.json()["show"] == "A new topic: «Text console»?" and len(r.json()["lines"]) == 1
+    assert r.json()["show"] == "Start the topic «Text console»? Answer «yes» or give your own name."
+    assert len(r.json()["lines"]) == 1
     _say(c, root, ME, [*turns, ("2026-09-10T10:01:00", "да")])
     got = _answer(c, ME, 1).json()
     assert got["opened"] == "new" and got["name"] == "Text console"
@@ -256,7 +260,7 @@ def test_a_name_alone_answers_the_one_line(app) -> None:
     assert _answer(c, ME, 1).json()["name"] == "Консоль текстов"
 
 
-def test_an_unnamed_topic_chosen_takes_the_name_given_a_named_one_keeps_its_own(board) -> None:
+def test_an_unnamed_topic_chosen_takes_the_name_given_and_a_named_one_is_renamed(board) -> None:
     c, root, ids = board
     _say(c, root, ME, [("2026-09-10T09:00:00", "hello")])
     c.post(f"/api/entrypoints/{ids['notes']}/stops", json={"agent_id": ME, "text": "Drafted."})
@@ -268,13 +272,27 @@ def test_an_unnamed_topic_chosen_takes_the_name_given_a_named_one_keeps_its_own(
     assert got["id"] == ids["notes"] and got["name"] == "Store release notes"
     assert "now has this name" in got["next"]
     assert E.entry_of(_store(c), ids["notes"])["topic"] == "Store release notes"  # type: ignore[index]
-    # A named topic keeps its name.
+    # A named topic chosen with a name beside its number is renamed; its history keeps the old name.
     turns2 = [(CMD, "#entrypoint the site deploy and the search texts")]
     _say(c, root, THIRD, turns2)
     _ask(c, THIRD, 1)
     _say(c, root, THIRD, [*turns2, ("2026-09-10T10:01:00", "1 Website")])
     got = _answer(c, THIRD, 1).json()
-    assert got["id"] == ids["site"] and got["name"] == "Site and SEO" and "keeps its name" in got["next"]
+    assert got["id"] == ids["site"] and got["name"] == "Website"
+    assert "renamed, as the operator wrote (it was «Site and SEO»)" in got["next"]
+    names = E.renames(_store(c), ids["site"])
+    assert [(n["old"], n["new"], n["agent_id"], n["at"]) for n in names][-1] == (
+        "Site and SEO", "Website", THIRD, "2026-09-10T10:01:00")
+    assert names[-1]["command_id"] == keeplib.keep_id("entrypoint", "ALPHA", THIRD, 1)
+    kept = c.get(f"/api/entrypoints/{ids['site']}").json()["kept"]
+    assert kept["renames"][-1]["old"] == "Site and SEO" and kept["renames"][-1]["new"] == "Website"
+    # A number alone renames nothing.
+    turns3 = [(CMD, "#entrypoint the site deploy and the search texts")]
+    _say(c, root, OTHER, turns3)
+    _ask(c, OTHER, 1)
+    _say(c, root, OTHER, [*turns3, ("2026-09-10T10:01:00", "1")])
+    assert _answer(c, OTHER, 1).json()["name"] == "Website"
+    assert len(E.renames(_store(c), ids["site"])) == len(names)
 
 
 @pytest.mark.parametrize("reply, state", [
@@ -440,7 +458,7 @@ def test_the_answer_is_read_from_the_operators_words(text, offered, kind, number
 def test_the_contract_says_the_steps() -> None:
     root = Path(__file__).resolve().parents[2]
     part = (root / "prompts" / "contract" / "56-entrypoint.md").read_text(encoding="utf-8")
-    for words in ("entrypoint_ask", "entrypoint_answer", "nothing is made", "last stop"):
+    for words in ("entrypoint_ask", "entrypoint_answer", "nothing is made", "exactly as given"):
         assert words in part, words
     whole = (root / "SLIGHTLY-PARALLEL.md").read_text(encoding="utf-8")
     assert "entrypoint_ask {id, name}" in whole and "entrypoint_answer {number, name?}" in whole
@@ -455,7 +473,7 @@ def test_a_yes_word_answer_keeps_the_offered_name(app, reply: str) -> None:
     turns = [(CMD, "#entrypoint лента проверки для агентов")]
     _say(c, root, ME, turns)
     kid, r = _ask(c, ME, 1, "Лента проверки для агентов")
-    assert r.json()["show"] == "A new topic: «Лента проверки для агентов»?"
+    assert r.json()["show"] == "Завести тему «Лента проверки для агентов»? Ответь «да» или дай своё название."
     _say(c, root, ME, [*turns, ("2026-09-10T10:01:00", reply)])
     got = _answer(c, ME, 1).json()
     assert got["name"] == "Лента проверки для агентов"
@@ -543,3 +561,202 @@ def test_a_negative_or_a_question_is_no_choice_and_never_a_name(app, reply: str,
     got = _answer(c, ME, 0 if state != "question" else 1).json()
     assert got["state"] == state and got["opened"] == "nothing"
     assert E.entry_of(_store(c), kid) is None
+
+
+# ---------------------------------------------------------------------------
+# The offer the operator reads (show_of)
+# ---------------------------------------------------------------------------
+
+SITE_WHAT = ("Сайт проекта и его тексты для поиска. Деплой одним скриптом, тексты пишет консоль.\n\n"
+             "Второй абзац не показывается.")
+NOTES_WHAT = "Release notes for the store, one per version. They are written in English.\n\nNot shown."
+
+
+def _pin(root: Path, at: str, stops_at: str) -> None:
+    """Every time the server stamped with its clock, set to ``at`` (a stop
+    to ``stops_at``): the offer's dates are the same on every run."""
+    from backend.csvio import rewrite_rows
+    from backend.entities import ENTRYPOINT_STOP_COLUMNS, ENTRYPOINT_VERSION_COLUMNS, ENTRYPOINT_WAY_COLUMNS
+    for name, cols, keys in [(E.STOPS_FILE, ENTRYPOINT_STOP_COLUMNS, ("stop",)),
+                             (E.AUTHORS_FILE, ENTRYPOINT_VERSION_COLUMNS, ("version",)),
+                             (E.WAYS_FILE, ENTRYPOINT_WAY_COLUMNS, ("created_at", "updated_at"))]:
+        if (root / name).exists():
+            def mutate(rs: list[dict[str, str]], keys=keys) -> bool:
+                for r in rs:
+                    if keys == ("stop",):
+                        r["at"] = stops_at
+                    elif keys == ("version",):      # a version's own stamp: 2609-05 12:00
+                        r["at"] = f"{at[2:4]}{at[5:7]}-{at[8:10]} {at[11:16]}"
+                    else:
+                        r.update({k: at for k in keys})
+                return True
+            rewrite_rows(root / name, cols, mutate)
+
+
+@pytest.fixture()
+def rich(app):
+    """ALPHA: a named topic with a record, two ways in and the operator's
+    stop; an unnamed one with a record, written on by this chat."""
+    c, root = app
+    site = _topic(c, root, "ALPHA", "2026-09-01T10:00:00", "сайт: деплой и тексты для поиска", "Сайт и SEO",
+                  stop="Задеплоено; консоль текстов готова наполовину.")
+    assert c.post(f"/api/entrypoints/{site}/interpretation",
+                  json={"agent_id": OLD, "text": f"## What\n{SITE_WHAT}\n\n## State\nx"}).status_code == 200
+    for way in ({"name": "Сайт", "kind": "site", "url": "https://example.org"},
+                {"name": "Консоль текстов", "kind": "folder", "path": "/srv/console"}):
+        assert c.post(f"/api/entrypoints/{site}/ways", json={"actor": "operator", "way": way}).status_code == 200
+    notes = _topic(c, root, "ALPHA", "2026-09-03T10:00:00", "the store's release notes", "-", agent="cc-epask0n1")
+    assert c.post(f"/api/entrypoints/{notes}/interpretation",
+                  json={"agent_id": "cc-epask0n1", "text": f"## What\n{NOTES_WHAT}"}).status_code == 200
+    _say(c, root, ME, [("2026-09-10T09:00:00", "hello")])
+    assert c.post(f"/api/entrypoints/{notes}/stops", json={"agent_id": ME, "text": "Drafted 1.4."}).status_code == 201
+    _pin(root, "2026-09-05T12:00:00", "2026-09-06T12:00:00")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "10:05", "project": "ALPHA",
+                                  "agent_id": "operator", "title": "Push the deploy", "status": "todo"})
+    tid = r.json()["metadata"]["id"]
+    assert c.post(f"/api/tasks/{tid}/topic", json={"actor": "operator", "entrypoint_id": site}).status_code == 200
+    _store(c).rebuild()
+    return c, root, {"site": site, "notes": notes}
+
+
+def _offer(c: TestClient, root: Path, text: str, name: str):
+    _say(c, root, ME, [("2026-09-10T09:00:00", "hello"), (CMD, text)])
+    return _ask(c, ME, 2, name)[1].json()
+
+
+RU_OFFER = """Куда записать эту точку входа?
+
+1) Сайт и SEO · в работе
+   Что: Сайт проекта и его тексты для поиска. Деплой одним скриптом, тексты пишет консоль.
+   Входы: Сайт — https://example.org; Консоль текстов — /srv/console
+   Где остановились (6 сен, ты): Задеплоено; консоль текстов готова наполовину.
+   Последний чат: «cc-epask002», 5 сен · открытых задач: 1
+   → допишу новую версию её записи
+
+2) Без названия · в работе
+   Что: Release notes for the store, one per version. They are written in English.
+   Входы: пока нет
+   Где остановились (6 сен, cc-epask001): Drafted 1.4.
+   Последний чат: «cc-epask001», 6 сен · открытых задач: 0
+   → допишу новую версию её записи
+
+3) Новая тема «Консоль текстов»
+   → заведу отдельную тему
+
+Ответь номером. Можно сразу дать название: «1 Название» — тема 1 получит это название (или новое, если оно \
+уже есть); «3 Своё название» — новая тема будет называться так."""
+
+EN_OFFER = """Where should this entry point go?
+
+1) Сайт и SEO · active
+   What: Сайт проекта и его тексты для поиска. Деплой одним скриптом, тексты пишет консоль.
+   Ways in: Сайт — https://example.org; Консоль текстов — /srv/console
+   Where it stopped (6 Sep, you): Задеплоено; консоль текстов готова наполовину.
+   Last chat: «cc-epask002», 5 Sep · open tasks: 1
+   → I add a new version of its record
+
+2) No name · active
+   What: Release notes for the store, one per version. They are written in English.
+   Ways in: none yet
+   Where it stopped (6 Sep, cc-epask001): Drafted 1.4.
+   Last chat: «cc-epask001», 6 Sep · open tasks: 0
+   → I add a new version of its record
+
+3) New topic «Text console»
+   → I start a separate topic
+
+Answer with a number. You can give a name with it: «1 Name» — topic 1 takes this name (or a new one, if it has \
+one already); «3 Your name» — the new topic is called that."""
+
+
+def test_the_offer_in_russian(rich) -> None:
+    c, root, ids = rich
+    got = _offer(c, root, "#entrypoint сайт и тексты для поиска", "Консоль текстов")
+    assert [x.get("id") for x in got["lines"]] == [ids["site"], ids["notes"], None]
+    assert got["lang"] == "ru"
+    print(got["show"])
+    assert got["show"] == RU_OFFER
+
+
+def test_the_offer_in_english(rich) -> None:
+    c, root, ids = rich
+    got = _offer(c, root, "#entrypoint the SEO site", "Text console")
+    assert [x.get("id") for x in got["lines"]] == [ids["site"], ids["notes"], None]
+    assert got["lang"] == "en"
+    print(got["show"])
+    assert got["show"] == EN_OFFER
+
+
+def test_an_unnamed_topic_shows_its_what_never_the_old_line_on_the_desk_and_in_the_briefing(rich) -> None:
+    c, root, ids = rich
+    got = _offer(c, root, "#entrypoint сайт и тексты для поиска", "Консоль текстов")
+    assert "the store's release notes" not in got["show"]
+    assert "Что: Release notes for the store, one per version. They are written in English." in got["show"]
+    assert "Not shown" not in got["show"] and "Второй абзац" not in got["show"]
+    tile = next(t for t in c.get("/api/entrypoints/desk?project=ALPHA").json()["topics"] if t["id"] == ids["notes"])
+    assert tile["name"] == "" and tile["title"] == "Release notes for the store, one per version."
+    brief = c.get(f"/api/entrypoints/{ids['notes']}/context").json()["briefing"]
+    assert brief.startswith("# Release notes for the store, one per version.\n")
+
+
+def _lang_pref(root: Path, lang: str | None) -> None:
+    prefs = root / A.PREFS_FILE
+    prefs.write_text(json.dumps({A.LANG_PREF: lang} if lang else {}), encoding="utf-8")
+
+
+@pytest.mark.parametrize("text, setting, lang", [
+    ("#entrypoint сайт и тексты", "en", "ru"),     # Cyrillic in the message: Russian, whatever the setting
+    ("#entrypoint сайт и тексты", None, "ru"),
+    ("#entrypoint the SEO site", "ru", "ru"),      # no Cyrillic: the app's language
+    ("#entrypoint the SEO site", "en", "en"),
+    ("#entrypoint the SEO site", None, "en"),
+    ("#entrypoint", "ru", "ru"),
+])
+def test_the_offers_language_is_the_messages_else_the_setting(rich, text: str, setting: str | None,
+                                                              lang: str) -> None:
+    c, root, _ids = rich
+    _lang_pref(root, setting)
+    got = _offer(c, root, text, "Консоль текстов")
+    assert got["lang"] == lang
+    assert got["show"].startswith(A.TEXTS[lang]["heading"] + "\n\n1) ")
+    tx = A.TEXTS[lang]
+    for key in ("choose_topic", "choose_new"):
+        assert tx[key] in got["show"]
+    other = A.TEXTS["en" if lang == "ru" else "ru"]
+    assert other["heading"] not in got["show"] and other["choose_topic"] not in got["show"]
+
+
+def test_the_footer_uses_the_real_numbers_and_the_one_line_form(board) -> None:
+    c, root, ids = board
+    _say(c, root, ME, [("2026-09-10T09:00:00", "hello")])
+    c.post(f"/api/entrypoints/{ids['notes']}/stops", json={"agent_id": ME, "text": "Drafted."})
+    _say(c, root, ME, [("2026-09-10T09:00:00", "hello"), (CMD, "#entrypoint заметки")])
+    show = _ask(c, ME, 2, "Заметки магазина")[1].json()["show"]
+    assert show.endswith("Ответь номером. Можно сразу дать название: «1 Название» — тема 1 получит это название "
+                         "(или новое, если оно уже есть); «2 Своё название» — новая тема будет называться так.")
+    assert "\n\n2) Новая тема «Заметки магазина»\n   → заведу отдельную тему\n\n" in show
+    assert "\n\n3)" not in show
+    # No candidate: one line, in the operator's language.
+    _say(c, root, BETA, [(CMD, "#entrypoint совсем другое")], project="GAMMA")
+    got = _ask(c, BETA, 1, "Другое", project="GAMMA")[1].json()
+    assert got["show"] == "Завести тему «Другое»? Ответь «да» или дай своё название."
+
+
+def test_a_question_asked_before_a_restart_is_answered_after_it(board, data_root: Path) -> None:
+    """The writing tracker's chat waits on an offer the old server showed:
+    the new server reads the same row and answers it."""
+    c, root, ids = board
+    turns = [(CMD, "#entrypoint the site deploy and the search texts")]
+    _say(c, root, ME, turns)
+    kid, r = _ask(c, ME, 1)
+    # The row as the server before this change wrote it: the same lines, no lang.
+    row = next(x for x in A.rows(_store(c)) if x["id"] == kid)
+    old_lines = [{k: v for k, v in x.items() if k in ("n", "kind", "id", "name", "named", "why", "stop", "stop_at")}
+                 for x in json.loads(row["lines"])]
+    A._save(_store(c), kid, {"lines": json.dumps(old_lines, ensure_ascii=False)})
+    _say(c, root, ME, [*turns, ("2026-09-10T10:01:00", "1")])
+    with TestClient(create_app(data_root=root, watch=False)) as c2:
+        c2.headers["X-SP-Via"] = "mcp"
+        got = c2.post("/api/entrypoints/answer", json={"agent_id": ME, "number": 1}).json()
+    assert got["state"] == "chosen" and got["id"] == ids["site"] and got["writer"] == ME
+    assert E.command_of(_store(c), kid)["how"] == "chosen"  # type: ignore[index]

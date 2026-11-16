@@ -698,8 +698,9 @@ class Translator:
                  "Right after the operator's #entrypoint (the id the notice named). Nothing is made yet: "
                  "the operator chooses the topic. Send `name`, your proposal for a new topic, about four "
                  "words, from their words or this chat. Answers the topics of this project the command may "
-                 "mean, numbered, with a last line for a new topic, and `show`: the line to give the operator "
-                 "as it is, as the last line of your reply. When the operator typed a topic's exact name, it "
+                 "mean, numbered, with a last line for a new topic, and `show`: the offer the server wrote, in "
+                 "the operator's language, several lines per topic. Give it exactly as given, every line, as the "
+                 "end of your reply; never shorten, translate or retell it. When the operator typed a topic's exact name, it "
                  "answers instead that a new version of that topic was opened."),
              "inputSchema": {"type": "object", "properties": {
                  "id": {"type": "string", "description": "the id from the #entrypoint notice"},

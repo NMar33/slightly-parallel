@@ -313,11 +313,13 @@ def record(store: ViewStore, kind: str, row: dict[str, Any]) -> dict[str, Any]:
     _l2, _l3, message = read_detail(store.data_root, str(origin.get("md_ref") or ""))
     versions = read_versions(store, kid)
     shown = [v.as_dict() for v in versions]
+    names: list[dict[str, str]] = []
     if kind == "entrypoint":
         # Many chats write one topic's record: each version names its chat.
         from . import entrypointlib
         known = entrypointlib.authors(store, row)
         shown = [{**v, **entrypointlib.by_of(row, v, known)} for v in shown]
+        names = entrypointlib.renames(store, kid)
     out: dict[str, Any] = {
         "kind": kind,
         "from": str(origin["id"]) if origin is not row else None,
@@ -326,6 +328,8 @@ def record(store: ViewStore, kind: str, row: dict[str, Any]) -> dict[str, Any]:
         "versions": shown,
         "current": shown[-1] if shown else None,
     }
+    if kind == "entrypoint":
+        out["renames"] = names
     if str(origin.get("source") or "") == "demo":
         # An example has no chat log; examples.py holds the turns around it.
         from .examples import context_for

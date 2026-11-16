@@ -617,6 +617,9 @@ ENTRYPOINT_ASK_COLUMNS: tuple[str, ...] = (
 # Who wrote each version of an entry point's record: the chat (agent_id, or
 # operator) and the command it answered.
 ENTRYPOINT_VERSION_COLUMNS: tuple[str, ...] = ("id", "entrypoint_id", "n", "at", "agent_id", "command_id")
+# Each change of an entry point's name: when, the old name and the new, who
+# (a chat, or operator) and the #entrypoint whose answer gave it.
+ENTRYPOINT_NAME_COLUMNS: tuple[str, ...] = ("id", "entrypoint_id", "at", "old", "new", "agent_id", "command_id")
 
 # A commit linked to a task after the fact (MCP task_commits): the agent's
 # word, the same as a ``Task:`` line in the commit, for one it did not sign.
