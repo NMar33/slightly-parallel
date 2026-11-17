@@ -200,6 +200,29 @@ def tmux(data_root: Path, *args: str, check: bool = False) -> subprocess.Complet
     return subprocess.run(tmux_argv(data_root, *args), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=check)
 
 
+#: What a tmux client says when the server it reached went away under it.
+#: tmux's server quits when its last session ends; a client that connects in
+#: that moment talks to a server already on its way out and exits 1.
+SERVER_GOING = ("server exited unexpectedly", "lost server")
+
+
+def tmux_starting(data_root: Path, *args: str, tries: int = 4) -> subprocess.CompletedProcess:
+    """A command that starts tmux's server when none runs (new-session).
+    Right after the last terminal closes, the old server may still take the
+    connection and then quit: the command is lost, not refused. It is sent
+    again, after a moment, to the next server — at most `tries` times, and
+    only for that failure; any other error is raised at once."""
+    for i in range(tries):
+        got = tmux(data_root, *args)
+        if got.returncode == 0:
+            return got
+        if i == tries - 1 or not any(s in (got.stderr or "") for s in SERVER_GOING):
+            break
+        log.info("tmux's server was going away as a terminal opened: sent again (%s)", (got.stderr or "").strip())
+        time.sleep(0.05 * (i + 1))
+    raise subprocess.CalledProcessError(got.returncode, got.args, got.stdout, got.stderr)
+
+
 def scrollback_of(settings: dict[str, Any]) -> int:
     """The lines a new terminal keeps (Settings › Terminal history)."""
     try:
@@ -572,9 +595,9 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
         shell = os.environ.get("SHELL") or "bash"
         # The history length is set just before the pane is made: tmux gives
         # a pane the limit in force when it is born, and keeps it.
-        tmux(data_root, "set-option", "-g", "history-limit", str(scrollback_of(settings)), ";",
-             "new-session", "-d", "-s", PREFIX + sid, "-x", "200", "-y", "50", "-c", where,
-             "-e", f"SP_TERMINAL={sid}", "-e", "TERM=xterm-256color", shell, "-l", check=True)
+        tmux_starting(data_root, "set-option", "-g", "history-limit", str(scrollback_of(settings)), ";",
+                      "new-session", "-d", "-s", PREFIX + sid, "-x", "200", "-y", "50", "-c", where,
+                      "-e", f"SP_TERMINAL={sid}", "-e", "TERM=xterm-256color", shell, "-l")
         if command:
             wait_for_prompt(data_root, sid)
             type_into(data_root, row, typed_form(command, shell), enter=row["launch"] == "run")

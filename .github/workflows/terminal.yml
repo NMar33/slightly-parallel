@@ -99,3 +99,69 @@ jobs:
           name: terminal-window-${{ matrix.os }}
           path: desktop/e2e/test-results
           if-no-files-found: ignore
+
+  # The bench of the window (desktop/e2e/bench, `npm run bench`): memory by
+  # windows and by tabs, the speed of 20 MB of output. A measurement, not a
+  # check: a separate job, so the suite above reports as soon as it is done,
+  # and no number fails it. The runners are VMs without a GPU (Windows and
+  # Linux draw in software): their numbers compare across systems, not with
+  # a laptop. The JSON (and its table) is the artifact bench-<os>.
+  bench:
+    name: Bench (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux }
+          - { os: macos-latest, name: macos }
+          - { os: windows-latest, name: windows }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - name: tmux, and Xvfb for a display (Linux); tmux (macOS)
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux xvfb; else brew install tmux; fi
+      - name: Backend environment
+        working-directory: backend
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python -m pip install -q -r requirements.lock -r requirements-dev.txt
+      - name: Frontend build and Playwright
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Electron
+        working-directory: desktop
+        run: npm ci
+      - name: "Bench, Linux: an X11 window under Xvfb"
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run bench
+      - name: Bench, ${{ runner.os }}
+        if: runner.os != 'Linux'
+        working-directory: desktop
+        run: npm run bench
+      - name: The bench's JSON and table
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-${{ matrix.name }}
+          path: |
+            desktop/e2e/bench/out/bench-*.json
+            desktop/e2e/bench/out/bench-*.md
+          if-no-files-found: warn

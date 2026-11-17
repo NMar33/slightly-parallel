@@ -677,3 +677,61 @@ def test_a_terminal_from_before_the_server_was_recorded_is_not_offered_back() ->
     assert termlib.lost([old, new], "") == [new]
     assert termlib.lost([old, new], "200") == [new]
     assert termlib.lost([old, new], "100") == []
+
+
+@needs_tmux
+def test_a_terminal_opens_while_the_last_one_closes(tmp_path: Path, monkeypatch) -> None:
+    # tmux's server quits when its last session ends; a new-session that
+    # reaches it in that moment came back "server exited unexpectedly" (exit
+    # 1) and the page said "the terminal could not open". The bench saw it 4
+    # times in one run. Here the close and the open race 60 times.
+    import subprocess
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    root = tmp_path / "data"
+    root.mkdir()
+    settings = {"terminal.keep": "tmux"}
+    failed: list[str] = []
+    try:
+        for i in range(60):
+            first = termlib.open_session(root, settings, kind="shell", project="", cwd="")
+            closing = subprocess.Popen(termlib.tmux_argv(root, "kill-session", "-t", termlib.PREFIX + first["id"]),
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(0.001 * (i % 10))
+            try:
+                second = termlib.open_session(root, settings, kind="shell", project="", cwd="")
+            except subprocess.CalledProcessError as exc:
+                failed.append(exc.stderr.strip())
+                second = None
+            closing.wait()
+            if second:
+                termlib.tmux(root, "kill-session", "-t", termlib.PREFIX + second["id"])
+    finally:
+        termlib.tmux(root, "kill-server")
+    assert failed == []
+
+
+def test_only_a_server_going_away_is_tried_again(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+    calls: list[tuple[str, ...]] = []
+    answers: list[tuple[int, str]] = []
+
+    def fake(_root, *args, check=False):
+        calls.append(args)
+        code, err = answers.pop(0)
+        return subprocess.CompletedProcess(["tmux", *args], code, "", err)
+
+    monkeypatch.setattr(termlib, "tmux", fake)
+    monkeypatch.setattr(termlib.time, "sleep", lambda _s: None)
+    answers[:] = [(1, "server exited unexpectedly\n"), (1, "lost server\n"), (0, "")]
+    assert termlib.tmux_starting(tmp_path, "new-session", "-d").returncode == 0
+    assert len(calls) == 3
+    calls.clear()
+    answers[:] = [(1, "duplicate session: mk-a\n"), (0, "")]
+    with pytest.raises(subprocess.CalledProcessError):
+        termlib.tmux_starting(tmp_path, "new-session", "-d")
+    assert len(calls) == 1
+    calls.clear()
+    answers[:] = [(1, "server exited unexpectedly\n")] * 4
+    with pytest.raises(subprocess.CalledProcessError):
+        termlib.tmux_starting(tmp_path, "new-session", "-d")
+    assert len(calls) == 4

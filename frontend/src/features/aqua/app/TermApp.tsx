@@ -214,6 +214,7 @@ function AquaWindow({ status }: { status: Status }) {
   const [nativeW, setNativeW] = useState(vp.w)
   const lwrw = useRef({ lw, rw })
   lwrw.current = { lw, rw }
+  const growTurn = useRef(0)
   useEffect(() => { if (native) setNativeW(Math.max(320, vp.w - lwrw.current.lw - lwrw.current.rw)) }, [native, vp.w])
   const termW = native ? nativeW : Math.max(360, Math.min(1000, vp.w - 2 * MARGIN))
   const termX = native ? lw : Math.round((vp.w - termW) / 2) + slide
@@ -231,8 +232,16 @@ function AquaWindow({ status }: { status: Status }) {
       post({ op: 'grow', left: side === 'left' ? (on ? width : -width) : 0, right: side === 'right' ? (on ? width : -width) : 0 })
       // A window that cannot grow (maximised, at the screen's edge) never
       // answers with a resize: the terminal then gives up the room itself.
+      // Only the last toggle may do that, and with the sidebars as they are
+      // then: a sidebar opened and closed again inside the wait leaves the
+      // window at its first width, and the first toggle's check would take
+      // that for "no answer" and shrink the terminal by the closed panel.
       const before = window.innerWidth
-      setTimeout(() => { if (window.innerWidth === before) setNativeW(Math.max(320, window.innerWidth - widths({ ...at, [side]: on ? side : null }).lw - widths({ ...at, [side]: on ? side : null }).rw)) }, 500)
+      const turn = ++growTurn.current
+      setTimeout(() => {
+        if (growTurn.current !== turn || window.innerWidth !== before) return
+        setNativeW(Math.max(320, window.innerWidth - lwrw.current.lw - lwrw.current.rw))
+      }, 500)
       refocus()
       return
     }

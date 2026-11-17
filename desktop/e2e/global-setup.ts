@@ -18,6 +18,8 @@ import path from 'node:path'
  * SP_E2E_VISIBLE=1: the real screen instead (to watch a test). Without
  * gnome-shell (CI) the display is whatever the run was given (xvfb-run);
  * SP_E2E_HEADLESS=1 is Chromium's headless Ozone, no display at all.
+ * SP_E2E_MONITOR=3072x1920: the hidden display's size (1600x1000), room for
+ * a window drawn at a forced scale (the bench's SP_BENCH_SCALE).
  */
 export default async function globalSetup(): Promise<void> {
   if (process.platform !== 'linux' || process.env.SP_E2E_VISIBLE === '1' || process.env.SP_E2E_HEADLESS === '1') return
@@ -27,7 +29,7 @@ export default async function globalSetup(): Promise<void> {
   if (!shell || !dbus || !runtime) return
   const name = `sp-e2e-${process.pid}`
   const sock = path.join(runtime, name)
-  const runner = spawn(dbus, ['--', shell, '--headless', '--wayland', '--no-x11', `--wayland-display=${name}`, '--virtual-monitor', '1600x1000'], {
+  const runner = spawn(dbus, ['--', shell, '--headless', '--wayland', '--no-x11', `--wayland-display=${name}`, '--virtual-monitor', process.env.SP_E2E_MONITOR || '1600x1000'], {
     stdio: 'ignore',
     env: { ...process.env, WAYLAND_DISPLAY: '', DISPLAY: '' },
   })
@@ -50,7 +52,7 @@ function which(cmd: string): string {
 }
 
 /** Every process under `pid`, from /proc (Linux). */
-function descendants(pid: number): number[] {
+export function descendants(pid: number): number[] {
   const out: number[] = []
   const walk = (p: number) => {
     let kids: number[] = []

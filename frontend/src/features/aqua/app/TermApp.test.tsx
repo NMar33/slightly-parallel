@@ -219,6 +219,52 @@ describe('SP Aqua at /term', () => {
     expect(sent.some((m) => (m as { op: string }).op === 'title')).toBe(true)
   })
 
+  it('a sidebar opened and closed at once leaves the terminal its full width (no stale "the window never answered")', async () => {
+    // A window that answers quickly, as on Windows: the resize comes a moment
+    // after the message (the main process is another process), well before the
+    // next key; four keys take less than the half second the page waits for
+    // a window that cannot grow.
+    ;(window as unknown as { spWindow: unknown }).spWindow = {
+      postMessage: (m: { op: string; left?: number; right?: number }) => {
+        if (m.op !== 'grow') return
+        setTimeout(() => {
+          Object.defineProperty(window, 'innerWidth', { value: window.innerWidth + (m.left ?? 0) + (m.right ?? 0), configurable: true })
+          window.dispatchEvent(new Event('resize'))
+        }, 5)
+      },
+    }
+    world = { sessions: [row({ label: 'calendar-overlap' })] }
+    page()
+    await screen.findByRole('tablist', { name: 'Chats' })
+    const termW = () => parseInt((frame().querySelector('[data-level]') as HTMLElement).style.width, 10)
+    const w0 = termW()
+    const answered = () => act(() => new Promise((r) => setTimeout(r, 30)))
+    for (const code of ['BracketLeft', 'BracketRight', 'BracketLeft', 'BracketRight']) {
+      key(code, { alt: true })
+      await answered()
+      expect(termW()).toBe(w0)
+    }
+    expect(window.innerWidth).toBe(1680)
+    expect(termW()).toBe(w0)
+    await act(() => new Promise((r) => setTimeout(r, 700)))
+    expect(termW()).toBe(w0)
+  })
+
+  it('a window that cannot grow: the terminal gives up the room for the sidebar itself', async () => {
+    ;(window as unknown as { spWindow: unknown }).spWindow = { postMessage: () => {} }
+    world = { sessions: [row({ label: 'calendar-overlap' })] }
+    page()
+    await screen.findByRole('tablist', { name: 'Chats' })
+    const termW = () => parseInt((frame().querySelector('[data-level]') as HTMLElement).style.width, 10)
+    const w0 = termW()
+    key('BracketLeft', { alt: true })
+    await act(() => new Promise((r) => setTimeout(r, 700)))
+    expect(termW()).toBe(w0 - 236)
+    key('BracketLeft', { alt: true })
+    await act(() => new Promise((r) => setTimeout(r, 700)))
+    expect(termW()).toBe(w0)
+  })
+
   it('has no close or minimise in a browser', async () => {
     world = { sessions: [row({})] }
     page()

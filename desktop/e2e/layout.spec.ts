@@ -42,6 +42,12 @@ test.describe('sidebars', () => {
       await check(RW, { left: false, right: true })
       await press('right')
       await check(0, { left: false, right: false })
+      // The page gives a window that never answered half a second, then takes
+      // the room for the sidebar itself. That wait must not outlive the keys:
+      // fast presses on Windows left the terminal 236 px short (107 columns of
+      // 141) once the first press's wait ran out. Past it, nothing moves.
+      await page.waitForTimeout(700)
+      expect(await termWidth(page), 'the terminal width after the wait').toEqual(t0)
       expect(await ptySize(page)).toEqual(pty0)
     })
   }

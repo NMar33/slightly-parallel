@@ -8,7 +8,8 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "node e2e/run.mjs",
+    "bench": "node e2e/bench/run-bench.mjs"
   },
   "devDependencies": {
     "electron": "45.3.3"

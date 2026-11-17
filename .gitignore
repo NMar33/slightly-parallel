@@ -64,6 +64,7 @@ server.lock
 frontend/test-results/
 frontend/playwright-report/
 desktop/e2e/test-results/
+desktop/e2e/bench/out/
 
 # The 2608 article kit: 21.5 MB of screenshots of pages that no longer exist
 # (a Goals page, a goals tree). Kept on disk, out of the repository — re-shoot
