@@ -37,6 +37,8 @@ export const HIDDEN = process.env.SP_E2E_WAYLAND ?? ''
  *  only (no tmux). */
 export const TERMINAL = true
 export const WINDOWS = process.platform === 'win32'
+/** SP_E2E_KEEP=plain: every terminal a pty the server holds, as on Windows. */
+export const KEEP_PLAIN = process.env.SP_E2E_KEEP === 'plain'
 /** What the shell's prompt ends with: sh's `$`, PowerShell's `PS C:\…>`. */
 export const PROMPT = WINDOWS ? '>' : '$'
 
@@ -77,7 +79,7 @@ export function launchEnv(): Record<string, string> {
 }
 
 type Server = { url: string; api: APIRequestContext; dir: string }
-type Shell = { id: string; label: string }
+type Shell = { id: string; label: string; backend: string }
 type Win = { app: ElectronApplication; page: Page; userData: string }
 
 async function withWindow(use: (w: Win) => Promise<void>) {
@@ -122,6 +124,8 @@ export const test = base.extend<{ shell: Shell; win: Win; bare: Win }, { server:
     test.skip(!TERMINAL, 'no terminal on this system')
     await closeAll(server.api)
     const s = await openShell(server.api, 'e2e-shell')
+    // SP_E2E_KEEP=plain (playwright.config.ts) took: no tmux under the run.
+    if (KEEP_PLAIN || WINDOWS) expect(s.backend, 'a plain terminal').toBe('plain')
     await use(s)
   },
 
@@ -144,8 +148,8 @@ export const linksOut = (app: ElectronApplication) =>
 export async function openShell(api: APIRequestContext, label: string): Promise<Shell> {
   const r = await api.post('/api/terminal/sessions', { data: { kind: 'shell', project: PROJECT, label, role: 'shell' } })
   expect(r.ok(), await r.text()).toBeTruthy()
-  const s = (await r.json()).session as { id: string; label: string }
-  return { id: s.id, label: s.label }
+  const s = (await r.json()).session as { id: string; label: string; backend: string }
+  return { id: s.id, label: s.label, backend: s.backend }
 }
 
 export type Row = { id: string; label: string; state: string; asleep?: boolean; backend?: string }

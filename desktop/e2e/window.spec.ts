@@ -18,7 +18,10 @@ test.describe('window', () => {
     expect(w.count).toBe(1)
     // No frame: the window's bounds are its content's, no title bar or border.
     expect(w.content).toEqual(w.bounds)
-    expect(w.menu).toBe(false)
+    // The window carries no menu bar. On macOS there is none in a window to ask
+    // about: the menu is the system's bar at the top of the screen, and Electron
+    // answers true there.
+    if (process.platform !== 'darwin') expect(w.menu).toBe(false)
 
     // The bridge, and nothing else of Electron or Node in the page.
     const seen = await page.evaluate(() => ({

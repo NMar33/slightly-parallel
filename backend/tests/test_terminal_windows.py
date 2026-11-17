@@ -394,11 +394,14 @@ def test_the_windows_path_through_the_routes(plain, monkeypatch) -> None:
     s = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "role": "server",
                                               "command": "npm run dev", "label": "web"}).json()["session"]
     assert s["backend"] == "plain"
+    # The pty is made when the terminal opens, before any view: listed live.
+    fake = FakePTY.made[-1]
+    assert fake.appname == r"C:\pwsh\pwsh.exe" and fake.cwd == str(work.resolve())
+    assert _row(c, s["id"])["state"] != "ended"
     with c.websocket_connect(f"/ws/terminal/{s['id']}?token={tok}&cols=90&rows=30") as ws:
-        # The pty is made after the handshake: its first output says it is there.
+        # The first view gets what the shell printed before it came, at its size.
         assert b"PS C:" in _until(ws, b"PS C:")
-        fake = FakePTY.made[-1]
-        assert fake.appname == r"C:\pwsh\pwsh.exe" and fake.cwd == str(work.resolve()) and fake.size == (90, 30)
+        assert FakePTY.made[-1] is fake and fake.size == (90, 30)
         assert f"SP_TERMINAL={s['id']}\0" in fake.env and "TERM=xterm-256color\0" in fake.env
         # Its command, typed once, as built: no bash wrapping on Windows.
         assert b"npm run dev\r" in _until(ws, b"npm run dev\r")
@@ -419,11 +422,12 @@ def test_the_windows_path_through_the_routes(plain, monkeypatch) -> None:
         fake.proc.wait(timeout=10)
     assert c.get("/api/terminal/restore").json()["needed"] == 0
     woke = c.post(f"/api/terminal/sessions/{s['id']}/wake", json={}).json()["session"]
-    assert woke["state"] == "ended" and not woke["asleep"]   # its shell starts with the next view
+    # Its shell is back at once, not when a view comes (before: `ended` until then).
+    assert woke["state"] not in ("ended", "asleep") and not woke["asleep"]
+    second = FakePTY.made[-1]
+    assert second is not fake
     with c.websocket_connect(f"/ws/terminal/{s['id']}?token={tok}") as ws:
         assert b"PS C:" in _until(ws, b"PS C:")
-        second = FakePTY.made[-1]
-        assert second is not fake
         assert b"npm run dev\r" in _until(ws, b"npm run dev\r")
         ws.send_text(json.dumps({"type": "input", "data": "exit\r"}))
         from starlette.websockets import WebSocketDisconnect
@@ -437,13 +441,20 @@ def test_the_windows_path_through_the_routes(plain, monkeypatch) -> None:
 
 
 def test_a_shell_that_does_not_start_closes_the_socket_with_why(plain, monkeypatch) -> None:
-    c, _, _ = plain
+    c, root, _ = plain
 
     def fail(*_a, **_k):
         raise OSError("no such shell")
     monkeypatch.setattr(terminal, "open_pty", fail)
     tok = c.get("/api/terminal/state").json()["token"]
-    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    # Opening: a 500 that says why, and no terminal left behind.
+    r = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"})
+    assert r.status_code == 500 and "no such shell" in r.json()["detail"]
+    assert c.get("/api/terminal/sessions").json()["sessions"] == []
+    # A terminal whose shell is gone (the server restarted), opened in a view:
+    # the socket closes with why.
+    sid = termlib.open_session(root, {"terminal.keep": "plain"}, kind="shell", project="alpha", cwd="")["id"]
+    assert _row(c, sid)["state"] == "ended"
     from starlette.websockets import WebSocketDisconnect
     with pytest.raises(WebSocketDisconnect) as e:
         with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}") as ws:
@@ -481,3 +492,43 @@ def test_a_plain_terminal_sleeps_and_wakes_running_its_command_again(plain) -> N
         assert b"mark-7" in seen and b"once-6" not in seen
     for sid in (s["id"], sh["id"]):
         c.post(f"/api/terminal/sessions/{sid}/close", json={})
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a Unix pty (the Windows one: tests/test_conpty.py)")
+def test_a_plain_terminal_runs_from_the_moment_it_opens_with_no_view(plain) -> None:
+    """Every terminal on Windows. Opened through the API (as the window's
+    suite does, as Start on a task does), a plain terminal's shell starts at
+    once and runs its command with nobody looking: before, it listed as
+    `ended` until a view attached, and the window showed its "ended" card
+    instead of the screen. Woken, the same."""
+    c, _, work = plain
+    tok = c.get("/api/terminal/state").json()["token"]
+    s = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "role": "server",
+                                              "command": "echo ran-$((6*7)) > ran.txt", "label": "web"}).json()["session"]
+    assert s["backend"] == "plain"
+    assert _row(c, s["id"])["state"] != "ended"
+    end = time.time() + 8
+    while not (work / "ran.txt").exists() and time.time() < end:
+        time.sleep(0.1)
+    assert (work / "ran.txt").read_text().strip() == "ran-42"
+    assert _row(c, s["id"])["typed"] is True
+    # The first view gets what was printed before it came, and the shell is the same one.
+    with c.websocket_connect(f"/ws/terminal/{s['id']}?token={tok}") as ws:
+        assert b"ran-$((6*7))" in _until(ws, b"ran-$((6*7))")
+        ws.send_text(json.dumps({"type": "input", "data": "echo seen-$((3+4))\r"}))
+        assert b"seen-7" in _until(ws, b"seen-7")
+    # Asleep, then woken with no view: the server's command runs again at once.
+    (work / "ran.txt").unlink()
+    assert c.post(f"/api/terminal/sessions/{s['id']}/sleep", json={}).json()["session"]["state"] == "asleep"
+    woke = c.post(f"/api/terminal/sessions/{s['id']}/wake", json={}).json()["session"]
+    assert woke["state"] not in ("ended", "asleep")
+    end = time.time() + 8
+    while not (work / "ran.txt").exists() and time.time() < end:
+        time.sleep(0.1)
+    assert (work / "ran.txt").read_text().strip() == "ran-42"
+    # A shell opened by the API with no command is a prompt, not `ended`.
+    sh = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]
+    assert _row(c, sh["id"])["state"] == "shell"
+    for sid in (s["id"], sh["id"]):
+        c.post(f"/api/terminal/sessions/{sid}/close", json={})
+    assert c.get("/api/terminal/sessions").json()["sessions"] == []

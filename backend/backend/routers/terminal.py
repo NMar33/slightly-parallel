@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from anyio import from_thread as anyio_from_thread
 from fastapi.concurrency import run_in_threadpool
 
 from .. import app_settings, conpty, termlib, timeauto
@@ -376,6 +377,64 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             live = list(sessions.items())
         return {sid: {"fg": s.foreground(), "activity": s.last_output} for sid, s in live}
 
+    # ---------------------------------------------------- a plain terminal's shell
+    # A plain terminal's shell starts when the terminal opens (or wakes), as a
+    # tmux one does, not when a view first attaches: before, a terminal opened
+    # through the API, by Start on a task or by Wake listed as `ended` until
+    # something attached, and the window then showed its "ended" card instead
+    # of the screen that would have started it — every terminal on Windows.
+
+    def _hold_plain(root: Path, row: dict[str, Any], cols: int = 100, rows: int = 30) -> tuple[PtySession, bool]:
+        """The pty of a plain terminal: the one the server holds, else a new
+        shell (True). Raises _TooMany at the cap, or whatever stopped the shell."""
+        sid = row["id"]
+        with lock:
+            found = sessions.get(sid)
+            if found is not None:
+                return found, False
+            if len(sessions) >= _MAX_SESSIONS:
+                raise _TooMany
+            env = {"TERM": "xterm-256color", "COLORTERM": "truecolor", "SP_TERMINAL": sid}
+            found = open_pty(sid, termlib.plain_shell(), str(row.get("cwd") or root), cols, rows, env)
+            sessions[sid] = found
+        return found, True
+
+    async def _run_plain(root: Path, session: PtySession, row: dict[str, Any]) -> None:
+        """On the event loop: the pump that reads the shell (once), and the
+        command a new plain terminal types once — a woken one what it wakes
+        with (termlib.wake)."""
+        if session.pump_task is None or session.pump_task.done():
+            session.pump_task = asyncio.create_task(_pump(session))
+        pending = _pending(row)
+        if row.get("typed") or not pending or session.type_task is not None:
+            return
+
+        async def type_later() -> None:
+            await asyncio.sleep(0.4)
+            typed = termlib.typed_form(pending, termlib.plain_shell()[0])
+            await run_in_threadpool(session.write, (typed + ("\r" if row.get("launch") == "run" else "")).encode())
+        # Held on the session: a task nothing references can be collected before it runs.
+        session.type_task = asyncio.create_task(type_later())
+        await run_in_threadpool(termlib.put, root, {"id": row["id"], "typed": True})
+
+    def _start_plain(root: Path, sid: str) -> None:
+        """From a route's worker thread: the shell of a plain terminal just
+        opened or woken, running now. A new terminal whose shell does not
+        start is taken away again; either way the caller gets a 500 with why."""
+        row = termlib.get(root, sid)
+        if row is None or row.get("backend") == "tmux":
+            return
+        try:
+            session, _ = _hold_plain(root, row)
+        except _TooMany:
+            raise HTTPException(status_code=429, detail=f"{_MAX_SESSIONS} terminals are open: close one first.")
+        except Exception as exc:  # noqa: BLE001 — Windows: no shell, no pseudo console
+            log.warning("terminal %s did not open: %s", sid, exc)
+            if not row.get("woken_at"):
+                termlib.close(root, sid)
+            raise HTTPException(status_code=500, detail=f"the shell did not start: {str(exc) or type(exc).__name__}"[:300])
+        anyio_from_thread.run(_run_plain, root, session, row)
+
     # ---------------------------------------------------------------- state
     @router.get("/api/terminal/state")
     def terminal_state(request: Request, response: Response) -> dict[str, Any]:
@@ -480,6 +539,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                                        role=str(body.get("role") or ""), group=group)
         except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
             raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
+        _start_plain(root, row["id"])
         return {"session": {**row, "state": "working" if command else "shell"}, "existing": False}
 
     # Where each terminal's last command was typed (absolute history line):
@@ -637,6 +697,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             termlib.wake(root, cfg, row["id"], cmd)
         except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
             raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
+        _start_plain(root, row["id"])
         return _listed(root, row["id"])
 
     @router.post("/api/terminal/sessions/{sid}/sleep")
@@ -843,76 +904,36 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             fresh = True
         else:
             key = session_id
-            if session_id not in sessions and len(sessions) >= _MAX_SESSIONS:
+            # Held since the terminal opened (_start_plain); started here only
+            # for one whose shell is gone — "Open a shell in it" on an ended one.
+            try:
+                session, fresh = _hold_plain(root, row, cols, rows)
+            except _TooMany:
                 await websocket.close(code=4429, reason="too many terminals")
                 return
-            failed = ""
-            with lock:
-                found = sessions.get(session_id)
-                fresh = found is None
-                if found is None:
-                    try:
-                        found = open_pty(session_id, termlib.plain_shell(), str(row.get("cwd") or root), cols, rows, env)
-                        sessions[session_id] = found
-                    except Exception as exc:  # noqa: BLE001 — Windows: no shell, no pseudo console
-                        failed = str(exc) or type(exc).__name__
-            if found is None:
+            except Exception as exc:  # noqa: BLE001 — Windows: no shell, no pseudo console
+                failed = str(exc) or type(exc).__name__
                 log.warning("terminal %s did not open: %s", session_id, failed)
                 await websocket.close(code=4500, reason=f"the shell did not start: {failed}"[:120])
                 return
-            session = found
         if not fresh:
             session.resize(cols, rows)
-            if session.buffer:
+            # Taken and subscribed with no await between: a chunk the pump
+            # reads meanwhile is in the replay or sent to this view, never lost.
+            replay = _QUERIES.sub(b"", bytes(session.buffer[-_REPLAY_BYTES:]))
+            session.subscribers.add(websocket)
+            if replay:
                 try:
-                    await websocket.send_bytes(_QUERIES.sub(b"", bytes(session.buffer[-_REPLAY_BYTES:])))
+                    await websocket.send_bytes(replay)
                 except Exception:  # noqa: BLE001 — reconnect replay is best-effort
                     pass
-        elif row.get("backend") != "tmux" and not row.get("typed") and _pending(row):
-            # A plain terminal types its command once, when it first opens —
-            # and a woken one what it wakes with (termlib.wake), once.
-            pending = _pending(row)
-
-            async def type_later() -> None:
-                await asyncio.sleep(0.4)
-                typed = termlib.typed_form(pending, termlib.plain_shell()[0])
-                await run_in_threadpool(session.write, (typed + ("\r" if row.get("launch") == "run" else "")).encode())
-            # Held on the session: a task nothing references can be collected before it runs.
-            session.type_task = asyncio.create_task(type_later())
-            await run_in_threadpool(termlib.put, root, {"id": session_id, "typed": True})
-
-        session.subscribers.add(websocket)
-
-        async def pump_output() -> None:
-            while not session.closed:
-                try:
-                    data = await _read_session(session)
-                except OSError:
-                    break
-                if session.closed:
-                    break
-                if not data:
-                    break
-                session.last_output = time.time()
-                session.buffer.extend(data)
-                if len(session.buffer) > _BUFFER_BYTES:
-                    del session.buffer[: len(session.buffer) - _BUFFER_BYTES]
-                for ws in list(session.subscribers):
-                    try:
-                        await ws.send_bytes(data)
-                    except Exception:  # noqa: BLE001 — drop dead subscribers
-                        session.subscribers.discard(ws)
-            if session.closed:
-                session.release()
-            # The shell ended (exit, or the tmux session was killed).
-            for ws in list(session.subscribers):
-                try:
-                    await ws.close(code=4000, reason="ended")
-                except Exception:  # noqa: BLE001
-                    pass
-
-        if session.pump_task is None or session.pump_task.done():
-            session.pump_task = asyncio.create_task(pump_output())
+        else:
+            session.subscribers.add(websocket)
+        if in_tmux:
+            if session.pump_task is None or session.pump_task.done():
+                session.pump_task = asyncio.create_task(_pump(session))
+        else:
+            await _run_plain(root, session, row)
 
         # Typing in a project's terminal is working on it (the smart timer).
         timer = timeauto.of(app)
@@ -968,6 +989,41 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 session.close()
 
     return router
+
+
+class _TooMany(Exception):
+    """Every plain terminal the server may hold is open."""
+
+
+async def _pump(session: PtySession) -> None:
+    """Read a pty until it ends: keep its recent output for the next view,
+    send it to every view now, and tell them when the shell has ended."""
+    while not session.closed:
+        try:
+            data = await _read_session(session)
+        except OSError:
+            break
+        if session.closed:
+            break
+        if not data:
+            break
+        session.last_output = time.time()
+        session.buffer.extend(data)
+        if len(session.buffer) > _BUFFER_BYTES:
+            del session.buffer[: len(session.buffer) - _BUFFER_BYTES]
+        for ws in list(session.subscribers):
+            try:
+                await ws.send_bytes(data)
+            except Exception:  # noqa: BLE001 — drop dead subscribers
+                session.subscribers.discard(ws)
+    if session.closed:
+        session.release()
+    # The shell ended (exit, or the tmux session was killed).
+    for ws in list(session.subscribers):
+        try:
+            await ws.close(code=4000, reason="ended")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _pending(row: dict[str, Any]) -> str:

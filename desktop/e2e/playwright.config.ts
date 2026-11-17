@@ -31,6 +31,11 @@ function dataRoot(): string {
     recursive: true, filter: (src) => path.basename(src) !== 'operator.token',
   })
   fs.mkdirSync(path.join(root, 'work'))
+  // SP_E2E_KEEP=plain: every terminal is a pty the server holds, as on
+  // Windows (no tmux there), so most of what Windows does runs here too.
+  if (process.env.SP_E2E_KEEP === 'plain') {
+    fs.writeFileSync(path.join(root, 'data', 'settings.json'), JSON.stringify({ terminal: { keep: 'plain' } }))
+  }
   // tmux's sockets: a short path of their own (macOS's tmp is long, and a
   // socket's path may not pass 104 bytes there).
   const tmux = process.platform === 'win32' ? path.join(root, 'tmux') : fs.mkdtempSync('/tmp/sp-e2e-tmux-')

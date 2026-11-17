@@ -77,9 +77,20 @@ jobs:
         env:
           SP_E2E_HEADLESS: "1"
         run: npm run e2e
+      - name: "End to end, Linux, plain terminals (no tmux, what Windows has): restore skips, named"
+        if: always() && runner.os == 'Linux'
+        working-directory: desktop
+        env:
+          SP_E2E_KEEP: plain
+          SP_E2E_HEADLESS: "1"
+        run: npm run e2e
       - name: End to end, ${{ runner.os }}
         if: runner.os != 'Linux'
         working-directory: desktop
+        env:
+          # The Windows runner draws in software (first run: gpu_compositing
+          # disabled_software); macOS's has GPU compositing.
+          SP_E2E_NO_GPU: ${{ runner.os == 'Windows' && '1' || '' }}
         run: npm run e2e
       - name: Traces and screenshots (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
         if: failure()
