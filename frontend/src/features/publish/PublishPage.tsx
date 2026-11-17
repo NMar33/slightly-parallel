@@ -14,8 +14,8 @@ import { fail } from '../../lib/getJson'
 import { isTypingTarget } from '../../lib/typing'
 import { persistPref, readPref } from '../../lib/uiPrefs'
 import { DocPane } from './DocPane'
-import { FeedCard } from './FeedCard'
-import { docColor, docOrder, fileToUpload, itemsOf, usePublish, usePublishWrites, type Card, type Doc } from './data'
+import { FeedCard, type AttachKind } from './FeedCard'
+import { attachBody, docColor, docOrder, fileToAttachment, fileToUpload, itemsOf, usePublish, usePublishWrites, type Card, type Doc } from './data'
 import { Kbd, Zoom } from './parts'
 import { t, tn } from '../../i18n/scope/system'
 
@@ -24,7 +24,9 @@ import { t, tn } from '../../i18n/scope/system'
  * #publish in a chat run down the left, newest first, each with its life
  * rail; the documents he makes from them are tabs on the right, each in
  * versions. A card goes into a document with one key (1–9) or a drag.
- * Cards are only made in a chat; this page never makes one.
+ * The agent of the chat writes a card (its context and what belongs to
+ * it); here the operator edits the text and the context, attaches and
+ * removes by hand, and merges a card into another.
  */
 export function PublishPage() {
   const [hash, setHash] = useHashState()
@@ -59,7 +61,10 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
   const [filter, setFilter] = useState<Filter>('all')
   const [cursor, setCursor] = useState('')
   const [open, setOpen] = useState<Set<string>>(() => new Set())
-  const [editing, setEditing] = useState('')
+  const [edit, setEdit] = useState<{ id: string; part: 'text' | 'context' } | null>(null)
+  const editing = edit ? `${edit.id}:${edit.part}` : ''
+  const [attaching, setAttaching] = useState('')
+  const [merging, setMerging] = useState('')
   const [zoom, setZoom] = useState<{ id: string; index: number } | null>(null)
   const [newDoc, setNewDoc] = useState(false)
   const [newCard, setNewCard] = useState(false)
@@ -91,7 +96,9 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
   const placeMutate = writes.place.mutate
   const textMutate = writes.cardText.mutate
   const attachMutate = writes.attach.mutate
+  const writeMutate = writes.write.mutate
   const removeAttachmentMutate = writes.removeAttachment.mutate
+  const removeSourceMutate = writes.removeSource.mutate
 
   const select = useCallback((id: string) => setCursor(id), [])
   const openDoc = useCallback((id: string) => setHash({ doc: id }), [setHash])
@@ -109,23 +116,43 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
   }, [placeMutate])
 
   const saveText = useCallback((id: string, text: string) => {
-    textMutate({ id, text }, { onSuccess: () => setEditing(''), onError: fail })
+    textMutate({ id, text }, { onSuccess: () => setEdit(null), onError: fail })
   }, [textMutate])
-  const cancelEdit = useCallback(() => setEditing(''), [])
+  const saveContext = useCallback((id: string, context: string) => {
+    writeMutate({ id, context }, { onSuccess: () => setEdit(null), onError: fail })
+  }, [writeMutate])
+  const startEdit = useCallback((id: string, part: 'text' | 'context') => { setCursor(id); setEdit({ id, part }) }, [])
+  const cancelEdit = useCallback(() => setEdit(null), [])
+  const openAttach = useCallback((id: string, on: boolean) => setAttaching(on ? id : ''), [])
+  const askMerge = useCallback((id: string) => setMerging(id), [])
+  const attachTyped = useCallback((id: string, kind: AttachKind, value: string, title: string) => {
+    const body = attachBody(kind, value, title)
+    if (!body) return
+    attachMutate({ id, ...body }, { onSuccess: () => toast.success(t('Attached.')), onError: fail })
+  }, [attachMutate])
+  const removeSource = useCallback((sourceId: string) => {
+    removeSourceMutate(sourceId, { onSuccess: () => toast.success(t('Taken off the card.')), onError: fail })
+  }, [removeSourceMutate])
   const onZoom = useCallback((id: string, index: number) => setZoom({ id, index }), [])
 
+  // An image goes on the card's strip; any other file is copied onto the card.
   const attachFiles = useCallback((id: string, files: File[], title?: string) => {
-    Promise.all(files.map((f) => fileToUpload(f, t('Pasted image'))))
-      .then((images) => {
+    const pictures = files.filter((f) => f.type.startsWith('image/'))
+    const others = files.filter((f) => !f.type.startsWith('image/'))
+    Promise.all([Promise.all(pictures.map((f) => fileToUpload(f, t('Pasted image')))), Promise.all(others.map(fileToAttachment))])
+      .then(([images, rest]) => {
         const named = title ? images.map((im) => ({ ...im, title })) : images
-        attachMutate({ id, images: named }, {
-          onSuccess: () => toast.success(tn(named.length, 'Attached {n} image.', 'Attached {n} images.')),
+        const n = named.length + rest.length
+        attachMutate({ id, ...(named.length ? { images: named } : {}), ...(rest.length ? { files: rest } : {}) }, {
+          onSuccess: () => toast.success(tn(n, 'Attached {n} file.', 'Attached {n} files.')),
           onError: fail,
         })
       }, fail)
   }, [attachMutate])
-  const removeAttachment = useCallback((attachmentId: string) => {
-    removeAttachmentMutate(attachmentId, { onSuccess: () => toast.success(t('Removed the image.')), onError: fail })
+  const removeAttachment = useCallback((attachmentId: string, what: 'image' | 'link') => {
+    removeAttachmentMutate(attachmentId, {
+      onSuccess: () => toast.success(what === 'image' ? t('Removed the image.') : t('Taken off the card.')), onError: fail,
+    })
   }, [removeAttachmentMutate])
 
   // The cursor scrolls into view only when it has left it: no layout read
@@ -139,13 +166,13 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
 
   // The keys read the page through a ref: one listener for the page's
   // life, not a new one on every cursor move.
-  const live = useRef({ cursorCard, shown, docs, place, zoom, newDoc, newCard, keysShown, editing, toggleFeed })
-  live.current = { cursorCard, shown, docs, place, zoom, newDoc, newCard, keysShown, editing, toggleFeed }
+  const live = useRef({ cursorCard, shown, docs, place, zoom, newDoc, newCard, keysShown, editing, toggleFeed, attaching, merging })
+  live.current = { cursorCard, shown, docs, place, zoom, newDoc, newCard, keysShown, editing, toggleFeed, attaching, merging }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e)) return
       const s = live.current
-      if (s.zoom || s.newDoc || s.newCard || s.keysShown || s.editing) return
+      if (s.zoom || s.newDoc || s.newCard || s.keysShown || s.editing || s.attaching || s.merging) return
       if (document.querySelector('[role="dialog"]')) return
       const k = e.key
       // Enter and space on a focused button press the button.
@@ -161,7 +188,10 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
       else if ((k === 'Enter' || k === 'o') && card) {
         e.preventDefault()
         setOpen((o) => { const n = new Set(o); if (n.has(card.id)) n.delete(card.id); else n.add(card.id); return n })
-      } else if (k === 'e' && card) { e.preventDefault(); setCursor(card.id); setEditing(card.id) }
+      } else if (k === 'e' && card) { e.preventDefault(); setCursor(card.id); setEdit({ id: card.id, part: 'text' }) }
+      else if (k === 'x' && card) { e.preventDefault(); setCursor(card.id); setEdit({ id: card.id, part: 'context' }) }
+      else if (k === 'a' && card) { e.preventDefault(); setCursor(card.id); setAttaching(card.id) }
+      else if (k === 'm' && card) { e.preventDefault(); setCursor(card.id); setMerging(card.id) }
       else if (/^[1-9]$/.test(k) && card) {
         e.preventDefault()
         const doc = s.docs[Number(k) - 1]
@@ -185,7 +215,7 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
     const onPaste = (e: ClipboardEvent) => {
       if (isTypingTarget(e)) return
       const s = live.current
-      if (!s.cursorCard || s.editing || document.querySelector('[role="dialog"]')) return
+      if (!s.cursorCard || s.editing || s.attaching || document.querySelector('[role="dialog"]')) return
       const images = Array.from(e.clipboardData?.items ?? [])
         .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
         .map((it) => it.getAsFile())
@@ -240,14 +270,16 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
             <div ref={feedRef} className="flex-1 overflow-y-auto overscroll-contain flex flex-col gap-8 pr-4 pb-24">
               {cards.length === 0 ? (
                 <EmptyState title={t('No cards yet.')}
-                  subtitle={t('Add #publish to a message in a chat with an agent. The message becomes a card here, with the task, its commits and its images.')} />
+                  subtitle={t('Add #publish to a message in a chat with an agent. The message becomes a card here; the agent writes the context and attaches the tasks, commits, files and screenshots that belong to it.')} />
               ) : shown.length === 0 ? (
                 <EmptyState compact title={t('No cards match.')} />
               ) : shown.map((c) => (
                 <FeedCard key={c.id} card={c} order={order} colorOf={colorOf}
-                  selected={cursorCard?.id === c.id} open={open.has(c.id)} editing={editing === c.id}
-                  onSelect={select} onEdit={setEditing} onSave={saveText} onCancel={cancelEdit} onZoom={onZoom} onOpenDoc={openDoc}
-                  onAttachFiles={attachFiles} onRemoveAttachment={removeAttachment} />
+                  selected={cursorCard?.id === c.id} open={open.has(c.id)} editing={edit?.id === c.id ? edit.part : ''}
+                  attaching={attaching === c.id}
+                  onSelect={select} onEdit={startEdit} onSave={saveText} onSaveContext={saveContext} onCancel={cancelEdit} onZoom={onZoom} onOpenDoc={openDoc}
+                  onAttachFiles={attachFiles} onAttach={attachTyped} onAttachOpen={openAttach} onRemoveAttachment={removeAttachment}
+                  onRemoveSource={removeSource} onMerge={askMerge} />
               ))}
             </div>
             <KeyLegend />
@@ -264,6 +296,9 @@ function Board({ project, codes, onProject }: { project: string; codes: string[]
       {newDoc && <NewDocModal project={project} onClose={() => setNewDoc(false)} onMade={openDoc} />}
       {newCard && <NewCardModal project={project} onClose={() => setNewCard(false)} onMade={(id) => setCursor(id)} />}
       {keysShown && <KeysModal onClose={() => setKeysShown(false)} />}
+      {merging && byId.get(merging) && (
+        <MergeModal project={project} card={byId.get(merging)!} cards={cards} onClose={() => setMerging('')} onMerged={(id) => setCursor(id)} />
+      )}
     </>
   )
 }
@@ -286,6 +321,9 @@ const KEYS: Array<[string, string]> = [
   ['j k', 'move through the cards'],
   ['Enter o', 'show the original and the history'],
   ['e', 'edit the card text (Enter saves, Esc cancels)'],
+  ['x', 'edit the context'],
+  ['a', 'attach a task, note, link or commit'],
+  ['m', 'merge the card into another'],
   ['1–9', 'place the card in document 1–9'],
   ['n', 'new document'],
   ['c', 'new card, written by hand'],
@@ -302,13 +340,16 @@ function KeyLegend() {
       <span><Kbd>j</Kbd> <Kbd>k</Kbd> {t('move')}</span>
       <span><Kbd>o</Kbd> {t('original')}</span>
       <span><Kbd>e</Kbd> {t('edit')}</span>
+      <span><Kbd>x</Kbd> {t('context')}</span>
+      <span><Kbd>a</Kbd> {t('attach')}</span>
+      <span><Kbd>m</Kbd> {t('merge')}</span>
       <span><Kbd>1</Kbd>–<Kbd>9</Kbd> {t('place')}</span>
       <span><Kbd>n</Kbd> {t('document')}</span>
       <span><Kbd>c</Kbd> {t('card')}</span>
       <span><Kbd>v</Kbd> {t('history')}</span>
       <span><Kbd>f</Kbd> {t('narrow')}</span>
       <span><Kbd>␣</Kbd> {t('image')}</span>
-      <span className="ml-auto">{t('drop or paste an image to attach it')}</span>
+      <span className="ml-auto">{t('drop a file or paste an image to attach it')}</span>
     </div>
   )
 }
@@ -319,6 +360,9 @@ function KeysModal({ onClose }: { onClose: () => void }) {
       case 'move through the cards': return t('move through the cards')
       case 'show the original and the history': return t('show the original and the history')
       case 'edit the card text (Enter saves, Esc cancels)': return t('edit the card text (Enter saves, Esc cancels)')
+      case 'edit the context': return t('edit the context')
+      case 'attach a task, note, link or commit': return t('attach a task, note, link or commit')
+      case 'merge the card into another': return t('merge the card into another')
       case 'place the card in document 1–9': return t('place the card in document 1–9')
       case 'new document': return t('new document')
       case 'new card, written by hand': return t('new card, written by hand')
@@ -341,7 +385,7 @@ function KeysModal({ onClose }: { onClose: () => void }) {
           ))}
         </dl>
         <p className="m-0 text-11 text-tertiary">{t('Drag a card onto a tab to place it, or onto an item to place it in front of that item.')}</p>
-        <p className="m-0 text-11 text-tertiary">{t('Drop an image file on a card, or paste one while the card is selected, to attach it.')}</p>
+        <p className="m-0 text-11 text-tertiary">{t('Drop a file on a card, or paste an image while the card is selected, to attach it.')}</p>
       </div>
     </Modal>
   )
@@ -410,6 +454,51 @@ function NewDocModal({ project, onClose, onMade }: { project: string; onClose: (
         <div className="flex justify-end gap-8">
           <Button type="button" variant="ghost" size="sm" onClick={onClose}>{t('Cancel')}</Button>
           <Button type="submit" size="sm" disabled={!name.trim() || writes.newDoc.isPending}>{t('Make the document')}</Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/**
+ * Fold a card into another: its messages become the other's sources, its
+ * attachments show there, and it leaves the feed. The other cards of the
+ * project, newest first; the merge is taken back with × on the merged line.
+ */
+function MergeModal({ project, card, cards, onClose, onMerged }: {
+  project: string; card: Card; cards: Card[]; onClose: () => void; onMerged: (id: string) => void
+}) {
+  const writes = usePublishWrites(project)
+  const others = cards.filter((c) => c.id !== card.id)
+  const [into, setInto] = useState(others[0]?.id ?? '')
+  const submit = () => {
+    if (!into) return
+    writes.merge.mutate({ id: card.id, into }, {
+      onSuccess: () => { toast.success(t('Merged.')); onClose(); onMerged(into) },
+      onError: fail,
+    })
+  }
+  return (
+    <Modal labelledBy="pub-merge-title" onClose={onClose} width="w-[560px]">
+      <form className="flex flex-col gap-12" onSubmit={(e) => { e.preventDefault(); submit() }}>
+        <h3 id="pub-merge-title" className="text-16 font-semibold text-primary m-0">{t('Merge into another card')}</h3>
+        <p className="m-0 text-12 text-secondary line-clamp-2">{card.text}</p>
+        {others.length === 0 ? <p className="m-0 text-12 text-tertiary">{t('No other card in this project.')}</p> : (
+          <div role="radiogroup" aria-label={t('The card to merge into')} className="flex flex-col gap-4 max-h-[50vh] overflow-y-auto">
+            {others.map((c) => (
+              <label key={c.id} className={`flex items-start gap-8 rounded-input border px-8 py-6 cursor-pointer ${into === c.id ? 'border-brand bg-surface' : 'border-border-subtle'}`}>
+                <input type="radio" name="merge-into" value={c.id} checked={into === c.id} onChange={() => setInto(c.id)} className="mt-2" />
+                <span className="flex flex-col min-w-0">
+                  <span className="text-10 font-mono text-tertiary">{c.id} · {c.at.slice(0, 10)}</span>
+                  <span className="text-12 text-primary line-clamp-2">{c.text}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-end gap-8">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>{t('Cancel')}</Button>
+          <Button type="submit" size="sm" disabled={!into || writes.merge.isPending}>{t('Merge')}</Button>
         </div>
       </form>
     </Modal>

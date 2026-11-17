@@ -16,9 +16,11 @@ from backend.server import create_app
 
 TMUX = termlib.tmux_path() is not None
 
-# A terminal is a Unix pty; on Windows the server says so (tested below) and
-# nothing here can run.
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="the terminal needs macOS or Linux")
+# The routes run on every system: a Unix pty on macOS and Linux, a ConPTY on
+# Windows (tests/test_conpty.py runs the real one there; tests/test_terminal_
+# windows.py the Windows path with a stand-in pywinpty, everywhere). A test
+# that forks a Unix pty itself says so and skips on Windows.
+unix_pty = pytest.mark.skipif(os.name == "nt", reason="a Unix pty (the Windows one: tests/test_conpty.py)")
 
 
 @pytest.fixture()
@@ -85,7 +87,7 @@ def test_resume_needs_a_resumable_chat_and_start_a_task(env) -> None:
 def test_commands() -> None:
     assert termlib.resume_command("claude-code", "abc-1") == "claude -r abc-1"
     assert termlib.resume_command("codex", "abc; rm -rf /") == ""
-    cmd = termlib.start_command("claude", {"id": "tk_1", "title": "It's \"quoted\"", "description": "line1\nline2"})
+    cmd = termlib.start_command("claude", {"id": "tk_1", "title": "It's \"quoted\"", "description": "line1\nline2"}, "bash")
     assert cmd.startswith("claude $'") and "\\n" in cmd and "\n" not in cmd and "\\'" in cmd
 
 
@@ -160,7 +162,10 @@ def test_a_folder_cannot_walk_out_of_the_allowlist(env) -> None:
     assert termlib.resolve_cwd(root, "", str(work / "src")) == (work / "src").resolve()
     # `..` inside an allowed folder, and a symlink out of it, both end at the data root.
     assert termlib.resolve_cwd(root, "", str(work / ".." / ".." / "..")) == root
-    (work / "out").symlink_to("/")
+    try:
+        (work / "out").symlink_to("/")
+    except OSError:  # pragma: no cover — Windows without the right to make one
+        pytest.skip("a symlink needs privileges on Windows")
     assert termlib.resolve_cwd(root, "", str(work / "out")) == root
 
 
@@ -376,6 +381,7 @@ def test_idle_terminals_do_not_take_the_threads_the_server_works_on() -> None:
     asyncio.run(main())
 
 
+@unix_pty
 def test_a_terminal_gets_its_environment_without_the_server_changing_its_own() -> None:
     from backend.routers.terminal import PtySession
 
@@ -397,6 +403,7 @@ def test_a_terminal_gets_its_environment_without_the_server_changing_its_own() -
     assert os.environ.get("SP_TERMINAL") != "tq-env"
 
 
+@unix_pty
 def test_the_foreground_program_is_named_without_proc(monkeypatch) -> None:
     """macOS has no /proc: the program comes from ps there."""
     from backend.routers.terminal import PtySession
@@ -471,3 +478,202 @@ def test_the_token_is_new_at_each_start_and_never_cached(tmp_path: Path, monkeyp
         _on(c)
         r = c.get("/api/terminal/state")
         assert r.headers["cache-control"] == "no-store" and r.json()["token"] == terminal.token_of(a)
+
+
+# ---------------------------------------------------------------------------
+# Roles, sleep and wake, restore after a restart, groups, typing
+# ---------------------------------------------------------------------------
+
+needs_tmux = pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+
+
+def _open(c, **body) -> dict:
+    r = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", **body})
+    assert r.status_code == 201, r.text
+    return r.json()["session"]
+
+
+def _row(c, sid: str) -> dict:
+    return next(x for x in c.get("/api/terminal/sessions").json()["sessions"] if x["id"] == sid)
+
+
+def _screen(root: Path, sid: str) -> str:
+    return termlib.tmux(root, "capture-pane", "-p", "-t", termlib.PREFIX + sid).stdout
+
+
+def _wait_screen(root: Path, sid: str, text: str, timeout: float = 5.0) -> str:
+    end = time.time() + timeout
+    while time.time() < end:
+        got = _screen(root, sid)
+        if text in got:
+            return got
+        time.sleep(0.1)
+    return _screen(root, sid)
+
+
+@needs_tmux
+def test_a_terminal_has_a_role(env) -> None:
+    c, _, _ = env
+    _on(c)
+    shell = _open(c)
+    server = _open(c, role="server", command="echo serving", label="web")
+    rows = {x["id"]: x for x in c.get("/api/terminal/sessions").json()["sessions"]}
+    assert rows[shell["id"]]["role"] == "shell" and rows[server["id"]]["role"] == "server"
+
+
+@needs_tmux
+def test_a_server_sleeps_and_wakes_running_its_command_again(env) -> None:
+    c, root, _ = env
+    _on(c)
+    s = _open(c, role="server", command="echo up-$((6*7))", label="web")
+    assert "up-42" in _wait_screen(root, s["id"], "up-42")
+    got = c.post(f"/api/terminal/sessions/{s['id']}/sleep", json={}).json()["session"]
+    assert got["state"] == "asleep" and got["wake"] == "echo up-$((6*7))"
+    assert not termlib.alive_tmux(root, s["id"])
+    listed = c.get("/api/terminal/sessions").json()
+    assert listed["counts"]["asleep"] == 1 and listed["counts"]["ended"] == 0
+    # Asleep is not lost: Restore does not offer it.
+    assert c.get("/api/terminal/restore").json()["needed"] == 0
+    woke = c.post(f"/api/terminal/sessions/{s['id']}/wake", json={}).json()["session"]
+    assert woke["id"] == s["id"] and woke["state"] != "asleep" and woke["label"] == "web" and woke["role"] == "server"
+    assert "up-42" in _wait_screen(root, s["id"], "up-42")
+    # Waking one that is awake changes nothing.
+    assert c.post(f"/api/terminal/sessions/{s['id']}/wake", json={}).json()["session"]["state"] != "asleep"
+
+
+@needs_tmux
+def test_a_plain_shell_wakes_empty(env) -> None:
+    c, root, _ = env
+    _on(c)
+    s = _open(c, command="echo once-$((2*3))")
+    assert "once-6" in _wait_screen(root, s["id"], "once-6")
+    assert c.post(f"/api/terminal/sessions/{s['id']}/sleep", json={}).json()["session"]["wake"] == ""
+    c.post(f"/api/terminal/sessions/{s['id']}/wake", json={})
+    time.sleep(0.6)
+    assert "once-6" not in _screen(root, s["id"])
+    # The command it was opened with is still on its row.
+    assert _row(c, s["id"])["command"] == "echo once-$((2*3))"
+
+
+def test_what_a_terminal_runs_when_it_comes_back() -> None:
+    wc = termlib.wake_command
+    assert wc({"kind": "resume", "command": "claude -r abc"}) == "claude -r abc"
+    # A terminal that started an agent on a task: the agent's session, never a second start.
+    assert wc({"kind": "start", "command": "claude 'do the task'"}, "claude -r xyz") == "claude -r xyz"
+    assert wc({"kind": "start", "command": "claude 'do the task'"}) == ""
+    assert wc({"kind": "shell", "role": "server", "command": "npm run dev"}) == "npm run dev"
+    assert wc({"kind": "shell", "command": "ls"}) == ""
+
+
+@needs_tmux
+def test_after_a_restart_restore_brings_back_what_was_not_asleep(env) -> None:
+    c, root, _ = env
+    _on(c)
+    web = _open(c, role="server", command="echo back-$((5*5))", label="web")
+    sh = _open(c, label="scratch")
+    napping = _open(c, role="server", command="echo nap", label="docs")
+    c.post(f"/api/terminal/sessions/{napping['id']}/sleep", json={})
+    assert c.get("/api/terminal/restore").json()["needed"] == 0
+    # The computer restarts: the tmux server and every session in it are gone.
+    termlib.tmux(root, "kill-server")
+    time.sleep(0.3)
+    state = c.get("/api/terminal/restore").json()
+    assert {x["id"] for x in state["sessions"]} == {web["id"], sh["id"]}
+    assert next(x for x in state["sessions"] if x["id"] == web["id"])["wake"] == "echo back-$((5*5))"
+    done = c.post("/api/terminal/restore", json={}).json()
+    assert done["restored"] == 2 and all(r["ok"] for r in done["results"])
+    assert "back-25" in _wait_screen(root, web["id"], "back-25")
+    assert termlib.alive_tmux(root, sh["id"])
+    assert _row(c, napping["id"])["state"] == "asleep"
+    assert c.get("/api/terminal/restore").json()["needed"] == 0
+
+
+@needs_tmux
+def test_a_shell_left_with_exit_is_not_offered_back(env) -> None:
+    c, root, _ = env
+    _on(c)
+    keep = _open(c, label="keep")
+    gone = _open(c, label="gone")
+    termlib.tmux(root, "kill-session", "-t", termlib.PREFIX + gone["id"])
+    assert _row(c, gone["id"])["state"] == "ended"
+    assert termlib.alive_tmux(root, keep["id"])
+    assert c.get("/api/terminal/restore").json()["needed"] == 0
+
+
+@needs_tmux
+def test_restore_takes_only_the_named_ones(env) -> None:
+    c, root, _ = env
+    _on(c)
+    a, b = _open(c, label="a"), _open(c, label="b")
+    termlib.tmux(root, "kill-server")
+    time.sleep(0.3)
+    done = c.post("/api/terminal/restore", json={"ids": [a["id"]]}).json()
+    assert [r["id"] for r in done["results"]] == [a["id"]]
+    assert _row(c, b["id"])["state"] == "ended"
+
+
+@needs_tmux
+def test_groups_hold_terminals_of_any_project(env) -> None:
+    c, _, _ = env
+    _on(c)
+    assert c.get("/api/terminal/groups").json() == {"groups": []}
+    g = c.post("/api/terminal/groups", json={"name": "Release week", "color": 3}).json()["group"]
+    assert g["name"] == "Release week" and g["color"] == 3 and g["id"]
+    s = _open(c)
+    moved = c.post(f"/api/terminal/sessions/{s['id']}/group", json={"group": g["id"]}).json()["session"]
+    assert moved["group"] == g["id"] and moved["project"] == "alpha"
+    born = _open(c, group=g["id"])
+    assert _row(c, born["id"])["group"] == g["id"]
+    assert c.post(f"/api/terminal/sessions/{s['id']}/group", json={"group": "nope"}).status_code == 422
+    assert c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "group": "nope"}).status_code == 422
+    g2 = c.post(f"/api/terminal/groups/{g['id']}", json={"name": "Launch", "color": 5}).json()["group"]
+    assert g2["name"] == "Launch" and g2["color"] == 5
+    assert c.post(f"/api/terminal/groups/{g['id']}", json={"color": 9}).status_code == 422
+    assert c.post("/api/terminal/groups", json={"name": " "}).status_code == 422
+    assert c.post("/api/terminal/groups/nope", json={"name": "x"}).status_code == 404
+    # Removing a group returns its terminals to their projects.
+    assert c.post(f"/api/terminal/groups/{g['id']}/remove", json={}).json() == {"removed": g["id"]}
+    assert _row(c, s["id"])["group"] == "" and _row(c, born["id"])["group"] == ""
+    assert c.get("/api/terminal/groups").json() == {"groups": []}
+    assert c.post(f"/api/terminal/groups/{g['id']}/remove", json={}).status_code == 404
+
+
+@needs_tmux
+def test_typing_is_counted_never_kept(env) -> None:
+    c, root, _ = env
+    _on(c)
+    s = _open(c)
+    assert c.post("/api/terminal/typing", json={"sid": s["id"], "keys": 12}).json() == {"noted": True}
+    assert c.post("/api/terminal/typing", json={"sid": s["id"], "keys": 0}).json() == {"noted": False}
+    assert c.post("/api/terminal/typing", json={"sid": "nope", "keys": 5}).json() == {"noted": False}
+    assert c.post("/api/terminal/typing", json={"sid": s["id"], "keys": "abc"}).json() == {"noted": False}
+    day = c.get("/api/terminal/typing").json()
+    assert day["minutes"] == {"alpha": 1} and day["total"] == 1
+    lines = (root / "terminal" / "typing.csv").read_text().splitlines()
+    assert lines[0] == "at,terminal,project,agent_id,keys" and lines[1].endswith(f",{s['id']},alpha,,12")
+    assert c.get("/api/terminal/typing?day=2020-01-01").json()["total"] == 0
+
+
+def test_an_agent_cannot_sleep_wake_restore_or_group(env) -> None:
+    c, _, _ = env
+    _on(c)
+    who = {"agent_id": "cc-1"}
+    for path in ("/api/terminal/sessions/x/sleep", "/api/terminal/sessions/x/wake", "/api/terminal/restore",
+                 "/api/terminal/groups", "/api/terminal/groups/x", "/api/terminal/groups/x/remove",
+                 "/api/terminal/sessions/x/group", "/api/terminal/typing"):
+        assert c.post(path, json=who).status_code in (403, 422), path
+
+
+def test_the_new_writes_are_off_with_the_terminal(env) -> None:
+    c, _, _ = env
+    for path in ("/api/terminal/sessions/x/sleep", "/api/terminal/sessions/x/wake", "/api/terminal/restore",
+                 "/api/terminal/groups", "/api/terminal/typing"):
+        assert c.post(path, json={}).status_code == 409, path
+
+
+def test_a_terminal_from_before_the_server_was_recorded_is_not_offered_back() -> None:
+    old = {"id": "a", "state": "ended", "backend": "tmux"}
+    new = {"id": "b", "state": "ended", "backend": "tmux", "server": "100"}
+    assert termlib.lost([old, new], "") == [new]
+    assert termlib.lost([old, new], "200") == [new]
+    assert termlib.lost([old, new], "100") == []

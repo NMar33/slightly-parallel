@@ -33,6 +33,7 @@ import { useTaskCoreField } from './editor/cores'
 import { EditorFooter } from './editor/Footer'
 import { TaskLinks } from './editor/Links'
 import { TaskStory } from './editor/Story'
+import { TaskNotesSection } from '../../notes/page/TaskNotesSection'
 import { TaskEventsTimeline, TaskMentions } from './editor/History'
 import type { Asking } from './editor/types'
 import { t, tn } from '../../../i18n/scope/project'
@@ -476,6 +477,7 @@ export function TaskAddModal({
             {prefs.sections.links && (
               <TaskLinks taskId={existingTask.id} projectCode={homeProject} onOpen={(id) => onOpenOther?.(id)} onChanged={onLinksChanged} />
             )}
+            <TaskNotesSection taskId={existingTask.id} />
             {prefs.sections.story && <TaskStory taskId={existingTask.id} />}
             {prefs.sections.history && <TaskEventsTimeline taskId={existingTask.id} />}
             {prefs.sections.chat && <TaskMentions taskId={existingTask.id} />}

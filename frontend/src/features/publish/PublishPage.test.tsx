@@ -15,9 +15,15 @@ const CARDS: Card[] = [
     placements: [{ doc_id: 'pd_rel', doc_name: 'Release note', version_n: 1, item_id: 'pi_1', text: 'The board keeps a card dropped on a hidden column.', changed: false }] },
   { ...base, id: 'pu_old', images: [
     { url: '/api/publishing/attachments/pa_1/file', label: 'board', from: 'attached', id: 'pa_1', by: 'cc-9' },
-    { url: '/evidence/x.png', label: 'evidence shot', from: 'evidence' },
-  ], links: [{ url: 'https://github.com/nmar33/x/pull/4', label: 'PR 4', id: 'pl_1', by: 'cc-9' }],
-  files: Array.from({ length: 8 }, (_, i) => ({ path: `backend/f${i}.py`, add: 10 + i, del: 1 })), at: '2026-11-02T10:00:00', message: 'Capture reads stdin.', text: 'Capture reads stdin.', versions: [], placements: [] },
+  ], links: [{ url: 'https://example.org/x/pull/4', label: 'PR 4', id: 'pl_1', by: 'cc-9' }],
+  files: [{ id: 'pa_f', name: 'load-test.txt', path: '/home/op/load-test.txt', size: 2048, url: '/api/publishing/attachments/pa_f/file' }],
+  tasks: [{ id: 'tk_aaaa1111', title: 'Capture on every tool', status: 'done', project: 'alpha', attachment_id: 'pa_t1' },
+    { id: 'tk_bbbb2222', title: 'Tracker export', status: 'todo', project: 'beta', attachment_id: 'pa_t2' }],
+  context: 'Before: Codex lost its first turn. After: every tool sends it on stdin.',
+  context_versions: [{ n: 1, at: '2026-11-02T10:05:00', text: 'Before: Codex lost its first turn. After: every tool sends it on stdin.', note: '', by: 'cc-9' }],
+  sources: [{ id: 'pu_old', kind: 'kept', at: '2026-11-02T10:00:00', agent_id: 'cc-1', text: 'Capture reads stdin.', from_card: '' },
+    { id: 'pu_add1', kind: 'appended', at: '2026-11-02T11:00:00', agent_id: 'cc-7', text: 'add the numbers', from_card: '' }],
+  at: '2026-11-02T10:00:00', message: 'Capture reads stdin.', text: 'Capture reads stdin.', versions: [], placements: [] },
 ]
 const DOCS: Doc[] = [
   { id: 'pd_post', project: 'alpha', name: 'Launch post', created_at: '2026-11-02T12:00:00', archived_at: '', current: 1,
@@ -120,23 +126,67 @@ describe('PublishPage', () => {
     expect(posts[0]).toMatchObject({ path: '/api/publishing/cards/pu_new/text', body: { text: 'the board drops a card on a hidden column' } })
   })
 
-  it('shows where each image came from, the links by host, at most six files, and removes an attached image', async () => {
+  it('shows who attached each image, the links by host, the files, the tasks with a foreign project, and removes an image', async () => {
     const posts: Post[] = []
     serve(posts)
     render(wrap(<PublishPage />))
     await waitFor(() => expect(screen.getByText('Capture reads stdin.')).toBeInTheDocument())
     expect(screen.getByText('attached · by cc-9')).toBeInTheDocument()
-    expect(screen.getByText('evidence')).toBeInTheDocument()
-    expect(screen.getByText('github.com')).toBeInTheDocument()
-    // The files and commits sit under one line until it is opened.
-    expect(screen.queryByText('f0.py')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /8 files/ }))
-    expect(screen.getAllByText(/\+1[0-7]/)).toHaveLength(8)
+    expect(screen.getByText('example.org')).toBeInTheDocument()
+    expect(screen.getByText('load-test.txt')).toBeInTheDocument()
+    expect(screen.getByText('2 KB')).toBeInTheDocument()
+    // A task of another project shows its project; one of the card's own does not.
+    expect(screen.getByText('beta')).toBeInTheDocument()
+    expect(screen.queryByText('alpha', { selector: 'span.text-status-info' })).not.toBeInTheDocument()
     const remove = screen.getAllByRole('button', { name: 'Remove the image' })
     expect(remove).toHaveLength(1)
     fireEvent.click(remove[0]!)
     await waitFor(() => expect(posts).toHaveLength(1))
     expect(posts[0]!.path).toBe('/api/publishing/attachments/pa_1/remove')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove tk_bbbb2222' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1]!.path).toBe('/api/publishing/attachments/pa_t2/remove')
+  })
+
+  it('shows the context and the message another chat added, edits the context with x', async () => {
+    const posts: Post[] = []
+    serve(posts)
+    render(wrap(<PublishPage />))
+    await waitFor(() => expect(screen.getByText(/Before: Codex lost its first turn/)).toBeInTheDocument())
+    expect(screen.getByText('add the numbers')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'j' })
+    fireEvent.keyDown(window, { key: 'x' })
+    const field = await screen.findByRole('textbox', { name: 'Card context' })
+    fireEvent.change(field, { target: { value: 'Every tool sends the first turn on stdin.' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(posts).toHaveLength(1))
+    expect(posts[0]).toMatchObject({ path: '/api/publishing/cards/pu_old/write', body: { context: 'Every tool sends the first turn on stdin.', actor: 'operator' } })
+    // × on the added message takes it off the card.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the message from the card' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1]!.path).toBe('/api/publishing/sources/pu_add1/remove')
+  })
+
+  it('attaches a task by hand with a, and merges a card into another with m', async () => {
+    const posts: Post[] = []
+    serve(posts)
+    render(wrap(<PublishPage />))
+    await waitFor(() => expect(screen.getByText('Capture reads stdin.')).toBeInTheDocument())
+    fireEvent.keyDown(window, { key: 'a' })
+    const field = await screen.findByRole('textbox', { name: 'What to attach' })
+    fireEvent.change(field, { target: { value: 'not-an-id' } })
+    expect(screen.getByRole('button', { name: 'Attach' })).toBeDisabled()
+    fireEvent.change(field, { target: { value: 'tk_cccc3333, tk_dddd4444' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(posts).toHaveLength(1))
+    expect(posts[0]).toMatchObject({ path: '/api/publishing/cards/pu_new/attach', body: { tasks: ['tk_cccc3333', 'tk_dddd4444'], actor: 'operator' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.keyDown(window, { key: 'm' })
+    await screen.findByText('Merge into another card')
+    expect(screen.getByRole('radio', { name: /pu_old/ })).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Merge' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1]).toMatchObject({ path: '/api/publishing/cards/pu_new/merge', body: { into: 'pu_old', actor: 'operator' } })
   })
 
   it('attaches an image file dropped on a card', async () => {
@@ -150,6 +200,20 @@ describe('PublishPage', () => {
     await waitFor(() => expect(posts).toHaveLength(1))
     expect(posts[0]!.path).toBe('/api/publishing/cards/pu_old/attach')
     expect(posts[0]!.body).toMatchObject({ images: [{ title: 'board-shot', ext: 'png', data_base64: 'iVBORw==' }] })
+  })
+
+  it('copies any other file dropped on a card onto it', async () => {
+    const posts: Post[] = []
+    serve(posts)
+    render(wrap(<PublishPage />))
+    await waitFor(() => expect(screen.getByText('Capture reads stdin.')).toBeInTheDocument())
+    const card = document.querySelector('[data-card="pu_new"]')!
+    const file = new File(['p95 180 ms'], 'report.txt', { type: 'text/plain' })
+    fireEvent.drop(card, { dataTransfer: { files: [file], types: ['Files'], getData: () => '' } })
+    await waitFor(() => expect(posts).toHaveLength(1))
+    expect(posts[0]!.path).toBe('/api/publishing/cards/pu_new/attach')
+    expect(posts[0]!.body).toMatchObject({ files: [{ name: 'report.txt', title: 'report.txt', data_base64: btoa('p95 180 ms') }] })
+    expect(posts[0]!.body.images).toBeUndefined()
   })
 
   it('narrows the cards to a strip with [ and keeps placing with digits', async () => {

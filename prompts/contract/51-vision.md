@@ -4,7 +4,7 @@ section: 4
 title: Vision
 enabled: true
 command: #vision | Nothing to write — the server keeps the message as a vision; write its interpretation (Kept messages, section 4)
-command: #publish <text> | Nothing to write — the server keeps the message as a card on the Publish page (what shipped, worth telling)
+command: #publish <text> | publish_write in the same turn — the card the hook names: text only if asked, context, and what belongs to it (Publish, section 4)
 command: #prompt | Nothing to write — the server keeps the message in the operator's prompt library
 command: #important | Nothing to write — the server stars the message, its agent and the tasks it names; `#important-agent`, `-task` or `-message` stars one of them
 ---
@@ -23,14 +23,6 @@ markdown; `note` is one optional line on what changed). An `#entrypoint` makes
 nothing until the operator chooses its topic: `entrypoint_ask` first
 (Entry point, below).
 
-`#publish` is kept the same way, as a card on the Publish page (what
-shipped, worth telling). Its text is the operator's: no interpretation, no
-entry. What you add is what they may need to tell about it: 1–3
-screenshots of what it is about (the page or the product, as you can
-render it), each in its original size, never shrunk or recompressed, given
-by its file `path`, and the links, with `publish_attach {id, images,
-links}` in the same turn. The notice names the card.
-
 The interpretation is the message read with the conversation around it:
 what the user means, in plain words, with what the context settles —
 constraints, rejected options, what it replaces. A vision: the direction
@@ -48,3 +40,21 @@ asks nothing of you: answer the message as usual.
 the agent of the chat and every task the message names; `#important-agent`,
 `#important-task` (the named task, else the last task named in this chat)
 and `#important-message` mark one of them. There is nothing to write.
+
+**Publish — `#publish`.** The message is kept as a card on the Publish page
+(what shipped, worth telling) and stays on it as the source; the tag asks
+you to write the card in the same turn with `publish_write {id, …}` (the
+notice names the card). `#publish <text>`: their text is the card's text —
+leave `text` out. `#publish about X` or "describe …": write `text` from what
+was done. Never rewrite the operator's text unless asked. Write `context`,
+the block under the text: what was done, for whom, before and after,
+numbers. Attach what belongs to it, by id or path, never guessed: `tasks`
+(tk_…, any project), `commits` ({sha, repo}), `files` ({path}: copied onto
+the card — a report, a test), `images` ({path}: 1–3 screenshots, original
+size, never shrunk), `links` (http(s)), `notes` (nt_…). Each write of text
+or context is a version; `base` is the card's `rev` you read.
+`#publish pu_… <more>` from any chat of the project adds the message to that
+card: write only what it asks for, on top of what is there. When the notice
+says this chat made a card in the last hour and the message is about the
+same thing, write into that card and fold the new one in with `merge`.
+`publish_attach` is the older name of the tool.

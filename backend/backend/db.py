@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -547,6 +548,11 @@ class ViewStore:
             if detail_dir.exists():
                 for md in detail_dir.glob("*.md"):
                     note(md)
+        # A note's versions sit one folder down (note_details/<nt>/vNNN.md).
+        notes_dir = self.data_root / ENTITIES["note"].detail_dir
+        if notes_dir.exists():
+            for md in notes_dir.glob("*/v*.md"):
+                note(md)
         return stamps
 
     def rebuild(self) -> None:
@@ -875,8 +881,23 @@ class ViewStore:
         # A helper chat (a codex exec, a claude -p another chat started) the
         # same: its messages were written by an agent, and a command in them
         # is no operator's (hookshared.HELPER_KINDS).
-        imported = {str(a.get("agent_id") or "") for a in agents
-                    if a.get("capture") == "import" or a.get("helper") is True}
+        # A resumed imported chat acts from its first live turn on
+        # (``live_from``, capture.py open_turn): the gate is per turn, not
+        # per chat. ``muted`` maps a chat to the first turn that acts.
+        muted: dict[str, float] = {}
+        for a in agents:
+            aid = str(a.get("agent_id") or "")
+            if a.get("helper") is True:
+                muted[aid] = math.inf
+            elif a.get("capture") == "import":
+                try:
+                    live = int(a.get("live_from") or 0)
+                except (TypeError, ValueError):
+                    live = 0
+                muted[aid] = live if live > 0 else math.inf
+
+        def acts(r: Any, k: dict[str, Any]) -> bool:
+            return int(k.get("turn") or 0) >= muted.get(r.agent_id, 0)
         chats = []
         for a in agents:
             chat_path = Path(a.get("_chat_path") or "")
@@ -928,27 +949,27 @@ class ViewStore:
             "prompt_marks": [
                 (m["project"], m["agent_id"], m["session_id"], m["turn"], m["at"],
                  m["title"], m["body"], m["print"])
-                for r in rows if r.agent_id not in imported for m in r.prompt_marks
+                for r in rows for m in r.prompt_marks if acts(r, m)
             ],
             "keep_marks": [
                 (k["kind"], k["project"], k["agent_id"], k["session_id"], k["turn"],
                  k["at"], k["title"], k["body"])
-                for r in rows if r.agent_id not in imported for k in r.keep_marks
+                for r in rows for k in r.keep_marks if acts(r, k)
             ],
             "important_tags": [
                 (k["kind"], k["project"], k["agent_id"], k["session_id"], k["turn"],
                  k["at"], k["excerpt"], k["tasks"])
-                for r in rows if r.agent_id not in imported for k in r.important_tags
+                for r in rows for k in r.important_tags if acts(r, k)
             ],
             "done_tags": [
                 (k["project"], k["agent_id"], k["session_id"], k["turn"], k["at"],
                  k["excerpt"], k["tasks"])
-                for r in rows if r.agent_id not in imported for k in r.done_tags
+                for r in rows for k in r.done_tags if acts(r, k)
             ],
             "now_tags": [
                 (k["project"], k["agent_id"], k["session_id"], k["turn"], k["at"],
                  k["column_"], k["lane"], k["answered"], k["body"])
-                for r in rows if r.agent_id not in imported for k in r.now_tags
+                for r in rows for k in r.now_tags if acts(r, k)
             ],
             "skill_uses": [tuple(u) for u in read_uses(chats, rows)],
             "turn_prints": [
@@ -971,8 +992,9 @@ class ViewStore:
     #                 sent again.
     # keep_marks    — turns tagged #vision, #rule, #problem or #skill;
     #                 keeplib.py adopts them into their ledgers on read.
-    # important_tags — turns tagged #important[-agent|-task|-message];
-    #                 marklib.py adopts them into marks.csv on read.
+    # important_tags — turns tagged #important[-agent|-task|-message], and
+    #                 the marks on one message (#pin, #carry, #carry-brief,
+    #                 #fork-later); marklib.py adopts them into marks.csv on read.
     # done_tags     — turns tagged #done; donelib.py applies them to the
     #                 board and records each task's stretch of the chat.
     # now_tags      — turns tagged #now / #now-<column>; nowlib.py writes the

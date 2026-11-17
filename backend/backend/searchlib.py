@@ -173,6 +173,11 @@ def build(store: ViewStore) -> Index:
         columns = [c for c in TEXT_COLUMNS if c in ent.columns or c in ent.view_extras]
         for r in got[:MAX_PER_KIND]:
             title = str(r.get(ent.headline_field) or r.get("title") or r.get("name") or "")
+            if name == "entrypoint":
+                # A topic reads as its name (or its What), never as the
+                # first line of the message it was kept from.
+                from . import entrypointlib
+                title = entrypointlib.label_of(store, r) or title
             add(name, str(r.get("id") or ""), title, str(r.get("project") or ""),
                 str(r.get("created_date") or ""),
                 _row_words(r, columns), _clip(_detail_text(store, str(r.get("md_ref") or ""))))
@@ -212,6 +217,12 @@ def build(store: ViewStore) -> Index:
     # person who said it, the minute, and the session it belongs to. The
     # turns are already parsed into the sessions table, so this costs nothing.
     names = {str(a.get("agent_id") or ""): a for a in store.agents()}
+    # A pinned message says so on its hit (pinlib.py; marks.csv moves the stamp).
+    from . import marklib
+    try:
+        pinned = {str(m.get("target") or "") for m in marklib.active(store) if m.get("kind") == "pin"}
+    except Exception:  # noqa: BLE001 — a damaged ledger costs the flag, never the search
+        pinned = set()
     for ses in store.query("SELECT * FROM sessions"):
         try:
             turns = json.loads(str(ses.get("turns_json") or "[]"))
@@ -230,7 +241,9 @@ def build(store: ViewStore) -> Index:
                     _clip(said),
                     meta={"role": role, "turn": n, "at": str(t.get("at") or ""),
                           "session_id": str(ses.get("id") or ""),
-                          "agent_id": str(ses.get("agent_id") or "")},
+                          "agent_id": str(ses.get("agent_id") or ""),
+                          **({"pinned": True} if f"{ses.get('agent_id')}#{n}{'' if role == 'user' else '/reply'}"
+                             in pinned else {})},
                     by_title=False)
 
     in_rows: Counter[str] = Counter()

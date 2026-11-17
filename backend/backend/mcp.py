@@ -70,7 +70,10 @@ TOOLS: dict[str, str] = {
     "core_note": "After #core-note, or when finished work changes a tracked core: one note on a core.",
     "core_attach": "After #core: attach this message, and this chat's task, to the matching core.",
     "core_off": "After #core-off, confirmed by the operator: remove a core from view; its notes and links are kept.",
-    "publish_attach": "After the operator's #publish: attach screenshots and links to the card; its text is the operator's.",
+    "pins": "The messages the operator pinned (or carried, or kept to fork later), each whole: this chat's or the project's.",
+    "carry_brief": "After #carry-brief: the brief of the message, given back after a compaction instead of it.",
+    "publish_write": "After the operator's #publish: write the card — text if asked, context, and what belongs to it (tasks, commits, files, images, links, notes).",
+    "publish_attach": "The older name of publish_write, for attachments only; it forwards there.",
     "entrypoints": "The project's entry points: the topics the operator comes back to, with their ways in.",
     "entrypoint_stop": "One line of where a topic stopped: at #done for a task of the topic.",
     "entrypoint_way": "Add a way in to a topic (a page, a site, an app, a file …), or change one an agent wrote.",
@@ -99,6 +102,9 @@ TOOLS: dict[str, str] = {
     "usage": "This chat's tokens, the plan limits and the project's day: the #usage text, and the numbers behind it.",
     "usage_prices_material": "After #usage-price: the models the chats used, the API prices now, the pages to read, instructions.",
     "usage_prices_write": "After #usage-price: one update of the API prices, read from the providers' own pages.",
+    "note_write": "Write a note for the operator instead of a long reply or a file: context, a text to paste, a review, a plan, a report, manual steps.",
+    "note_image": "Add a picture to a note; answers the markdown line that shows it.",
+    "notes": "The project's notes, or one note with what the operator ticked and answered.",
 }
 
 
@@ -471,6 +477,29 @@ class Translator:
                  "the latest note. Read it before core_note, core_attach and core_off to choose "
                  "the matching core; if two match, ask the operator to choose by number."),
              "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}}},
+            {"name": "pins",
+             "description": (
+                 "The messages the operator marked, each whole, newest first: `kind` pin (default; "
+                 "#pin, to come back to), carry (#carry and #carry-brief: what survives a context "
+                 "compaction, with the brief written for each) or fork (#fork-later: work another agent "
+                 "could take, with the command that starts it). `scope` chat (default: this chat) or "
+                 "project. `q` keeps the ones whose text holds it. When the operator says \"go back to "
+                 "the pin\", read this chat's pins and take up the one they mean."),
+             "inputSchema": {"type": "object", "properties": {
+                 "kind": {"type": "string", "enum": ["pin", "carry", "fork"]},
+                 "scope": {"type": "string", "enum": ["chat", "project"]},
+                 "q": {"type": "string"}, "project": {"type": "string"}}}},
+            {"name": "carry_brief",
+             "description": (
+                 "After #carry-brief (the hook's notice names the message): write the brief of that "
+                 "message — what it says and the context needed to understand it once the chat is "
+                 "compacted (who asked, what for, what was decided), a few sentences, at most 4000 "
+                 "characters. After the next compaction it is given back to you instead of the message. "
+                 "`message` is <agent_id>#<turn> (or …/reply) as the notice names it; or `turn`, a turn "
+                 "of this chat. Writing it again replaces it."),
+             "inputSchema": {"type": "object", "properties": {
+                 "message": {"type": "string"}, "turn": {"type": "integer"}, "text": {"type": "string"}},
+                 "required": ["text"]}},
             {"name": "core_new",
              "description": (
                  "After the operator's #core-new: a new core. `name` is short (at most 60 "
@@ -609,14 +638,57 @@ class Translator:
                  "Follow them, then call task_evidence."),
              "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
                              "required": ["id"]}},
+            {"name": "publish_write",
+             "description": (
+                 "After the operator's #publish (the hook names the card, pu_…): write the card in the same turn. "
+                 "`text` only when the operator asked you to write it (\"#publish about X\", \"describe …\"); "
+                 "when their message is the text, leave it out — the message is the card's text and stays its "
+                 "source. Never rewrite the operator's text unless asked. `context`: the block under the text — "
+                 "what was done, for whom, before/after, numbers; when asked for one piece (\"add how it looks "
+                 "on a phone\"), write only that piece on top of the context you read. Each write of text or "
+                 "context is a version; `base` is the card's rev you read. Attach what belongs to it, by id or "
+                 "by path, never guessed: `tasks` (tk_… ids, any project), `notes` (nt_…), `commits` "
+                 "({sha, repo}: repo is the repository's folder; left out, the project's), `files` ({path, "
+                 "title}: any file on this machine, copied onto the card, up to 25MB), `images` ({path, title}: "
+                 "screenshots, original size), `links` ({title, url}, http(s)). `merge`: a card this chat "
+                 "made a moment ago about the same thing, folded into this one. The same attachment again is "
+                 "the existing one."),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string", "description": "the card, pu_… (the hook names it)"},
+                     "text": {"type": "string", "description": "the card's text; only when the operator asked you to write it"},
+                     "context": {"type": "string", "description": "the context block under the text (markdown)"},
+                     "note": {"type": "string", "description": "one line: what this version changed"},
+                     "base": {"type": "integer", "description": "the card's rev you read; refused if someone wrote since"},
+                     "tasks": {"type": "array", "items": {"type": "string"}, "description": "tk_… ids"},
+                     "notes": {"type": "array", "items": {"type": "string"}, "description": "nt_… ids"},
+                     "commits": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"sha": {"type": "string"}, "repo": {"type": "string"}},
+                         "required": ["sha"]}},
+                     "files": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"path": {"type": "string", "description": "the file on this machine; read by the tool"},
+                                        "title": {"type": "string"}},
+                         "required": ["path"]}},
+                     "images": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"path": {"type": "string", "description": "the image file on this machine; read by the tool"},
+                                        "title": {"type": "string"}},
+                         "required": ["path"]}},
+                     "links": {"type": "array", "items": {
+                         "type": "object",
+                         "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
+                         "required": ["url"]}},
+                     "merge": {"type": "string", "description": "pu_… of a card this chat made about the same thing, folded into this one"},
+                 },
+                 "required": ["id"]}},
             {"name": "publish_attach",
              "description": (
-                 "After the operator's #publish (the hook names the card, pu_…): attach what the "
-                 "operator may need to tell about it — 1–3 screenshots of what it is about "
-                 "(png/jpg/webp/gif: give the file's `path` on this machine, or `data_base64`; "
-                 "each with a one-line title) and links. The card's "
-                 "text is the operator's; you attach, you do not write. The same image again is "
-                 "the existing attachment."),
+                 "The older name of publish_write, kept for chats that know it: attaches images "
+                 "(`path` on this machine, or `data_base64`), links, files, tasks, notes and commits to "
+                 "the card. Prefer publish_write, which also writes the card's text and context."),
              "inputSchema": {
                  "type": "object",
                  "properties": {
@@ -932,6 +1004,50 @@ class Translator:
                  "sources": {"type": "array", "items": {"type": "string"}, "description": "the https pages the prices were read from"},
                  "note": {"type": "string", "description": "one line: what you left out, and why"}},
                  "required": ["models", "sources"]}},
+            {"name": "note_write",
+             "description": (
+                 "Write a note: a text the operator will read again or keep, instead of a long chat reply "
+                 "or a markdown file — context to come back to, a text to paste elsewhere, a review with "
+                 "pictures, a plan for helpers, a helper's report, the steps only the operator can do. "
+                 "`text` is markdown whose first line is `# Title`; `## ` headings make its sections. "
+                 "Blocks: ```copy Title …``` (a text to paste, with a copy button); `- [ ] step` "
+                 "(a checklist the operator ticks); ```choice Question with lines `1. option` (the "
+                 "operator picks one; read it back with notes {id}); ```gallery with lines "
+                 "`![caption](file.png)`; `:::fold Title` … `:::` (folded); ```mermaid. Ids like tk_… "
+                 "ep_… dc_… show as live chips. `images`: the picture files the text names, read here. "
+                 "`id` writes the next version of a note (any chat of the project); `base` is the "
+                 "version you read. Then say one line in the chat and the note's id."),
+             "inputSchema": {"type": "object", "properties": {
+                 "text": {"type": "string", "description": "the markdown, first line `# Title`"},
+                 "kind": {"type": "string", "enum": ["context", "paste", "review", "plan", "report", "actions"],
+                          "description": "context: to know when coming back; paste: a text for another chat or "
+                                         "place; review: pictures and the choice they ask; plan: a spec for helpers; "
+                                         "report: what a helper found and did; actions: what only the operator can do"},
+                 "title": {"type": "string", "description": "only when the text has no `# Title` line"},
+                 "task_id": {"type": "string", "description": "the tk_… the note is for"},
+                 "entrypoint_id": {"type": "string", "description": "the ep_… topic it belongs to"},
+                 "replaces": {"type": "string", "description": "an older nt_… this note replaces"},
+                 "id": {"type": "string", "description": "nt_…: write the next version of this note"},
+                 "base": {"type": "integer", "description": "with id: the version you read; refused if another chat wrote since"},
+                 "images": {"type": "array", "items": {"type": "object", "properties": {
+                     "path": {"type": "string", "description": "the file on this machine; the text names it by file name"},
+                     "caption": {"type": "string"}}, "required": ["path"]}}},
+                 "required": ["text", "kind"]}},
+            {"name": "note_image",
+             "description": (
+                 "Add a picture to a note (PNG, JPEG, GIF or WebP; `path` on this machine). Answers its "
+                 "ni_… id and the markdown line to put in the note's next version (note_write with id)."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "the note, nt_…"},
+                 "path": {"type": "string"}, "caption": {"type": "string"}},
+                 "required": ["id", "path"]}},
+            {"name": "notes",
+             "description": (
+                 "The project's notes, one line each with what waits on the operator; with `task_id` the "
+                 "notes of that task. With `id`: one note whole, and `operator` — each checklist item "
+                 "ticked or not, each choice's answer. Reads only."),
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string"}, "project": {"type": "string"}, "task_id": {"type": "string"}}}},
         ]
 
     def call(self, name: str, args: dict) -> Any:
@@ -1087,32 +1203,13 @@ class Translator:
                 {"agent_id": self.identity()["agent_id"],
                  "items": args.get("items") or []},
             )
-        if name == "publish_attach":
-            # An image given by `path` is read here, on the agent's machine:
-            # base64 through a tool call is tens of thousands of characters.
-            images = []
-            for i, item in enumerate(args.get("images") or [], 1):
-                if not isinstance(item, dict):
-                    raise ApiError(f"image {i}: an object with title and path (or data_base64)")
-                if item.get("path") and not item.get("data_base64"):
-                    p = pathlib.Path(str(item["path"])).expanduser()
-                    if not p.is_file():
-                        raise ApiError(f"image {i}: {p} is not a file")
-                    if p.stat().st_size > 12 * 1024 * 1024:
-                        raise ApiError(f"image {i}: {p.name} is over 12MB")
-                    item = {**item, "data_base64": base64.b64encode(p.read_bytes()).decode("ascii"),
-                            "ext": str(item.get("ext") or p.suffix.lstrip(".").lower() or "png"),
-                            "title": str(item.get("title") or p.stem)}
-                    item.pop("path", None)
-                images.append(item)
-            return self.api.post(
-                f"/api/publishing/cards/{_id(args)}/attach",
-                {"agent_id": self.identity()["agent_id"],
-                 "images": images, "links": args.get("links") or []},
-            )
+        if name in ("publish_write", "publish_attach"):
+            return self._publish(name, args)
         if name in ("entrypoints", "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_offer",
                     "entrypoint_ask", "entrypoint_answer", "task_topic"):
             return self._entrypoint(name, args)
+        if name in ("note_write", "note_image", "notes"):
+            return self._note(name, args)
         if name == "task_story":
             return self.api.post(
                 f"/api/tasks/{_id(args)}/story",
@@ -1121,6 +1218,33 @@ class Translator:
                  "body": str(args.get("body") or ""),
                  "images": args.get("images") or []},
             )
+        if name == "pins":
+            kind = str(args.get("kind") or "pin")
+            path = {"pin": "pins", "carry": "carries", "fork": "forks"}.get(kind)
+            if path is None:
+                raise ApiError("kind is pin, carry or fork")
+            scope = str(args.get("scope") or "chat")
+            if scope not in ("chat", "project"):
+                raise ApiError("scope is chat or project")
+            who = self.identity()
+            query = {"full": "true", "q": str(args.get("q") or ""),
+                     "project": str(args.get("project") or who["project"])}
+            if scope == "chat":
+                query["agent_id"] = who["agent_id"]
+            got = self.api.get(f"/api/{path}?{urllib.parse.urlencode(query)}")
+            keep = ("target", "kind", "turn", "side", "at", "marked_at", "source", "text", "reply",
+                    "brief", "brief_at", "state", "command", "given_at", "left_out_at", "agent_id", "project")
+            return {"total": got.get("total", 0),
+                    "items": [{k: i[k] for k in keep if i.get(k) not in (None, "")} for i in got.get("items") or []]}
+        if name == "carry_brief":
+            who = self.identity()
+            target = str(args.get("message") or "").strip()
+            if not target:
+                if args.get("turn") is None:
+                    raise ApiError("carry_brief needs the message (<agent_id>#<turn>) or this chat's turn")
+                target = f"{who['agent_id']}#{int(args['turn'])}"
+            return self.api.post("/api/carries/brief", {
+                "agent_id": who["agent_id"], "target": target, "text": str(args.get("text") or "")})
         if name == "cores":
             code = args.get("project") or self.identity()["project"]
             return self.api.get(f"/api/cores?project={urllib.parse.quote(str(code))}")
@@ -1223,6 +1347,125 @@ class Translator:
         raise ApiError(f"unknown tool: {name}")
 
     # -- resources ---------------------------------------------------------
+
+    def _note(self, name: str, args: dict) -> Any:
+        """The notes tools. A picture is read here, on the agent's machine."""
+        def text(key: str, required: bool = False) -> str:
+            v = args.get(key)
+            if v is None or v == "":
+                if required:
+                    raise ApiError(f"{key} is required")
+                return ""
+            if not isinstance(v, str):
+                raise ApiError(f"{key} is text, not {'a list' if isinstance(v, list) else type(v).__name__}")
+            return v
+
+        def picture(path: str, i: str) -> str:
+            p = pathlib.Path(path).expanduser()
+            if not p.is_file():
+                raise ApiError(f"{i}{p} is not a file")
+            if p.stat().st_size > 12 * 1024 * 1024:
+                raise ApiError(f"{i}{p.name} is over 12MB")
+            return base64.b64encode(p.read_bytes()).decode("ascii")
+
+        if name == "notes":
+            if text("id"):
+                return self.api.get(f"/api/notes/{_id(args)}/agent")
+            project = text("project") or self.identity()["project"]
+            q = urllib.parse.urlencode({"project": project, "task": text("task_id")})
+            return self.api.get(f"/api/notes/list?{q}")
+        if name == "note_image":
+            return self.api.post(f"/api/notes/{_id(args)}/images", {
+                "agent_id": self.identity()["agent_id"], "caption": text("caption"),
+                "data_base64": picture(text("path", True), "")})
+        raw = args.get("images") or []
+        if not isinstance(raw, list):
+            raise ApiError("images is a list of {path, caption}")
+        images = []
+        for i, item in enumerate(raw, start=1):
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not item["path"]:
+                raise ApiError(f"image {i}: an object with path (and caption)")
+            if item.get("caption") is not None and not isinstance(item.get("caption"), str):
+                raise ApiError(f"image {i}: caption is text")
+            images.append({"name": item["path"], "caption": item.get("caption") or pathlib.Path(item["path"]).stem,
+                           "data_base64": picture(item["path"], f"image {i}: ")})
+        base = args.get("base")
+        if base is not None and (isinstance(base, bool) or not isinstance(base, int)):
+            raise ApiError("base is the version number you read, a number")
+        who = self.identity()
+        body: dict[str, Any] = {"agent_id": who["agent_id"], "project": who["project"],
+                                "text": text("text", True), "kind": text("kind", True), "title": text("title"),
+                                "id": text("id"), "images": images}
+        for key in ("task_id", "entrypoint_id", "replaces"):
+            if key in args:
+                body[key] = text(key)
+        if base is not None:
+            body["base"] = base
+        return self.api.post("/api/notes/write", body)
+
+    def _publish(self, name: str, args: dict) -> Any:
+        """publish_write, and publish_attach forwarding to it. A file or an
+        image given by `path` is read here, on the agent's machine: base64
+        through a tool call is tens of thousands of characters."""
+        def read(path: Any, label: str, most: int) -> tuple[pathlib.Path, str]:
+            if not isinstance(path, str) or not path:
+                raise ApiError(f"{label}: path is the file on this machine")
+            p = pathlib.Path(path).expanduser()
+            if not p.is_file():
+                raise ApiError(f"{label}: {p} is not a file")
+            if p.stat().st_size > most:
+                raise ApiError(f"{label}: {p.name} is over {most // (1024 * 1024)}MB")
+            return p, base64.b64encode(p.read_bytes()).decode("ascii")
+
+        def items(key: str) -> list:
+            v = args.get(key)
+            if v in (None, ""):
+                return []
+            if not isinstance(v, list):
+                raise ApiError(f"{key} is a list")
+            return v
+
+        images = []
+        for i, item in enumerate(items("images"), 1):
+            if not isinstance(item, dict):
+                raise ApiError(f"image {i}: an object with title and path")
+            if item.get("path") and not item.get("data_base64"):
+                p, data = read(item["path"], f"image {i}", 12 * 1024 * 1024)
+                item = {**item, "data_base64": data, "source": str(p),
+                        "ext": str(item.get("ext") or p.suffix.lstrip(".").lower() or "png"),
+                        "title": str(item.get("title") or p.stem)}
+                item.pop("path", None)
+            images.append(item)
+        files = []
+        for i, item in enumerate(items("files"), 1):
+            if isinstance(item, str):
+                item = {"path": item}
+            if not isinstance(item, dict):
+                raise ApiError(f"file {i}: an object with path and title")
+            p, data = read(item.get("path"), f"file {i}", 25 * 1024 * 1024)
+            files.append({"name": p.name, "source": str(p), "title": str(item.get("title") or p.name),
+                          "data_base64": data})
+        body: dict[str, Any] = {"agent_id": self.identity()["agent_id"]}
+        for key in ("text", "context", "note", "merge"):
+            v = args.get(key)
+            if v is None:
+                continue
+            if not isinstance(v, str):
+                raise ApiError(f"{key} is text, not {'a list' if isinstance(v, list) else type(v).__name__}")
+            body[key] = v
+        base = args.get("base")
+        if base is not None:
+            if isinstance(base, bool) or not isinstance(base, int):
+                raise ApiError("base is the card's rev you read, a number")
+            body["base"] = base
+        for key in ("tasks", "notes", "commits", "links"):
+            if items(key):
+                body[key] = items(key)
+        if images:
+            body["images"] = images
+        if files:
+            body["files"] = files
+        return self.api.post(f"/api/publishing/cards/{_id(args)}/write", body)
 
     def _entrypoint(self, name: str, args: dict) -> Any:
         """The entry point tools. Text arguments are text: a list or an

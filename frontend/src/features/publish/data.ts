@@ -13,16 +13,20 @@ import { OPERATOR_ACTOR } from '../project/types'
 
 export const API = '/api/publishing'
 
-export interface CardVersion { n: number; at: string; text: string; note: string }
-export interface CardTask { id: string; title: string; status: string }
+export interface CardVersion { n: number; at: string; text: string; note: string; by?: string }
+/** A task attached to the card, of any project (its project shows on the chip). */
+export interface CardTask { id: string; title: string; status: string; project?: string; attachment_id?: string }
+export interface CardNote { id: string; title: string; project?: string; attachment_id?: string }
 export interface CardCore { id: string; name: string; type: string }
-export interface CardCommit { sha: string; subject: string; at: string }
-/** An image of the card: from the tasks' evidence, from a story, or attached
- *  to the card itself (then with its id and who attached it). */
-export interface CardImage { url: string; label: string; from?: 'evidence' | 'story' | 'attached' | string; id?: string; by?: string }
+export interface CardCommit { sha: string; subject: string; at: string; repo?: string; attachment_id?: string }
+/** An image attached to the card (with its id and who attached it). */
+export interface CardImage { url: string; label: string; from?: 'attached' | string; id?: string; by?: string }
 export interface CardLink { url: string; label: string; id?: string; by?: string }
-/** A file the card's tasks changed: lines added and removed. */
-export interface CardFile { path: string; add: number; del: number }
+/** A file copied onto the card: its name, where it was copied from, its size. */
+export interface CardFile { id: string; name: string; path: string; size: number; url: string; by?: string }
+/** A message of the operator the card carries: the one that made it, one
+ *  added with `#publish pu_…`, or a card merged into it. */
+export interface CardSource { id: string; kind: 'kept' | 'appended' | 'merged' | string; at: string; agent_id: string; turn?: number; text: string; from_card: string }
 export interface Placement { doc_id: string; doc_name: string; version_n: number; item_id: string; text: string; changed: boolean }
 
 export interface Card {
@@ -34,14 +38,21 @@ export interface Card {
   at: string
   /** The message as typed, the #publish tag taken out. */
   message: string
-  /** The current text: the last edit, else the message. */
+  /** The current text: the last version, else the message. */
   text: string
   versions: CardVersion[]
+  /** The block under the text the agent writes: what was done, for whom, before/after. */
+  context?: string
+  context_versions?: CardVersion[]
+  /** Text and context versions together: the base of the next write. */
+  rev?: number
+  sources?: CardSource[]
+  merged_from?: string[]
   tasks: CardTask[]
+  notes?: CardNote[]
   cores: CardCore[]
   commits: CardCommit[]
   images: CardImage[]
-  /** Optional on the wire until every server carries them. */
   links?: CardLink[]
   files?: CardFile[]
   placements: Placement[]
@@ -50,7 +61,7 @@ export interface Card {
 
 export interface CardHistoryEvent {
   at: string
-  what: 'kept' | 'edited' | 'placed' | 'edited in' | 'removed from' | string
+  what: 'kept' | 'appended' | 'merged' | 'written' | 'edited' | 'context' | 'placed' | 'edited in' | 'removed from' | string
   doc_id: string
   doc_name: string
   version_n: number | null
@@ -146,6 +157,23 @@ export function usePublishWrites(project: string) {
         const { id, ...rest } = input
         return postJson<{ attached: Array<{ id: string; kind: string; title: string; existing: boolean }>; card: Card }>(`${API}/cards/${enc(id)}/attach`, { ...op, ...rest })
       },
+      onSuccess: refresh,
+    }),
+    /** The card's context (a version), or links the operator types: tasks, notes, links, commits. */
+    write: useMutation({
+      mutationFn: (input: { id: string; context?: string; tasks?: string[]; notes?: string[]; links?: Array<{ title: string; url: string }>; commits?: Array<{ sha: string; repo?: string }>; files?: Array<{ name: string; title: string; data_base64: string }> }) => {
+        const { id, ...rest } = input
+        return postJson<{ id: string; rev: number; card: Card }>(`${API}/cards/${enc(id)}/write`, { ...op, ...rest })
+      },
+      onSuccess: refresh,
+    }),
+    merge: useMutation({
+      mutationFn: (input: { id: string; into: string }) =>
+        postJson<{ card: Card }>(`${API}/cards/${enc(input.id)}/merge`, { ...op, into: input.into }),
+      onSuccess: refresh,
+    }),
+    removeSource: useMutation({
+      mutationFn: (id: string) => postJson<{ removed: boolean }>(`${API}/sources/${enc(id)}/remove`, op),
       onSuccess: refresh,
     }),
     removeAttachment: useMutation({
@@ -321,7 +349,45 @@ export function hostOf(url: string): string {
   try { return new URL(url).host.replace(/^www\./, '') } catch { return url }
 }
 
+/** A file's size the way a chip shows it: 840 B, 12 KB, 3.4 MB. */
+export function sizeOf(bytes: number): string {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** What the operator typed into the attach field, as the write takes it; null when it is not that kind. */
+export function attachBody(kind: 'task' | 'note' | 'link' | 'commit', value: string, title = ''):
+  | { tasks: string[] } | { notes: string[] } | { links: Array<{ title: string; url: string }> } | { commits: Array<{ sha: string; repo?: string }> } | null {
+  const v = value.trim()
+  if (!v) return null
+  if (kind === 'task') {
+    const ids = v.split(/[\s,]+/).filter(Boolean)
+    return ids.every((x) => /^tk_[0-9a-z][0-9a-z_-]{2,40}$/.test(x)) ? { tasks: ids } : null
+  }
+  if (kind === 'note') {
+    const ids = v.split(/[\s,]+/).filter(Boolean)
+    return ids.every((x) => /^nt_[0-9a-z_]{3,40}$/.test(x)) ? { notes: ids } : null
+  }
+  if (kind === 'link') return /^https?:\/\//.test(v) ? { links: [{ title: title.trim(), url: v }] } : null
+  const [sha, ...repo] = v.split(/\s+/)
+  return /^[0-9a-f]{7,40}$/i.test(sha ?? '') ? { commits: [{ sha: sha!.toLowerCase(), ...(repo.length ? { repo: repo.join(' ') } : {}) }] } : null
+}
+
 export interface ImageUpload { title: string; ext: string; data_base64: string }
+
+/** Any file as the write takes it: its name, a title, base64. */
+export function fileToAttachment(file: File): Promise<{ name: string; title: string; data_base64: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+    reader.onload = () => {
+      const url = String(reader.result ?? '')
+      resolve({ name: file.name, title: file.name, data_base64: url.slice(url.indexOf(',') + 1) })
+    }
+    reader.readAsDataURL(file)
+  })
+}
 
 /** An image file as the attach route takes it: base64, its extension, a title from its name. */
 export function fileToUpload(file: File, fallbackTitle: string): Promise<ImageUpload> {

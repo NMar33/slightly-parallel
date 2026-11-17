@@ -133,6 +133,10 @@ def _adopt_locked(store: ViewStore) -> list[str]:
     # command is the record that it was seen.
     from . import entrypointlib
     known["entrypoint"] |= {str(c.get("id") or "") for c in entrypointlib.commands(store)}
+    # A `#publish pu_… more` goes onto that card, not into a new one
+    # (publishlib.take_append); its id is the turn's keep id.
+    from . import publishlib
+    known["publish"] |= publishlib.source_ids(store)
 
     added: list[str] = []
     for m in marks:
@@ -149,6 +153,10 @@ def _adopt_locked(store: ViewStore) -> list[str]:
             entrypointlib.take_command(
                 store, kid=kid, project=project, agent=agent, session_id=str(m["session_id"] or ""),
                 turn=turn, at=str(m["at_ts"] or ""), name=str(m["title"] or ""))
+            known[kind].add(kid)
+            added.append(kid)
+            continue
+        if kind == "publish" and publishlib.take_append(store, kid, m):
             known[kind].add(kid)
             added.append(kid)
             continue

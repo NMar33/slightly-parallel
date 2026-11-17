@@ -49,13 +49,13 @@ export function PromptTag({ mark }: { mark: PromptMark }) {
 }
 
 /** Copy one message's full text — the raw capture, not the clipped view. */
-function CopyMsg({ text, label }: { text: string; label: string }) {
+function CopyMsg({ text, label, push = true }: { text: string; label: string; push?: boolean }) {
   return (
     <CopyButton
       text={text}
       title={t('Copy the {label} message', { label })}
       size={10}
-      className="ml-auto inline-flex items-center justify-center h-16 w-16 rounded-input text-tertiary hover:text-primary hover:bg-hover"
+      className={`${push ? 'ml-auto ' : ''}inline-flex items-center justify-center h-16 w-16 rounded-input text-tertiary hover:text-primary hover:bg-hover`}
     />
   )
 }
@@ -91,7 +91,7 @@ export function TaskChips({ text, onOpenTask }: { text: string; onOpenTask?: (id
  * body carries the reader's size, so markdown and raw text read at
  * exactly the same scale.
  */
-export const TurnMsg = memo(function TurnMsg({ who, text, full, long, open, msgKey, onToggle, needle, md, size, onOpenTask }: {
+export const TurnMsg = memo(function TurnMsg({ who, text, full, long, open, msgKey, onToggle, needle, md, size, onOpenTask, sid, turn, extra }: {
   who: 'user' | 'agent'
   text: string
   /** The unclipped source — what the copy button takes. */
@@ -108,14 +108,20 @@ export const TurnMsg = memo(function TurnMsg({ who, text, full, long, open, msgK
   /** Reading size in px, chosen in the toolbar. */
   size: number
   onOpenTask?: (id: string) => void
+  /** The chat and the turn, handed back to `extra` (primitives keep the memo). */
+  sid?: string
+  turn?: number
+  /** The host's marks on this one message (pin, carry, fork), before the copy button. */
+  extra?: (sid: string, turn: number, who: 'user' | 'agent', full: string) => ReactNode
 }) {
   const tone = who === 'user' ? 'text-status-amber' : 'text-brand'
   const markdown = md && !needle
   return (
-    <div className={`rounded-card border border-border-subtle bg-surface px-10 py-8 flex flex-col ${who === 'agent' ? 'ml-16' : ''}`}>
+    <div className={`group rounded-card border border-border-subtle bg-surface px-10 py-8 flex flex-col ${who === 'agent' ? 'ml-16' : ''}`}>
       <div className={`text-10 uppercase tracking-wide font-mono ${tone} mb-2 flex items-center gap-6`}>
         {who}
-        <CopyMsg text={full} label={who} />
+        {extra && sid != null && turn != null && <span className="ml-auto normal-case">{extra(sid, turn, who, full)}</span>}
+        <CopyMsg text={full} label={who} push={!(extra && sid != null && turn != null)} />
       </div>
       <div className="chat-size" style={{ fontSize: size }}>
         {markdown ? (

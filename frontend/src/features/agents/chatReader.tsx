@@ -21,7 +21,7 @@ import { TEXT_SIZES, useReadingPrefs, useStretches, type ReadingPrefs } from './
 import { isTypingTarget } from '../../lib/typing'
 
 import { t } from '../../i18n/scope/views'
-export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, position, onPrev, onNext, find: findProp, onFind, extra, markTurn, promptMarks, reading, turnExtra }: {
+export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, position, onPrev, onNext, find: findProp, onFind, extra, markTurn, promptMarks, reading, turnExtra, msgExtra }: {
   /** One session — the reader; several — the whole history, oldest first. */
   sessions: ProfileSession[]
   onOpenLens: (lens: string, id: string) => void
@@ -47,6 +47,9 @@ export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, pos
   reading?: ReadingPrefs
   /** Drawn at the end of a turn's header line — the host's own mark (the ★). */
   turnExtra?: (session: ProfileSession, turn: number, userText: string) => ReactNode
+  /** Drawn on each message's label line — the host's marks on that message
+   *  (pin, carry, fork). Keep it stable: every message re-renders when it changes. */
+  msgExtra?: (sessionId: string, turn: number, who: 'user' | 'agent', full: string) => ReactNode
 }) {
   const single = sessions.length === 1 ? sessions[0] : undefined
   // One round trip for the whole history: the ids in one request, the turns
@@ -284,6 +287,9 @@ export function ChatReader({ sessions, onOpenLens, onOpenTask, fill = false, pos
                         md={md}
                         size={size}
                         onOpenTask={onOpenTask}
+                        sid={g.session.id}
+                        turn={it.n}
+                        extra={msgExtra}
                       />
                       </div>
                     )

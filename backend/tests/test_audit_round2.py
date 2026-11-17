@@ -592,7 +592,7 @@ def test_hook_settings_of_another_shape(text: str) -> None:
 # 21 — what is typed into a terminal is written off the event loop ------------
 
 
-@pytest.mark.skipif(__import__("os").name == "nt", reason="the terminal needs macOS or Linux")
+@pytest.mark.skipif(__import__("os").name == "nt", reason="a Unix pty: it patches PtySession (the Windows one: tests/test_conpty.py)")
 def test_terminal_input_is_written_off_the_event_loop(tmp_path: Path, monkeypatch) -> None:
     import asyncio
     import time as _time

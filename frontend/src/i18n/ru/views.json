@@ -1085,5 +1085,15 @@
   "helpers": "помощники",
   "Open this helper's chat": "Открыть чат этого помощника",
   "helper run ({kind}), started by": "запуск-помощник ({kind}), его запустил",
-  "helper run ({kind}); the chat that started it is not known": "запуск-помощник ({kind}); чат, который его запустил, неизвестен"
+  "helper run ({kind}); the chat that started it is not known": "запуск-помощник ({kind}); чат, который его запустил, неизвестен",
+  "Marked messages in this chat": "Отмеченные сообщения этого чата",
+  "Marked": "Отмечено",
+  "pinned": "закреплено",
+  "fork later": "форк на потом",
+  "carried whole": "переносится целиком",
+  "carried as a brief": "переносится как изложение",
+  "reply": "ответ",
+  "The carried messages were given back to the agent after a context compaction": "Переносимые сообщения были возвращены агенту после сжатия контекста",
+  "given back after compaction at {at}": "возвращены после сжатия в {at}",
+  "all marks": "все отметки"
 }

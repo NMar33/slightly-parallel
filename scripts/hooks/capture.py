@@ -208,6 +208,16 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # A star: the server marks it from the chat log (backend marklib.py).
     **{k: ("", "nothing to write: the server stars it") for k in (
         "important", "important-agent", "important-task", "important-message")},
+    # Marks on this message, kept by the server from the chat log (backend pinlib.py).
+    "pin": ("", "nothing to write: the server pins this message for the operator to come back to; "
+            "MCP tool pins reads the pins when you are told to go back to one"),
+    "fork-later": ("", "nothing to write: the server lists this message as work to fork to another agent later; "
+                   "go on with the message as usual"),
+    "carry": ("", "nothing to write: the server gives this message and your reply to it back to you whole "
+              "after a context compaction"),
+    # The brief is the agent's: the notice of the briefs owed names the message (format_signals).
+    "carry-brief": ("", "MCP tool carry_brief {message, text}: now, a short brief of this message with the "
+                    "context needed to understand it; after a compaction the brief is given back instead of the message"),
 }
 # Built from the table, so a command is added in one place. Longest first,
 # so `#important-task` is not read as `#important`; a space in a command
@@ -377,6 +387,34 @@ def _kept(text: str, project: str, agent_id: str, turn: int) -> list[dict]:
     ]
 
 
+# `#publish pu_… more`: the card the message goes to (publishlib.APPEND_RE).
+_PUBLISH_APPEND_RE = re.compile(r"(?<![\w#])#publish\s+(pu_[0-9a-f]{8})\b", re.IGNORECASE)
+# A second #publish in the same chat within this long of a card of the
+# chat: the notice names the card, to append to unless it is another story.
+PUBLISH_NEAR_S = 3600
+
+
+def _publish_card(k: dict, said: str, meta: dict, data_root: Path, project: str) -> dict:
+    """A #publish notice's card: the one named after the tag (a card of
+    this project: the message is appended to it), else the new one, with
+    the chat's card of the last hour when there is one. Records the new
+    card in meta (``publish_recent``)."""
+    m = _PUBLISH_APPEND_RE.search(said or "")
+    if m:
+        named = m.group(1).lower()
+        if any(r.get("id") == named and r.get("project") == project for r in _read_csv(data_root / "publish.csv")):
+            return {**k, "append_to": named}
+    now = shared.now_epoch()
+    recent = [r for r in meta.get("publish_recent") or []
+              if isinstance(r, dict) and isinstance(r.get("t"), (int, float)) and now - r["t"] < PUBLISH_NEAR_S
+              and r.get("id") != k["id"]]
+    out = dict(k)
+    if recent:
+        out["near"] = {"id": recent[-1]["id"], "minutes": max(1, round((now - recent[-1]["t"]) / 60))}
+    meta["publish_recent"] = (recent + [{"id": k["id"], "t": round(now, 3)}])[-5:]
+    return out
+
+
 def now_iso() -> str:
     # SP_NOW fixes the clock for tests (hookshared.now_dt).
     return shared.now_dt().strftime("%Y-%m-%dT%H:%M:%S")
@@ -432,6 +470,28 @@ def _atomic_write_json(path: Path, obj: dict) -> None:
         except OSError:
             pass
         raise
+
+
+#: A compaction this soon after carried messages were given back is the one they answered.
+_CARRY_GRACE_S = 60.0
+
+
+def _limits():
+    """The backend's limits.py (caps the server enforces), loaded by path."""
+    return _backend_module("limits")
+
+
+def _briefs_owed(data_root: Path, agent: str, turn: int, tagged: bool) -> list[str]:
+    """The messages of this chat marked #carry-brief whose brief is not
+    written: this turn's when it carries the tag, then the ones in marks.csv."""
+    try:
+        owed = shared.briefs_owed(data_root, agent)
+    except Exception:  # noqa: BLE001 — a notice never costs the turn
+        owed = []
+    here = shared.mark_target(agent, turn)
+    if tagged and here not in owed and here not in shared.briefs_of(data_root, agent):
+        owed.insert(0, here)
+    return owed
 
 
 class TurnCapture:
@@ -568,7 +628,11 @@ class TurnCapture:
         # messages are recorded, and nothing in them acts — no command, no
         # kept entry, no notice that asks for work (the standup, a scan's
         # reminders). Its prompt was written by an agent, not the operator.
-        helper = bool(meta.get("helper"))
+        # A text the tool hands in under a prefix of its own (a task
+        # notification, another session's message: hookshared.NOT_OPERATOR)
+        # the same, in every adapter: Claude Code's hook skips it before it
+        # gets here, the others (Codex notify, Cursor, OpenCode) did not.
+        helper = bool(meta.get("helper")) or not shared.operator_wrote(user_text)
         if quiet or helper:
             settings = {**settings, "standup_enabled": False, "decision_hint_enabled": False,
                         "contract_refresh_turns": 0, "files_due_enabled": False, "architecture_due_enabled": False}
@@ -614,8 +678,10 @@ class TurnCapture:
             f"**User**: {escape_content(user_text.rstrip())}\n"
         )
 
+        # A task id in a text nobody typed (a helper's brief, a notification)
+        # is not the task the operator's next #evidence means.
         named = _TASK_ID_RE.findall(user_text or "")
-        if named:
+        if named and not helper:
             meta["last_task"] = named[-1]
         # The message as the commands read it: a ###command silences the
         # other tags (hookshared.command_text, the server reads the same).
@@ -640,6 +706,11 @@ class TurnCapture:
         if tell_identity:
             meta["identity_told"] = True
         meta["message_count"] = turn
+        if meta.get("capture") == "import" and not meta.get("live_from"):
+            # A chat imported from the tool's log, resumed: its turns from
+            # here on are recorded live and act like any other; the imported
+            # ones before stay read only (db.py, by turn).
+            meta["live_from"] = turn
         meta["last_active"] = now_iso()
         meta["pending_turn"] = turn
         meta["pending_user_text"] = text_key
@@ -648,6 +719,17 @@ class TurnCapture:
         # read at a later Stop, go to the turn whose window holds them, and
         # never to one the hook answered itself (quiet).
         self._note_turn(meta, turn, shared.now_epoch(), quiet)
+        kept = [
+            # An artifact is a folder the agent writes itself; the notice
+            # names where, so the agent never guesses the data root.
+            {**k, "folder": str(self.data_root / "projects" / self.project / "artifacts")}
+            if k["kind"] == "artifact"
+            # A #publish names the card to write: a new one, or the one
+            # named after the tag; and the chat's card of the last hour.
+            else _publish_card(k, said, meta, self.data_root, self.project) if k["kind"] == "publish"
+            else k
+            for k in _kept(said, self.project, self.agent_name, turn)
+        ]
         if files_due:
             # One notice per scan per agent — the response warning and the
             # contract carry the rest; nagging every turn would be noise.
@@ -682,13 +764,7 @@ class TurnCapture:
             # does not have; the notice says so first, so the agent asks.
             "task_lane": _task_lane(self.data_root, self.project, said)
             if any(c == "task" or c.startswith("now") for c in commands) else None,
-            "kept": [
-                # An artifact is a folder the agent writes itself; the notice
-                # names where, so the agent never guesses the data root.
-                {**k, "folder": str(self.data_root / "projects" / self.project / "artifacts")}
-                if k["kind"] == "artifact" else k
-                for k in _kept(said, self.project, self.agent_name, turn)
-            ],
+            "kept": kept,
             # Identity + clock on the first turn and every refresh: entries
             # posted with this agent_id and time line up with the captured
             # chat, which is what links a checkpoint to its conversation.
@@ -698,6 +774,10 @@ class TurnCapture:
                  "time": datetime.now().strftime("%H:%M")}
                 if tell_identity else None
             ),
+            # #carry-brief messages of this chat with no brief yet: this one,
+            # and any the operator marked by hand on the chat page.
+            "briefs_owed": [] if quiet or helper else _briefs_owed(
+                self.data_root, self.agent_name, turn, "carry-brief" in commands),
             # The cores the operator tracks right now: the agent may write a
             # one-line note when work it finishes changes one (corelib.py).
             "cores_tracking": shared.tracked_cores(self.data_root, self.project)
@@ -1036,6 +1116,68 @@ class TurnCapture:
             return max(0, int(got.get("pos") or 0)) if got.get("path") == path else 0
         except (OSError, ValueError, AttributeError, TypeError):
             return 0
+
+    # -- carried messages (#carry, #carry-brief) ---------------------------
+
+    @_with_meta_lock
+    def note_compacts(self, boundaries: list[float]) -> None:
+        """Keep when the context was compacted, read at a Stop: the next
+        prompt gives the carried messages back for one not answered yet
+        (a folder whose hooks predate the SessionStart one)."""
+        got = [b for b in boundaries if isinstance(b, (int, float))]
+        if not got or not self.meta_path.exists():
+            return
+        meta = self._load_meta()
+        seen = sorted({*(c for c in meta.get("carry_compacts") or [] if isinstance(c, (int, float))), *got})
+        if seen != meta.get("carry_compacts"):
+            meta["carry_compacts"] = seen[-10:]
+            _atomic_write_json(self.meta_path, meta)
+
+    def _last_given(self) -> float:
+        """When carried messages were last given back (or a compaction
+        found nothing to give): every compaction before it is answered."""
+        last = shared.carried_deliveries(self.folder)
+        try:
+            return float(last[-1].get("at_epoch") or 0) if last else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def compactions_due(self, transcript_path: str = "") -> list[float]:
+        """The compactions after the last time carried messages were given
+        back: the ones a Stop kept, and the ones written since it (a /compact
+        typed between two prompts)."""
+        try:
+            meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        seen = [c for c in meta.get("carry_compacts") or [] if isinstance(c, (int, float))]
+        pos = self.transcript_pos(transcript_path) if transcript_path else 0
+        if pos:
+            # Only the stretch since the last Stop: a chat with no position
+            # kept yet is not read from the top on every prompt.
+            seen += shared.compactions_in(transcript_path, pos)
+        # A minute's grace: the boundary of the compaction a SessionStart just
+        # answered may carry a time a moment after that answer.
+        last = self._last_given()
+        return sorted({c for c in seen if c > last + _CARRY_GRACE_S})
+
+    def give_back_carried(self, via: str, compact_at: float | None = None) -> str:
+        """The chat's carried messages as one text for the agent, once per
+        compaction: each call is recorded in carried.jsonl (a compaction
+        with nothing carried too, so it is not answered again later)."""
+        if not self.meta_path.exists() or self.is_helper():
+            return ""
+        lim = _limits()
+        items = shared.carried_items(self.data_root, self.agent_name, self.chat_path,
+                                     reply_cap=lim.CARRY_REPLY_CAP)
+        text, given, left = shared.compose_carried(items, lim.CARRY_BUDGET)
+        rec = {"at": now_iso(), "at_epoch": shared.now_epoch(), "via": via,
+               "compact_at": compact_at, "given": given, "left_out": left, "chars": len(text)}
+        try:
+            shared.append_locked(self.folder / shared.CARRIED_FILE, json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            self._lost("carried messages not recorded", exc)
+        return text
 
     @_with_meta_lock
     def note_chat_title(self, title: str) -> None:
@@ -1810,6 +1952,8 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
                     f"[slightly-parallel] #{name} — the hook's answer is below; show it to the user as it is "
                     "and add nothing to it.\n" + str(signals["usage_answer"]))
             continue
+        if name == "carry-brief" and signals.get("briefs_owed"):
+            continue  # the briefs owed, below, name this message
         if name == "map":
             on, other = offer("map", signals.get("map_model") or "opus")
             notes.append(
@@ -1842,6 +1986,15 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
                     + (f" (its lanes: {', '.join(lane['lanes'])})" if lane.get("lanes") else " (it has no lanes yet)")
                     + ": ask the operator which, in one line, before writing."
                 )
+    owed = signals.get("briefs_owed") or []
+    if owed:
+        named = ", ".join(f"\"{t}\"" for t in owed[:8])
+        notes.append(
+            f"[slightly-parallel] #carry-brief — the operator marked {len(owed)} message"
+            f"{'' if len(owed) == 1 else 's'} to be carried over a context compaction as a brief: {named}. "
+            "Write each brief now, before other work: MCP tool carry_brief {message, text}; the text is what the "
+            "message says and the context needed to understand it after the chat is compacted (who asked, what for, "
+            "what was decided), in a few sentences. It is given back instead of the message.")
     ev = signals.get("evidence_for")
     if ev is not None:
         if ev.get("id"):
@@ -1926,12 +2079,29 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
         )
     for k in signals.get("kept") or []:
         if k["kind"] == "publish":
+            if k.get("append_to"):
+                notes.append(
+                    f"[slightly-parallel] #publish — the operator adds this message to the card {k['append_to']} "
+                    "(Publish page). Write what they ask for and only that, in the same turn, with MCP tool "
+                    f"publish_write {{id: \"{k['append_to']}\", base}}: read the card first (its rev and context are "
+                    "in the answer of any publish_write; a piece goes on top of the context as it is), then the "
+                    "context or the attachments they asked for. Never rewrite their text unless asked "
+                    "(SLIGHTLY-PARALLEL.md §4, Publish)."
+                )
+                continue
+            near = k.get("near")
             notes.append(
-                f"[slightly-parallel] #publish — the server keeps this message as {k['id']} on the "
-                "Publish page (what shipped, worth telling). The text is the operator's: write nothing. "
-                "Attach what they may need to tell about it: 1–3 screenshots of what it is about (the "
-                "page or the product, as you can render it) and the links, with MCP tool "
-                f"publish_attach {{id: \"{k['id']}\", images, links}}."
+                f"[slightly-parallel] #publish — the server keeps this message as the card {k['id']} on the "
+                "Publish page (what shipped, worth telling). Write the card now, in this turn, with MCP tool "
+                f"publish_write {{id: \"{k['id']}\"}}: `text` only if the operator asked you to write it (\"about "
+                "X\", \"describe …\"), else their message is the text; `context` — what was done, for whom, "
+                "before/after, numbers; and what belongs to it, by id or path, never guessed: tasks, commits "
+                "{sha, repo}, files {path}, images {path} (1–3 screenshots, original size), links, notes "
+                "(SLIGHTLY-PARALLEL.md §4, Publish)."
+                + (f" This chat made the card {near['id']} {near['minutes']} min ago: if this message is about "
+                   f"the same thing, write into {near['id']} instead and fold the new card in with "
+                   f"publish_write {{id: \"{near['id']}\", merge: \"{k['id']}\"}}; if it is another story, "
+                   "write the new card." if near else "")
             )
             continue
         if k["kind"] == "entrypoint":

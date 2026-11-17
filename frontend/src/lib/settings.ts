@@ -156,7 +156,7 @@ export function areasOf(key: readonly unknown[]): string[] | null {
     || (typeof head === 'string' && head.startsWith('time-'))) return ['tasks']
   if (head === 'visions' || head === 'rules' || head === 'problems' || head === 'entrypoints' || head === 'skills'
     || head === 'artifacts' || head === 'standups-page' || head === 'standups-calendar' || head === 'standups'
-    || head === 'decisions-page' || head === 'prompt-library' || head === 'integrate' || head === 'reason'
+    || head === 'decisions-page' || head === 'prompt-library' || head === 'integrate' || head === 'reason' || head === 'notes'
     || head === 'tour') return ['rest']
   // Constants of the server's code: no write ever changes them.
   if (head === 'story-templates') return []

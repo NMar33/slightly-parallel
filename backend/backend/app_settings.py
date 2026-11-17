@@ -410,7 +410,7 @@ SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         key="terminal.keep", label="Keep terminals when Slightly Parallel restarts",
-        description="tmux: every terminal lives on in tmux, and a restart or a closed tab rejoins it — an agent keeps working. plain: a terminal ends with the server.",
+        description="tmux: every terminal lives on in tmux, and a restart or a closed tab rejoins it — an agent keeps working. plain: a terminal ends with the server. On Windows every terminal is plain: tmux does not run there.",
         type="choice", default="tmux", group="Terminal", options=("tmux", "plain"),
     ),
     SettingSpec(

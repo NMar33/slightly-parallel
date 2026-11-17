@@ -47,8 +47,8 @@ def test_an_agents_write_is_refused_at_the_gate(client: TestClient, route: str, 
 def test_the_terminal_gates_refuse_an_agent(client: TestClient, monkeypatch) -> None:
     from backend.routers import terminal
 
-    if not terminal.SUPPORTED:
-        pytest.skip("the terminal needs macOS or Linux")
+    # Every system has the terminal (Windows: pywinpty); without it this fails, named.
+    assert terminal.SUPPORTED, terminal.UNSUPPORTED
     assert client.post("/api/settings", json={"values": {"terminal.enabled": True}}).status_code == 200
     for route, what in (("/api/terminal/sessions/ts_x/type", "Typing into a terminal"),
                         ("/api/terminal/sessions/ts_x/rename", "Renaming a terminal"),

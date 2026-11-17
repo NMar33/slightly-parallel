@@ -41,8 +41,10 @@ export interface TermSession {
 
 interface TermStatus {
   enabled: boolean
-  /** False on Windows: the terminal is a Unix pty. */
+  /** False only on Windows without the pywinpty package (the server's ConPTY). */
   supported?: boolean
+  /** Windows: plain terminals only (no tmux), none survives a server restart. */
+  windows?: boolean
   forced: boolean
   token: string
   tmux: boolean
@@ -57,6 +59,9 @@ interface TermStatus {
   editor: string
   projects: Record<string, string>
 }
+
+/** How to install the Windows terminal's one package into the backend's environment. */
+export const PYWINPTY = 'backend\\.venv\\Scripts\\python -m pip install pywinpty'
 
 export const STATE_WORD: Record<TermState, string> = {
   shell: t('a prompt'), working: t('working'), waiting: t('your turn'), running: t('running'), ended: t('ended'),

@@ -29,7 +29,8 @@ from .vocab import HEADLINE_REQUIRED, check_enum_fields
 OPERATOR_ONLY: dict[str, str] = {
     # A publish card is the operator's own #publish message (what shipped,
     # worth telling); the page and its documents are the operator's.
-    "publish": "a publish card is the operator's own #publish message, kept by the server; nothing is written for it",
+    "publish": ("a publish card starts from the operator's own #publish message, kept by the server; "
+                "the agent writes its text, context and attachments with MCP publish_write"),
     # A rule is the operator's own #rule message, kept by the server. An
     # agent's rule was accepted with a warning, made active, and served to
     # every agent of the project as the operator's (sp://rules).
@@ -55,6 +56,10 @@ OPERATOR_ONLY: dict[str, str] = {
         "artifacts come from #artifact in a message or the Artifacts page — an "
         "agent writes the folder and makes the record with the MCP tool "
         "artifact_write"
+    ),
+    "note": (
+        "a note is written with the MCP tool note_write {title, kind, text, "
+        "task_id?, entrypoint_id?} — versions, pictures and the operator's marks come with it"
     ),
 }
 

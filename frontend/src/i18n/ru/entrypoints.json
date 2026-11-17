@@ -207,5 +207,6 @@
     "few": "Показать все {n} сообщения",
     "many": "Показать все {n} сообщений"
   },
-  "Loading the entry points": "Загрузка точек входа"
+  "Loading the entry points": "Загрузка точек входа",
+  "Archived {date}. Kept for reading; it is not offered after #entrypoint and takes no writes.": "В архиве с {date}. Её можно читать, но после #entrypoint она не предлагается и записи в неё не принимаются."
 }

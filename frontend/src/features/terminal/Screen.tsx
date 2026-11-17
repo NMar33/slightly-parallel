@@ -37,8 +37,9 @@ import { letter } from '../../lib/typing'
 const INVALID_TOKEN = 4401
 const OFF = 4409
 const ENDED = 4000
-/** Refusals a retry cannot change: a foreign page, a bad id, too many terminals. */
-const REFUSED = new Set([4400, 4403, 4429])
+/** Refusals a retry cannot change: a foreign page, a bad id, too many
+ *  terminals, a shell that did not start (4500, the reason says why). */
+const REFUSED = new Set([4400, 4403, 4429, 4500])
 
 /** What the bar (and the right-click menu) can ask a screen to do. */
 export interface ScreenApi {
@@ -50,7 +51,7 @@ export interface ScreenApi {
 
 interface Dot { abs: number; rel: number }
 
-export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor = '', visible = true, project = '', taskId = '', backend = 'tmux', onEnded, onFocus, autoFocus = true, onZoom, bind }: {
+export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor = '', visible = true, project = '', taskId = '', backend = 'tmux', onEnded, onFocus, autoFocus = true, onZoom, bind, onInput }: {
   sid: string
   token: string
   fontSize?: number
@@ -72,6 +73,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   onZoom?: (delta: number) => void
   /** Hands the bar this screen's actions (find, select lines, …). */
   bind?: (api: ScreenApi | null) => void
+  /** Told of each input that goes to the shell (a key, a paste), after it is sent; what is sent never changes. */
+  onInput?: (data: string) => void
 }) {
   const box = useRef<HTMLDivElement>(null)
   const fitRef = useRef<() => void>(() => {})
@@ -84,6 +87,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const workRef = useRef({ project, taskId })
   workRef.current = { project, taskId }
   const onZoomRef = useRef(onZoom)
+  const onInputRef = useRef(onInput)
+  onInputRef.current = onInput
   const visibleRef = useRef(visible)
   const autoFocusRef = useRef(autoFocus)
   const editorRef = useRef(editor)
@@ -440,6 +445,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       })
       t.onData((data) => {
         if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }))
+        onInputRef.current?.(data)
         if (data.includes('\r')) {
           const b = t.buffer.active
           plainStamp.current = b.baseY + b.cursorY

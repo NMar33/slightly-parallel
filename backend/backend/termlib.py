@@ -13,6 +13,13 @@ to. The shell itself lives in one of two places (setting ``terminal.keep``):
 - **plain**: a pty the server holds (routers/terminal.py); it ends with the
   server.
 
+On Windows every terminal is plain: the pty is a ConPTY (conpty.py, through
+pywinpty) and the shell is PowerShell 7, else Windows PowerShell, else cmd.
+tmux does not exist there, so nothing survives a server restart, there is no
+server-side history (capture, pos, bottom answer 409 as for any plain
+terminal) and Restore never offers anything. A command typed into a terminal
+is built for the shell it is typed into (``family_of``).
+
 What runs in a terminal is read, not guessed: tmux says the program in the
 foreground and when the terminal last printed; the capture hook records the
 terminal an agent was started in (``SP_TERMINAL`` → chat meta
@@ -45,7 +52,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .csvio import read_rows
 from .docs_md import resolve_under
@@ -59,7 +66,11 @@ SOCKET = "sp"
 OLD_SOCKET = "merkhet"  # the socket's name before the product was renamed
 PREFIX = "mk-"
 QUIET_SECONDS = 4            # printed nothing this long: not working any more
-SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ksh", "tmux", "login"}
+SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ksh", "tmux", "login",
+          # Windows' shells, as foreground_of_pid names them (no ".exe").
+          "pwsh", "powershell", "cmd"}
+#: Windows: every terminal is a plain ConPTY, and commands are built for its shell.
+WINDOWS = os.name == "nt"
 TMUX_CONF = """\
 # Slightly Parallel's own tmux: invisible, the browser is the window.
 set -g status off
@@ -138,7 +149,9 @@ def resolve_cwd(data_root: Path, project: str, cwd: str = "") -> Path:
 
 
 def tmux_path() -> str | None:
-    return shutil.which("tmux")
+    """tmux, where it can hold a terminal. Never on Windows: a tmux from MSYS
+    or Cygwin on the PATH cannot hold a native Windows shell."""
+    return None if WINDOWS else shutil.which("tmux")
 
 
 def tmux_version() -> str:
@@ -269,7 +282,60 @@ def to_bottom(data_root: Path, sid: str) -> None:
 
 
 def uses_tmux(settings: dict[str, Any]) -> bool:
+    # False on Windows whatever the setting says: tmux_path() is None there.
     return settings.get("terminal.keep", "tmux") == "tmux" and tmux_path() is not None
+
+
+# ---------------------------------------------------------------------------
+# The shell a terminal runs, and the family its commands are written for
+# ---------------------------------------------------------------------------
+
+#: How commands are quoted: bash ($'…'), PowerShell, or cmd.
+FAMILIES = ("bash", "powershell", "cmd")
+
+
+def windows_shell(which=shutil.which, env: Mapping[str, str] | None = None) -> list[str]:
+    """The shell a Windows terminal runs, as argv: PowerShell 7 (pwsh), else
+    Windows PowerShell, else cmd (%ComSpec%). Its output is UTF-8: PowerShell
+    sets its console encodings at start, cmd switches to code page 65001.
+    There is no setting for it: $SHELL on Windows is Git Bash's, a Unix path."""
+    env = os.environ if env is None else env
+    for name in ("pwsh", "powershell"):
+        exe = which(name)
+        if exe:
+            # A bare string (no quotes, no $ the command line could take):
+            # -EncodedCommand is UTF-16LE base64, as PowerShell documents.
+            utf8 = ("$OutputEncoding = [Console]::InputEncoding = [Console]::OutputEncoding"
+                    " = New-Object System.Text.UTF8Encoding $false")
+            packed = base64.b64encode(utf8.encode("utf-16-le")).decode("ascii")
+            return [exe, "-NoLogo", "-NoExit", "-EncodedCommand", packed]
+    comspec = env.get("ComSpec") or env.get("COMSPEC") or which("cmd") or "cmd.exe"
+    return [comspec, "/K", "chcp 65001>nul"]
+
+
+def plain_shell() -> list[str]:
+    """argv of the shell a plain terminal runs on this system."""
+    if WINDOWS:
+        return windows_shell()
+    return [os.environ.get("SHELL") or "bash", "-l"]
+
+
+def family_of(shell: str) -> str:
+    """The quoting family of a shell, by its program name."""
+    name = Path(shell or "bash").name.lower().replace("\\", "/").rsplit("/", 1)[-1]
+    name = name[:-4] if name.endswith(".exe") else name
+    if name in ("pwsh", "powershell"):
+        return "powershell"
+    if name == "cmd":
+        return "cmd"
+    return "bash"
+
+
+def command_family() -> str:
+    """The family the terminals' commands are built for here: bash on macOS
+    and Linux (typed_form hands a command to bash in other shells), the
+    shell's own on Windows, where there is no bash to hand it to."""
+    return family_of(plain_shell()[0]) if WINDOWS else "bash"
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +408,51 @@ def new_id() -> str:
 # ---------------------------------------------------------------------------
 
 
+#: The longest text one argument carries on Windows: cmd.exe takes a command
+#: line of 8191 characters, and an npm-installed agent is a .cmd that cmd runs.
+WINDOWS_ARG_MAX = 7000
+
+
+def windows_arg_text(text: str) -> str:
+    """Text that stays one argument on its way through PowerShell or cmd to a
+    Windows program, and through cmd again when that program is a .cmd (an
+    npm-installed claude or codex). Control characters are dropped, a line
+    break or tab becomes a space (a newline ends a cmd line), a double quote
+    becomes a single one (Windows PowerShell and a .cmd both split an
+    argument at an inner "), and % becomes the full-width ％ (cmd expands
+    %NAME% even inside quotes). Cut at WINDOWS_ARG_MAX, and without a
+    trailing backslash, which would escape the quote a program's command
+    line closes the argument with."""
+    text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    text = re.sub(r"[\x00-\x1f\x7f]", "", text)
+    text = text.replace('"', "'").replace("%", "\uff05")
+    return text[:WINDOWS_ARG_MAX].rstrip("\\")
+
+
+def ps_quote(text: str, *, literal: bool = False) -> str:
+    """One PowerShell argument holding `text`: single quotes, where nothing is
+    expanded and a quote is written twice (PowerShell also reads the curly
+    single quotes as quotes). `literal`: a path, kept as it is otherwise."""
+    body = text if literal else windows_arg_text(text)
+    return "'" + re.sub("['\u2018\u2019\u201a\u201b]", lambda m: m.group(0) * 2, body) + "'"
+
+
+def cmd_quote(text: str, *, literal: bool = False) -> str:
+    """One cmd argument holding `text`: double quotes, inside which & | < > ^
+    are plain characters; windows_arg_text took out the " and % that could
+    still act. `literal`: a path (a Windows path has no ")."""
+    return '"' + (text.replace('"', "") if literal else windows_arg_text(text)) + '"'
+
+
+def quote_for(family: str, text: str) -> str:
+    """`text` as one argument of a command in `family`."""
+    if family == "powershell":
+        return ps_quote(text)
+    if family == "cmd":
+        return cmd_quote(text)
+    return ansi_quote(text)
+
+
 def ansi_quote(text: str) -> str:
     """One line of bash that holds any text: $'…' with the escapes spelled.
     Other control characters are dropped: typed, ESC or ^U act as keys."""
@@ -364,6 +475,37 @@ def resume_command(tool: str, session_ref: str) -> str:
     return ""
 
 
+#: The longest first prompt a fork command carries: one argument of a
+#: command line is at most 128 KiB on Linux.
+FORK_PROMPT_MAX = 100_000
+
+
+def fork_command(tool: str, session_ref: str, cwd: str, prompt: str, family: str | None = None) -> str:
+    """The command that starts a copy of a chat with ``prompt`` as its first
+    message, in the chat's folder: Claude Code resumes the session into a
+    new one (``--fork-session``), Codex forks it (``codex fork``). "" for a
+    tool that cannot, or a chat with no session or folder known. The server
+    never runs it: the operator copies it, or the page types it into a
+    terminal — so it is written for the terminals' shell (``family``)."""
+    if not cwd or not prompt.strip() or not session_ref \
+            or not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$", session_ref):
+        return ""
+    family = family or command_family()
+    q = quote_for(family, prompt if family != "bash" else prompt[:FORK_PROMPT_MAX])
+    if tool == "claude-code":
+        run = f"claude -r {session_ref} --fork-session {q}"
+    elif tool == "codex":
+        run = f"codex fork {session_ref} {q}"
+    else:
+        return ""
+    if family == "powershell":
+        # Windows PowerShell 5.1 has no &&: the run waits on Set-Location's success.
+        return f"Set-Location -LiteralPath {ps_quote(cwd, literal=True)}; if ($?) {{ {run} }}"
+    if family == "cmd":
+        return f"cd /d {cmd_quote(cwd, literal=True)} && {run}"
+    return f"cd {shlex.quote(cwd)} && {run}"
+
+
 def task_prompt(task: dict[str, Any]) -> str:
     title = str(task.get("title") or "").strip()
     desc = str(task.get("description") or "").strip()
@@ -372,8 +514,10 @@ def task_prompt(task: dict[str, Any]) -> str:
     return body
 
 
-def start_command(tool: str, task: dict[str, Any]) -> str:
-    q = ansi_quote(task_prompt(task))
+def start_command(tool: str, task: dict[str, Any], family: str | None = None) -> str:
+    """The command that starts `tool` on a task, written for the terminals'
+    shell (``family``; bash on macOS and Linux)."""
+    q = quote_for(family or command_family(), task_prompt(task))
     if tool == "codex":
         return f"codex {q}"
     if tool == "opencode":
@@ -387,7 +531,12 @@ def typed_form(command: str, shell: str) -> str:
     are into another shell, a quote in that text would end the string and
     the rest would run. bash and zsh read it as written; a POSIX shell hands
     it to bash in one quoted word; any other shell (fish, nu — their quoting
-    rules differ) gets it as base64, which holds nothing to quote."""
+    rules differ) gets it as base64, which holds nothing to quote.
+
+    On Windows a command was built for the shell it goes into (start_command
+    and fork_command quote for PowerShell or cmd there): typed as it is."""
+    if WINDOWS:
+        return command
     name = Path(shell or "bash").name
     if name in ("bash", "zsh"):
         return command
@@ -404,7 +553,7 @@ def typed_form(command: str, shell: str) -> str:
 
 def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, project: str, cwd: str,
                  command: str = "", label: str = "", agent_id: str = "", task_id: str = "",
-                 sid: str = "") -> dict[str, Any]:
+                 sid: str = "", role: str = "", group: str = "") -> dict[str, Any]:
     """A new terminal: its row, and — with tmux — the session, running `command`."""
     sid = sid if sid and SAFE_ID.match(sid) else new_id()
     where = str(resolve_cwd(data_root, project, cwd))
@@ -415,6 +564,10 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "backend": backend,
         "launch": settings.get("terminal.launch", "run"),
     }
+    if role in ROLES:
+        row["role"] = role
+    if group:
+        row["group"] = group
     if backend == "tmux":
         shell = os.environ.get("SHELL") or "bash"
         # The history length is set just before the pane is made: tmux gives
@@ -425,8 +578,12 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
         if command:
             wait_for_prompt(data_root, sid)
             type_into(data_root, row, typed_form(command, shell), enter=row["launch"] == "run")
-    put(data_root, row)
-    return row
+        # Which tmux server holds it: a terminal whose server is gone was not
+        # closed by anyone (a reboot, a crash), and Restore offers it back.
+        row["server"] = tmux_server_pid(data_root)
+    # Awake again, whatever it was: sleep() and a restore go through here.
+    row["asleep"] = False
+    return put(data_root, row)
 
 
 def pane_pos(data_root: Path, sid: str) -> dict[str, int]:
@@ -522,6 +679,187 @@ def alive_tmux(data_root: Path, sid: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Roles, sleep, restore, groups, typing
+# ---------------------------------------------------------------------------
+
+#: What a terminal is for: an agent's chat, a local server kept apart from
+#: the chats, or a plain shell.
+ROLES = ("chat", "server", "shell")
+GROUPS = "groups.json"
+TYPING = "typing.csv"
+
+
+def role_of(row: dict[str, Any]) -> str:
+    role = str(row.get("role") or "")
+    if role in ROLES:
+        return role
+    return "chat" if row.get("kind") in ("resume", "start") or row.get("agent_id") else "shell"
+
+
+def tmux_server_pid(data_root: Path) -> str:
+    """The pid of Slightly Parallel's tmux server, "" when none runs."""
+    exe = tmux_path()
+    if exe is None:
+        return ""
+    # Asked without the config file: a read writes nothing, and with no
+    # server running tmux answers an error instead of starting one.
+    try:
+        got = subprocess.run([exe, "-L", socket_of(data_root), "display-message", "-p", "#{pid}"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return got.stdout.strip() if got.returncode == 0 else ""
+
+
+def wake_command(row: dict[str, Any], resume: str = "") -> str:
+    """What a terminal runs when it comes back. An agent's chat resumes its
+    session (`resume`, worked out by the caller from the chat's record); a
+    server runs its command again; a plain shell comes back empty — its
+    one-off command is not repeated, and a terminal that started an agent on
+    a task never starts a second one."""
+    if resume:
+        return resume
+    if row.get("kind") == "resume":
+        return str(row.get("command") or "")
+    if role_of(row) == "server":
+        return str(row.get("command") or "")
+    return ""
+
+
+def sleep(data_root: Path, sid: str, wake: str) -> dict[str, Any] | None:
+    """Stop what runs in the terminal and keep its row: `wake` is what it
+    runs when woken. The tmux session is killed; the caller drops a plain pty."""
+    row = get(data_root, sid)
+    if row is None:
+        return None
+    if row.get("backend") == "tmux":
+        tmux(data_root, "kill-session", "-t", PREFIX + sid)
+    return put(data_root, {"id": sid, "asleep": True, "wake": wake,
+                           "slept_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+
+
+def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | None = None) -> dict[str, Any] | None:
+    """The terminal again, under its own id, running `command` (default: what
+    sleep() kept). Its label, role, group, agent and task stay."""
+    row = get(data_root, sid)
+    if row is None:
+        return None
+    if row.get("backend") == "tmux" and alive_tmux(data_root, sid):
+        return put(data_root, {"id": sid, "asleep": False})
+    cmd = str(row.get("wake") or "") if command is None else command
+    created = row.get("created")
+    cwd = str(row.get("cwd") or "")
+    if cwd and not Path(cwd).is_dir():
+        cwd = ""  # the folder is gone: the project's folder, or home
+    out = open_session(data_root, settings, kind=str(row.get("kind") or "shell"), project=str(row.get("project") or ""),
+                       cwd=cwd, command=cmd, label=str(row.get("label") or ""),
+                       agent_id=str(row.get("agent_id") or ""), task_id=str(row.get("task_id") or ""), sid=sid)
+    # The command a terminal was opened with stays its own; what woke it is `wake`.
+    # A plain terminal types `wake` when its new shell starts (routers/terminal.py
+    # _pending): not typed yet. Before, it kept `typed` from its first life and a
+    # woken chat came back as an empty shell.
+    return put(data_root, {"id": sid, "created": created or out.get("created"),
+                           "command": row.get("command") or "", "wake": cmd, "typed": False,
+                           "woken_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+
+
+def lost(items: list[dict[str, Any]], server_pid: str) -> list[dict[str, Any]]:
+    """Terminals that ended without anyone ending them: their tmux server is
+    not the one running now (the computer restarted, tmux was killed). One
+    put to sleep is not lost; one whose shell was left with `exit` under the
+    server still running is not either, and neither is one from before the
+    server was recorded (nobody can tell how that one ended)."""
+    return [x for x in items if x.get("state") == "ended" and not x.get("asleep")
+            and x.get("backend") == "tmux" and x.get("server") and str(x["server"]) != server_pid]
+
+
+def groups(data_root: Path) -> list[dict[str, Any]]:
+    p = Path(data_root) / FOLDER / GROUPS
+    if not p.exists():
+        return []
+    try:
+        data = safe_read_json(p)
+    except (OSError, ValueError):
+        return []
+    return [g for g in (data.get("groups") if isinstance(data, dict) else []) or [] if isinstance(g, dict)]
+
+
+def _edit_groups(data_root: Path, change) -> Any:
+    out: list[Any] = []
+
+    def apply(doc: Any) -> dict:
+        doc = doc if isinstance(doc, dict) else {}
+        gs = [g for g in doc.get("groups") or [] if isinstance(g, dict)]
+        out.append(change(gs))
+        return {"groups": gs}
+
+    edit_json(folder(data_root) / GROUPS, apply)
+    return out[0] if out else None
+
+
+def group_put(data_root: Path, gid: str, name: str | None = None, color: int | None = None) -> dict[str, Any] | None:
+    """A custom workspace: a named, coloured set of terminals from any
+    projects. An empty `gid` makes one; None leaves a field as it is."""
+    def change(gs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for g in gs:
+            if g.get("id") == gid:
+                if name is not None:
+                    g["name"] = name
+                if color is not None:
+                    g["color"] = color
+                return g
+        if gid:
+            return None
+        g = {"id": "g" + secrets.token_hex(4), "name": name or f"Group {len(gs) + 1}",
+             "color": color or (len(gs) % 8) + 1, "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        gs.append(g)
+        return g
+    return _edit_groups(data_root, change)
+
+
+def group_remove(data_root: Path, gid: str) -> bool:
+    """The group goes; its terminals return to their projects."""
+    def change(gs: list[dict[str, Any]]) -> bool:
+        n = len(gs)
+        gs[:] = [g for g in gs if g.get("id") != gid]
+        return len(gs) < n
+    gone = bool(_edit_groups(data_root, change))
+
+    def clear(sessions: list[dict[str, Any]]) -> None:
+        for r in sessions:
+            if r.get("group") == gid:
+                r["group"] = ""
+    if gone and rows(data_root):
+        _edit(data_root, clear)
+    return gone
+
+
+def note_typing(data_root: Path, row: dict[str, Any], keys: int) -> None:
+    """One line per report: when the operator typed into which terminal, and
+    how many keys. Counts only — what was typed is never kept."""
+    p = folder(data_root) / TYPING
+    new = not p.exists()
+    with p.open("a", encoding="utf-8", newline="") as f:
+        if new:
+            f.write("at,terminal,project,agent_id,keys\n")
+        f.write(",".join([time.strftime("%Y-%m-%dT%H:%M:%S"), str(row.get("id") or ""),
+                          str(row.get("project") or ""), str(row.get("agent_id") or ""), str(keys)]) + "\n")
+
+
+def typing_minutes(data_root: Path, day: str) -> dict[str, int]:
+    """project → minutes of `day` (YYYY-MM-DD) in which the operator typed."""
+    p = Path(data_root) / FOLDER / TYPING
+    if not p.exists():
+        return {}
+    seen: dict[str, set[str]] = {}
+    for line in p.read_text(encoding="utf-8").splitlines()[1:]:
+        parts = line.split(",")
+        if len(parts) >= 5 and parts[0].startswith(day):
+            seen.setdefault(parts[2], set()).add(parts[0][:16])
+    return {k: len(v) for k, v in seen.items()}
+
+
+# ---------------------------------------------------------------------------
 # What runs where
 # ---------------------------------------------------------------------------
 
@@ -611,7 +949,9 @@ def listing(data_root: Path, plain: dict[str, dict[str, Any]] | None = None) -> 
             p = plain.get(sid)
             st = state_of(p["fg"], p["activity"], now, link, False) if p else "ended"
             fg, last = (p or {}).get("fg", ""), (p or {}).get("activity", 0.0)
-        out.append({**r, "state": st, "program": fg, "last_output": last,
+        if st == "ended" and r.get("asleep"):
+            st = "asleep"
+        out.append({**r, "role": role_of(r), "state": st, "program": fg, "last_output": last,
                     "agent_id": (link or {}).get("agent_id") or r.get("agent_id") or ""})
     out.sort(key=lambda x: x.get("created") or "")
     return out
@@ -639,3 +979,33 @@ def foreground_of_fd(fd: int) -> str:
     return os.path.basename(out)
 
 
+#: A console host is a ConPTY's helper, not a program the operator runs.
+_HOSTS = {"conhost", "openconsole"}
+
+
+def foreground_of_pid(pid: int) -> str:
+    """Windows has no foreground process group: the program a plain terminal
+    runs is read from its shell's process tree instead — the newest process
+    at the bottom of it (``claude`` under ``pwsh``; a build's last child),
+    the shell itself when it has no children. "" when the shell is gone.
+    It names what runs, not what holds the keyboard: a program left running
+    in the background with ``Start-Process -NoNewWindow`` counts as running."""
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover — psutil is a backend dependency
+        return ""
+
+    def name_of(p: Any) -> str:
+        n = os.path.basename(p.name() or "")
+        return n[:-4] if n.lower().endswith(".exe") else n
+
+    try:
+        here = psutil.Process(pid)
+        for _ in range(16):  # a chain of shells is short; a loop is never infinite
+            kids = [k for k in here.children() if name_of(k).lower() not in _HOSTS]
+            if not kids:
+                return name_of(here)
+            here = max(kids, key=lambda k: k.create_time())
+    except (psutil.Error, OSError):
+        return ""
+    return name_of(here)

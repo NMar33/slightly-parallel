@@ -1,0 +1,16 @@
+{
+  "name": "slightly-parallel-terminal",
+  "productName": "Slightly Parallel Terminal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The terminal of Slightly Parallel in a window of its own",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "e2e": "node e2e/run.mjs"
+  },
+  "devDependencies": {
+    "electron": "45.3.3"
+  }
+}

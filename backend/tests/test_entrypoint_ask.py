@@ -760,3 +760,20 @@ def test_a_question_asked_before_a_restart_is_answered_after_it(board, data_root
         got = c2.post("/api/entrypoints/answer", json={"agent_id": ME, "number": 1}).json()
     assert got["state"] == "chosen" and got["id"] == ids["site"] and got["writer"] == ME
     assert E.command_of(_store(c), kid)["how"] == "chosen"  # type: ignore[index]
+
+
+def test_an_archived_topic_is_on_the_desk_marked_and_search_names_it_by_its_label(board) -> None:
+    from backend import searchlib
+    c, root, ids = board
+    store = _store(c)
+    row = E.entry_of(store, ids["site"])
+    label = E.label_of(store, row)
+    E._rewrite_entry(store, ids["site"], {"archived_at": "2026-09-10T10:00:30"})
+    tiles = {t["id"]: t for t in c.get("/api/entrypoints/desk?project=ALPHA").json()["topics"]}
+    assert tiles[ids["site"]]["archived_at"] == "2026-09-10T10:00:30"
+    assert all(not t["archived_at"] for k, t in tiles.items() if k != ids["site"])
+    # Offers, matching and writes still never see it.
+    assert ids["site"] not in [r["id"] for r in E.entries(store, "ALPHA")]
+    searchlib.forget()
+    hit = next(h for h in searchlib.search(_store(c), ids["site"]) if h.id == ids["site"])
+    assert hit.kind == "entrypoint" and hit.title == label

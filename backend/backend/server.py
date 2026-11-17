@@ -66,10 +66,12 @@ from .routers import (
     files_extra,
     integrate,
     entrypoints,
+    notes,
     keep,
     lenses,
     logs,
     marks,
+    pins,
     done,
     undo,
     stats,
@@ -322,9 +324,9 @@ _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "ta
                 "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
                 "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
                 "task_done", "next_tasks",
-                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "usage_prices_write",
+                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "publish_write", "usage_prices_write",
                 "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_ask", "entrypoint_answer",
-                "task_topic")
+                "task_topic", "carry_brief", "note_write", "note_image")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
 MCP_REFUSAL = (
     f"agents write through the Slightly Parallel MCP tools ({', '.join(_WRITE_TOOLS)}), not by HTTP. "
@@ -359,11 +361,14 @@ _MCP_WRITE_PATHS = (
     r"/api/next-tasks/make",
     r"/api/cores",
     r"/api/cores/[^/]+/(notes|links|off)",
-    r"/api/publishing/cards/[^/]+/attach",
+    r"/api/publishing/cards/[^/]+/(attach|write)",
     r"/api/entrypoints/[^/]+/(stops|ways|shots)",
     r"/api/entrypoints/(ask|answer)",
     r"/api/tasks/[^/]+/topic",
     r"/api/usage/prices",
+    r"/api/carries/brief",
+    r"/api/notes/write",
+    r"/api/notes/[^/]+/images",
 )
 MCP_PATH_REFUSAL = (
     "the Slightly Parallel MCP tools do not write here, so an agent cannot either. "
@@ -672,6 +677,17 @@ def create_app(
         except (OSError, RuntimeError) as exc:
             log.warning("entry point migration skipped: %s", exc)
     store = ViewStore(data_root=root)
+    # Publish cards whose task the server used to guess at every read: the
+    # sound guesses frozen into stored links once (publishlib.migrate).
+    if root.resolve() != FIXTURES.resolve():
+        try:
+            from .publishlib import migrate as migrate_publish
+            got = migrate_publish(store)
+            if got["frozen"] or got["dropped"]:
+                log.info("publish cards migrated: %d task links kept, %d of another project dropped",
+                         got["frozen"], got["dropped"])
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.warning("publish migration skipped: %s", exc)
     # A new data root starts with example visions, rules and problems, once.
     if os.environ.get("SP_EXAMPLES", "1") != "0":
         try:
@@ -1005,6 +1021,7 @@ def create_app(
     app.include_router(schema_api.router)
     app.include_router(logs.router)
     app.include_router(marks.router)
+    app.include_router(pins.router)
     app.include_router(done.router)
     app.include_router(undo.router)
     app.include_router(stats.router)
@@ -1040,6 +1057,7 @@ def create_app(
     app.include_router(tasks_extra.detail_router)
     app.include_router(keep.router)
     app.include_router(entrypoints.router)  # before the lens router: /api/entrypoints/desk
+    app.include_router(notes.router)  # before the lens router: /api/notes/feed, /api/notes/write
     app.include_router(standups.router)  # before the lens router: /api/standups/material
     app.include_router(skills.router)
     app.include_router(artifacts.router)

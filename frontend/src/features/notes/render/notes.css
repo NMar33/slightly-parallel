@@ -1,0 +1,30 @@
+/* The Notes page: the moves between reading and the tiles (design round 3).
+   The global reduced-motion rule (styles/tokens.css) shortens all of them
+   to nothing; K's zoom is not started at all then. */
+
+/* J: the switch fades the new view in. */
+.r3-fade { animation: r3-fade var(--dur-med) var(--ease-out) both; }
+@keyframes r3-fade { from { opacity: 0; } }
+
+/* L: a tile drills into reading from the right; the shelves come back from the left. */
+.r3-drill { animation: r3-drill var(--dur-med) var(--ease-out) both; }
+@keyframes r3-drill { from { opacity: 0; transform: translateX(24px); } }
+.r3-back { animation: r3-back var(--dur-med) var(--ease-out) both; }
+@keyframes r3-back { from { opacity: 0; transform: translateX(-24px); } }
+
+/* K: the line read flies into its tile and back; everything else cross-fades. */
+::view-transition-group(nt-hero) { animation-duration: 280ms; animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+::view-transition-old(nt-hero), ::view-transition-new(nt-hero) { animation-duration: 280ms; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 200ms; }
+
+/* The main column: the old picture is gone before the new one shows (no double exposure); zooming out it shrinks away and the tiles settle in, zooming in the tiles swell away and the note settles in. */
+::view-transition-group(nt-page) { animation-duration: 280ms; animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+html[data-zoom='out']::view-transition-old(nt-page) { animation: 140ms cubic-bezier(0.7, 0, 0.84, 0) both r3-shrink-away; transform-origin: 50% 25vh; }
+html[data-zoom='out']::view-transition-new(nt-page) { animation: 240ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both r3-settle-down; }
+html[data-zoom='in']::view-transition-old(nt-page) { animation: 140ms cubic-bezier(0.7, 0, 0.84, 0) both r3-swell-away; }
+html[data-zoom='in']::view-transition-new(nt-page) { animation: 240ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both r3-settle-up; }
+@keyframes r3-shrink-away { to { opacity: 0; transform: scale(0.9); } }
+@keyframes r3-settle-down { from { opacity: 0; transform: scale(1.04); } }
+@keyframes r3-swell-away { to { opacity: 0; transform: scale(1.06); } }
+@keyframes r3-settle-up { from { opacity: 0; transform: scale(0.96); } }
+

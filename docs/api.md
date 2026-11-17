@@ -416,11 +416,18 @@ operator writes about it, as a new version under `kept_versions/`.
 **Publish** (`#publish`, the operator's: what shipped, worth telling): the
 cards are the kept kind `publish` (`GET /api/publish`, `GET /api/publish/{id}`,
 `POST /api/publish/{id}/update` — `tags`; `POST /api/publish/{id}/interpretation` is
-the operator's edit of the text, the same as the page's `text` route); nothing is asked of the agent, and
-an agent's write is refused. The Publish page reads and writes under
+the operator's edit of the text, the same as the page's `text` route); an agent's
+write there is refused: it writes a card with MCP `publish_write`. The Publish page reads and writes under
 `/api/publishing` (docs/publish.md): `GET /api/publishing?project=` (the
-cards with their text versions, tasks, cores, commits, images and
-placements; the documents with their versions and items) ·
+cards with their sources, text and context versions, and what was attached
+— tasks, notes, commits, files, images, links — and placements; the
+documents with their versions and items) ·
+`POST /api/publishing/cards/{card_id}/write` (`text?`, `context?`, `note?`,
+`base?`, `tasks?`, `notes?`, `commits?`, `links?`, `files?`, `images?`,
+`merge?` — the agent with MCP `publish_write`, or the operator) ·
+`POST /api/publishing/cards/{card_id}/merge` (`into`; the operator's) ·
+`POST /api/publishing/sources/{source_id}/remove` (a merge taken back, or an
+appended message dropped; the operator's) ·
 `GET /api/publishing/cards/{card_id}` (with `history`) ·
 `POST /api/publishing/cards` (`project`, `text`: a card written by hand on the page) ·
 `POST /api/publishing/cards/{card_id}/text` (`text`, `note?`) ·
@@ -431,10 +438,10 @@ current items copied) · `POST /api/publishing/docs/{doc_id}/items`
 (`card_id`, `text?`, `before?`) · `GET /api/publishing/docs/{doc_id}/markdown`
 (`n?`) · `POST /api/publishing/items/{item_id}/update` (`text?`, `before?`) ·
 `POST /api/publishing/items/{item_id}/remove` ·
-`POST /api/publishing/cards/{card_id}/attach` (`images[]` with `title`, `ext`,
-`data_base64`; `links[]` with `title`, `url` — the operator on the page, or
-the agent with MCP `publish_attach`; the same image again is the existing
-attachment) · `GET /api/publishing/attachments/{attachment_id}/file` ·
+`POST /api/publishing/cards/{card_id}/attach` (attachments only, as `write`
+takes them — the operator on the page, or the agent with MCP
+`publish_attach`, which forwards to `write`; the same attachment again is
+the existing one) · `GET /api/publishing/attachments/{attachment_id}/file` ·
 `POST /api/publishing/attachments/{attachment_id}/remove` (the operator's).
 - `GET /api/example` — the example project: `enabled`, `present`, `building`
   and the last error.
@@ -1435,11 +1442,18 @@ A real shell in Slightly Parallel's pages (termlib.py). Off until the operator
 switches it on (setting `terminal.enabled`, one click in the drawer;
 `SP_ENABLE_TERMINAL` forces it on). With tmux installed each terminal
 runs on Slightly Parallel's own tmux socket and stays open after the page and the server close.
+On Windows every terminal is plain: a ConPTY (pywinpty) the server holds,
+running PowerShell 7, else Windows PowerShell, else cmd; it ends with the
+server, the history routes below (tmux only) answer 409, and restore never
+offers one.
 Every route refuses a foreign `Origin` or a cross-site request.
 
 - `GET /api/terminal/state` — `enabled`, `token` (only while on; the page
-  passes it to the socket), `tmux`, and the settings: `keep`, `launch`,
-  `agent`, `font_size`, and the `projects` a terminal may open in.
+  passes it to the socket), `tmux`, `supported` (false only on Windows
+  without the pywinpty package; the other routes then answer 501 saying what
+  to install), `windows` (true on Windows: plain terminals only), and the
+  settings: `keep`, `launch`, `agent`, `font_size`, and the `projects` a
+  terminal may open in.
 - `GET /api/terminal/sessions?project=` — every terminal: `id`, `label`,
   `kind` (shell · resume · start), `project`, `cwd`, `command`,
   `agent_id` (the agent the capture hook saw started in it), `task_id`, and
@@ -1467,8 +1481,31 @@ Every route refuses a foreign `Origin` or a cross-site request.
   copy mode; answers the new position.
 - `POST /api/terminal/sessions/{sid}/rename` — `{label}`.
 - `POST /api/terminal/sessions/{sid}/close` — end it (tmux too).
+- `POST /api/terminal/sessions/{sid}/sleep` — stop what runs in it and keep
+  its row (`state: asleep`, `wake`: what it will run): a chat's agent is
+  resumed on waking, a server (`role: server`) runs its command again, a
+  plain shell comes back empty.
+- `POST /api/terminal/sessions/{sid}/wake` — bring it back under the same id. A terminal's `role` is `chat`, `server` or `shell` (sent on
+  opening, else worked out from its kind).
+- `GET /api/terminal/restore` — `needed` and the `sessions` that ended
+  without being closed or put to sleep because their tmux server is gone (a
+  restart of the computer), each with the `wake` command it would run.
+  `POST /api/terminal/restore` — `{ids?}`: bring them back; `results` holds
+  `id`, `label`, `ok`, `error`, `command` per terminal.
+- `GET /api/terminal/groups` — custom workspaces: `id`, `name`, `color`
+  (1–8). `POST /api/terminal/groups` `{name, color?}` makes one,
+  `POST /api/terminal/groups/{gid}` `{name?, color?}` changes it,
+  `POST /api/terminal/groups/{gid}/remove` removes it (its terminals return
+  to their projects). `POST /api/terminal/sessions/{sid}/group` `{group}`
+  moves a terminal into a group, `""` back to its project; `group` is also
+  accepted on opening.
+- `POST /api/terminal/typing` — `{sid, keys}`: the operator typed that many
+  keys into a terminal since the last report (the window sends it; the text
+  is never sent). `GET /api/terminal/typing?day=YYYY-MM-DD` — `minutes` per
+  project in which the operator typed, and `total`.
 - `WS /ws/terminal/{id}?token=&project=&cols=&rows=` — the screen. Not an
-  HTTP route and not in the OpenAPI document.
+  HTTP route and not in the OpenAPI document. Closed with 4000 when the
+  terminal ended, 4500 when its shell did not start (the reason says why).
 
 ---
 

@@ -38,7 +38,7 @@ from typing import Any
 
 from .csvio import read_rows
 from .db import ViewStore
-from .hookshared import NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, session_key
+from .hookshared import NO_PROMPT, NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, prompt_record, session_key, tool_wrote
 
 ERRORS = Path(".capture") / "errors.jsonl"
 IGNORED = Path(".capture") / "ignored.json"
@@ -48,7 +48,7 @@ GRACE_SECONDS = 120            # a prompt this much newer than the capture is a 
 # What the hook does not capture (a helper's report handed back into the
 # chat included: without it here, every such report was "a turn that was
 # not recorded"), and the tool's own bookkeeping in its transcript.
-_SYSTEM = tuple(dict.fromkeys(NOT_OPERATOR + TRANSCRIPT_NOISE))
+_SYSTEM = tuple(dict.fromkeys(NOT_OPERATOR + TRANSCRIPT_NOISE + NO_PROMPT))
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
@@ -86,19 +86,20 @@ def last_prompt(transcript: Path, tail_bytes: int = 400_000) -> float | None:
     except OSError:
         return None
     for line in reversed(lines):
-        if '"type":"user"' not in line.replace(" ", ""):
+        squeezed = line.replace(" ", "")
+        # A message typed while the agent worked is a queued_command
+        # attachment, not a "user" record (hookshared.queued_prompt).
+        if '"type":"user"' not in squeezed and "queued_command" not in squeezed:
             continue
         try:
-            rec = json.loads(line)
+            rec = prompt_record(json.loads(line))
         except ValueError:
             continue
-        if not isinstance(rec, dict) or rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain"):
+        if rec is None or tool_wrote(rec) or rec.get("isSidechain") or rec.get("forkedFrom"):
             continue
         msg = rec.get("message")
         content = msg.get("content") if isinstance(msg, dict) else None
         if isinstance(content, list):
-            if any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content):
-                continue
             text = " ".join(str(c.get("text") or "") for c in content if isinstance(c, dict))
         else:
             text = str(content or "")

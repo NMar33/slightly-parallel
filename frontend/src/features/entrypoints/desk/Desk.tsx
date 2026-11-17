@@ -17,11 +17,15 @@
  * projects as rows of tiles whose picture steps through the screenshots; a
  * tile opens the same card under its row. The layout is kept in this
  * browser; `?layout=shelves` or `?layout=list` in the address wins.
+ *
+ * `?topic=ep_…` opens that topic (search links here; an old `#ep_…` link
+ * too). Archived topics (#undo) are folded under Archived at the bottom of
+ * the list or the shelves; a link to one unfolds it.
  */
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { DoorOpen, LayoutGrid, PanelLeft, Pencil, Search, X } from 'lucide-react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useLocation, useSearchParams } from 'react-router-dom'
+import { Archive, ChevronRight, DoorOpen, LayoutGrid, PanelLeft, Pencil, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { CopyButton } from '../../../components/CopyButton'
@@ -97,15 +101,29 @@ export function EntryPointsDesk({ project }: { project?: string } = {}) {
       setParams(next, { replace: true })
     }
   }
-  const fromTopic = params.get('topic')
+  const { hash } = useLocation()
+  const fromTopic = params.get('topic') ?? (/^#ep_[\w-]+$/.test(hash) ? hash.slice(1) : null)
   const [pick, setPick] = useState<string | null>(() => fromTopic ?? read(KEY))
-  const [open, setOpen] = useState<string | null>(null)
+  const [open, setOpen] = useState<string | null>(() => fromTopic)
+  const [showArchived, setShowArchived] = useState(false)
+  // A link to a topic (from search, or another page) while the page is open picks it too.
+  useEffect(() => {
+    if (!fromTopic) return
+    setPick(fromTopic); setOpen(fromTopic)
+  }, [fromTopic])
+  const linkedArchived = !!fromTopic && !!topics.find((tp) => tp.id === fromTopic)?.archived_at
+  useEffect(() => { if (linkedArchived) setShowArchived(true) }, [linkedArchived])
+  useEffect(() => {
+    if (fromTopic && desk.data) document.querySelector(`[data-topic="${fromTopic}"]`)?.scrollIntoView?.({ block: 'nearest' })
+  }, [fromTopic, desk.data, showArchived])
   const [face, setFace] = useState<Face>(() => { const f = read(FACE_KEY); return f === 'record' || f === 'shots' ? f : 'briefing' })
   const [query, setQuery] = useState('')
-  const ordered = byStateThenRecent(topics)
+  const live = topics.filter((tp) => !tp.archived_at)
+  const ordered = byStateThenRecent(live)
   const topic = topics.find((tp) => tp.id === pick) ?? ordered[0]
-  const found = topics.filter((tp) => matches(tp, query))
+  const found = live.filter((tp) => matches(tp, query))
   const projects = [...new Set(byStateThenRecent(found).map((tp) => tp.project))]
+  const archived = byStateThenRecent(topics.filter((tp) => tp.archived_at && matches(tp, query)))
   const choose = (id: string, f?: Face) => {
     setPick(id); keep(KEY, id)
     if (f) { setFace(f); keep(FACE_KEY, f) }
@@ -115,7 +133,7 @@ export function EntryPointsDesk({ project }: { project?: string } = {}) {
   const head = (
     <>
       <PageHeader variant="lens" icon={DoorOpen} title={t('Entry points')}
-        count={desk.data ? tn(topics.length, '{n} topic', '{n} topics') : undefined} />
+        count={desk.data ? tn(live.length, '{n} topic', '{n} topics') : undefined} />
       {!project && <PageGuide id="entrypoints" guide={GUIDE} examples={0} />}
     </>
   )
@@ -129,7 +147,7 @@ export function EntryPointsDesk({ project }: { project?: string } = {}) {
       </div>
     )
   }
-  if (!topics.length) {
+  if (!live.length && !topics.length) {
     return (
       <div className="flex flex-col gap-16 min-w-0">
         {head}
@@ -141,7 +159,7 @@ export function EntryPointsDesk({ project }: { project?: string } = {}) {
   const tools = (
     <div className="flex items-center gap-8 min-w-0">
       <LayoutToggle value={layout} onChange={pickLayout} />
-      <FindBox value={query} onChange={setQuery} found={found.length} of={topics.length} className={layout === 'list' ? 'flex-1 min-w-0' : 'w-full max-w-[320px] min-w-0'} />
+      <FindBox value={query} onChange={setQuery} found={found.length} of={live.length} className={layout === 'list' ? 'flex-1 min-w-0' : 'w-full max-w-[320px] min-w-0'} />
     </div>
   )
   if (layout === 'shelves') {
@@ -173,6 +191,25 @@ export function EntryPointsDesk({ project }: { project?: string } = {}) {
             </section>
           )
         })}
+        {archived.length > 0 && (
+          <ArchivedFold n={archived.length} open={showArchived} onToggle={() => setShowArchived((v) => !v)}>
+            <div data-testid="ep-shelf-archived" className="grid gap-12 min-w-0 grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]" style={{ gridAutoFlow: 'dense' }}>
+              {archived.map((tp) => (
+                <Fragment key={tp.id}>
+                  <Tile topic={tp} picked={open === tp.id} onPick={() => {
+                    if (open === tp.id) setOpen(null)
+                    else { setOpen(tp.id); choose(tp.id) }
+                  }} />
+                  {open === tp.id && (
+                    <div className="min-w-0" style={{ gridColumn: '1 / -1' }}>
+                      <Card key={tp.id} topic={tp} face={face} onFace={onFace} onClose={() => setOpen(null)} />
+                    </div>
+                  )}
+                </Fragment>
+              ))}
+            </div>
+          </ArchivedFold>
+        )}
       </div>
     )
   }
@@ -194,10 +231,32 @@ export function EntryPointsDesk({ project }: { project?: string } = {}) {
             )
           })}
           {!found.length && <EmptyState compact title={t('Nothing matches.')} />}
+          {archived.length > 0 && (
+            <ArchivedFold n={archived.length} open={showArchived} onToggle={() => setShowArchived((v) => !v)}>
+              <div className="flex md:flex-col gap-4 overflow-x-auto md:overflow-visible min-w-0 pt-4 pb-2">
+                {archived.map((tp) => <ListItem key={tp.id} topic={tp} current={tp.id === topic?.id} onPick={(f) => choose(tp.id, f)} />)}
+              </div>
+            </ArchivedFold>
+          )}
         </nav>
         {topic && <Card key={topic.id} topic={topic} face={face} onFace={onFace} />}
       </div>
     </div>
+  )
+}
+
+/** Archived topics (#undo), folded: shown on a click, or when a link names one. */
+function ArchivedFold({ n, open, onToggle, children }: { n: number; open: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <section aria-label={t('Archived')} data-testid="ep-archived" className="flex flex-col gap-6 min-w-0">
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="inline-flex items-center gap-6 self-start text-11 font-mono text-tertiary hover:text-primary">
+        <ChevronRight size={12} aria-hidden className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+        <Archive size={12} aria-hidden />
+        {t('Archived')} · {n}
+      </button>
+      {open && <div className="opacity-70 min-w-0">{children}</div>}
+    </section>
   )
 }
 
@@ -238,7 +297,7 @@ function Tile({ topic, picked, onPick }: { topic: Topic; picked: boolean; onPick
   const last = newestFirst(topic.stops)[0]
   const local = serversByPort(topic)
   return (
-    <div data-testid="ep-tile" className={`rounded-input bg-elevated p-10 flex flex-col gap-8 min-w-0 ${picked ? 'ring-1 ring-brand' : ''} ${topic.state === 'dead' ? 'opacity-60' : ''}`}>
+    <div data-testid="ep-tile" data-topic={topic.id} className={`rounded-input bg-elevated p-10 flex flex-col gap-8 min-w-0 ${picked ? 'ring-1 ring-brand' : ''} ${topic.state === 'dead' ? 'opacity-60' : ''}`}>
       <ShotStepper topic={topic} onOpen={picked ? undefined : onPick} />
       <button type="button" onClick={onPick} aria-expanded={picked} className="flex flex-col gap-6 text-left min-w-0">
         <span className="flex items-start justify-between gap-8 min-w-0">
@@ -267,7 +326,7 @@ function Tile({ topic, picked, onPick }: { topic: Topic; picked: boolean; onPick
 function ListItem({ topic, current, onPick }: { topic: Topic; current: boolean; onPick: (f?: Face) => void }) {
   const newest = topic.shots.at(-1)
   return (
-    <div data-testid="ep-list-item" className={`flex items-center gap-8 rounded-input px-6 py-4 shrink-0 md:shrink min-w-0 w-[220px] md:w-auto ${current ? 'bg-brand-glow' : 'hover:bg-hover'} ${topic.state === 'dead' ? 'opacity-60' : ''}`}>
+    <div data-testid="ep-list-item" data-topic={topic.id} className={`flex items-center gap-8 rounded-input px-6 py-4 shrink-0 md:shrink min-w-0 w-[220px] md:w-auto ${current ? 'bg-brand-glow' : 'hover:bg-hover'} ${topic.state === 'dead' ? 'opacity-60' : ''}`}>
       {newest && (
         <button type="button" onClick={() => onPick('shots')} title={t('Open on its screenshots')} aria-label={t('{name}: screenshots', { name: displayName(topic) })}
           className="block w-[44px] shrink-0 rounded-bar overflow-hidden border border-border-subtle hover:border-brand" style={{ aspectRatio: '16 / 10' }}>
@@ -363,6 +422,12 @@ export function Card({ topic, face, onFace, onClose }: { topic: Topic; face: Fac
           </span>
         </div>
         <LastWorked cx={cx.data} home={home} />
+        {topic.archived_at && (
+          <p data-testid="ep-card-archived" className="m-0 inline-flex items-center gap-6 text-12 text-status-amber">
+            <Archive size={12} aria-hidden />
+            {t('Archived {date}. Kept for reading; it is not offered after #entrypoint and takes no writes.', { date: topic.archived_at.slice(0, 10) })}
+          </p>
+        )}
       </header>
 
       <div data-testid="ep-card-what" className="flex flex-col gap-4 px-16 pt-12 min-w-0">

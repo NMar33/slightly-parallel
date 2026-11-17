@@ -43,6 +43,8 @@ def build(target: Path) -> Sim:
     import shopfront_chats_b
     import shopfront_chats_c
     import shopfront_lenses
+    import shopfront_desk
+    import shopfront_notes
     import shopfront_standups
     import shopfront_story
     import shopfront_tasks
@@ -78,6 +80,8 @@ def build(target: Path) -> Sim:
     shopfront_lenses.setup(sim, w, repo, K)
     shopfront_standups.setup(sim, w, K)
     shopfront_story.setup(sim, w, repo, K)
+    shopfront_notes.setup(sim, w, repo, K)
+    shopfront_desk.setup(sim, w, repo, K)
     small_projects.link_cross(sim, w)
     extras(sim, w, K)
 

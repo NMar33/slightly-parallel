@@ -974,9 +974,11 @@ def _way_view(w: dict[str, str]) -> dict[str, Any]:
                                          "updated_at")} | {"port": as_int(w.get("port")) or None}
 
 
-def entries(store: ViewStore, project: str = "") -> list[dict[str, str]]:
+def entries(store: ViewStore, project: str = "", *, archived: bool = False) -> list[dict[str, str]]:
+    """The project's topics (or all). Archived ones only when asked: the desk
+    shows them folded; matching, offers and writes never see them."""
     rows = read_rows(store.data_root / ENTITIES["entrypoint"].csv)
-    return [r for r in rows if not str(r.get("archived_at") or "").strip()
+    return [r for r in rows if (archived or not str(r.get("archived_at") or "").strip())
             and (not project or r.get("project") == project)]
 
 
@@ -996,13 +998,15 @@ def summary(store: ViewStore, row: dict[str, str], *, ways: list[dict[str, str]]
         "shots": [_shot_view(s) for s in shots],
         "open_tasks": sum(1 for t in tasks if not is_done(t.get("status")) and not t.get("archived_at")),
         "chats": chats, "last_at": last,
+        "archived_at": str(row.get("archived_at") or "").strip(),
     }
 
 
 def desk(store: ViewStore, project: str = "") -> dict[str, Any]:
     """Every topic (of a project, or all), with what its tile and list line
-    show. Light: no chat is read, no git is run."""
-    rows = entries(store, project)
+    show, archived ones too (marked, the page folds them). Light: no chat is
+    read, no git is run."""
+    rows = entries(store, project, archived=True)
     all_ways = [w for w in _rows(store, WAYS_FILE) if _live(w)]
     all_stops = [s for s in _rows(store, STOPS_FILE) if _live(s)]
     all_shots = [s for s in _rows(store, SHOTS_FILE) if _live(s)]

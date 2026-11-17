@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import secrets
 import struct
 import subprocess
 import sys
@@ -97,6 +98,14 @@ class _FakeTime(types.ModuleType):
     @staticmethod
     def time() -> float:
         return _fake_epoch()
+
+    _ns = itertools.count()
+
+    @staticmethod
+    def time_ns() -> int:
+        # The simulated moment, plus a step per call: an id seeded with it
+        # (taskevents) is the same in every build and never repeats.
+        return int(_fake_epoch()) * 1_000_000_000 + next(_FakeTime._ns)
 
     @staticmethod
     def localtime(secs=None):
@@ -456,7 +465,20 @@ class Sim:
         self.capture = importlib.util.module_from_spec(spec)
         sys.modules["sp_capture"] = self.capture
         spec.loader.exec_module(self.capture)  # type: ignore[union-attr]
-        patch_clock(extra=[self.capture])
+        # The backend modules the core loads by path (hookshared.now_dt
+        # stamps every turn) are copies of their own, outside sys.modules:
+        # each is loaded here and patched with the core.
+        helpers = [self.capture._backend_module(n)
+                   for n in ("hookshared", "usagelib", "limits", "usagewarn", "turntimes")]
+        patch_clock(extra=[self.capture, *helpers])
+        # Ids the server draws at random (a note's nt_…) come from the
+        # build's own seed, so two builds name them alike.
+        seeded = types.SimpleNamespace(**{k: getattr(secrets, k) for k in dir(secrets) if not k.startswith("_")})
+        ids = random.Random(seed + 1)
+        seeded.token_hex = lambda n=32: ids.randbytes(n).hex()
+        for name, mod in list(sys.modules.items()):
+            if name.split(".")[0] == "backend" and getattr(mod, "secrets", None) is secrets:
+                mod.secrets = seeded
 
         self.app = create_app(data_root=self.root, watch=False, run_monitor=False)
         # The operator's writes carry the operator's cookie, as a page's do.
@@ -574,7 +596,7 @@ class Chat:
         self.last_end = end
         first = self.turns == 0
         self.turns += 1
-        self.last_n = self.turns
+        self.last_n = n = self.turns
 
         def open_() -> None:
             if first:
@@ -611,6 +633,7 @@ class Chat:
                     hp.append(t)
                     t = t + timedelta(seconds=sim.rng.randint(20, 150))
                 hs.append([int(p.timestamp() * 1000) for p in hp])
+            self.cap.record_usage(self._usage(n, at, pts, hs), this_turn=True)
             if skills:
                 self.cap.record_skills([
                     {"skill": s, "at": (at + timedelta(seconds=40)).strftime("%Y-%m-%dT%H:%M:%S"), "how": "auto"}
@@ -625,3 +648,36 @@ class Chat:
 
         sim.at(end, close)
         return end
+
+    _MODEL = {"claude-code": "claude-opus-4-5", "codex": "gpt-5-codex", "opencode": "claude-sonnet-4-5"}
+
+    def _usage(self, n: int, at: _RealDT, pts: list[_RealDT], helpers: list[list[int]]) -> list[dict]:
+        """The tokens of a turn, one line per API message, as the hook reads
+        them from the tool's log (usage.jsonl): the context grows through the
+        turn and is read again from the cache; a helper's messages carry its
+        id. From a generator of the chat and turn's own, so the month's other
+        numbers do not move."""
+        rng = random.Random(zlib.crc32(f"{self.agent_id}#{n}".encode()))
+        model = self._MODEL[self.tool]
+        codex = self.tool == "codex"
+        context = 18_000 + 1_500 * n
+        out: list[dict] = []
+
+        def line(i: int, when: _RealDT, helper: str, ctx: int) -> dict:
+            new = rng.randint(200, 2_500)
+            output = rng.randint(80, 1_800)
+            return {"at": when.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "id": str(n * 1000 + i) if codex else f"msg_{self.agent_id[-8:]}{n:03d}{i:03d}",
+                    "tool": self.tool, "model": model, "new": new, "cache_write": 0 if codex else new,
+                    "cache": ctx, "output": output, "thinking": output // 3 if codex else 0,
+                    "ttl": "" if codex else "1h", "helper": helper, "effort": ""}
+
+        for i, p in enumerate([at + timedelta(seconds=5), *pts]):
+            out.append(line(i, p, "", context))
+            context += out[-1]["new"] + out[-1]["output"]
+        for h, stamps in enumerate(helpers, start=1):
+            ctx = 9_000
+            for j, ms in enumerate(stamps):
+                out.append(line(500 + h * 100 + j, _RealDT.fromtimestamp(ms / 1000), f"h{n}{h}", ctx))
+                ctx += out[-1]["new"] + out[-1]["output"]
+        return out

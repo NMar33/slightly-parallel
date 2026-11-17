@@ -481,7 +481,7 @@ def test_setup_without_a_status_line_installs_ours_alone(env) -> None:
     assert _run_status(client, project_dir, {"rate_limits": {"five_hour": {"used_percentage": 62.5}}}) == "SP · 5-hour 62%\n"
     # The two hooks that only add tokens are installed beside the two that capture.
     hooks = _local(project_dir)["hooks"]
-    assert set(hooks) == {"UserPromptSubmit", "Stop", "SessionEnd", "StopFailure"}
+    assert set(hooks) == {"UserPromptSubmit", "Stop", "SessionEnd", "StopFailure", "SessionStart"}
     assert out["results"]
 
 
@@ -605,7 +605,7 @@ def test_the_server_adds_the_status_line_to_folders_that_have_the_hooks(tmp_path
     got = json.loads((with_hooks / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
     side = hookshared.read_statusline_then(root, hookshared.statusline_key(with_hooks))
     assert side["from"] == "user" and hookshared.statusline_then_command(side) == "echo mine"   # runs after ours
-    assert set(got["hooks"]) == {"UserPromptSubmit", "Stop", "SessionEnd", "StopFailure"}
+    assert set(got["hooks"]) == {"UserPromptSubmit", "Stop", "SessionEnd", "StopFailure", "SessionStart"}
     assert hooks_installed(str(with_hooks))                       # the hooks are kept
     assert not statusline_installed(str(without))
     assert setup_mod.ensure_statuslines(root) == []               # nothing to do the second time

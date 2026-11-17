@@ -143,6 +143,98 @@ def _split_rows(
     return len(removed)
 
 
+def _header(path: Path) -> tuple[str, ...]:
+    import csv as _csv
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            return tuple(c.strip() for c in next(_csv.reader(fh), []))
+    except (OSError, UnicodeDecodeError):
+        return ()
+
+
+def _archive_folder(data_root: Path, trash: Path, rel: str) -> bool:
+    src = data_root / rel
+    if not src.is_dir():
+        return False
+    dst = trash / rel
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.move(str(src), str(dst))
+    except OSError:
+        return False
+    return True
+
+
+def _sweep_side_ledgers(data_root: Path, trash: Path, code: str, owned: dict[str, set[str]],
+                        task_ids: set[str], moved: dict[str, int]) -> None:
+    """The ledgers that hang off a note, an entry point, a publish card or
+    document, or a core, and the project's own rows of the newer ledgers,
+    go with the project: left behind, a restored archive (the example
+    project is built that way) lost every note's text and pictures, every
+    topic's ways in and stops, and a deleted project's rows stayed on disk.
+    The ledgers are read with their own header, so a column added later
+    travels too."""
+    notes = owned.get("note", set())
+    eps = owned.get("entrypoint", set())
+    cards = owned.get("publish", set())
+
+    def project_ids(name: str) -> set[str]:
+        return {str(r.get("id") or "") for r in read_rows(data_root / name)
+                if str(r.get("project") or "") == code}
+
+    publish_docs = project_ids("publish_docs.csv")
+    cores = project_ids("cores.csv")
+    is_project = lambda r: str(r.get("project") or "") == code  # noqa: E731
+
+    def by(key: str, ids: set[str]):
+        return lambda r: str(r.get(key) or "") in ids
+
+    plan: list[tuple[str, Any]] = [
+        ("note_versions.csv", by("note_id", notes)),
+        ("note_images.csv", by("note_id", notes)),
+        ("note_marks.csv", by("note_id", notes)),
+        ("entrypoint_ways.csv", by("entrypoint_id", eps)),
+        ("entrypoint_stops.csv", by("entrypoint_id", eps)),
+        ("entrypoint_shots.csv", by("entrypoint_id", eps)),
+        ("entrypoint_versions.csv", by("entrypoint_id", eps)),
+        ("entrypoint_names.csv", by("entrypoint_id", eps)),
+        ("task_topics.csv", lambda r: str(r.get("task_id") or "") in task_ids
+         or str(r.get("entrypoint_id") or "") in eps),
+        ("entrypoint_commands.csv", is_project),
+        ("entrypoint_asks.csv", is_project),
+        ("publish_docs.csv", is_project),
+        ("publish_versions.csv", by("doc_id", publish_docs)),
+        ("publish_items.csv", lambda r: str(r.get("doc_id") or "") in publish_docs
+         or str(r.get("card_id") or "") in cards),
+        ("publish_attachments.csv", by("card_id", cards)),
+        ("publish_sources.csv", by("card_id", cards)),
+        ("publish_writes.csv", by("card_id", cards)),
+        ("cores.csv", is_project),
+        ("core_notes.csv", by("core_id", cores)),
+        ("core_links.csv", by("core_id", cores)),
+        ("core_events.csv", by("core_id", cores)),
+        ("commit_links.csv", by("task_id", task_ids)),
+        ("carry_briefs.csv", is_project),
+        ("now.csv", is_project),
+        ("next_tasks.csv", is_project),
+    ]
+    for name, belongs in plan:
+        cols = _header(data_root / name)
+        if not cols:
+            continue
+        n = _split_rows(data_root, trash, name, cols, belongs)
+        if n:
+            moved[name.removesuffix(".csv")] = n
+    folders = 0
+    for rel in ([f"note_details/{i}" for i in sorted(notes)] + [f"note_images/{i}" for i in sorted(notes)]
+                + [f"entrypoint_shots/{i}" for i in sorted(eps)] + [f"publish_images/{i}" for i in sorted(cards)]
+                + [f"publish_files/{i}" for i in sorted(cards)] + [f"publish_context/{i}" for i in sorted(cards)]):
+        if _archive_folder(data_root, trash, rel):
+            folders += 1
+    if folders:
+        moved["side_folders"] = folders
+
+
 def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
     """Archive everything the project owns; returns what moved and where."""
     data_root = store.data_root
@@ -200,13 +292,17 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
     )
 
     task_ids: set[str] = set()
+    # The ids of the rows moved, by entity: their side ledgers follow them (below).
+    owned_ids: dict[str, set[str]] = {}
     for ent in ENTITIES.values():
         if ent.name == "sprint":
             continue  # membership only, below
 
         def belongs(r, _ent=ent):
-            if _ent.name == "task" and is_project(r):
-                task_ids.add(str(r.get("id") or ""))
+            if is_project(r):
+                owned_ids.setdefault(_ent.name, set()).add(str(r.get("id") or ""))
+                if _ent.name == "task":
+                    task_ids.add(str(r.get("id") or ""))
             return is_project(r)
 
         n = _split_rows(data_root, trash, ent.csv, ent.columns, belongs, keep_all)
@@ -352,6 +448,8 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
         n = _split_rows(data_root, trash, name, cols, is_project)
         if n:
             moved[name.removesuffix(".csv")] = n
+
+    _sweep_side_ledgers(data_root, trash, code, owned_ids, task_ids, moved)
 
     moved["detail_docs"] = docs
     moved["kept_versions"] = versions

@@ -51,6 +51,15 @@ npm run e2e
 ```
 
 ```bash
+# The terminal window (desktop/, Electron) against its own sandbox server on
+# port 8131: about a minute. Needs frontend/node_modules (its Playwright) and
+# Electron in desktop/ (npm ci). On Linux with GNOME the windows open on a
+# hidden display of their own; SP_E2E_VISIBLE=1 shows them, SP_E2E_HEADLESS=1
+# draws without any display. CI: .github/workflows/terminal.yml (ci-terminal).
+cd desktop && npm ci && npm test && npm run e2e
+```
+
+```bash
 # From `git clone` to a working setup, as a new user meets it; with an
 # agent login it also talks to a real agent ([scripts/fresh_user/README.md](../scripts/fresh_user/README.md))
 python3 scripts/fresh_user/run.py --no-agent

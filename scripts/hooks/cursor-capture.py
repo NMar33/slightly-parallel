@@ -50,7 +50,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture import TurnCapture, record_failure  # noqa: E402
+from capture import TurnCapture, record_failure, shared  # noqa: E402
 
 TOOL = "cursor"
 PREFIX = "cursor"
@@ -72,6 +72,22 @@ def _load_beside(name: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def helper_signal(conversation: str, data_root: Path) -> tuple[str, str, str]:
+    """(helper kind, the parent's agent id, how it was found) of this chat:
+    ("cursor-print", …) when the CLI that runs it is in print mode
+    (hookshared.cursor_helper_kind); the parent is the chat whose variables
+    it inherited (hookshared.helper_parent). ("", "", "") for the
+    operator's own chat, and whenever it cannot be told: never raises."""
+    try:
+        kind = shared.cursor_helper_kind()
+        if not kind:
+            return "", "", ""
+        parent = shared.helper_parent(TOOL, conversation, os.environ, str(data_root))
+        return kind, parent, "env" if parent else ""
+    except Exception:  # noqa: BLE001 — a helper not recognised is recorded as a chat
+        return "", "", ""
 
 
 def agent_name(conversation_id: str) -> str:
@@ -138,7 +154,10 @@ def handle(payload: dict, data_root: Path, project: str) -> dict:
         prompt = first_text(payload, "prompt", "text", "message")
         if not prompt.strip():
             return ALLOW
-        cap.note_origin(TOOL, conversation, cwd)
+        # A cursor-agent -p run (a script's, another agent's) is a helper
+        # chat: recorded, and no command in it acts (capture.py open_turn).
+        kind, parent, by = helper_signal(conversation, data_root)
+        cap.note_origin(TOOL, conversation, cwd, helper_kind=kind, helper_of=parent, helper_of_by=by)
         _load_beside("claude-code-capture").write_breadcrumb(
             str(data_root), project, conversation, cwd, tool=TOOL, agent_id=agent)
         cap.open_turn(prompt)

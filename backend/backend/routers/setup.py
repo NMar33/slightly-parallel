@@ -330,7 +330,7 @@ def ensure_statuslines(data_root: Path) -> list[str]:
     again: our status line beside the hooks (Claude Code gives those limits
     only to the status line — docs: statusline, rate_limits), moved to the
     side file when an older Setup wrote the wrapped command into the line;
-    and the SessionEnd and StopFailure hooks. A folder whose status line was
+    and the SessionEnd, StopFailure and SessionStart (compact) hooks. A folder whose status line was
     turned off in Setup (integrations.csv ``statusline`` "off") gets none.
     Run once at the server's start, under the lock Setup's edits take;
     idempotent; a folder it cannot read or write is skipped and logged,

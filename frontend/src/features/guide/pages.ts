@@ -187,6 +187,18 @@ export const GUIDE_PAGES: GuidePage[] = [
       t('Everything you marked important, in three sections: messages, agents and tasks. Type #important in a message to mark it, its agent and the task it names; #important-agent, #important-task or #important-message marks only one. You can also click ★ on the board, on agent cards and in the chat reader. A task\'s ★ is the same star as on the board.'),
   },
   {
+    route: '/pins',
+    title: t('Pins'),
+    text:
+      t('The messages you marked to do something with later, in three lists. #pin: a message to come back to; the agent reads it again when you say "go back to the pin". #carry: after a context compaction the agent is given the message back whole, with its reply. #carry-brief: the agent writes a short brief of it now, and the brief is given back instead. #fork-later: work another agent could take later, with the command that starts a copy of that chat with the message as its first prompt, and a state you set. Each tag is also a button on every message in the chat reader.'),
+  },
+  {
+    route: '/notes',
+    title: t('Notes'),
+    text:
+      t('Long texts agents wrote for you instead of a long reply or a file: context for later, a text to paste, a review with pictures, a plan for helpers, a report, the steps only you can do. Read them one after another, or as tiles shelved by what you do. Tick the steps, pick an answer to a choice, copy a text: the agent reads your ticks and answers back. A task\'s notes also show in its window.'),
+  },
+  {
     route: '/stats',
     title: t('Statistics'),
     text:
@@ -221,7 +233,7 @@ export const GUIDE_PAGES: GuidePage[] = [
     title: t('Publish'),
     command: '#publish',
     text:
-      t('What shipped and is worth telling. Type #publish in a message in a chat and it is kept here as a card, with the task, its commits and its images. On the right, the documents you make: a release note, a post, a video script, each in versions. Press a number or drag a card onto a tab to place it in that document; edit the text on the card or inside the document. Each card shows its life: the original, your edits and the documents it went into.'),
+      t('What shipped and is worth telling. Type #publish with your text, or "#publish about X" for the agent to write it; the agent adds the context and attaches the tasks, commits, files and screenshots. #publish pu_… adds to a card. On the right, the documents you make: a release note, a post, a video script, each in versions. Press a number or drag a card onto a tab to place it there. Each card shows its life: the original, the edits and the documents it went into.'),
   },
   {
     route: '/backups',

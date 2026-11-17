@@ -106,9 +106,13 @@ silenced, and the notice names only that one.
 | `#standup` | Write the standup for yesterday now (also offered on the first message of a day) |
 | `#rule <text>` | Nothing to write — the server keeps the message as a rule; write its interpretation (Kept messages, section 4) |
 | `#vision` | Nothing to write — the server keeps the message as a vision; write its interpretation (Kept messages, section 4) |
-| `#publish <text>` | Nothing to write — the server keeps the message as a card on the Publish page (what shipped, worth telling) |
+| `#publish <text>` | publish_write in the same turn — the card the hook names: text only if asked, context, and what belongs to it (Publish, section 4) |
 | `#prompt` | Nothing to write — the server keeps the message in the operator's prompt library |
 | `#important` | Nothing to write — the server stars the message, its agent and the tasks it names; `#important-agent`, `-task` or `-message` stars one of them |
+| `#pin` | Nothing to write — the server pins the message for the operator to come back to; when told to go back to a pin, read it with `pins` |
+| `#carry` | Nothing to write — after a context compaction the hook gives this message and your reply to it back to you whole |
+| `#carry-brief` | `carry_brief {message, text}` now: a short brief of the message with the context needed to understand it; after a compaction the brief is given back instead |
+| `#fork-later` | Nothing to write — the server lists the message as work another agent could take later, with the command that starts it |
 | `#skill` | Write the skill from what was done in this chat (Skill, section 4) |
 | `#artifact <what>` | Write the folder under the project's artifacts/, then make its record with artifact_write (Artifact, section 4) |
 | `#help` | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it) |
@@ -326,14 +330,6 @@ markdown; `note` is one optional line on what changed). An `#entrypoint` makes
 nothing until the operator chooses its topic: `entrypoint_ask` first
 (Entry point, below).
 
-`#publish` is kept the same way, as a card on the Publish page (what
-shipped, worth telling). Its text is the operator's: no interpretation, no
-entry. What you add is what they may need to tell about it: 1–3
-screenshots of what it is about (the page or the product, as you can
-render it), each in its original size, never shrunk or recompressed, given
-by its file `path`, and the links, with `publish_attach {id, images,
-links}` in the same turn. The notice names the card.
-
 The interpretation is the message read with the conversation around it:
 what the user means, in plain words, with what the context settles —
 constraints, rejected options, what it replaces. A vision: the direction
@@ -351,6 +347,52 @@ asks nothing of you: answer the message as usual.
 the agent of the chat and every task the message names; `#important-agent`,
 `#important-task` (the named task, else the last task named in this chat)
 and `#important-message` mark one of them. There is nothing to write.
+
+**Publish — `#publish`.** The message is kept as a card on the Publish page
+(what shipped, worth telling) and stays on it as the source; the tag asks
+you to write the card in the same turn with `publish_write {id, …}` (the
+notice names the card). `#publish <text>`: their text is the card's text —
+leave `text` out. `#publish about X` or "describe …": write `text` from what
+was done. Never rewrite the operator's text unless asked. Write `context`,
+the block under the text: what was done, for whom, before and after,
+numbers. Attach what belongs to it, by id or path, never guessed: `tasks`
+(tk_…, any project), `commits` ({sha, repo}), `files` ({path}: copied onto
+the card — a report, a test), `images` ({path}: 1–3 screenshots, original
+size, never shrunk), `links` (http(s)), `notes` (nt_…). Each write of text
+or context is a version; `base` is the card's `rev` you read.
+`#publish pu_… <more>` from any chat of the project adds the message to that
+card: write only what it asks for, on top of what is there. When the notice
+says this chat made a card in the last hour and the message is about the
+same thing, write into that card and fold the new one in with `merge`.
+`publish_attach` is the older name of the tool.
+
+**Marks on one message — `#pin`, `#carry`, `#carry-brief`, `#fork-later`.**
+Like `#important`, the tag is the whole act: the server marks the message
+it is in from the chat log, and the operator can set or remove each one by
+hand on the chat page. A message is `<agent_id>#<turn>`; the agent's reply
+in that turn is `<agent_id>#<turn>/reply`.
+
+- `#pin` — the operator will come back to this message. When they say "go
+  back to the pin" (or name one), read it with `pins` (this chat's pins
+  with each message whole; `scope: "project"` for the whole project).
+- `#carry` — the message survives a context compaction: right after one,
+  the capture hook gives it back to you whole, with your reply to it (the
+  first 4,000 characters). Nothing to write.
+- `#carry-brief` — the message survives as a brief you write now:
+  `carry_brief {message, text}` (`message` as the notice names it; without
+  it, this chat's turn by `turn`). The brief is what the message says and
+  the context needed to understand it after the chat is compacted: who
+  asked, what for, what was decided — a few sentences, at most 4,000
+  characters. When the operator marks a message this way by hand, the next
+  notice names it: write its brief then.
+- `#fork-later` — work another agent could take later, in parallel. Go on
+  with the message as usual; the operator starts the fork from the list.
+
+After a compaction the hook's notice `[slightly-parallel] carried — …` holds
+the carried messages, whole ones first, then briefs, newest first, within
+30,000 characters. What does not fit is named in it: `pins {kind: "carry"}`
+gives every carried message whole. Read them as part of what you know about
+the chat.
 
 **Skill — `#skill`.** The operator wants what was just done to become a
 skill: a procedure any agent loads when a task matches. The server keeps
@@ -373,6 +415,8 @@ the draft on the Skills page and decides where it is installed; you do not
 install skills.
 
 **Artifact** (`#artifact`). The operator wants a result kept in one place and shown on the Artifacts page: a dataset, a document, a page or an app. Write the folder yourself at `<data_root>/projects/<project>/artifacts/<name>/`, then make its record with `artifact_write {id, name, kind, description}`. The skill `make-an-artifact` holds the steps.
+
+**Note** (no command; your own call). A text the operator will read again or keep — context to come back to, a text to paste elsewhere, a review with pictures, a plan for helpers, a helper's report, steps only the operator can do — goes into a note with `note_write {text, kind, task_id?, entrypoint_id?}`, not into a long chat reply or a markdown file. The reply then says one line and the note's id. The skill `write-a-note` holds the blocks and the steps.
 
 **Help** (`#help`). Answer the operator with the list of commands, what each does for them and where they see the result. The skill `sp-help` holds the list; give it as it is, in the operator's language, and add nothing that is not in it.
 

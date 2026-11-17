@@ -45,8 +45,10 @@ up. Follow the README as written.
       (Launcher, `autostart_check.py`) but cannot restart and log in.
 - [ ] Sleep and wake: the app answers, the monitor goes on, the chat after
       waking is recorded. *A real computer:* a runner cannot sleep.
-- [ ] Windows: the terminal says it needs macOS or Linux, and nothing else
-      breaks without it. *Not built yet:* the page's message is read by a person.
+- [ ] Windows: open a terminal, run `claude` in it, type, resize the window,
+      put it to sleep and wake it (the agent resumes), close it. *A person
+      at Windows:* CI checks the ConPTY (backend/tests/test_conpty.py) and
+      the window (desktop/e2e), not a real agent in it.
 - [ ] Codex logged in through ChatGPT (Windows and macOS): run
       `python scripts/ci/check_codex_limits.py`; it prints the plan, the
       5-hour and the weekly percentages. On Windows, with Codex installed by
@@ -87,6 +89,15 @@ up. Follow the README as written.
   browser. Down, it starts the server and the page answers; up, it only
   opens, the supervisor the same process. Not covered: a real desktop's
   double click and the system's default browser.
+
+- **The terminal window** — in CI (workflow Terminal window, `desktop/e2e`,
+  three systems; on Windows in PowerShell, without restore after tmux is
+  gone): the real Electron window on a sandbox server — sidebars
+  grow the window and leave the terminal's columns alone, the folded title
+  row, the workspaces levels, tabs, sleep and wake, restore after tmux is
+  gone, detach, links out, one instance, 5 MB of output. Not covered: moving
+  the window by its title row (the window system's own drag; the suite
+  checks the drag regions only).
 
 ## Built
 
@@ -155,7 +166,7 @@ agent CLIs in the report.
 
 ## Known limits (for the release notes)
 
-- The terminal runs on macOS and Linux only; on Windows the rest of the app works.
+- On Windows a terminal is plain: it ends when Slightly Parallel stops or restarts (no tmux there), and the server keeps no history of it (copying lines works from the page's own history only).
 - One server per data folder: a second one on the same folder refuses to start.
 - OpenCode, in a project whose path has a space: it escapes the space in a shell
   command and then asks permission for its own folder as an outside one; with

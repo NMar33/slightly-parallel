@@ -442,6 +442,25 @@ export const IMPORTANT_GUIDE: Guide = {
   ],
 }
 
+export const PINS_GUIDE: Guide = {
+  intro: [
+    t('This page shows the messages you marked to do something with later, in three lists: pins, carried messages and forks for later.'),
+    t('Type the tag anywhere in a message, or click its button on any message in the chat reader, yours or the agent\'s.'),
+  ],
+  parts: [
+    [t('#pin'), t('a message to come back to. Tell the agent "go back to the pin" and it reads it again.')],
+    [t('#carry'), t('the red light: after a context compaction the agent is given the message back whole, with its reply.')],
+    [t('#carry-brief'), t('the yellow light: the agent writes a short brief of the message now, and the brief is given back after a compaction.')],
+    [t('#fork-later'), t('work another agent could take later. Copy the command: it starts a copy of that chat with the message as its first prompt.')],
+  ],
+  steps: [
+    t('You type the tag in a chat, or click its button on a message.'),
+    t('The message appears here, in its list, and on a line above the chat in the reader.'),
+    t('After a compaction, the capture hook gives the carried messages back to the agent once: whole ones first, then briefs, newest first, up to 30,000 characters.'),
+    t('Click a message to open the chat on it; ✕ takes the mark off.'),
+  ],
+}
+
 export const STATS_GUIDE: Guide = {
   intro: [
     t('This page shows what each finished task took: messages and time in the chat, commits and files, and the time from creation to done.'),

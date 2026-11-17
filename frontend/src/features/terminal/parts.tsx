@@ -11,7 +11,7 @@ import { Plus, Power, RotateCcw, SquareTerminal, X } from 'lucide-react'
 import { Segmented } from '../../components/Segmented'
 import { api, qk } from '../../lib/api'
 import {
-  STATE_COLOR, STATE_WORD, useTerminalActions, useTerminalStatus, type TermSession, type TermState,
+  PYWINPTY, STATE_COLOR, STATE_WORD, useTerminalActions, useTerminalStatus, type TermSession, type TermState,
 } from '../../lib/terminal'
 import { agentLabel } from '../../utils/agentLabel'
 import { useWaitingNotify } from './waiting'
@@ -38,8 +38,13 @@ export function TurnOn({ compact = false }: { compact?: boolean }) {
   if (st?.supported === false) {
     return (
       <div className="flex flex-col gap-4 max-w-[560px] p-16">
-        <span className="text-14 font-semibold text-primary">{t('The terminal needs macOS or Linux.')}</span>
-        {!compact && <p className="text-12 text-secondary leading-relaxed">{t('It does not run on Windows yet. Every other page works.')}</p>}
+        <span className="text-14 font-semibold text-primary">{t('The terminal needs the pywinpty package.')}</span>
+        {!compact && (
+          <p className="text-12 text-secondary leading-relaxed">
+            {t('Install it into Slightly Parallel\'s environment, then restart Slightly Parallel. Every other page works.')}
+            {' '}<code className="font-mono">{PYWINPTY}</code>
+          </p>
+        )}
       </div>
     )
   }
@@ -50,7 +55,7 @@ export function TurnOn({ compact = false }: { compact?: boolean }) {
         {!compact && (
           <p className="text-12 text-secondary leading-relaxed">
             {t("When on, it opens a shell on this computer here. Resume reopens an agent's chat in it, Start starts an agent on a task, and each terminal shows whether its agent is working or waiting.")}
-            {' '}{st?.tmux ? t('In tmux, terminals keep running after the page closes or Slightly Parallel restarts.') : t('Install tmux to keep terminals running after the page closes or a restart.')}
+            {' '}{st?.windows ? t('On Windows, terminals close when Slightly Parallel stops.') : st?.tmux ? t('In tmux, terminals keep running after the page closes or Slightly Parallel restarts.') : t('Install tmux to keep terminals running after the page closes or a restart.')}
             {' '}{t("Only Slightly Parallel's own pages can reach it.")}
           </p>
         )}
@@ -192,10 +197,14 @@ export function TerminalSettings() {
         <Segmented label={t('Agent')} shape="pill" height={20} value={st.agent} onChange={(v) => act.setting({ 'terminal.agent': v })}
           options={[['claude', 'claude'], ['codex', 'codex'], ['opencode', 'opencode']] as const} />
       </Row>
-      <Row label={t('Keep terminals')} hint={st.tmux ? t('With tmux ({v}), terminals keep running after the page closes or the server restarts.', { v: st.tmux_version ?? '' }) : t('tmux is not installed. Terminals close when the server stops.')}>
-        <Segmented label={t('Keep')} shape="pill" height={20} value={st.keep} onChange={(v) => act.setting({ 'terminal.keep': v })}
-          options={[['tmux', 'tmux'], ['plain', t('plain')]] as const} />
-      </Row>
+      {st.windows ? (
+        <Row label={t('Keep terminals')} hint={t('On Windows, terminals close when the server stops: tmux does not run there.')}>{null}</Row>
+      ) : (
+        <Row label={t('Keep terminals')} hint={st.tmux ? t('With tmux ({v}), terminals keep running after the page closes or the server restarts.', { v: st.tmux_version ?? '' }) : t('tmux is not installed. Terminals close when the server stops.')}>
+          <Segmented label={t('Keep')} shape="pill" height={20} value={st.keep} onChange={(v) => act.setting({ 'terminal.keep': v })}
+            options={[['tmux', 'tmux'], ['plain', t('plain')]] as const} />
+        </Row>
+      )}
       {notify.supported && (
         <Row label={t('When an agent waits')} hint={notify.blocked
           ? t('The browser blocks notifications for this page — allow them in its site settings.')
@@ -223,7 +232,7 @@ export function TerminalSettings() {
           options={[['12', 'S'], ['13', 'M'], ['15', 'L'], ['17', 'XL']] as const} />
       </Row>
       {!st.forced && (
-        <Row label={t('The terminal')} hint={t('Turns off new shells. Open terminals keep running in tmux.')}>
+        <Row label={t('The terminal')} hint={st.windows ? t('Turns off new shells.') : t('Turns off new shells. Open terminals keep running in tmux.')}>
           <button type="button" onClick={() => act.setting({ 'terminal.enabled': false })}
             className="h-20 px-8 rounded-pill border border-border-default text-11 text-secondary hover:text-primary">{t('turn off')}</button>
         </Row>

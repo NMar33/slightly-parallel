@@ -67,7 +67,7 @@ def test_every_part_of_the_product_has_an_example(built: Path) -> None:
                    "visions.csv", "rules.csv", "problems.csv", "skills.csv", "artifacts.csv",
                    "prompts.csv", "marks.csv", "done.csv", "agent_links.csv", "milestones.csv",
                    "calendar_entries.csv", "time_entries.csv", "task_evidence.csv", "task_notes.csv",
-                   "docs.csv"):
+                   "docs.csv", "notes.csv", "entrypoints.csv", "publish.csv", "publish_docs.csv", "cores.csv"):
         assert _mine(root, ledger), f"the example has no {ledger}"
     assert any(r.get("status") == "resolved" for r in _mine(root, "problems.csv"))
     assert [r for r in _rows(root, "sprints.csv") if r.get("projects") == CODE]
@@ -81,6 +81,52 @@ def test_every_part_of_the_product_has_an_example(built: Path) -> None:
     assert [r for r in _rows(root, "integrations.csv") if r["project"] == CODE]
     # Browsing the example counts no time and asks nothing about the timer.
     assert json.loads((root / "timer" / "modes.json").read_text())[CODE] == "manual"
+
+
+def test_the_newer_pages_have_something_to_show(built: Path) -> None:
+    """Notes with their versions, pictures and the operator's marks; entry
+    points with ways in, stops and shots; pins; the tokens of every chat.
+    Each lives in a ledger keyed by its note or topic, which the build's
+    archive and restore must carry."""
+    root = built
+    notes = {r["id"]: r for r in _mine(root, "notes.csv")}
+    assert set(r["kind"] for r in notes.values()) >= {"context", "paste", "review", "plan", "report", "actions"}
+    versions = [r for r in _rows(root, "note_versions.csv") if r["note_id"] in notes]
+    assert {r["note_id"] for r in versions} == set(notes) and len(versions) > len(notes)
+    assert all((root / r["file"]).is_file() for r in versions)
+    images = [r for r in _rows(root, "note_images.csv") if r["note_id"] in notes]
+    assert len(images) >= 3 and all((root / r["file"]).is_file() for r in images)
+    marks = {r["kind"] for r in _rows(root, "note_marks.csv") if r["note_id"] in notes}
+    assert marks == {"tick", "answer", "copy"}
+    eps = {r["id"] for r in _mine(root, "entrypoints.csv")}
+    assert len(eps) >= 2
+    for ledger in ("entrypoint_ways.csv", "entrypoint_stops.csv", "entrypoint_shots.csv", "task_topics.csv"):
+        assert {r["entrypoint_id"] for r in _rows(root, ledger)} == eps, ledger
+    pins = {r["kind"] for r in _mine(root, "marks.csv")}
+    assert {"pin", "carry", "fork"} <= pins
+    # Publish cards the agents wrote: a context on each, what belongs to them
+    # stored (tasks, images, a file, links), a text one agent wrote, and a
+    # message another chat added to a card.
+    cards = {r["id"] for r in _mine(root, "publish.csv")}
+    writes = [r for r in _rows(root, "publish_writes.csv") if r["card_id"] in cards]
+    assert {r["card_id"] for r in writes if r["part"] == "context"} == cards
+    assert any(r["part"] == "text" for r in writes)
+    kinds = {r["kind"] for r in _rows(root, "publish_attachments.csv") if r["card_id"] in cards}
+    assert {"task", "image", "file", "link"} <= kinds
+    assert [r for r in _rows(root, "publish_sources.csv") if r["card_id"] in cards]
+    chats = [d for d in (root / "projects" / CODE / "chats").iterdir() if d.is_dir()]
+    assert all((d / "usage.jsonl").is_file() for d in chats)
+
+
+def test_every_chat_is_dated_in_the_month(built: Path) -> None:
+    """The capture core stamps turns through hookshared's clock: played on
+    the fake one, no chat starts on the day the build ran."""
+    for meta in (built / "projects" / CODE / "chats").glob("*/meta.json"):
+        m = json.loads(meta.read_text(encoding="utf-8"))
+        first = str(m.get("first_seen") or m.get("started_at") or m.get("created_date") or "")
+        last = str(m.get("last_active") or "")
+        assert last[:10] <= END.isoformat(), (meta.parent.name, last)
+        assert first, meta
 
 
 def test_the_month_ends_yesterday(built: Path) -> None:

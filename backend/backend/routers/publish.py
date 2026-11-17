@@ -1,11 +1,17 @@
 """Publish — the operator's page of what shipped, worth telling (publishlib.py, docs/publish.md).
 
 Every route is under /api/publishing (the kept entity's own lens list is
-/api/publish). All of it is the operator's: an agent's write is refused.
+/api/publish). The card's own writes (text, context, attachments) are the
+agent's through MCP publish_write and the operator's on the page; merging,
+removing and the documents are the operator's.
 
   GET  /api/publishing?project=                 the cards with their life, the documents with their versions
   GET  /api/publishing/cards/{id}               one card, with its history
-  POST /api/publishing/cards/{id}/text          {text, note?}: a new version of the card's text
+  POST /api/publishing/cards/{id}/write         {text?, context?, note?, base?, tasks?, notes?, commits?, links?, files?, images?, merge?}
+  POST /api/publishing/cards/{id}/attach        the older door: attachments only (MCP publish_attach)
+  POST /api/publishing/cards/{id}/text          {text, note?}: the operator's new version of the text
+  POST /api/publishing/cards/{id}/merge         {into}: this card folded into another (the operator's)
+  POST /api/publishing/sources/{id}/remove      a merge taken back, or an appended message dropped
   POST /api/publishing/docs                     {project, name}: a document (the same name answers the existing one)
   POST /api/publishing/docs/{id}/update         {name?, archived?}
   POST /api/publishing/docs/{id}/versions       {note?}: the next version, the current items copied
@@ -32,7 +38,8 @@ router = APIRouter()
 
 def _operator(body: dict) -> None:
     if identity_of(body) not in ("", "operator"):
-        refuse_agent("the Publish page is the operator's", "a card comes from the operator's own #publish in a chat; nothing is written for it")
+        refuse_agent("this part of the Publish page is the operator's",
+                     "an agent writes a card's text, context and attachments with MCP publish_write")
 
 
 def _refused(exc: publishlib.PublishRefused) -> HTTPException:
@@ -75,6 +82,7 @@ def publishing_card_create(response: Response, body: dict = Body(...), store: Vi
 @router.post("/api/publishing/cards/{card_id}/text")
 def publishing_card_text(card_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     _operator(body)
+    adopt_when_changed(store, "keep", keeplib.adopt)
     try:
         return {"card": publishlib.edit_card(store, card_id, body)}
     except LookupError:
@@ -83,11 +91,26 @@ def publishing_card_text(card_id: str, body: dict = Body(...), store: ViewStore 
         raise _refused(exc)
 
 
+@router.post("/api/publishing/cards/{card_id}/write")
+def publishing_card_write(card_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    """The card's text, context and attachments: the agent (MCP
+    publish_write) after the operator's #publish, or the operator on the
+    page. The id may be a card, a message appended to one, or a merged card."""
+    adopt_when_changed(store, "keep", keeplib.adopt)
+    try:
+        return publishlib.write(store, card_id, body, identity_of(body) or "operator")
+    except LookupError:
+        raise not_found("card", card_id)
+    except publishlib.PublishRefused as exc:
+        raise _refused(exc)
+
+
 @router.post("/api/publishing/cards/{card_id}/attach", status_code=201)
 def publishing_card_attach(card_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
-    """Images and links onto a card: the operator on the page, or the agent
-    (MCP publish_attach) with what the operator may need to tell about it.
-    The text stays the operator's."""
+    """Attachments onto a card: the operator on the page (a drop, a paste,
+    a link typed), or the agent through MCP publish_attach (publish_write's
+    older name). Adopts first: the hook names a card before any read has."""
+    adopt_when_changed(store, "keep", keeplib.adopt)
     try:
         return publishlib.attach(store, card_id, body, identity_of(body) or "operator")
     except LookupError:
@@ -96,11 +119,37 @@ def publishing_card_attach(card_id: str, body: dict = Body(...), store: ViewStor
         raise _refused(exc)
 
 
+@router.post("/api/publishing/cards/{card_id}/merge")
+def publishing_card_merge(card_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    """``{into}`` — this card folded into another of the project (the operator's)."""
+    _operator(body)
+    into = str(body.get("into") or "").strip()
+    try:
+        return {"card": publishlib.merge(store, card_id, into, "operator")}
+    except LookupError:
+        raise not_found("card", into)
+    except publishlib.PublishRefused as exc:
+        raise _refused(exc)
+
+
+@router.post("/api/publishing/sources/{source_id}/remove")
+def publishing_source_remove(source_id: str, body: dict = Body(default={}), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    _operator(body)
+    try:
+        return publishlib.remove_source(store, source_id)
+    except LookupError:
+        raise not_found("source", source_id)
+
+
 @router.get("/api/publishing/attachments/{attachment_id}/file")
 def publishing_attachment_file(attachment_id: str, store: ViewStore = Depends(get_store)):
-    path = publishlib.attachment_file(store, attachment_id)
-    if path is None:
+    got = publishlib.attachment_file(store, attachment_id)
+    if got is None:
         raise not_found("attachment", attachment_id)
+    path, name = got
+    if publishlib.FILES_DIR in path.parts:
+        # A file opens in the browser when it can (a text, a PDF), under its own name.
+        return FileResponse(path, filename=name, content_disposition_type="inline")
     return FileResponse(path)
 
 

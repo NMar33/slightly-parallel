@@ -103,8 +103,8 @@ def test_a_rule_posted_by_an_agent_is_refused_and_pointed_at_interpret(client: T
 
 def test_unchecked_entities_never_warn(client: TestClient) -> None:
     r = client.post(
-        "/api/notes",
-        json={**_BASE, "title": "A bare note"},
+        "/api/ideas",
+        json={**_BASE, "title": "A bare idea"},
     )
     assert r.status_code == 201
     assert r.json()["warnings"] == []

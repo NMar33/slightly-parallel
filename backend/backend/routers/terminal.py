@@ -24,6 +24,9 @@ Routes:
 - ``POST /api/terminal/sessions/{id}/type`` ``{text, enter}`` · ``/rename``
   ``{label}`` · ``/close``.
 - ``WS   /ws/terminal/{id}?token=&project=&cols=&rows=`` — the screen.
+
+The pty: a Unix pty (``PtySession``) on macOS and Linux; on Windows a ConPTY
+through pywinpty (``WinPtySession``, conpty.py), plain terminals only.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 
-from .. import app_settings, termlib, timeauto
+from .. import app_settings, conpty, termlib, timeauto
 from ..config import Settings
 from ..db import ViewStore
 from .deps import foreign_origin, get_store, not_found, operator_only, to_int
@@ -64,15 +67,27 @@ _REPLAY_BYTES = 65_536
 _BUFFER_BYTES = 131_072
 
 
-# A terminal is a Unix pty. On Windows these do not exist: the server still
-# starts (every other page works), and the terminal says it is unavailable.
-try:
+# A terminal is a Unix pty on macOS and Linux, a ConPTY on Windows (pywinpty,
+# installed there by requirements.txt). Without it the server still starts
+# (every other page works), and the terminal says what to install.
+if os.name == "nt":  # pragma: no cover — Windows
+    SUPPORTED = conpty.available()
+    UNSUPPORTED = conpty.MISSING
+else:
     import fcntl
     import pty
     import termios
     SUPPORTED = True
-except ImportError:  # pragma: no cover — Windows
-    SUPPORTED = False
+    UNSUPPORTED = ""
+#: The socket's close reason when there is no terminal here (4403).
+UNSUPPORTED_WS = "the terminal needs pywinpty"
+
+#: The pty's size limits: a Unix winsize and a Windows COORD are 16-bit.
+_MAX_ROWS, _MAX_COLS = 500, 1000
+
+
+def _size(cols: int, rows: int) -> tuple[int, int]:
+    return min(max(cols, 1), _MAX_COLS), min(max(rows, 1), _MAX_ROWS)
 
 
 # The pumps' own threads. Each open terminal holds one in a blocking read for
@@ -98,6 +113,11 @@ def close_all() -> None:
 async def _read_pty(fd: int) -> bytes:
     """The next output of a pty, read on the pumps' own threads."""
     return await asyncio.get_running_loop().run_in_executor(_PTY_READS, os.read, fd, 8192)
+
+
+async def _read_session(session: "PtySession") -> bytes:
+    """The next output of a terminal (either kind of pty), on the pumps' threads."""
+    return await asyncio.get_running_loop().run_in_executor(_PTY_READS, session.read_chunk)
 
 
 class PtySession:
@@ -130,10 +150,18 @@ class PtySession:
         self.last_output = time.time()
         self.closed = False
 
+    def read_chunk(self) -> bytes:
+        """The next output, blocking (a pump thread); b"" or OSError at the end."""
+        return os.read(self.fd, 8192)
+
+    def foreground(self) -> str:
+        return termlib.foreground_of_fd(self.fd)
+
     def resize(self, cols: int, rows: int) -> None:
         # The pty takes 16-bit sizes: past them struct.pack raised after the
         # fork, and the shell lived on with no owner.
-        winsize = struct.pack("HHHH", min(max(rows, 1), 500), min(max(cols, 1), 1000), 0, 0)
+        cols, rows = _size(cols, rows)
+        winsize = struct.pack("HHHH", rows, cols, 0, 0)
         try:
             fcntl.ioctl(self.fd, termios.TIOCSWINSZ, winsize)
         except OSError:
@@ -184,6 +212,61 @@ class PtySession:
             os.close(fd)
         except OSError:
             pass
+
+
+class WinPtySession(PtySession):
+    """A plain terminal on Windows: the same session (buffer, views, pump),
+    its pty a ConPTY (conpty.py). There is no fd: ``fd`` stays -1, and the
+    pump reads through ``read_chunk``."""
+
+    def __init__(self, session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str],
+                 module: Any = None):
+        self.session_id = session_id
+        cols, rows = _size(cols, rows)
+        self.con = conpty.ConPty(argv, cwd, cols, rows, {**os.environ, **env}, module=module)
+        self.pid = self.con.pid
+        self.fd = -1
+        self.buffer = bytearray()
+        self.subscribers: set[WebSocket] = set()
+        self.pump_task: asyncio.Task | None = None
+        self.type_task: asyncio.Task | None = None
+        self.last_output = time.time()
+        self.closed = False
+
+    def read_chunk(self) -> bytes:
+        return self.con.read()
+
+    def foreground(self) -> str:
+        return self.con.foreground()
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.con.resize(*_size(cols, rows))
+
+    def write(self, data: bytes) -> None:
+        if not self.closed:
+            self.con.write(data)
+
+    def alive(self) -> bool:
+        return self.con.alive()
+
+    def close(self) -> None:
+        """Once only: the shell and its whole tree end, a blocked read wakes;
+        the pseudo console goes when nothing reads it (release)."""
+        if self.closed:
+            return
+        self.closed = True
+        self.con.kill()
+        if self.pump_task is None or self.pump_task.done():
+            self.release()
+
+    def release(self) -> None:
+        self.con.release()
+
+
+def open_pty(session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str]) -> PtySession:
+    """A pty of this system's kind running `argv`."""
+    kind = WinPtySession if os.name == "nt" else PtySession
+    return kind(session_id, argv, cwd, cols, rows, env)
 
 
 def _cfg(data_root: Path) -> dict[str, Any]:
@@ -242,9 +325,17 @@ def _operator_page(headers: Any, app: Any) -> bool:
 def _need_on(request: Request) -> None:
     _guard(request)
     if not SUPPORTED:
-        raise HTTPException(status_code=501, detail="The terminal runs on macOS and Linux only.")
+        raise HTTPException(status_code=501, detail=UNSUPPORTED or "The terminal is not available on this system.")
     if not enabled(request.app):
         raise HTTPException(status_code=409, detail="the terminal is off: turn it on in the terminal drawer or in Settings › Terminal")
+
+
+def _group_or_422(root: Path, value: Any) -> str:
+    """A group's id as sent, "" for none; a group that does not exist is refused."""
+    gid = str(value or "")
+    if gid and not any(g.get("id") == gid for g in termlib.groups(root)):
+        raise HTTPException(status_code=422, detail=f"no group {gid}")
+    return gid
 
 
 def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for the old call site
@@ -283,7 +374,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         _reap_dead()
         with lock:
             live = list(sessions.items())
-        return {sid: {"fg": termlib.foreground_of_fd(s.fd), "activity": s.last_output} for sid, s in live}
+        return {sid: {"fg": s.foreground(), "activity": s.last_output} for sid, s in live}
 
     # ---------------------------------------------------------------- state
     @router.get("/api/terminal/state")
@@ -301,8 +392,10 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         on = enabled(request.app)
         return {
             "enabled": on,
-            # False on Windows: no pty, so no terminal (the page says so).
+            # False only on Windows without pywinpty (the page says what to install).
             "supported": SUPPORTED,
+            # Windows: plain terminals only — none survives a server restart.
+            "windows": termlib.WINDOWS,
             "forced": bool(boot.terminal_enabled),
             "token": token_of(request.app) if on else "",
             "tmux": termlib.tmux_path() is not None,
@@ -324,7 +417,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         items = termlib.listing(root, _plain_status())
         if project:
             items = [x for x in items if x.get("project") == project]
-        counts = {s: sum(1 for x in items if x["state"] == s) for s in ("shell", "working", "waiting", "running", "ended")}
+        counts = {s: sum(1 for x in items if x["state"] == s)
+                  for s in ("shell", "working", "waiting", "running", "ended", "asleep")}
         return {"sessions": items, "counts": counts}
 
     # ---------------------------------------------------------------- open
@@ -377,11 +471,13 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             command = str(body.get("command") or "")
         else:
             raise HTTPException(status_code=422, detail="kind must be shell, resume or start")
-        if sum(1 for r in termlib.listing(root, _plain_status()) if r["state"] != "ended") >= _MAX_SESSIONS:
+        if sum(1 for r in termlib.listing(root, _plain_status()) if r["state"] not in ("ended", "asleep")) >= _MAX_SESSIONS:
             raise HTTPException(status_code=429, detail=f"{_MAX_SESSIONS} terminals are open: close one first.")
+        group = _group_or_422(root, body.get("group"))
         try:
             row = termlib.open_session(root, cfg, kind=kind, project=project, cwd=cwd, command=command,
-                                       label=label, agent_id=agent_id, task_id=task_id)
+                                       label=label, agent_id=agent_id, task_id=task_id,
+                                       role=str(body.get("role") or ""), group=group)
         except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
             raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
         return {"session": {**row, "state": "working" if command else "shell"}, "existing": False}
@@ -513,6 +609,172 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         termlib.close(root, sid)
         return {"closed": sid}
 
+    # ------------------------------------------------- sleep, wake, restore
+    def _resume_of(store: ViewStore, row: dict[str, Any]) -> str:
+        """The command that brings this terminal's agent back, "" for none."""
+        agent_id = str(row.get("agent_id") or "")
+        if not agent_id:
+            return ""
+        agent = next((dict(a) for a in store.agents() if str(a.get("agent_id")) == agent_id), None)
+        if not agent:
+            return ""
+        return termlib.resume_command(str(agent.get("tool") or ""), str(agent.get("session_ref") or ""))
+
+    def _listed(root: Path, sid: str) -> dict[str, Any]:
+        row = next((r for r in termlib.listing(root, _plain_status()) if r["id"] == sid), None)
+        if row is None:
+            raise not_found("terminal", sid)
+        return row
+
+    def _wake(root: Path, cfg: dict[str, Any], store: ViewStore, row: dict[str, Any]) -> dict[str, Any]:
+        awake = sum(1 for r in termlib.listing(root, _plain_status()) if r["state"] not in ("ended", "asleep"))
+        if awake >= _MAX_SESSIONS:
+            raise HTTPException(status_code=429, detail=f"{_MAX_SESSIONS} terminals are open: close one first.")
+        # What sleep kept; a terminal lost to a restart never slept, so its
+        # command is worked out now.
+        cmd = str(row.get("wake") or "") if row.get("asleep") else termlib.wake_command(row, _resume_of(store, row))
+        try:
+            termlib.wake(root, cfg, row["id"], cmd)
+        except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
+            raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
+        return _listed(root, row["id"])
+
+    @router.post("/api/terminal/sessions/{sid}/sleep")
+    def terminal_sleep(sid: str, request: Request, body: dict = Body(default={}),
+                       store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+        """Stop what runs in a terminal and keep its tab: a chat's agent is
+        resumed when it is woken, a server runs its command again."""
+        _need_on(request)
+        operator_only(body, "Putting a terminal to sleep")
+        root = request.app.state.settings.data_root
+        row = _listed(root, sid)
+        if row["state"] == "asleep":
+            return {"session": row}
+        cmd = termlib.wake_command(row, _resume_of(store, row))
+        _drop(sid)
+        termlib.sleep(root, sid, cmd)
+        return {"session": _listed(root, sid)}
+
+    @router.post("/api/terminal/sessions/{sid}/wake")
+    def terminal_wake(sid: str, request: Request, body: dict = Body(default={}),
+                      store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+        _need_on(request)
+        operator_only(body, "Waking a terminal")
+        root = request.app.state.settings.data_root
+        row = _listed(root, sid)
+        if row["state"] not in ("asleep", "ended"):
+            return {"session": row}
+        return {"session": _wake(root, _cfg(root), store, row)}
+
+    def _lost(root: Path) -> list[dict[str, Any]]:
+        return termlib.lost(termlib.listing(root, _plain_status()), termlib.tmux_server_pid(root))
+
+    @router.get("/api/terminal/restore")
+    def terminal_restore_state(request: Request, store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+        """Terminals that ended without being closed or put to sleep — after
+        a restart of the computer — and what each would run if restored."""
+        _guard(request)
+        root = request.app.state.settings.data_root
+        items = [{**r, "wake": termlib.wake_command(r, _resume_of(store, r))} for r in _lost(root)]
+        return {"needed": len(items), "sessions": items}
+
+    @router.post("/api/terminal/restore")
+    def terminal_restore(request: Request, body: dict = Body(default={}),
+                         store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+        _need_on(request)
+        operator_only(body, "Restoring terminals")
+        root = request.app.state.settings.data_root
+        cfg = _cfg(root)
+        only = {str(x) for x in body.get("ids") or []}
+        results = []
+        for row in _lost(root):
+            if only and row["id"] not in only:
+                continue
+            try:
+                got = _wake(root, cfg, store, row)
+                results.append({"id": row["id"], "label": row.get("label") or "", "ok": True, "error": "",
+                                "command": got.get("wake") or ""})
+            except HTTPException as exc:
+                results.append({"id": row["id"], "label": row.get("label") or "", "ok": False,
+                                "error": str(exc.detail), "command": ""})
+        return {"results": results, "restored": sum(1 for r in results if r["ok"])}
+
+    # ---------------------------------------------------------------- groups
+    @router.get("/api/terminal/groups")
+    def terminal_groups(request: Request) -> dict[str, Any]:
+        _guard(request)
+        return {"groups": termlib.groups(request.app.state.settings.data_root)}
+
+    def _group_fields(body: dict) -> tuple[str | None, int | None]:
+        name = body.get("name")
+        name = str(name).strip()[:60] if name is not None else None
+        if name == "":
+            raise HTTPException(status_code=422, detail="a group needs a name")
+        color = body.get("color")
+        if color is not None:
+            if not isinstance(color, int) or isinstance(color, bool) or not 1 <= color <= 8:
+                raise HTTPException(status_code=422, detail="color is a number from 1 to 8")
+        return name, color
+
+    @router.post("/api/terminal/groups", status_code=201)
+    def terminal_group_new(request: Request, body: dict = Body(default={})) -> dict[str, Any]:
+        _need_on(request)
+        operator_only(body, "Making a group of terminals")
+        name, color = _group_fields(body)
+        return {"group": termlib.group_put(request.app.state.settings.data_root, "", name, color)}
+
+    @router.post("/api/terminal/groups/{gid}")
+    def terminal_group_edit(gid: str, request: Request, body: dict = Body(default={})) -> dict[str, Any]:
+        _need_on(request)
+        operator_only(body, "Changing a group of terminals")
+        name, color = _group_fields(body)
+        g = termlib.group_put(request.app.state.settings.data_root, gid, name, color)
+        if g is None:
+            raise not_found("group", gid)
+        return {"group": g}
+
+    @router.post("/api/terminal/groups/{gid}/remove")
+    def terminal_group_remove(gid: str, request: Request, body: dict = Body(default={})) -> dict[str, Any]:
+        _need_on(request)
+        operator_only(body, "Removing a group of terminals")
+        if not termlib.group_remove(request.app.state.settings.data_root, gid):
+            raise not_found("group", gid)
+        return {"removed": gid}
+
+    @router.post("/api/terminal/sessions/{sid}/group")
+    def terminal_set_group(sid: str, request: Request, body: dict = Body(default={})) -> dict[str, Any]:
+        """Move a terminal into a group, or with "" back to its project: it
+        is in exactly one place."""
+        _need_on(request)
+        operator_only(body, "Moving a terminal")
+        root = request.app.state.settings.data_root
+        if not termlib.get(root, sid):
+            raise not_found("terminal", sid)
+        termlib.put(root, {"id": sid, "group": _group_or_422(root, body.get("group"))})
+        return {"session": _listed(root, sid)}
+
+    # ---------------------------------------------------------------- typing
+    @router.post("/api/terminal/typing")
+    def terminal_typing(request: Request, body: dict = Body(default={})) -> dict[str, Any]:
+        """The operator typed into a terminal: how many keys since the last
+        report. The time they spend, never the text."""
+        _need_on(request)
+        operator_only(body, "Reporting typing")
+        root = request.app.state.settings.data_root
+        row = termlib.get(root, str(body.get("sid") or ""))
+        keys = body.get("keys")
+        if row is None or not isinstance(keys, int) or isinstance(keys, bool) or keys <= 0:
+            return {"noted": False}
+        termlib.note_typing(root, row, min(keys, 20000))
+        return {"noted": True}
+
+    @router.get("/api/terminal/typing")
+    def terminal_typing_day(request: Request, day: str = Query("")) -> dict[str, Any]:
+        _guard(request)
+        day = day if re.match(r"^\d{4}-\d{2}-\d{2}$", day) else time.strftime("%Y-%m-%d")
+        minutes = termlib.typing_minutes(request.app.state.settings.data_root, day)
+        return {"day": day, "minutes": minutes, "total": sum(minutes.values())}
+
     # ------------------------------------------------------------ the screen
     @router.websocket("/ws/terminal/{session_id}")
     async def terminal_ws(websocket: WebSocket, session_id: str) -> None:
@@ -530,7 +792,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         await websocket.accept()
         if not SUPPORTED:
             # 4403 is a refusal the screen shows and does not retry.
-            await websocket.close(code=4403, reason="the terminal needs macOS or Linux")
+            await websocket.close(code=4403, reason=UNSUPPORTED_WS)
             return
         if not enabled(app):
             await websocket.close(code=4409, reason="the terminal is off")
@@ -575,7 +837,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 await websocket.close(code=4429, reason="too many views")
                 return
             key = f"{session_id}#{secrets.token_hex(3)}"
-            session = PtySession(session_id, termlib.attach_argv(root, session_id), str(row.get("cwd") or root), cols, rows, env)
+            session = open_pty(session_id, termlib.attach_argv(root, session_id), str(row.get("cwd") or root), cols, rows, env)
             with lock:
                 clients[key] = session
             fresh = True
@@ -584,13 +846,21 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             if session_id not in sessions and len(sessions) >= _MAX_SESSIONS:
                 await websocket.close(code=4429, reason="too many terminals")
                 return
+            failed = ""
             with lock:
-                session = sessions.get(session_id)
-                fresh = session is None
-                if fresh:
-                    shell = os.environ.get("SHELL") or "bash"
-                    session = PtySession(session_id, [shell, "-l"], str(row.get("cwd") or root), cols, rows, env)
-                    sessions[session_id] = session
+                found = sessions.get(session_id)
+                fresh = found is None
+                if found is None:
+                    try:
+                        found = open_pty(session_id, termlib.plain_shell(), str(row.get("cwd") or root), cols, rows, env)
+                        sessions[session_id] = found
+                    except Exception as exc:  # noqa: BLE001 — Windows: no shell, no pseudo console
+                        failed = str(exc) or type(exc).__name__
+            if found is None:
+                log.warning("terminal %s did not open: %s", session_id, failed)
+                await websocket.close(code=4500, reason=f"the shell did not start: {failed}"[:120])
+                return
+            session = found
         if not fresh:
             session.resize(cols, rows)
             if session.buffer:
@@ -598,11 +868,14 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                     await websocket.send_bytes(_QUERIES.sub(b"", bytes(session.buffer[-_REPLAY_BYTES:])))
                 except Exception:  # noqa: BLE001 — reconnect replay is best-effort
                     pass
-        elif row.get("backend") != "tmux" and row.get("command") and not row.get("typed"):
-            # A plain terminal types its command once, when it first opens.
+        elif row.get("backend") != "tmux" and not row.get("typed") and _pending(row):
+            # A plain terminal types its command once, when it first opens —
+            # and a woken one what it wakes with (termlib.wake), once.
+            pending = _pending(row)
+
             async def type_later() -> None:
                 await asyncio.sleep(0.4)
-                typed = termlib.typed_form(row["command"], os.environ.get("SHELL") or "bash")
+                typed = termlib.typed_form(pending, termlib.plain_shell()[0])
                 await run_in_threadpool(session.write, (typed + ("\r" if row.get("launch") == "run" else "")).encode())
             # Held on the session: a task nothing references can be collected before it runs.
             session.type_task = asyncio.create_task(type_later())
@@ -613,7 +886,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         async def pump_output() -> None:
             while not session.closed:
                 try:
-                    data = await _read_pty(session.fd)
+                    data = await _read_session(session)
                 except OSError:
                     break
                 if session.closed:
@@ -695,6 +968,14 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 session.close()
 
     return router
+
+
+def _pending(row: dict[str, Any]) -> str:
+    """What a plain terminal types when its shell starts: the command it was
+    opened with; once woken, what it wakes with ("" for a shell woken empty)."""
+    if row.get("woken_at"):
+        return str(row.get("wake") or "")
+    return str(row.get("command") or "")
 
 
 _to_int = to_int  # a whole number, or the default (deps)

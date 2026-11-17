@@ -63,6 +63,7 @@ server.lock
 # Playwright artifacts
 frontend/test-results/
 frontend/playwright-report/
+desktop/e2e/test-results/
 
 # The 2608 article kit: 21.5 MB of screenshots of pages that no longer exist
 # (a Goals page, a goals tree). Kept on disk, out of the repository — re-shoot
@@ -87,8 +88,10 @@ fixtures/ui_prefs.json
 # Written by Setup for this machine: its interpreter and its folders.
 /.mcp.json
 
-# What a server started on the shipped demo data writes beside it.
+# What a server started on the shipped demo data writes beside it. The
+# token is a secret: it is the operator's key to that server.
 fixtures/timer/
+fixtures/operator.token
 
 # Rendered channel videos (MP4, GIF) made from the tour; large and remade on demand.
 brand/channel/videos/
