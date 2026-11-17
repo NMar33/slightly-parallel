@@ -68,6 +68,33 @@ function files() {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** A step of the bench that did not end in time, or failed: kept in the
+ *  JSON (`failures`), and the bench goes on with the next repeat. The
+ *  Windows bench once waited 57 minutes on one step, until the CI job's
+ *  limit cancelled it and nothing was saved. */
+type Failure = { test: string; mode?: string; repeat?: number; phase: string; error: string; at: string }
+const failures: Failure[] = []
+class PhaseTimeout extends Error {}
+
+/** `fn`, or a PhaseTimeout after `ms`. What it was doing goes on in the
+ *  background; the caller kills the app, which ends it. */
+async function phase<T>(name: string, ms: number, fn: () => Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new PhaseTimeout(`${name}: no end in ${Math.round(ms / 1000)} s`)), ms)
+  })
+  try { return await Promise.race([fn(), late]) } finally { clearTimeout(timer) }
+}
+
+function failed(where: Omit<Failure, 'error' | 'at'>, e: unknown) {
+  const error = (e instanceof Error ? e.message : String(e)).split('\n')[0].slice(0, 400)
+  failures.push({ ...where, error, at: new Date().toISOString() })
+  console.log(`bench: ${where.test}${where.mode ? ` ${where.mode}` : ''}${where.repeat ? ` #${where.repeat}` : ''}: ${where.phase} failed: ${error}`)
+}
+
+/** A test's failures, saved in its part of the JSON (a failed test restarts the worker: nothing is shared). */
+const failuresOf = (test: string) => failures.filter((f) => f.test === test)
+
 /** Terminals that failed to open on the first try. Right after the last
  *  tmux terminal closes, tmux's server is going away, and a new-session
  *  sent to it then fails (exit 1): seen in 1 of 6 rounds on the laptop. The
@@ -84,13 +111,21 @@ async function shell(api: APIRequestContext, label: string) {
 }
 
 type App = { app: ElectronApplication; page: Page; close: () => Promise<void> }
-async function launch(): Promise<App> {
+async function launch(test: string): Promise<App> {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-desktop-e2e-profile-'))
   const app = await _electron.launch({ executablePath: ELECTRON, args: [...launchArgs(userData), ...(SCALE ? [`--force-device-scale-factor=${SCALE}`] : [])], env: launchEnv(), timeout: 30_000 })
   await catchLinksOut(app)
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  return { app, page, close: async () => { await app.close().catch(() => {}); fs.rmSync(userData, { recursive: true, force: true }) } }
+  const close = async () => {
+    // A quit that does not end (a window that will not close) is killed: the bench goes on.
+    try { await phase('quit the app', 60_000, () => app.close()) } catch (e) {
+      failed({ test, phase: 'quit the app' }, e)
+      try { app.process().kill() } catch { /* gone */ }
+    }
+    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+  }
+  return { app, page, close }
 }
 
 /** Which terminals this server can keep: tmux where it is installed (never Windows), plain everywhere. */
@@ -154,7 +189,7 @@ test.beforeAll(() => files())
 
 test('machine', async ({ server }) => {
   test.skip(!ONLY.includes('machine'))
-  const w = await launch()
+  const w = await launch('machine')
   try {
     const main = await w.app.evaluate(async ({ app }) => {
       const info = await app.getGPUInfo('complete').catch(() => null) as { auxAttributes?: Record<string, unknown>; gpuDevice?: unknown[] } | null
@@ -202,41 +237,51 @@ test('memory by windows (one app, detached windows)', async ({ server }) => {
   const runs: unknown[] = []
   for (const mode of await modes(api)) {
     for (let r = 1; r <= REPEATS; r++) {
-      await closeAll(api)
-      await setMode(api, mode)
-      const first = await shell(api, 'bench-1')
-      expect(first.backend).toBe(mode)
-      const w = await launch()
-      const pages: Page[] = [w.page]
       const points: unknown[] = []
+      const where = { test: 'windows', mode, repeat: r }
+      let step = 'close the terminals'
       try {
-        await ready(w.page)
-        await fill(w.page, 1)
-        for (const n of WIN_N) {
-          while (pages.length < n) {
-            const s = await shell(api, `bench-${pages.length + 1}`)
-            const opened = w.app.waitForEvent('window')
-            await w.page.evaluate(([u, ww, hh]) => (window as unknown as { spWindow: { postMessage: (m: unknown) => void } })
-              .spWindow.postMessage({ op: 'detach', url: u, width: ww, height: hh }), [`/term?detached=${encodeURIComponent(s.id)}`, W, H] as const)
-            const p = await opened
-            await p.waitForLoadState('domcontentloaded')
-            await ready(p)
-            await fill(p, pages.length + 1)
-            pages.push(p)
+        await phase(step, 120_000, () => closeAll(api))
+        step = 'open the first terminal'
+        const first = await phase(step, 120_000, async () => { await setMode(api, mode); return shell(api, 'bench-1') })
+        expect(first.backend).toBe(mode)
+        step = 'launch the app'
+        const w = await phase(step, 90_000, () => launch(where.test))
+        const pages: Page[] = [w.page]
+        try {
+          step = 'fill the first window'
+          await phase(step, 180_000, async () => { await ready(w.page); await fill(w.page, 1) })
+          for (const n of WIN_N) {
+            step = `n=${n}`
+            await phase(step, 150_000 * Math.max(1, n - pages.length) + SETTLE + 60_000, async () => {
+              while (pages.length < n) {
+                const s = await shell(api, `bench-${pages.length + 1}`)
+                const opened = w.app.waitForEvent('window')
+                await w.page.evaluate(([u, ww, hh]) => (window as unknown as { spWindow: { postMessage: (m: unknown) => void } })
+                  .spWindow.postMessage({ op: 'detach', url: u, width: ww, height: hh }), [`/term?detached=${encodeURIComponent(s.id)}`, W, H] as const)
+                const p = await opened
+                await p.waitForLoadState('domcontentloaded')
+                await ready(p)
+                await fill(p, pages.length + 1)
+                pages.push(p)
+              }
+              await sleep(SETTLE)
+              const windows = await w.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
+              const mounted = (await Promise.all(pages.map((p) => p.locator('.xterm').count()))).reduce((a, b) => a + b, 0)
+              const m = await memory(w.app)
+              console.log(`windows ${mode} #${r} n=${n}: PSS ${m.pss_mb} MB, working set ${m.ws_mb} MB, ${m.procs} processes`)
+              points.push({ n, windows, terminals_mounted: mounted, ...m })
+            })
           }
-          await sleep(SETTLE)
-          const windows = await w.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
-          const mounted = (await Promise.all(pages.map((p) => p.locator('.xterm').count()))).reduce((a, b) => a + b, 0)
-          const m = await memory(w.app)
-          console.log(`windows ${mode} #${r} n=${n}: PSS ${m.pss_mb} MB, working set ${m.ws_mb} MB, ${m.procs} processes`)
-          points.push({ n, windows, terminals_mounted: mounted, ...m })
-        }
-      } finally { await w.close() }
+        } finally { await w.close() }
+      } catch (e) { failed({ ...where, phase: step }, e) }
       runs.push({ mode, repeat: r, points })
-      save('windows', { open_retries: openRetries, runs })
+      save('windows', { open_retries: openRetries, runs, failures: failuresOf('windows') })
     }
   }
-  await closeAll(api)
+  await phase('close the terminals', 120_000, () => closeAll(api)).catch((e) => failed({ test: 'windows', phase: 'close the terminals' }, e))
+  save('windows', { open_retries: openRetries, runs, failures: failuresOf('windows') })
+  expect(failuresOf('windows'), 'steps of the bench that failed (in the JSON)').toEqual([])
 })
 
 test('memory by tabs (one window)', async ({ server }) => {
@@ -245,36 +290,47 @@ test('memory by tabs (one window)', async ({ server }) => {
   const runs: unknown[] = []
   for (const mode of await modes(api)) {
     for (let r = 1; r <= REPEATS; r++) {
-      await closeAll(api)
-      await setMode(api, mode)
-      await shell(api, 'bench-1')
-      const w = await launch()
-      const { page } = w
       const points: unknown[] = []
+      const where = { test: 'tabs', mode, repeat: r }
+      let step = 'close the terminals'
       try {
-        await ready(page)
-        await fill(page, 1)
-        const strip = page.getByRole('tablist', { name: 'Chats' })
-        for (const n of TAB_N) {
-          for (let k = await strip.getByRole('tab').count(); k < n; k++) {
-            await page.getByRole('button', { name: 'New terminal (alt+N)' }).click()
-            await page.getByRole('menuitem', { name: 'Shell' }).click()
-            await expect(strip.getByRole('tab')).toHaveCount(k + 1)
-            await ready(page)
-            await fill(page, k + 1)
+        await phase(step, 120_000, () => closeAll(api))
+        step = 'open the first terminal'
+        await phase(step, 120_000, async () => { await setMode(api, mode); await shell(api, 'bench-1') })
+        step = 'launch the app'
+        const w = await phase(step, 90_000, () => launch(where.test))
+        const { page } = w
+        try {
+          step = 'fill the first tab'
+          await phase(step, 180_000, async () => { await ready(page); await fill(page, 1) })
+          const strip = page.getByRole('tablist', { name: 'Chats' })
+          for (const n of TAB_N) {
+            step = `n=${n}`
+            const have = await strip.getByRole('tab').count()
+            await phase(step, 150_000 * Math.max(1, n - have) + SETTLE + 60_000, async () => {
+              for (let k = await strip.getByRole('tab').count(); k < n; k++) {
+                await page.getByRole('button', { name: 'New terminal (alt+N)' }).click()
+                await page.getByRole('menuitem', { name: 'Shell' }).click()
+                await expect(strip.getByRole('tab')).toHaveCount(k + 1)
+                await ready(page)
+                await fill(page, k + 1)
+              }
+              await sleep(SETTLE)
+              const m = await memory(w.app)
+              const mounted = await page.locator('.xterm').count()
+              console.log(`tabs ${mode} #${r} n=${n}: PSS ${m.pss_mb} MB, working set ${m.ws_mb} MB, ${mounted} mounted`)
+              points.push({ n, tabs: await strip.getByRole('tab').count(), terminals_mounted: mounted, ...m })
+            })
           }
-          await sleep(SETTLE)
-          const m = await memory(w.app)
-          const mounted = await page.locator('.xterm').count()
-          console.log(`tabs ${mode} #${r} n=${n}: PSS ${m.pss_mb} MB, working set ${m.ws_mb} MB, ${mounted} mounted`)
-          points.push({ n, tabs: await strip.getByRole('tab').count(), terminals_mounted: mounted, ...m })
-        }
-      } finally { await w.close() }
+        } finally { await w.close() }
+      } catch (e) { failed({ ...where, phase: step }, e) }
       runs.push({ mode, repeat: r, points })
-      save('tabs', { open_retries: openRetries, runs })
+      save('tabs', { open_retries: openRetries, runs, failures: failuresOf('tabs') })
     }
   }
-  await closeAll(api)
+  await phase('close the terminals', 120_000, () => closeAll(api)).catch((e) => failed({ test: 'tabs', phase: 'close the terminals' }, e))
+  save('tabs', { open_retries: openRetries, runs, failures: failuresOf('tabs') })
+  expect(failuresOf('tabs'), 'steps of the bench that failed (in the JSON)').toEqual([])
 })
 
 /* ------------------------------------------------------------ speed */
@@ -351,72 +407,82 @@ test('speed', async ({ server }) => {
   const runs: unknown[] = []
   for (const mode of await modes(api)) {
     for (let r = 1; r <= REPEATS; r++) {
-      await closeAll(api)
-      await setMode(api, mode)
-      await shell(api, 'bench-speed')
-      const w = await launch()
-      const { page } = w
+      const where = { test: 'speed', mode, repeat: r }
+      let step = 'close the terminals'
       try {
-        await ready(page)
-        const size = await page.evaluate(() => {
-          const s = document.querySelector('.aqua-screen .xterm-screen')!.getBoundingClientRect()
-          return { w: Math.round(s.width), h: Math.round(s.height), dpr: devicePixelRatio }
-        })
-        // (a) the real path: the shell prints the file through the pty (and tmux).
-        const marker = `bench${r}-42-end`
-        await recordUntil(page, marker)
-        await typeLine(page, `${printFile(BIG)}; ${echoCalc(`bench${r}-`, '6*7', '-end')}`)
-        await page.waitForFunction(() => (window as unknown as Win).__b.done, null, { timeout: 300_000, polling: 250 })
-        const b = await page.evaluate(() => (window as unknown as Win).__b)
-        const ms = b.end - b.t0
-        const cat = {
-          ms: Math.round(ms), mb_s: r1(bytes / 1e6 / (ms / 1000)), fps: r1(b.frames.length / (ms / 1000)),
-          worst_frame_ms: Math.round(Math.max(0, ...b.frames)),
-          frames_over_50ms: b.frames.filter((f) => f > 50).length,
-        }
-        await sleep(1000)
-        const box = (await page.locator('.aqua-screen .xterm-screen').boundingBox())!
-        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-        const steps: number[] = []
-        for (let i = 0; i < 60; i++) steps.push(await wheelStep(page))
-        const moved = steps.filter((s) => s >= 0)
-        const scroll = { steps: steps.length, unchanged: steps.length - moved.length, ms_median: moved.length ? r1(median(moved)) : null, ms_worst: moved.length ? Math.round(Math.max(...moved)) : null }
-        console.log(`speed ${mode} #${r} cat: ${cat.ms} ms, ${cat.mb_s} MB/s, ${cat.fps} fps, worst frame ${cat.worst_frame_ms} ms; wheel ${scroll.ms_median} ms/step`)
+        await phase(step, 120_000, () => closeAll(api))
+        step = 'open the terminal'
+        await phase(step, 120_000, async () => { await setMode(api, mode); await shell(api, 'bench-speed') })
+        step = 'launch the app'
+        const w = await phase(step, 90_000, () => launch(where.test))
+        const { page } = w
+        try {
+          step = 'measure'
+          await phase(step, 15 * 60_000, async () => {
+            await ready(page)
+            const size = await page.evaluate(() => {
+              const s = document.querySelector('.aqua-screen .xterm-screen')!.getBoundingClientRect()
+              return { w: Math.round(s.width), h: Math.round(s.height), dpr: devicePixelRatio }
+            })
+            // (a) the real path: the shell prints the file through the pty (and tmux).
+            const marker = `bench${r}-42-end`
+            await recordUntil(page, marker)
+            await typeLine(page, `${printFile(BIG)}; ${echoCalc(`bench${r}-`, '6*7', '-end')}`)
+            await page.waitForFunction(() => (window as unknown as Win).__b.done, null, { timeout: 300_000, polling: 250 })
+            const b = await page.evaluate(() => (window as unknown as Win).__b)
+            const ms = b.end - b.t0
+            const cat = {
+              ms: Math.round(ms), mb_s: r1(bytes / 1e6 / (ms / 1000)), fps: r1(b.frames.length / (ms / 1000)),
+              worst_frame_ms: Math.round(Math.max(0, ...b.frames)),
+              frames_over_50ms: b.frames.filter((f) => f > 50).length,
+            }
+            await sleep(1000)
+            const box = (await page.locator('.aqua-screen .xterm-screen').boundingBox())!
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+            const steps: number[] = []
+            for (let i = 0; i < 60; i++) steps.push(await wheelStep(page))
+            const moved = steps.filter((s) => s >= 0)
+            const scroll = { steps: steps.length, unchanged: steps.length - moved.length, ms_median: moved.length ? r1(median(moved)) : null, ms_worst: moved.length ? Math.round(Math.max(...moved)) : null }
+            console.log(`speed ${mode} #${r} cat: ${cat.ms} ms, ${cat.mb_s} MB/s, ${cat.fps} fps, worst frame ${cat.worst_frame_ms} ms; wheel ${scroll.ms_median} ms/step`)
 
-        // (b) straight into the page's xterm, as the engine comparison did:
-        // plain terminals only — under tmux the page's xterm is on tmux's
-        // alternate screen, which keeps no history.
-        let direct: unknown = { skipped: mode === 'plain' ? 'the page\'s terminal was not found' : 'tmux: the page\'s xterm is on the alternate screen (no history there); measured on plain' }
-        if (mode === 'plain') {
-          await page.keyboard.press('End').catch(() => {})
-          const got = await page.evaluate(async ([find, gen, n]) => {
-            const term = (0, eval)(find)
-            if (!term) return null
-            const make = (0, eval)(`(${gen})`) as (b: number, e: string) => string
-            const buf = new TextEncoder().encode(make(n, '\r\n'))
-            term.scrollToBottom()
-            await new Promise((res) => setTimeout(res, 1500))
-            let frames = 0, last = performance.now(), worst = 0, run = true
-            const tick = () => { const t = performance.now(); frames++; worst = Math.max(worst, t - last); last = t; if (run) requestAnimationFrame(tick) }
-            requestAnimationFrame(tick)
-            const CH = 65536, t0 = performance.now()
-            for (let i = 0; i < buf.length; i += CH) await new Promise<void>((res) => term.write(buf.subarray(i, i + CH), res))
-            await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)))
-            const ms = performance.now() - t0; run = false
-            const s0 = performance.now(); let sf = 0
-            for (let i = 0; i < 300; i++) { term.scrollLines(-3); await new Promise((res) => requestAnimationFrame(res)); sf++ }
-            const scrollMs = performance.now() - s0
-            term.scrollToBottom()
-            return { bytes: buf.length, ms: Math.round(ms), mb_s: Math.round(buf.length / 1e6 / (ms / 1000) * 10) / 10, fps: Math.round(frames / (ms / 1000) * 10) / 10,
-              worst_frame_ms: Math.round(worst), scroll_ms_per_step: Math.round(scrollMs / sf * 10) / 10, cols: term.cols, rows: term.rows, scrollback: term.options.scrollback }
-          }, [FIND_TERM, makeData.toString(), MB * 1e6] as const)
-          if (got) direct = got
-          console.log(`speed ${mode} #${r} direct: ${JSON.stringify(direct)}`)
-        }
-        runs.push({ mode, repeat: r, bytes, screen: size, cat, scroll, direct })
-      } finally { await w.close() }
-      save('speed', { open_retries: openRetries, runs })
+            // (b) straight into the page's xterm, as the engine comparison did:
+            // plain terminals only — under tmux the page's xterm is on tmux's
+            // alternate screen, which keeps no history.
+            let direct: unknown = { skipped: mode === 'plain' ? 'the page\'s terminal was not found' : 'tmux: the page\'s xterm is on the alternate screen (no history there); measured on plain' }
+            if (mode === 'plain') {
+              await page.keyboard.press('End').catch(() => {})
+              const got = await page.evaluate(async ([find, gen, n]) => {
+                const term = (0, eval)(find)
+                if (!term) return null
+                const make = (0, eval)(`(${gen})`) as (b: number, e: string) => string
+                const buf = new TextEncoder().encode(make(n, '\r\n'))
+                term.scrollToBottom()
+                await new Promise((res) => setTimeout(res, 1500))
+                let frames = 0, last = performance.now(), worst = 0, run = true
+                const tick = () => { const t = performance.now(); frames++; worst = Math.max(worst, t - last); last = t; if (run) requestAnimationFrame(tick) }
+                requestAnimationFrame(tick)
+                const CH = 65536, t0 = performance.now()
+                for (let i = 0; i < buf.length; i += CH) await new Promise<void>((res) => term.write(buf.subarray(i, i + CH), res))
+                await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)))
+                const ms = performance.now() - t0; run = false
+                const s0 = performance.now(); let sf = 0
+                for (let i = 0; i < 300; i++) { term.scrollLines(-3); await new Promise((res) => requestAnimationFrame(res)); sf++ }
+                const scrollMs = performance.now() - s0
+                term.scrollToBottom()
+                return { bytes: buf.length, ms: Math.round(ms), mb_s: Math.round(buf.length / 1e6 / (ms / 1000) * 10) / 10, fps: Math.round(frames / (ms / 1000) * 10) / 10,
+                  worst_frame_ms: Math.round(worst), scroll_ms_per_step: Math.round(scrollMs / sf * 10) / 10, cols: term.cols, rows: term.rows, scrollback: term.options.scrollback }
+              }, [FIND_TERM, makeData.toString(), MB * 1e6] as const)
+              if (got) direct = got
+              console.log(`speed ${mode} #${r} direct: ${JSON.stringify(direct)}`)
+            }
+            runs.push({ mode, repeat: r, bytes, screen: size, cat, scroll, direct })
+          })
+        } finally { await w.close() }
+      } catch (e) { failed({ ...where, phase: step }, e) }
+      save('speed', { open_retries: openRetries, runs, failures: failuresOf('speed') })
     }
   }
-  await closeAll(api)
+  await phase('close the terminals', 120_000, () => closeAll(api)).catch((e) => failed({ test: 'speed', phase: 'close the terminals' }, e))
+  save('speed', { open_retries: openRetries, runs, failures: failuresOf('speed') })
+  expect(failuresOf('speed'), 'steps of the bench that failed (in the JSON)').toEqual([])
 })

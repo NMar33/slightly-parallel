@@ -735,3 +735,90 @@ def test_only_a_server_going_away_is_tried_again(tmp_path: Path, monkeypatch) ->
     with pytest.raises(subprocess.CalledProcessError):
         termlib.tmux_starting(tmp_path, "new-session", "-d")
     assert len(calls) == 4
+
+
+# ------------------------------------------------- a tmux that does not answer
+
+@pytest.fixture()
+def hanging_tmux(tmp_path: Path, monkeypatch):
+    """A `tmux` on the PATH that never answers — a server busy dying (CI on
+    macOS: list-panes timed out while the e2e killed tmux, and the list
+    answered 500). `exec` so the timeout's kill reaches the sleeper itself
+    and no grandchild holds the pipes open."""
+    if os.name == "nt":
+        pytest.skip("no tmux on Windows")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "tmux"
+    fake.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    monkeypatch.setattr(termlib, "READ_TIMEOUT", 0.3)
+    monkeypatch.setattr(termlib, "WRITE_TIMEOUT", 0.3)
+    assert termlib.tmux_path() == str(fake)
+    root = tmp_path / "data"
+    (root / "projects" / "alpha").mkdir(parents=True)
+    with TestClient(create_app(data_root=root, watch=False)) as c:
+        _on(c)
+        for sid in ("hang1", "hang2"):
+            termlib.put(root, {"id": sid, "kind": "shell", "label": sid, "project": "alpha", "cwd": str(tmp_path),
+                               "command": "", "created": f"2026-11-17T09:40:0{sid[-1]}", "backend": "tmux",
+                               "server": "4242", "asleep": False})
+        yield c, root
+
+
+def test_a_hanging_tmux_still_lists_the_terminals(hanging_tmux) -> None:
+    c, _ = hanging_tmux
+    t0 = time.time()
+    got = c.get("/api/terminal/sessions")
+    assert got.status_code == 200
+    body = got.json()
+    assert [s["id"] for s in body["sessions"]] == ["hang1", "hang2"]
+    assert {s["state"] for s in body["sessions"]} == {"ended"}
+    assert body["counts"]["ended"] == 2
+    # The restore offer works from the same answer: tmux's server is not the one recorded.
+    offer = c.get("/api/terminal/restore")
+    assert offer.status_code == 200 and offer.json()["needed"] == 2
+    assert c.get("/api/terminal/state").status_code == 200
+    assert time.time() - t0 < 10  # each read waits READ_TIMEOUT, not tmux's 30 s
+
+
+def test_a_hanging_tmux_reads_a_pane_as_empty(hanging_tmux) -> None:
+    c, _ = hanging_tmux
+    pos = c.get("/api/terminal/sessions/hang1/pos")
+    assert pos.status_code == 200 and pos.json() == {"history": 0, "scroll": 0, "rows": 0, "cursor": 0}
+    cap = c.post("/api/terminal/sessions/hang1/capture", json={"mode": "screen"})
+    assert cap.status_code == 200 and cap.json()["text"] == ""
+
+
+def test_a_hanging_tmux_fails_a_write_with_a_message(hanging_tmux) -> None:
+    c, root = hanging_tmux
+    typed = c.post("/api/terminal/sessions/hang1/type", json={"text": "ls", "enter": True})
+    assert typed.status_code == 503 and "tmux did not answer" in typed.json()["detail"]
+    closed = c.post("/api/terminal/sessions/hang1/close", json={})
+    assert closed.status_code == 503 and "was not closed" in closed.json()["detail"]
+    assert termlib.get(root, "hang1") is not None  # not forgotten while its session may live
+    bottom = c.post("/api/terminal/sessions/hang1/bottom")
+    assert bottom.status_code == 503
+    opened = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"})
+    assert opened.status_code == 500 and "tmux did not answer" in opened.json()["detail"]
+
+
+def test_a_tmux_timeout_never_leaves_tmux_read(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    def timing_out(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+    monkeypatch.setattr(termlib.shutil, "which", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
+    monkeypatch.setattr(termlib, "WINDOWS", False)
+    monkeypatch.setattr(termlib.subprocess, "run", timing_out)
+    (tmp_path / "terminal").mkdir()
+    assert termlib.tmux_panes(tmp_path) == {}
+    assert termlib.alive_tmux(tmp_path, "x") is False
+    assert termlib.tmux_server_pid(tmp_path) == ""
+    assert termlib.tmux_version() == ""
+    assert termlib.pane_pos(tmp_path, "x")["history"] == 0
+    with pytest.raises(termlib.TmuxError):
+        termlib.tmux(tmp_path, "kill-session", "-t", "x")

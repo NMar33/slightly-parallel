@@ -159,7 +159,8 @@ def tmux_version() -> str:
     if not t:
         return ""
     try:
-        return subprocess.run([t, "-V"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3).stdout.strip()
+        return subprocess.run([t, "-V"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=READ_TIMEOUT).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -190,14 +191,51 @@ def tmux_argv(data_root: Path, *args: str) -> list[str]:
         # A tmux already running reads the new settings now, not at its next start.
         try:
             subprocess.run([tmux_path() or "tmux", "-L", socket_of(data_root), "source-file", str(conf)],
-                           capture_output=True, timeout=3)
+                           capture_output=True, timeout=READ_TIMEOUT)
         except (OSError, subprocess.SubprocessError):
             pass
     return [tmux_path() or "tmux", "-L", socket_of(data_root), "-f", str(conf), *args]
 
 
-def tmux(data_root: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(tmux_argv(data_root, *args), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=check)
+#: How long a tmux command may take. tmux answers in milliseconds; one that
+#: takes longer is a server busy dying (the last session ended, a kill-server)
+#: or stuck. A read (list-panes, has-session, display-message) runs on every
+#: poll of the terminal list and must not hold it: 2 s. A capture of up to
+#: CAPTURE_MAX_LINES lines, and a write (new-session, send-keys, load-buffer,
+#: kill-session), wait 5 s.
+READ_TIMEOUT = 2.0
+WRITE_TIMEOUT = 5.0
+
+
+class TmuxError(RuntimeError):
+    """tmux did not answer in time, or could not be run. A write lets it
+    reach the route, which answers 503 with this message; a read never sees
+    it (tmux_read)."""
+
+
+def tmux(data_root: Path, *args: str, timeout: float | None = None, input: str | None = None) -> subprocess.CompletedProcess:
+    """A tmux command. A failing command comes back with its returncode; a
+    tmux that does not answer in `timeout` seconds (WRITE_TIMEOUT) raises TmuxError."""
+    timeout = WRITE_TIMEOUT if timeout is None else timeout
+    try:
+        return subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise TmuxError(f"tmux did not answer in {timeout:g} s ({args[0] if args else 'tmux'})") from None
+    except OSError as exc:
+        raise TmuxError(f"tmux could not run: {exc}") from None
+
+
+def tmux_read(data_root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
+    """A tmux read that never raises: a tmux that is slow, dying or gone
+    answers like a session that is not there — returncode 1, nothing on
+    stdout — so the terminal list, the restore offer and a capture answer
+    from the registry instead of failing."""
+    try:
+        return tmux(data_root, *args, timeout=READ_TIMEOUT if timeout is None else timeout)
+    except TmuxError as exc:
+        log.info("%s: read as no answer", exc)
+        return subprocess.CompletedProcess(list(args), 1, "", str(exc))
 
 
 #: What a tmux client says when the server it reached went away under it.
@@ -261,7 +299,7 @@ def pane_dir(data_root: Path, row: dict[str, Any]) -> Path:
     path it printed resolves where it was printed. A plain terminal (or a
     pane tmux cannot answer for) falls back to the folder it opened in."""
     if row.get("backend") == "tmux":
-        out = tmux(data_root, "display-message", "-p", "-t", PREFIX + str(row["id"]), "#{pane_current_path}")
+        out = tmux_read(data_root, "display-message", "-p", "-t", PREFIX + str(row["id"]), "#{pane_current_path}")
         here = (out.stdout or "").strip()
         if here and Path(here).is_dir():
             return Path(here)
@@ -613,8 +651,8 @@ def pane_pos(data_root: Path, sid: str) -> dict[str, int]:
     """Where the pane stands: how much history is above the screen, how far
     the view is scrolled up into it, the screen height, and the cursor row.
     Everything the page needs to anchor a clicked row to an absolute line."""
-    out = tmux(data_root, "display-message", "-p", "-t", PREFIX + sid,
-               "#{history_size}:#{scroll_position}:#{pane_height}:#{cursor_y}")
+    out = tmux_read(data_root, "display-message", "-p", "-t", PREFIX + sid,
+                    "#{history_size}:#{scroll_position}:#{pane_height}:#{cursor_y}")
     parts = (out.stdout or "").strip().split(":")
     def n(i: int) -> int:
         try:
@@ -645,7 +683,7 @@ def capture(data_root: Path, sid: str, from_abs: int | None = None, to_abs: int 
         if b - a + 1 > CAPTURE_MAX_LINES:
             a, truncated = b - CAPTURE_MAX_LINES + 1, True
         args += ["-S", str(a - pos["history"]), "-E", str(b - pos["history"])]
-    out = tmux(data_root, *args)
+    out = tmux_read(data_root, *args, timeout=WRITE_TIMEOUT)  # up to CAPTURE_MAX_LINES lines
     text = (out.stdout or "").rstrip("\n")
     lines = text.split("\n") if text else []
     while lines and not lines[-1].strip():
@@ -659,7 +697,7 @@ def wait_for_prompt(data_root: Path, sid: str, timeout: float = 4.0) -> None:
     end = time.time() + timeout
     last = ""
     while time.time() < end:
-        got = tmux(data_root, "capture-pane", "-p", "-t", PREFIX + sid).stdout.rstrip()
+        got = tmux_read(data_root, "capture-pane", "-p", "-t", PREFIX + sid).stdout.rstrip()
         if got and got == last and got.splitlines()[-1].rstrip().endswith(("$", "#", "%", ">", "❯")):
             return
         last = got
@@ -676,7 +714,7 @@ def type_into(data_root: Path, row: dict[str, Any], text: str, *, enter: bool, d
     # Through a paste buffer, not send-keys: tmux reads a trailing ";" in an
     # argument as a command separator and a leading "-" as an option.
     buf = f"mk-type-{row['id']}"
-    load = subprocess.run(tmux_argv(data_root, "load-buffer", "-b", buf, "-"), input=text, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
+    load = tmux(data_root, "load-buffer", "-b", buf, "-", input=text)
     if load.returncode != 0:
         return False
     if tmux(data_root, "paste-buffer", "-d", "-b", buf, "-t", target).returncode != 0:
@@ -698,7 +736,7 @@ def attach_argv(data_root: Path, sid: str) -> list[str]:
 
 
 def alive_tmux(data_root: Path, sid: str) -> bool:
-    return tmux_path() is not None and tmux(data_root, "has-session", "-t", PREFIX + sid).returncode == 0
+    return tmux_path() is not None and tmux_read(data_root, "has-session", "-t", PREFIX + sid).returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +766,7 @@ def tmux_server_pid(data_root: Path) -> str:
     # server running tmux answers an error instead of starting one.
     try:
         got = subprocess.run([exe, "-L", socket_of(data_root), "display-message", "-p", "#{pid}"],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=READ_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return ""
     return got.stdout.strip() if got.returncode == 0 else ""
@@ -891,8 +929,8 @@ def tmux_panes(data_root: Path) -> dict[str, dict[str, Any]]:
     """Every Slightly Parallel tmux session: foreground program, last print, its pid."""
     if tmux_path() is None:
         return {}
-    got = tmux(data_root, "list-panes", "-a", "-F",
-               "#{session_name}\t#{pane_current_command}\t#{window_activity}\t#{pane_dead}\t#{pane_pid}")
+    got = tmux_read(data_root, "list-panes", "-a", "-F",
+                    "#{session_name}\t#{pane_current_command}\t#{window_activity}\t#{pane_dead}\t#{pane_pid}")
     out: dict[str, dict[str, Any]] = {}
     for line in got.stdout.splitlines():
         parts = line.split("\t")

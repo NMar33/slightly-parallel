@@ -40,6 +40,7 @@ import re
 import secrets
 import signal
 import struct
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -331,6 +332,11 @@ def _need_on(request: Request) -> None:
         raise HTTPException(status_code=409, detail="the terminal is off: turn it on in the terminal drawer or in Settings › Terminal")
 
 
+def _tmux_503(exc: "termlib.TmuxError", what: str) -> HTTPException:
+    """A write tmux did not answer: the operator sees what did not happen."""
+    return HTTPException(status_code=503, detail=f"{exc}: {what} Try again in a moment.")
+
+
 def _group_or_422(root: Path, value: Any) -> str:
     """A group's id as sent, "" for none; a group that does not exist is refused."""
     gid = str(value or "")
@@ -603,7 +609,10 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         _guard(request)
         root = request.app.state.settings.data_root
         _tmux_row(root, sid)
-        termlib.to_bottom(root, sid)
+        try:
+            termlib.to_bottom(root, sid)
+        except termlib.TmuxError as exc:
+            raise _tmux_503(exc, "the view did not jump to the newest line.") from None
         return {"ok": True, **termlib.pane_pos(root, sid)}
 
     @router.post("/api/terminal/sessions/{sid}/capture")
@@ -642,7 +651,11 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             raise not_found("terminal", sid)
         text, enter = str(body.get("text") or ""), bool(body.get("enter"))
         if row.get("backend") == "tmux":
-            if not termlib.type_into(root, row, text, enter=enter):
+            try:
+                typed = termlib.type_into(root, row, text, enter=enter)
+            except termlib.TmuxError as exc:
+                raise _tmux_503(exc, "the text may not have been typed.") from None
+            if not typed:
                 raise HTTPException(status_code=409, detail="The terminal has closed. Nothing was typed.")
         else:
             s = sessions.get(sid)
@@ -666,7 +679,10 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         operator_only(body, "Closing a terminal")
         root = request.app.state.settings.data_root
         _drop(sid)
-        termlib.close(root, sid)
+        try:
+            termlib.close(root, sid)
+        except termlib.TmuxError as exc:
+            raise _tmux_503(exc, "the terminal was not closed.") from None
         return {"closed": sid}
 
     # ------------------------------------------------- sleep, wake, restore
@@ -713,7 +729,10 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             return {"session": row}
         cmd = termlib.wake_command(row, _resume_of(store, row))
         _drop(sid)
-        termlib.sleep(root, sid, cmd)
+        try:
+            termlib.sleep(root, sid, cmd)
+        except termlib.TmuxError as exc:
+            raise _tmux_503(exc, "the terminal was not put to sleep.") from None
         return {"session": _listed(root, sid)}
 
     @router.post("/api/terminal/sessions/{sid}/wake")
@@ -882,10 +901,15 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             return
         if row.get("backend") == "tmux" and not await run_in_threadpool(termlib.alive_tmux, root, session_id):
             # The computer restarted: the terminal comes back as a shell where it was.
-            row = await run_in_threadpool(lambda: termlib.open_session(
-                root, cfg, kind=row.get("kind", "shell"), sid=session_id,
-                project=row.get("project", ""), cwd=row.get("cwd", ""), label=row.get("label", ""),
-                agent_id=row.get("agent_id", ""), task_id=row.get("task_id", "")))
+            try:
+                row = await run_in_threadpool(lambda: termlib.open_session(
+                    root, cfg, kind=row.get("kind", "shell"), sid=session_id,
+                    project=row.get("project", ""), cwd=row.get("cwd", ""), label=row.get("label", ""),
+                    agent_id=row.get("agent_id", ""), task_id=row.get("task_id", "")))
+            except (termlib.TmuxError, subprocess.CalledProcessError) as exc:
+                log.warning("terminal %s could not reopen: %s", session_id, exc)
+                await websocket.close(code=1011, reason="the terminal could not open")
+                return
 
         await run_in_threadpool(_reap_dead)
         env = {"TERM": "xterm-256color", "COLORTERM": "truecolor", "SP_TERMINAL": session_id}
@@ -975,8 +999,12 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                         await run_in_threadpool(session.write, data.encode())
                         typed()
                     elif kind == "close":
-                        _drop(session_id)
-                        await run_in_threadpool(termlib.close, root, session_id)
+                        # Off the event loop: ending a shell's tree takes a while on Windows.
+                        await run_in_threadpool(_drop, session_id)
+                        try:
+                            await run_in_threadpool(termlib.close, root, session_id)
+                        except termlib.TmuxError as exc:
+                            log.warning("terminal %s did not close: %s", session_id, exc)
                         break
         except WebSocketDisconnect:
             pass

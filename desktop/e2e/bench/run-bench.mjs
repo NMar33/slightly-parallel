@@ -47,6 +47,8 @@ const windows = runsOf('windows')
 const tabs = runsOf('tabs')
 const speed = runsOf('speed')
 const openRetries = Math.max(0, ...['windows', 'tabs', 'speed'].map((n) => read(n)?.open_retries ?? 0))
+// Steps that did not end in time or failed (terminal.bench.ts, phase): the bench went on without them.
+const failures = ['windows', 'tabs', 'speed'].flatMap((n) => read(n)?.failures ?? [])
 
 const stat = (xs) => {
   const v = xs.filter((x) => typeof x === 'number')
@@ -84,6 +86,7 @@ const result = {
   note: machine.ci ? 'A CI runner: a VM without a GPU. Compare across systems, not with a laptop.' : undefined,
   machine,
   open_retries: openRetries,
+  failures,
   method: {
     output_mb: Number(process.env.SP_BENCH_MB) || 20, window: '1000x640', scrollback: 10000, fill_lines: 12000,
     settle_ms: Number(process.env.SP_BENCH_SETTLE_MS) || 5000, repeats: Number(process.env.SP_BENCH_REPEATS) || 3,
@@ -115,6 +118,11 @@ if (result.summary.speed.length) {
     md.push(`| ${x.mode} | cat in the shell | ${f(x.cat.ms)} | ${f(x.cat.mb_s)} | ${f(x.cat.fps)} | ${f(x.cat.worst_frame_ms)} | ${f(x.cat.wheel_ms)} (wheel) |`)
     if (x.direct.ms) md.push(`| ${x.mode} | written into xterm | ${f(x.direct.ms)} | ${f(x.direct.mb_s)} | ${f(x.direct.fps)} | ${f(x.direct.worst_frame_ms)} | ${f(x.direct.scroll_ms_per_step)} (scrollLines) |`)
   }
+  md.push('')
+}
+if (failures.length) {
+  md.push('## Steps that failed', '', 'The bench went on without them: their points are missing above.', '', '| Test | Keep | Repeat | Step | Error |', '|---|---|---|---|---|')
+  for (const x of failures) md.push(`| ${x.test} | ${x.mode ?? ''} | ${x.repeat ?? ''} | ${x.phase} | ${String(x.error).replace(/\|/g, '\\|')} |`)
   md.push('')
 }
 fs.writeFileSync(path.join(out, `bench-${os}.md`), md.join('\n'))

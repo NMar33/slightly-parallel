@@ -528,7 +528,114 @@ def test_a_plain_terminal_runs_from_the_moment_it_opens_with_no_view(plain) -> N
     assert (work / "ran.txt").read_text().strip() == "ran-42"
     # A shell opened by the API with no command is a prompt, not `ended`.
     sh = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]
+    # Until the forked child has exec'd the shell, its foreground is still
+    # this test's python ("working"): a moment, never `ended`.
+    end = time.time() + 5
+    while _row(c, sh["id"])["state"] != "shell" and time.time() < end:
+        assert _row(c, sh["id"])["state"] != "ended"
+        time.sleep(0.05)
     assert _row(c, sh["id"])["state"] == "shell"
     for sid in (s["id"], sh["id"]):
         c.post(f"/api/terminal/sessions/{sid}/close", json={})
     assert c.get("/api/terminal/sessions").json()["sessions"] == []
+
+
+# ---------------------------------------------------------------------------
+# Closing: the console host goes too, and nothing waits on its close
+# ---------------------------------------------------------------------------
+
+
+class HostPTY(FakePTY):
+    """A pseudo console with its console host: a process of this test
+    started --headless (OpenConsole's role), and a drop that waits — as
+    ClosePseudoConsole does — until that host has ended (at most 20 s).
+    Not kept in FakePTY.made: only the ConPty holds it, so it is dropped
+    where the product drops it. Its processes are in ``made_procs``."""
+
+    dropped: list[int] = []
+    made_procs: list[tuple[subprocess.Popen, subprocess.Popen]] = []
+
+    def __init__(self, cols, rows, backend=None):
+        super().__init__(cols, rows, backend)
+        FakePTY.made.remove(self)
+        self.host = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "--headless"])
+
+    def spawn(self, *a, **k):
+        ok = super().spawn(*a, **k)
+        HostPTY.made_procs.append((self.proc, self.host))
+        return ok
+
+    def __del__(self):
+        end = time.time() + 20
+        while self.host.poll() is None and time.time() < end:
+            time.sleep(0.02)
+        HostPTY.dropped.append(self.host.pid)
+
+
+HOSTED = SimpleNamespace(PTY=HostPTY, WinptyError=FakeError, Backend=FAKE.Backend)
+
+
+@pytest.fixture()
+def python_is_a_host(monkeypatch):
+    name = os.path.basename(psutil.Process().name()).lower()
+    monkeypatch.setattr(conpty, "HOST_NAMES", {name[:-4] if name.endswith(".exe") else name})
+
+
+def test_closing_a_conpty_ends_its_console_host(python_is_a_host) -> None:
+    con = conpty.ConPty(["cmd.exe"], "", 80, 24, {}, module=HOSTED)
+    proc, host = HostPTY.made_procs[-1]
+    assert con.host_pid == host.pid
+    con.kill()
+    host.wait(timeout=10)
+    proc.wait(timeout=10)
+    assert con.read() == b""
+    t0 = time.time()
+    con.release()
+    assert time.time() - t0 < 0.5
+
+
+def test_a_close_that_waits_holds_only_its_own_thread(python_is_a_host) -> None:
+    con = conpty.ConPty(["cmd.exe"], "", 80, 24, {}, module=HOSTED)
+    proc, host = HostPTY.made_procs[-1]
+    t0 = time.time()
+    con.release()          # the host still runs: the drop waits, the caller does not
+    assert time.time() - t0 < 0.5
+    assert host.pid not in HostPTY.dropped
+    host.kill()
+    end = time.time() + 10
+    while host.pid not in HostPTY.dropped and time.time() < end:
+        time.sleep(0.05)
+    assert host.pid in HostPTY.dropped
+    proc.kill()
+    proc.wait()
+
+
+def test_closing_twenty_windows_terminals_never_stalls_the_server(plain, monkeypatch, python_is_a_host) -> None:
+    """The Windows bench closed 20 terminals and the server answered nothing
+    for an hour: a pseudo console's close waited for its host on the event loop."""
+    c, _, _ = plain
+    monkeypatch.setattr(termlib, "WINDOWS", True)
+    monkeypatch.setattr(termlib, "windows_shell", lambda *a, **k: [r"C:\pwsh\pwsh.exe", "-NoLogo"])
+    monkeypatch.setattr(terminal, "open_pty", lambda sid, argv, cwd, cols, rows, env:
+                        terminal.WinPtySession(sid, argv, cwd, cols, rows, env, module=HOSTED))
+    HostPTY.made_procs.clear()
+    ids = [c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+           for _ in range(20)]
+    procs = list(HostPTY.made_procs)
+    assert len(procs) == 20
+    try:
+        t0 = time.time()
+        for sid in ids:
+            assert c.post(f"/api/terminal/sessions/{sid}/close", json={}).status_code == 200
+            assert c.get("/api/terminal/sessions").status_code == 200
+        assert time.time() - t0 < 15
+        for proc, host in procs:
+            host.wait(timeout=10)
+            proc.wait(timeout=10)
+        assert c.get("/api/terminal/sessions").json()["sessions"] == []
+    finally:
+        for proc, host in procs:
+            for p in (proc, host):
+                if p.poll() is None:
+                    p.kill()
+                    p.wait()
