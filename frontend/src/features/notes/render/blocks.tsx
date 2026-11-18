@@ -8,9 +8,11 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { CopyButton } from '../../../components/CopyButton'
+import { ImageZoom } from '../../../components/ImageZoom'
 import { Button } from '../../../components/primitives/Button'
 import { LABEL } from '../../../components/ui'
 import { t, tn } from '../../../i18n/scope/notes'
@@ -71,7 +73,7 @@ export function NoteText({ text, density = 'read' }: { text: string; density?: D
         th: ({ children }) => <th className="text-left font-mono text-10 uppercase tracking-wide font-normal text-tertiary border-b border-border-default px-8 py-4 whitespace-nowrap">{children}</th>,
         td: ({ children }) => <td className="border-b border-border-subtle px-8 py-4 align-top">{children}</td>,
         hr: () => <hr className="border-border-subtle my-12" />,
-        img: ({ src, alt }) => <span className="block my-6 max-w-[640px]"><Picture src={String(src ?? '')} alt={String(alt ?? '')} /></span>,
+        img: ({ src, alt }) => <span className="block my-6 max-w-[640px]"><Zoomable shots={[{ src: String(src ?? ''), caption: String(alt ?? '') }]} at={0}><Picture src={String(src ?? '')} alt={String(alt ?? '')} /></Zoomable></span>,
       }}>
         {src}
       </ReactMarkdown>
@@ -188,6 +190,22 @@ export function Choice({ block }: { block: Extract<Block, { type: 'choice' }> })
 /* ---------------------------------------------------------------- gallery */
 
 /** A series of images with captions: the big one, a stepper, and every picture small with its caption under it. */
+/** A picture that opens large on a click, with the rest of its series to step through. */
+function Zoomable({ shots, at, children }: { shots: Array<{ src: string; caption: string }>; at: number; children: ReactNode }) {
+  const { pictureUrl } = useNoteEnv()
+  const [open, setOpen] = useState<number | null>(null)
+  const images = shots.map((s) => ({ url: pictureUrl?.(s.src) ?? '', label: s.caption }))
+  if (!images[at]?.url) return <>{children}</>
+  return (
+    <>
+      <button type="button" aria-label={t('Open the picture large')} title={t('Open the picture large')} onClick={() => setOpen(at)}
+        className="block w-full p-0 border-0 bg-transparent cursor-zoom-in text-left">{children}</button>
+      {open != null && createPortal(
+        <ImageZoom images={images} index={open} onIndex={setOpen} onClose={() => setOpen(null)} />, document.body)}
+    </>
+  )
+}
+
 export function Gallery({ block, size = 'read' }: { block: Extract<Block, { type: 'gallery' }>; size?: 'read' | 'strip' }) {
   const { Picture } = useNoteEnv()
   const [i, setI] = useState(0)
@@ -204,7 +222,7 @@ export function Gallery({ block, size = 'read' }: { block: Extract<Block, { type
   return (
     <div data-block="gallery" className="flex flex-col gap-8 min-w-0">
       <figure className="m-0 flex flex-col gap-6 min-w-0">
-        <Picture src={cur.src} alt={cur.caption} />
+        <Zoomable shots={block.shots} at={i}><Picture src={cur.src} alt={cur.caption} /></Zoomable>
         <figcaption className="flex items-start gap-8 min-w-0">
           <span className="text-11 font-mono text-tertiary tabular shrink-0 mt-[2px]">{i + 1}/{n}</span>
           <span className="text-13 text-primary flex-1 min-w-0">{cur.caption}</span>

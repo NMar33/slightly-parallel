@@ -19,6 +19,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ChevronDown, Columns2, Focus, LayoutList, ListOrdered, Minimize2, Rows2, Search, Settings2, X } from 'lucide-react'
+import { smoothOn } from './smoothScroll'
 
 import {
   STATE_WORD, setDock, useDock, useTerminalActions, useTerminalStatus, useTerminals,
@@ -203,7 +204,7 @@ function Deck({ sessions, active, onActive, bar, project, empty, layoutKey = 'dr
           </div>
         )}
         <div className="flex-1 min-h-0">
-          <Screen sid={s.id} token={st.token} fontSize={st.font_size} scrollback={st.scrollback} editor={st.editor} project={s.project} taskId={s.task_id} backend={s.backend}
+          <Screen sid={s.id} token={st.token} fontSize={st.font_size} scrollback={st.scrollback} smooth={smoothOn(st.smooth_scroll)} editor={st.editor} project={s.project} taskId={s.task_id} backend={s.backend}
             visible={!launch} autoFocus={on}
             bind={(a) => { if (a) apis.current.set(s.id, a); else apis.current.delete(s.id) }}
             onFocus={() => { onActive(s.id); setFocus(s.id) }}

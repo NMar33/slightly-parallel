@@ -64,14 +64,9 @@ def _moved_clock():
 
 #: Tests that fail under a moved clock for a known product bug, with its card.
 #: Strict: the day the bug is fixed, the mark fails and is taken away.
-KNOWN_UNDER_CLOCK = {
-    # The timer keeps naive local times; in the hour the clocks go back a
-    # later moment reads earlier (tk_3a363c87).
-    "2026-11-01T01:59:58": ("tk_3a363c87", {
-        "test_working_on_an_auto_project_writes_its_own_entry_on_the_task",
-        "test_away_pauses_back_to_the_last_input_and_counting_it_gives_it_back",
-        "test_a_restart_closes_the_span_where_it_was_last_seen",
-    }),
+KNOWN_UNDER_CLOCK: dict[str, tuple[str, set[str]]] = {
+    # None now. tk_3a363c87 (the timer's naive local times in the hour the
+    # clocks go back) was fixed: its moments carry their UTC offset.
 }
 
 

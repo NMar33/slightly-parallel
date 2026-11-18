@@ -247,8 +247,12 @@ test.describe('paste', () => {
       await expectLine(page, /long-5$/, 20_000)
     }
     await expect.poll(() => fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '').toBe(body)
-    // Nothing left over: the next typed command runs alone.
-    await page.keyboard.press('Control+KeyU')
+    // Nothing left over: the next typed command runs alone. sh's line editor
+    // clears its line on Ctrl+U first. PowerShell's (PSReadLine, Windows
+    // mode) has no Ctrl+U: it types a literal ^U into the command, which
+    // then fails as `^Uecho`. There the pasted line already ran on Enter,
+    // so anything left over would glue to the typed command and break it.
+    if (!WINDOWS) await page.keyboard.press('Control+KeyU')
     await typeLine(page, echoCalc('typed-l-', '4+4'))
     await expectLine(page, 'typed-l-8')
   })

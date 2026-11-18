@@ -55,6 +55,8 @@ interface TermStatus {
   font_size: number
   /** Lines a new terminal keeps (Settings › Terminal history). */
   scrollback: number
+  /** The history scrolls by pixels (Settings › Smooth scrolling); absent from an older server: on. */
+  smooth_scroll?: boolean
   /** The editor a printed path opens in ("" = off or none installed). */
   editor: string
   projects: Record<string, string>

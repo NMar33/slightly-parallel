@@ -16,7 +16,11 @@
  * - the overview (Ctrl+Shift+↑ out, Esc back in): the workspace as still
  *   text tiles, then every workspace — transform and opacity only;
  * - groups, sleep and wake, restore after a restart, detach into another
- *   window, typing ticks — each drawn only when the server has its route.
+ *   window, typing ticks — each drawn only when the server has its route;
+ * - the smart timer: the tab in front is the project being worked on while
+ *   the window is in front with input (useWorkBeats, source "window"); the
+ *   strip's right end says today's time on its project and in all, and
+ *   whether the timer counts (TimerChip; a click opens the Timer page).
  *
  * `?detached=<id>` is a window of one chat; `?ws=<project or group>` a
  * window of one workspace.
@@ -25,6 +29,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ChevronRight, ChevronUp, Keyboard, LayoutGrid, Menu, Minus, PanelLeft, PanelRight, Plus, RotateCcw, Server, SquareTerminal, Sun, X, Zap } from 'lucide-react'
+import { smoothOn } from '../../terminal/smoothScroll'
 
 import '../design/aqua.css'
 import { Screen } from '../../terminal/Screen'
@@ -42,6 +47,8 @@ import { AllLevel, GAP, HEAD, PAD, TILE_H, WsLevel } from './overview'
 import { Dot, Float, GroupForm, GroupMenu, Item, RestoreCard, RoleIcon, SHOWN_WORD, Swatch, lane, moveTargets } from './parts'
 import { LeftSidebar, RightSidebar, type RightTab } from './sidebars'
 import { TypingBatcher } from './typing'
+import { useWorkBeats } from '../../time/beats'
+import { TimerChip } from './timer'
 import { t, tn } from '../../../i18n/scope/aqua'
 
 type Status = NonNullable<ReturnType<typeof useTerminalStatus>['data']>
@@ -272,6 +279,14 @@ function AquaWindow({ status }: { status: Status }) {
     post({ op: 'title', text: title })
   }, [title])
 
+  /* ---------------------------------------------------- the smart timer */
+  // The tab in front is the work at hand: while this window is in front and
+  // you give input, the timer hears of its project and task (the beats the
+  // app's pages send, source "window"; timeauto.py counts them).
+  const workProject = active?.project ?? ''
+  const workTask = active?.task_id ?? ''
+  useWorkBeats(() => (workProject ? { project: workProject, taskId: workTask } : null), 'window', `${workProject}\n${workTask}`)
+
   /* ------------------------------------------------------------- typing */
   const typing = useMemo(() => new TypingBatcher(sendTyping), [])
   useEffect(() => {
@@ -437,6 +452,7 @@ function AquaWindow({ status }: { status: Status }) {
           </Float>
         )}
       </span>
+      <TimerChip project={active?.project ?? ''} />
     </div>
   )
 
@@ -466,7 +482,7 @@ function AquaWindow({ status }: { status: Status }) {
         </span>
       </div>
     ) : (
-      <Screen key={active.id} sid={active.id} token={status.token} fontSize={status.font_size} scrollback={status.scrollback} editor={status.editor}
+      <Screen key={active.id} sid={active.id} token={status.token} fontSize={status.font_size} scrollback={status.scrollback} smooth={smoothOn(status.smooth_scroll)} editor={status.editor}
         project={active.project} taskId={active.task_id} backend={active.backend} visible autoFocus={level === 'chat'}
         onInput={() => typing.tick(active.id)}
         onZoom={(d) => void termAct.setting({ 'terminal.font_size': Math.max(10, Math.min(22, status.font_size + d)) })} />
@@ -576,6 +592,7 @@ function AquaWindow({ status }: { status: Status }) {
           </span>
           {!folded && (
             <span className="absolute flex items-center gap-2" style={{ right: rw + (kind === 'chat' ? 8 : 36), top: 5 }}>
+              {kind === 'chat' && <TimerChip project={active?.project ?? ''} />}
               {kind !== 'chat' && (
                 <button type="button" data-nodrag className="aq-btn" aria-pressed={level !== 'chat'} onClick={cycle}
                   title={t('Workspaces: the chat, its workspace, every workspace (Ctrl+Shift+↑)')} aria-label={t('Workspaces')}>

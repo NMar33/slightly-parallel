@@ -425,6 +425,11 @@ SPECS: tuple[SettingSpec, ...] = (
         type="choice", default="50000", group="Terminal", options=("10000", "50000", "200000"),
     ),
     SettingSpec(
+        key="terminal.smooth_scroll", label="Smooth scrolling",
+        description="The wheel and the touchpad move a terminal's history by pixels, as a native terminal does; a mouse notch glides. Off: xterm's own steps of whole lines (in tmux, five lines a step).",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
         key="terminal.font_size", label="Terminal text",
         description="The size of the text in every terminal.",
         type="int", default=13, group="Terminal", unit="px", minimum=10, maximum=22,

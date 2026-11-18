@@ -262,11 +262,17 @@ def time_auto(request: Request) -> dict:
 
 @router.post("/api/time/auto/beat")
 def time_auto_beat(request: Request, body: dict = Body(...)) -> dict:
-    """A page says: someone is working on this project (and this task) now."""
+    """A page says: someone is working on this project (and this task) now.
+    ``source`` names the page: ``page`` (the app's pages, the default) or
+    ``window`` (the terminal window, /term: the tab in front, with input).
+    Both count the same way: a beat, then the grace."""
     project = str(body.get("project") or "").strip()
     if not project:
         raise HTTPException(status_code=422, detail="project is required")
-    timeauto.of(request.app).beat(project, str(body.get("task_id") or ""), "page")
+    source = str(body.get("source") or "page")
+    if source not in timeauto.PAGE_SOURCES:
+        raise HTTPException(status_code=422, detail=f"source must be one of {', '.join(timeauto.PAGE_SOURCES)}")
+    timeauto.of(request.app).beat(project, str(body.get("task_id") or ""), source)
     return {"ok": True}
 
 

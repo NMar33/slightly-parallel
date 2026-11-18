@@ -71,6 +71,7 @@ export function ServerNoteEnv({ feed, children }: { feed: Feed | undefined; chil
       mark.mutate({ item, kind: 'copy', value: true }, { onError: fail })
     },
     Picture,
+    pictureUrl: (src) => (IMAGE.test(src) ? `/api/notes/images/${src}/file` : null),
     now: () => new Date(),
     noteHref: (id) => `/notes?note=${id}`,
     useVersion,

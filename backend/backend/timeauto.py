@@ -14,7 +14,12 @@ counted · Count it anyway"; a longer absence stays paused and asks.
 any signal says you are on it:
 - a Slightly Parallel page, task window or terminal of the project is in front with
   input (the page sends a beat, ``beat(…, "page")``);
-- you type in one of its terminals (``beat(…, "terminal")``);
+- the terminal window (/term, the desktop app) is in front on a tab of
+  the project with input — keys, a paste, a click or the wheel (the
+  window sends the page's beat, ``beat(…, "window")``); reading there
+  with no input counts as reading a page does, no longer;
+- you type in one of its terminals (``beat(…, "terminal")``, from the
+  terminal's socket, whichever page or window it is in);
 - files change in its folder while you are at the keyboard (git status,
   read each tick — editors outside the browser).
 A pause shorter than the grace (60 s) does not break the span. The span is
@@ -39,7 +44,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import app_settings, idle
+from . import app_settings, clocktime, idle
 from .csvio import DamagedFile
 from .db import ViewStore
 from .file_safety import atomic_write
@@ -51,6 +56,8 @@ READ_TRIES = 4
 
 TICK_SEC = 15
 MODES = ("remind", "auto", "manual")
+#: Who may send a beat through the route: the app's pages and the terminal window.
+PAGE_SOURCES = ("page", "window")
 #: Away this long or less: the timer resumes by itself on return.
 RESUME_WITHIN_SEC = 3 * 3600
 #: Files changing count only while someone is at the keyboard.
@@ -59,15 +66,10 @@ AT_KEYBOARD_SEC = 120
 FOCUS_KEEP_SEC = 30 * 60
 
 
-def _iso(t: datetime) -> str:
-    return t.replace(microsecond=0).isoformat()
-
-
-def _parse(s: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(s)
-    except (TypeError, ValueError):
-        return None
+# Every moment kept carries its UTC offset (clocktime.py): in the hour the
+# clocks go back a naive later moment read earlier (tk_3a363c87).
+_iso = clocktime.iso
+_parse = clocktime.parse
 
 
 @dataclass
@@ -185,7 +187,7 @@ class AutoTimer:
             # and the tick then closes every auto span that was open.
             atomic_write(self.folder / "modes.json", json.dumps(modes, indent=1, sort_keys=True))
             if mode != "auto" and project in self.spans:
-                self._close(project, _parse(self.spans[project].last) or datetime.now())
+                self._close(project, _parse(self.spans[project].last) or clocktime.now())
                 self._save()
 
     def _cfg(self) -> dict[str, Any]:
@@ -304,7 +306,7 @@ class AutoTimer:
         from .timelib import _delete
         with self._lock:
             for project, span in list(self.spans.items()):
-                self._close(project, _parse(span.last) or datetime.now())
+                self._close(project, _parse(span.last) or clocktime.now())
             held = {s.entry_id for s in self.spans.values()}
             for r in self.store.query(
                 f"SELECT id FROM {ENTITIES['time_entry'].view} WHERE COALESCE(ended_at, '') = '' "
@@ -320,7 +322,7 @@ class AutoTimer:
     # ------------------------------------------------------------ the tick
 
     def tick(self, now: datetime | None = None) -> None:
-        now = now or datetime.fromtimestamp(self.clock()).replace(microsecond=0)
+        now = clocktime.aware(now) if now else clocktime.at(self.clock())
         cfg = self._cfg()
         idle_sec, _how = self.read_idle()
         changed = self._file_signals(cfg, idle_sec)
@@ -393,7 +395,7 @@ class AutoTimer:
                        if not str(r.get("paused_at") or ""))
             top = max(0, 100 - base)
             task = (b or {}).get("task_id") or self._task_in_focus(project, wall)
-            seen = datetime.fromtimestamp(signal).replace(microsecond=0)
+            seen = clocktime.at(signal)
             if span and (span.top != top or (task and task != span.task_id)):
                 self._close(project, seen)
                 span = None
@@ -422,6 +424,10 @@ class AutoTimer:
                 "working": [{"project": s.project, "entry_id": s.entry_id, "task_id": s.task_id, "top": s.top}
                             for s in self.spans.values()],
                 "away": list(self.away.values()),
+                # The last beat per project: where it came from and how long ago.
+                "signals": [{"project": p, "source": b["source"], "task_id": b["task_id"],
+                             "sec_ago": max(0, int(self.clock() - b["at"]))}
+                            for p, b in sorted(self._beats.items())],
             }
 
     def dismiss(self, entry_id: str) -> dict[str, Any] | None:
@@ -450,7 +456,7 @@ class AutoTimer:
         self._stop.set()
         with self._lock:
             for project, span in list(self.spans.items()):
-                self._close(project, _parse(span.last) or datetime.now())
+                self._close(project, _parse(span.last) or clocktime.now())
             self._save()
 
 

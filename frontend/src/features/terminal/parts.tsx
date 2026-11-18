@@ -227,6 +227,11 @@ export function TerminalSettings() {
           onChange={(v) => act.setting({ 'terminal.scrollback': v })}
           options={[['10000', '10k'], ['50000', '50k'], ['200000', '200k']] as const} />
       </Row>
+      <Row label={t('Smooth scrolling')} hint={t('The history moves by pixels under the touchpad and the wheel, as in a native terminal. Off: steps of whole lines.')}>
+        <Segmented label={t('Smooth scrolling')} shape="pill" height={20} value={st.smooth_scroll === false ? 'off' : 'on'}
+          onChange={(v) => act.setting({ 'terminal.smooth_scroll': v === 'on' })}
+          options={[['on', t('on')], ['off', t('off')]] as const} />
+      </Row>
       <Row label={t('Text')}>
         <Segmented label={t('Text')} shape="pill" height={20} value={String(st.font_size)} onChange={(v) => act.setting({ 'terminal.font_size': Number(v) })}
           options={[['12', 'S'], ['13', 'M'], ['15', 'L'], ['17', 'XL']] as const} />

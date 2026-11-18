@@ -470,6 +470,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             "agent": cfg.get("terminal.agent", "claude"),
             "font_size": cfg.get("terminal.font_size", 13),
             "scrollback": termlib.scrollback_of(cfg),
+            # Pixel scrolling of the history (Settings › Smooth scrolling).
+            "smooth_scroll": bool(cfg.get("terminal.smooth_scroll", True)),
             # The editor a printed path opens in ("" = links off or none installed).
             "editor": termlib.editor_of(cfg),
             "projects": {k: str(v) for k, v in termlib.registered_project_dirs(boot.data_root).items()},
@@ -637,8 +639,15 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 # Nothing typed since the server started: the screen is the answer.
                 return {**termlib.capture(root, sid), "mode": "screen"}
             return {**termlib.capture(root, sid, start + 1, pos["history"] + pos["rows"] - 1), "mode": mode}
+        if mode == "history":
+            # The smooth reader (Screen.tsx): rows as tmux shows them, colours kept.
+            try:
+                rows = int(body.get("rows", 2000))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="mode history takes rows, a number") from None
+            return {**termlib.history_rows(root, sid, rows), "mode": mode}
         if mode != "screen":
-            raise HTTPException(status_code=422, detail="mode must be screen, last or range")
+            raise HTTPException(status_code=422, detail="mode must be screen, last, range or history")
         return {**termlib.capture(root, sid), "mode": "screen"}
 
     @router.post("/api/terminal/sessions/{sid}/type")

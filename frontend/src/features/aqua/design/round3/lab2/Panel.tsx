@@ -13,6 +13,8 @@ import { t } from '../../../../../i18n/scope/aqua'
 import { Segmented } from '../../../../../components/Segmented'
 import { SCHEMES, dimOf, grade, ratios, type Scheme } from './schemes'
 import { isMenu, isScheme, setMenu, setScheme, setScope, useLab2, type MenuKind, type Scope } from './store'
+import { useCompare } from '../../round4/compareState'
+import { SeeHint } from '../../round4/SeeHint'
 
 const fmt = (r: number) => r.toFixed(1)
 
@@ -45,6 +47,7 @@ export function Lab2Panel() {
   const lab = useLab2()
   const [params, setParams] = useSearchParams()
   const [folded, setFolded] = useState(false)
+  const [, compare] = useCompare()
   // the address picks the scheme and the menu when the page opens
   useEffect(() => {
     const s = params.get('scheme'), m = params.get('msgmenu'), sc = params.get('scope')
@@ -79,13 +82,16 @@ export function Lab2Panel() {
               options={[['term', t('terminal only')], ['window', t('whole window')]]} />
           </div>
           <div className="flex items-center gap-6 flex-wrap">
-            <span className="text-11 text-tertiary w-full">{t('Message menu')}</span>
+            <span className="text-11 text-tertiary flex-1">{t('Message menu')}</span>
+            <button type="button" className="text-10 text-tertiary hover:underline" onClick={() => compare('msgmenu')}>{t('compare')}</button>
             <Segmented<MenuKind> label={t('Message menu')} value={lab.menu} onChange={pickMenu}
               options={[['a', t('a · round')], ['b', t('b · list')], ['c', t('c · bar')]]} />
           </div>
           <p className="text-11 text-tertiary m-0">{lab.menu === 'c'
             ? t('Point at a message: its buttons show on its top edge. A click on a task id opens the task menu.')
             : t('Right click on a message opens its menu. A click on a task id opens the task menu.')}</p>
+          <SeeHint text={lab.menu === 'c' ? t('Point at a message') : t('Right click on a message')} />
+          <button type="button" className="aq-btn line !h-[24px] text-11 self-start" onClick={() => compare('scheme')}>{t('Compare the schemes')}</button>
           <div role="radiogroup" aria-label={t('Scheme')} className="flex flex-col gap-2">
             <span className="text-10 uppercase tracking-wide text-tertiary pt-4">{t('Made for Slightly Parallel')}</span>
             {ours.map((s) => <Row key={s.id} s={s} on={lab.scheme === s.id} pick={() => pickScheme(s.id)} />)}

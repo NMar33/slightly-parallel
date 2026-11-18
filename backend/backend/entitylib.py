@@ -119,10 +119,18 @@ def _pre_create_snippet(_store: ViewStore, body: dict) -> None:
         body["position"] = "100"
 
 
+def _pre_create_time_entry(_store: ViewStore, body: dict) -> None:
+    # Times typed by hand come naive: stored with their UTC offset, as the
+    # timer's own are (clocktime.py, tk_3a363c87).
+    from .timelib import stamp_offsets
+    body.update(stamp_offsets(body))
+
+
 PRE_CREATE: dict[str, Callable[[ViewStore, dict], None]] = {
     "file": _pre_create_file,
     "task": _pre_create_task,
     "snippet": _pre_create_snippet,
+    "time_entry": _pre_create_time_entry,
 }
 
 

@@ -97,6 +97,13 @@ set -g pane-active-border-style "fg=#2A2E35"
 # and a line just copied in the terminal reached the shell twice, glued.
 # A program that reads the mouse still gets the click.
 bind -n MouseDown2Pane select-pane -t = \\; if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" "send -M"
+# The wheel over a full-screen program that does not read the mouse (less,
+# man, vim without mouse=a) moves it by arrow keys, as GNOME Terminal does.
+# tmux's default enters copy mode there, which has no history on that
+# screen: the wheel did nothing at all. A line per wheel report; the page
+# sends one report per row the wheel moved.
+bind -n WheelUpPane if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send -M } { if -F "#{alternate_on}" { send -t = Up } { copy-mode -e } }
+bind -n WheelDownPane if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send -M } { if -F "#{alternate_on}" { send -t = Down } }
 """
 
 _lock = threading.Lock()
@@ -624,10 +631,15 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
     sid = sid if sid and SAFE_ID.match(sid) else new_id()
     where = str(resolve_cwd(data_root, project, cwd))
     backend = "tmux" if uses_tmux(settings) else "plain"
+    # `created` orders the tabs (and alt+1…9). To the millisecond: two
+    # terminals opened in the same second tied, the page broke the tie by
+    # their random ids, and a new tab came first or second by chance.
+    now = time.time()
     row = {
         "id": sid, "kind": kind, "label": label or (project or "shell"), "project": project,
         "cwd": where, "command": command, "agent_id": agent_id, "task_id": task_id,
-        "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "backend": backend,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}",
+        "backend": backend,
         "launch": settings.get("terminal.launch", "run"),
     }
     if role in ROLES:
@@ -657,14 +669,39 @@ def pane_pos(data_root: Path, sid: str) -> dict[str, int]:
     the view is scrolled up into it, the screen height, and the cursor row.
     Everything the page needs to anchor a clicked row to an absolute line."""
     out = tmux_read(data_root, "display-message", "-p", "-t", PREFIX + sid,
-                    "#{history_size}:#{scroll_position}:#{pane_height}:#{cursor_y}")
+                    "#{history_size}:#{scroll_position}:#{pane_height}:#{cursor_y}"
+                    ":#{pane_width}:#{alternate_on}:#{mouse_any_flag}:#{pane_in_mode}")
     parts = (out.stdout or "").strip().split(":")
     def n(i: int) -> int:
         try:
             return int(parts[i])
         except (IndexError, ValueError):
             return 0
-    return {"history": n(0), "scroll": n(1), "rows": n(2), "cursor": n(3)}
+    # What the wheel should do in the page (Screen.tsx): a full-screen program
+    # (alt) or one that reads the mouse gets it; otherwise the history scrolls.
+    return {"history": n(0), "scroll": n(1), "rows": n(2), "cursor": n(3), "cols": n(4),
+            "alt": bool(n(5)), "mouse": bool(n(6)), "in_mode": bool(n(7))}
+
+
+#: The most rows the page's reader asks for at once (about 0.4 s and 5 MB at 50 000).
+HISTORY_MAX_ROWS = 50_000
+
+
+def history_rows(data_root: Path, sid: str, rows: int) -> dict[str, Any]:
+    """The last ``rows`` rows of the pane's history and its screen, as tmux
+    shows them: one row per line (wrapped lines stay wrapped, so they line up
+    with the page's own rows), colours kept (escape sequences). The page's
+    smooth reader draws them in an xterm of its own and scrolls by pixels.
+    ``history`` is the history above the screen at that moment: row i of the
+    answer is absolute line ``history - (rows above the screen) + i``."""
+    pos = pane_pos(data_root, sid)
+    want = max(0, min(int(rows), HISTORY_MAX_ROWS, pos["history"]))
+    out = tmux_read(data_root, "capture-pane", "-p", "-e", "-t", PREFIX + sid, "-S", str(-want), "-E", str(pos["rows"] - 1),
+                    timeout=WRITE_TIMEOUT)
+    text = out.stdout or ""
+    if text.endswith("\n"):
+        text = text[:-1]
+    return {**pos, "text": text, "above": want, "complete": want >= pos["history"]}
 
 
 #: More than this in one copy is a mistake, not a copy.

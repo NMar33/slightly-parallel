@@ -41,15 +41,18 @@ const AGENT = { claude: 'Claude Code', codex: 'Codex' } as const
 
 interface Item { id: string; icon: ReactNode; label: string; hint: string; proposed?: boolean; sub?: Array<{ id: string; label: string; run: () => void }>; run?: () => void }
 
-export function PlusButton({ look, menu, chat, onOpen, onServer }: {
+export function PlusButton({ look, menu, chat, onOpen, onServer, shown = false }: {
   look: LabPick['plus']
   menu: LabPick['plusmenu']
   /** The current chat: its agent and project are what a plain click opens. */
   chat: Session
   onOpen: (id: string) => void
   onServer: (id: string) => void
+  /** Held open, the choice under the button in the page's flow: K's compare view. */
+  shown?: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const [opened, setOpen] = useState(false)
+  const open = shown || opened
   const [sub, setSub] = useState<string | null>(null)
   const st = useAqua()
   const lab = useLab()
@@ -107,7 +110,7 @@ export function PlusButton({ look, menu, chat, onOpen, onServer }: {
 
   // keys 1–9 pick an item; Escape and a click elsewhere close the choice
   useEffect(() => {
-    if (!open) return
+    if (!open || shown) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { close(); return }
       const n = Number(e.key)
@@ -168,8 +171,8 @@ export function PlusButton({ look, menu, chat, onOpen, onServer }: {
     <span ref={box} className="relative self-center shrink-0 inline-flex" style={look === 'b' ? { alignSelf: 'flex-end' } : undefined}>
       {button}
       {open && (menu === 'a' ? (
-        <div className="fixed z-[220] w-[340px] rounded-[8px] p-4 aq-fade" role="menu" aria-label={t('Open a new terminal')} data-plusmenu="a"
-          style={{ left: at.x, top: at.y, background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)' }}>
+        <div className={`${shown ? 'absolute' : 'fixed'} z-[220] w-[340px] rounded-[8px] p-4 aq-fade`} role="menu" aria-label={t('Open a new terminal')} data-plusmenu="a"
+          style={{ ...(shown ? { left: 0, top: 30 } : { left: at.x, top: at.y }), background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)' }}>
           {items.map((it, i) => (
             <div key={it.id}>
               {it.proposed && !items[i - 1]?.proposed && <div className="mx-8 my-4" style={{ borderTop: '1px solid var(--aq-line)' }} />}
@@ -187,8 +190,8 @@ export function PlusButton({ look, menu, chat, onOpen, onServer }: {
           ))}
         </div>
       ) : (
-        <div className="fixed z-[220] w-[560px] rounded-[10px] p-8 aq-fade" role="menu" aria-label={t('Open a new terminal')} data-plusmenu="b"
-          style={{ left: at.x, top: at.y, background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)' }}>
+        <div className={`${shown ? 'absolute' : 'fixed'} z-[220] w-[560px] rounded-[10px] p-8 aq-fade`} role="menu" aria-label={t('Open a new terminal')} data-plusmenu="b"
+          style={{ ...(shown ? { left: 0, top: 30 } : { left: at.x, top: at.y }), background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)' }}>
           <div className="grid grid-cols-4 gap-6">
             {items.map((it, i) => (
               <button key={it.id} type="button" role="menuitem" className="relative flex flex-col items-start gap-4 p-8 rounded-[8px] text-left text-12 hover:bg-[var(--aq-hover)] disabled:opacity-50"

@@ -34,6 +34,9 @@ import { t as tr, tn } from '../../i18n/scope/system'
 import { THEME } from './palette'
 import { letter } from '../../lib/typing'
 import { IS_MAC, pasteKey, pasteKeyName } from './pasteKeys'
+import { attachSmoothLayer, type SmoothLayer } from './scrollLayer'
+import { buildReader, fetchRows, FIRST_ROWS, readerKeeps, type Reader } from './reader'
+import { RowAccumulator, sgrWheel, wheelPx } from './smoothScroll'
 
 const INVALID_TOKEN = 4401
 const OFF = 4409
@@ -52,7 +55,7 @@ export interface ScreenApi {
 
 interface Dot { abs: number; rel: number }
 
-export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor = '', visible = true, project = '', taskId = '', backend = 'tmux', onEnded, onFocus, autoFocus = true, onZoom, bind, onInput }: {
+export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor = '', visible = true, project = '', taskId = '', backend = 'tmux', smooth = true, onEnded, onFocus, autoFocus = true, onZoom, bind, onInput }: {
   sid: string
   token: string
   fontSize?: number
@@ -64,6 +67,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   taskId?: string
   /** Lines a plain terminal keeps (a tmux one keeps its pane's own history). */
   scrollback?: number
+  /** Scroll by pixels (Settings › Smooth scrolling); off: xterm's own whole rows. */
+  smooth?: boolean
   /** The editor printed paths open in ("" = no links). */
   editor?: string
   onEnded?: () => void
@@ -91,6 +96,14 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const onInputRef = useRef(onInput)
   onInputRef.current = onInput
   const visibleRef = useRef(visible)
+  const smoothRef = useRef(smooth)
+  smoothRef.current = smooth
+  const layerRef = useRef<SmoothLayer | null>(null)
+  /** tmux mode, scrolled up: the history in a reader over the live xterm (reader.ts). */
+  const readerRef = useRef<Reader | null>(null)
+  const [reading, setReading] = useState(false)
+  const openReaderRef = useRef<(px: number, first?: WheelEvent, rows?: number) => void>(() => {})
+  const closeReaderRef = useRef<() => void>(() => {})
   const autoFocusRef = useRef(autoFocus)
   const editorRef = useRef(editor)
   editorRef.current = editor
@@ -119,6 +132,12 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
 
   /** Where the pane stands right now — the server for tmux, the buffer here for plain. */
   const readPos = useCallback(async (): Promise<PanePos> => {
+    const r = readerRef.current
+    if (r) {
+      // The reader's rows are the pane's: its history above, then the screen.
+      const rb = r.term.buffer.active
+      return { history: r.history, scroll: rb.baseY - rb.viewportY, rows: r.term.rows }
+    }
     if (backend === 'tmux') {
       const p = await getJson<PanePos & { cursor: number }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
       return { history: p.history, scroll: p.scroll, rows: p.rows }
@@ -181,13 +200,22 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
 
   const toggleRange = useCallback(() => {
     setRange((on) => !on)
+    // The gutter's rows are whole rows: the reader stops between two.
+    readerRef.current?.layer.resync()
     setDot(null)
     setHoverRow(null)
     // The gutter opens on the last known position when the pane cannot be read.
     void readPos().then(setPos, () => undefined)
   }, [readPos])
 
-  const toggleFind = useCallback(() => setFind((v) => { if (v) searchRef.current?.clearDecorations?.(); return !v }), [])
+  /** What find searches: the reader while it is open (all the tmux history), else the live xterm. */
+  const searcher = () => readerRef.current?.search ?? searchRef.current
+  const toggleFind = useCallback(() => setFind((v) => {
+    if (v) searcher()?.clearDecorations?.()
+    // tmux keeps the history: find opens the reader, which holds it.
+    else if (backend === 'tmux' && smoothRef.current && !readerRef.current) openReaderRef.current(0, undefined, 50_000)
+    return !v
+  }), [backend])
 
   useEffect(() => {
     bind?.({ find: toggleFind, range: toggleRange, copyScreen: () => void copyWhole('screen'), copyLast: () => void copyWhole('last') })
@@ -224,7 +252,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const watchTmux = useCallback(() => {
-    if (backend !== 'tmux' || watching.current) return
+    if (backend !== 'tmux' || watching.current || readerRef.current) return
     watching.current = true
     let first = true
     const tick = async () => {
@@ -243,8 +271,24 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     window.setTimeout(() => void tick(), 120)
   }, [backend, readPos])
 
+  // The reader is a snapshot: while it is open, count what the pane printed since.
+  useEffect(() => {
+    if (!reading) return
+    setBehind({ up: true, fresh: 0 })
+    let dead = false
+    const id = window.setInterval(() => {
+      const r = readerRef.current
+      if (!r) return
+      void getJson<PanePos>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
+        .then((p) => { if (!dead) setBehind({ up: true, fresh: Math.max(0, p.history - r.history) }) }, () => undefined)
+    }, 1000)
+    return () => { dead = true; window.clearInterval(id); setBehind({ up: false, fresh: 0 }) }
+  }, [reading, sid])
+
   const toBottom = useCallback(async () => {
-    if (backend === 'tmux') {
+    if (readerRef.current) {
+      closeReaderRef.current()
+    } else if (backend === 'tmux') {
       try { await postJson(`/api/terminal/sessions/${encodeURIComponent(sid)}/bottom`, {}) } catch { /* the watch will see */ }
     } else {
       termRef.current?.scrollToBottom()
@@ -329,6 +373,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     let retry: ReturnType<typeof setTimeout> | null = null
     let tries = 0
     let authFails = 0
+    let onWheel: ((e: WheelEvent) => void) | null = null
 
     const init = async () => {
       const [{ Terminal: XTerminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon: Search }] = await Promise.all([
@@ -353,6 +398,178 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       t.loadAddon(search)
       searchRef.current = search
       t.open(el)
+      // Pixel-smooth scrolling of the history xterm keeps (scrollLayer.ts):
+      // the page takes the wheel before xterm when the terminal shows its own
+      // history; a program that reads the mouse, or a full-screen one, still
+      // gets it from xterm as before.
+      const layer = attachSmoothLayer(t)
+      layerRef.current = layer
+      const stop = (e: Event) => { e.preventDefault(); e.stopPropagation() }
+      onWheel = (e: WheelEvent) => {
+        if (!smoothRef.current || e.deltaY === 0 || e.shiftKey || e.ctrlKey) return
+        const r = readerRef.current
+        if (r) {
+          // Down at the newest line: the reader has shown it all, the live terminal comes back.
+          if (e.deltaY > 0 && r.layer.atBottom()) { stop(e); closeReader(); return }
+          if (r.layer.wheel(e)) stop(e)
+          return
+        }
+        if (opening) { stop(e); pendingPx += wheelPx(e, rowH(), t.rows).px; pendingEvents.push(e); return }
+        if (layer.wheel(e)) { stop(e); return }
+        // tmux draws on xterm's alternate screen and asks for the mouse: the
+        // page routes the wheel by what the pane shows (tmuxWheel).
+        if (backend === 'tmux' && t.buffer.active.type === 'alternate' && t.modes.mouseTrackingMode !== 'none') { stop(e); tmuxWheel(e) }
+      }
+
+      /* ---- tmux: the wheel by what the pane shows ---- */
+      const rowH = () => { const sc = el.querySelector('.xterm-screen') as HTMLElement | null; return sc && t.rows ? sc.clientHeight / t.rows : 16 }
+      type Flags = { at: number; alt: boolean; mouse: boolean; in_mode: boolean }
+      let flags: Flags | null = null
+      let asking = false
+      let lastWheel = 0
+      let queued: WheelEvent[] = []
+      const acc = new RowAccumulator()
+      const route = (e: WheelEvent, f: Flags) => {
+        const { px } = wheelPx(e, rowH(), t.rows)
+        if (!f.alt && !f.mouse && !f.in_mode) {
+          // The history: up opens the reader; down at the bottom is nothing.
+          if (px < 0) openReader(px)
+          return
+        }
+        // A full-screen program, one that reads the mouse, or tmux's own copy
+        // mode (five lines a report): one wheel report per row the wheel moved,
+        // where xterm sent one per event (a notch of six rows was one line).
+        const n = acc.add(px, rowH() * (f.in_mode ? 5 : 1))
+        if (!n || ws?.readyState !== WebSocket.OPEN) return
+        const sc = (el.querySelector('.xterm-screen') as HTMLElement).getBoundingClientRect()
+        const col = Math.floor(((e.clientX - sc.left) / sc.width) * t.cols) + 1
+        const row = Math.floor(((e.clientY - sc.top) / sc.height) * t.rows) + 1
+        ws.send(JSON.stringify({ type: 'input', data: sgrWheel(n < 0, col, row).repeat(Math.min(Math.abs(n), 50)) }))
+      }
+      const tmuxWheel = (e: WheelEvent) => {
+        const now = performance.now()
+        // One question to the server per gesture (a pause of 300 ms ends one).
+        const same = now - lastWheel < 300
+        lastWheel = now
+        if (flags && same && now - flags.at < 2000) { route(e, flags); return }
+        // Up, the pane unknown: ask for the history straight away; its answer
+        // says what the pane shows too (one round trip, not two).
+        if (e.deltaY < 0 && !asking) { openReader(wheelPx(e, rowH(), t.rows).px, e); return }
+        queued.push(e)
+        if (asking) return
+        asking = true
+        getJson<PanePos & { alt: boolean; mouse: boolean; in_mode: boolean }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
+          .then((p) => {
+            flags = { at: performance.now(), alt: !!p.alt, mouse: !!p.mouse, in_mode: !!p.in_mode }
+            const q = queued; queued = []
+            for (const ev of q) route(ev, flags)
+          })
+          .catch(() => { queued = [] })
+          .finally(() => { asking = false })
+      }
+
+      /* ---- tmux: the reader ---- */
+      let opening = false
+      let pendingPx = 0
+      let pendingEvents: WheelEvent[] = []
+      const wire = (r: Reader) => {
+        r.term.attachCustomKeyEventHandler((e) => {
+          if (e.type !== 'keydown') return true
+          const what = readerKeeps(e, IS_MAC)
+          if (what === 'keep') {
+            const mod = IS_MAC ? e.metaKey : e.ctrlKey
+            const k = letter(e)
+            if ((mod || (e.ctrlKey && e.shiftKey)) && k === 'c') { if (r.term.hasSelection()) { void copyText(r.term.getSelection()); r.term.clearSelection() } return false }
+            if (e.ctrlKey && e.shiftKey && k === 'f') { toggleFind(); return false }
+            return mod && k === 'a' ? (r.term.selectAll(), false) : true
+          }
+          if (what === 'page-up' || what === 'page-down') { r.layer.by((what === 'page-up' ? -1 : 1) * rowH() * (r.term.rows - 1), true); return false }
+          closeReader()
+          if (what === 'close') return false
+          // Any other key is meant for the shell: it goes there, once.
+          t.focus()
+          const printable = e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey
+          if (!printable) {
+            // (A printable key's own keypress follows the focus to the live terminal.)
+            const again = new KeyboardEvent('keydown', { key: e.key, code: e.code, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, metaKey: e.metaKey, bubbles: true, cancelable: true })
+            Object.defineProperty(again, 'keyCode', { get: () => e.keyCode })
+            Object.defineProperty(again, 'which', { get: () => e.which })
+            t.textarea?.dispatchEvent(again)
+          }
+          return false
+        })
+        // A paste in the reader goes to the shell.
+        r.el.addEventListener('paste', (ev) => {
+          const text = ev.clipboardData?.getData('text/plain') ?? ''
+          ev.preventDefault(); ev.stopPropagation()
+          closeReader(); t.focus()
+          if (text) t.paste(text)
+        }, true)
+      }
+      const show = (r: Reader) => {
+        r.el.style.visibility = 'visible'
+        readerRef.current = r
+        setReading(true)
+      }
+      const closeReader = () => {
+        const r = readerRef.current
+        if (!r) return
+        readerRef.current = null
+        r.dispose()
+        flags = null
+        setReading(false)
+        if (findRef.current) searchRef.current?.clearDecorations?.()
+        if (visibleRef.current && autoFocusRef.current) t.focus()
+      }
+      closeReaderRef.current = closeReader
+      const openReader = (px: number, first?: WheelEvent, rows = FIRST_ROWS) => {
+        if (readerRef.current || opening || disposed) return
+        opening = true
+        pendingPx = px
+        pendingEvents = first ? [first] : []
+        const make = { Terminal: XTerminal, Search }
+        void fetchRows(sid, rows)
+          .then(async (got) => {
+            if (disposed) return
+            const f = got as unknown as { alt?: boolean; mouse?: boolean; in_mode?: boolean }
+            if (f.alt || f.mouse || f.in_mode) {
+              // Not the history: a full-screen program or one that reads the mouse gets the wheel.
+              flags = { at: performance.now(), alt: !!f.alt, mouse: !!f.mouse, in_mode: !!f.in_mode }
+              lastWheel = performance.now()
+              for (const ev of pendingEvents) route(ev, flags)
+              return
+            }
+            const r = await buildReader(make, el, t, got)
+            if (disposed) { r.dispose(); return }
+            wire(r)
+            show(r)
+            if (pendingPx) r.layer.by(pendingPx, true)
+            // A longer history follows, swapped in at the same line.
+            if (!got.complete) {
+              const full = await fetchRows(sid, 50_000).catch(() => null)
+              if (!full || readerRef.current !== r || disposed) return
+              const r2 = await buildReader(make, el, t, full)
+              if (readerRef.current !== r || disposed) { r2.dispose(); return }
+              // The same absolute line at the top: rows above r's first are (history - above).
+              const h = rowH()
+              const w = r.layer.where()
+              const abs = w.pos + (r.history - r.above) * h
+              wire(r2)
+              r2.layer.setPos(abs - (full.history - full.above) * h)
+              // A glide under way goes on in the new reader.
+              if (Math.abs(w.target - w.pos) > 0.01) r2.layer.by(w.target - w.pos, true)
+              r2.el.style.visibility = 'visible'
+              readerRef.current = r2
+              r.dispose()
+            }
+          })
+          .catch(() => undefined)
+          .finally(() => { opening = false; pendingPx = 0; pendingEvents = [] })
+      }
+      openReaderRef.current = openReader
+      // The live terminal resized: the reader's rows no longer match it.
+      t.onResize(() => closeReader())
+      el.addEventListener('wheel', onWheel, { capture: true, passive: false })
       // A path the terminal printed (src/app.ts:42) opens in the editor at
       // that line; the server resolves it where the shell stands now.
       t.registerLinkProvider({
@@ -395,6 +612,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       const doFit = () => {
         if (!el.offsetWidth || !el.offsetHeight) return
         try { fit.fit() } catch { /* not laid out yet */ }
+        layerRef.current?.resync()
         if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: t.cols, rows: t.rows }))
       }
       fitRef.current = doFit
@@ -449,6 +667,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         return true
       })
       t.onData((data) => {
+        // Typed into the live terminal: the reader steps aside (focus and mouse reports are not typing).
+        if (readerRef.current && !(data.startsWith('\x1b[I') || data.startsWith('\x1b[O') || data.startsWith('\x1b[<'))) closeReaderRef.current()
         if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }))
         onInputRef.current?.(data)
         if (data.includes('\r')) {
@@ -498,6 +718,11 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       disposed = true
       if (retry) clearTimeout(retry)
       ro?.disconnect()
+      if (onWheel) el.removeEventListener('wheel', onWheel, { capture: true })
+      layerRef.current?.dispose()
+      layerRef.current = null
+      readerRef.current?.dispose()
+      readerRef.current = null
       document.fonts?.removeEventListener?.('loadingdone', fitRef.current)
       try { ws?.close() } catch { /* fine */ }
       // A terminal removed while it has the keyboard may never see its blur:
@@ -613,15 +838,15 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
           <input autoFocus placeholder={tr('find')} aria-label={tr('Find in the terminal')}
             className="w-[160px] bg-transparent text-12 font-mono text-[var(--term-text)] outline-none placeholder:text-[var(--term-muted)]"
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) searchRef.current?.findNext(e.currentTarget.value)
-              if (e.key === 'Enter' && e.shiftKey) searchRef.current?.findPrevious(e.currentTarget.value)
+              if (e.key === 'Enter' && !e.shiftKey) searcher()?.findNext(e.currentTarget.value)
+              if (e.key === 'Enter' && e.shiftKey) searcher()?.findPrevious(e.currentTarget.value)
               if (e.key === 'Escape') toggleFind()
             }}
-            onChange={(e) => searchRef.current?.findNext(e.target.value, { incremental: true })} />
+            onChange={(e) => searcher()?.findNext(e.target.value, { incremental: true })} />
           <button type="button" className="text-[var(--term-muted)] hover:text-[var(--term-text)] text-12 px-2" title={tr('Previous (Shift+Enter)')}
-            onClick={(e) => searchRef.current?.findPrevious((e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement)?.value ?? '')}>‹</button>
+            onClick={(e) => searcher()?.findPrevious((e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement)?.value ?? '')}>‹</button>
           <button type="button" className="text-[var(--term-muted)] hover:text-[var(--term-text)] text-12 px-2" title={tr('Next (Enter)')}
-            onClick={(e) => searchRef.current?.findNext((e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement)?.value ?? '')}>›</button>
+            onClick={(e) => searcher()?.findNext((e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement)?.value ?? '')}>›</button>
           <button type="button" className="text-[var(--term-muted)] hover:text-[var(--term-text)] text-12 px-2" aria-label={tr('Close find')} onClick={toggleFind}>×</button>
         </div>
       )}

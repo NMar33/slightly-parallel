@@ -11,6 +11,12 @@
  *   /aqua?v=d  Mosaic   — every live chat at once, tiled in project pools; focus grows one
  *   /aqua?v=e  Tide     — one terminal, full bleed; the tide line of every chat; panels push it aside
  *   /aqua?v=f  Lineage  — the tree of chats, tasks and forks is the navigation
+ *   round 2: g h i (one terminal window on a desktop); round 3: j (I refined)
+ *   round 4: k (J and the labs of 18.11, with a compare view)
+ *
+ * Every round is a new version; an earlier one is never changed. The bar shows
+ * the latest version and the one before it; the earlier ones fold behind
+ * «Ранние версии». `/aqua` opens the latest.
  *
  * The page covers the whole browser window, as the app would cover its own.
  * `?th=light|dark` picks the theme where the variant has both.
@@ -18,7 +24,7 @@
 
 import { useEffect, useState, type ComponentType } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { ArrowLeft, Moon, Power, RotateCcw, Sun } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Moon, Power, RotateCcw, Sun } from 'lucide-react'
 
 import { t } from '../../../i18n/scope/aqua'
 import './aqua.css'
@@ -32,9 +38,10 @@ import { Spine } from './variants/Spine'
 import { Tide } from './variants/Tide'
 import { R2 } from './round2/R2'
 import { J } from './round3/J'
+import { K } from './round4/K'
 import { resetDesk } from './round2/desk'
 
-export type VariantKey = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+export type VariantKey = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k'
 export type Theme = 'light' | 'dark'
 
 interface Variant { key: VariantKey; name: string; idea: string; themes: Theme[]; C: ComponentType<{ theme: Theme }> }
@@ -52,7 +59,12 @@ export const VARIANTS: Variant[] = [
   { key: 'i', name: t('I · Zoom'), idea: t('The most fluid: the terminal shrinks into its own tile, the workspace into its pool; the plainest strip at rest, the workspace\'s name on the zoom button'), themes: ['dark', 'light'], C: () => <R2 look="i" /> },
   // Round 3: I refined, in Slightly Parallel's own colours.
   { key: 'j', name: t('J · Zoom, refined'), idea: t('I refined: folded groups, sidebar toggles that never move, a title row that folds away, Slightly Parallel\'s own colours, a cheap zoom'), themes: ['dark', 'light'], C: J },
+  // Round 4: J and the labs of 18.11 (tabs, the strip, the "+", schemes, the message menu, health), with a compare view.
+  { key: 'k', name: t('K · J + variants 18.11'), idea: t('J with the variants of 18.11: tabs and the Alt view, the status strip, the + button, colour schemes, the message menu, health and time. «Compare» shows the variants side by side'), themes: ['dark', 'light'], C: K },
 ]
+/** The latest version and the one before it are shown up front; the rest fold away. */
+export const LATEST: VariantKey = 'k'
+export const UP_FRONT: VariantKey[] = ['k', 'j']
 const isVariant = (v: string | null): v is VariantKey => VARIANTS.some((x) => x.key === v)
 
 function systemTheme(): Theme {
@@ -64,7 +76,7 @@ function systemTheme(): Theme {
 export function AquaDesign() {
   const [params, setParams] = useSearchParams()
   const fromUrl = params.get('v')
-  const v: VariantKey = isVariant(fromUrl) ? fromUrl : 'a'
+  const v: VariantKey = isVariant(fromUrl) ? fromUrl : LATEST
   const variant = VARIANTS.find((x) => x.key === v)!
   const [wanted, setWanted] = useState<Theme>(() => {
     const th = params.get('th')
@@ -85,6 +97,9 @@ export function AquaDesign() {
     next.set('th', th)
     setParams(next, { replace: true })
   }
+  const early = VARIANTS.filter((x) => !UP_FRONT.includes(x.key))
+  const [showEarly, setShowEarly] = useState(() => !UP_FRONT.includes(v))
+  const shown = [...UP_FRONT.map((k) => VARIANTS.find((x) => x.key === k)!), ...(showEarly ? early : [])]
   const C = variant.C
   return (
     <div className="fixed inset-0 z-[300] flex flex-col bg-base text-primary" data-variant={v}>
@@ -94,11 +109,15 @@ export function AquaDesign() {
         <span className="font-semibold shrink-0">SP Aqua</span>
         <span className="text-tertiary shrink-0">{t('design round')}</span>
         <div className="flex items-center gap-2 ml-8 min-w-0 overflow-x-auto" role="tablist" aria-label={t('Variant')}>
-          {VARIANTS.map((x) => (
+          {shown.map((x) => (
             <button key={x.key} type="button" role="tab" aria-selected={x.key === v} title={x.idea} onClick={() => pick(x.key)}
               className={`h-24 px-10 rounded-pill text-12 whitespace-nowrap ${x.key === v ? 'bg-brand text-on-brand' : 'text-secondary hover:bg-hover'}`}>{x.name}</button>
           ))}
         </div>
+        <button type="button" aria-expanded={showEarly} onClick={() => setShowEarly(!showEarly)} title={t('Versions A to I: rounds 1 and 2')}
+          className="h-24 px-8 inline-flex items-center gap-2 rounded-pill text-12 whitespace-nowrap text-tertiary hover:bg-hover shrink-0">
+          {showEarly ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}{showEarly ? t('Hide early versions') : `${t('Early versions')} (${early.length})`}
+        </button>
         <span className="text-11 text-tertiary truncate min-w-0 flex-1 ml-8" title={variant.idea}>{variant.idea}</span>
         <button type="button" onClick={flip} disabled={variant.themes.length < 2}
           title={variant.themes.length < 2 ? t('This variant has one theme') : t('Light or dark')}

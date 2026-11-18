@@ -2125,5 +2125,13 @@
     "one": "Прикреплён {n} файл.",
     "few": "Прикреплено {n} файла.",
     "many": "Прикреплено {n} файлов."
-  }
+  },
+  "Fit to the screen": "Вписать в экран",
+  "Actual size": "Настоящий размер",
+  "Previous picture": "Предыдущая картинка",
+  "Next picture": "Следующая картинка",
+  "click: actual size": "щелчок — настоящий размер",
+  "Smooth scrolling": "Плавная прокрутка",
+  "The history moves by pixels under the touchpad and the wheel, as in a native terminal. Off: steps of whole lines.": "История движется по пикселям под тачпадом и колесом, как в обычном терминале. Выключено: шагами по целой строке.",
+  "The wheel and the touchpad move a terminal's history by pixels, as a native terminal does; a mouse notch glides. Off: xterm's own steps of whole lines (in tmux, five lines a step).": "Колесо и тачпад двигают историю терминала по пикселям, как в обычном терминале; щелчок колеса мыши скользит. Выключено: шаги xterm по целой строке (в tmux — по пять строк)."
 }

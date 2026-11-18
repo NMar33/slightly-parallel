@@ -32,7 +32,9 @@ export const wsTint = (hue: number, a = 0.14) => `oklch(0.70 0.13 ${hue} / ${a})
  */
 export interface Paint { ink: (hue: number) => string; tint: (hue: number, a?: number) => string; still?: boolean
   /** Pools on the app's plain surface, the colour only as a dot and a left edge (J). */
-  plain?: boolean }
+  plain?: boolean
+  /** The labs of 18.11 switched on: colour schemes, the message menu, the «Схема» panel (K). */
+  lab?: boolean }
 const PaintCtx = createContext<Paint>({ ink: wsInk, tint: wsTint })
 export const PaintProvider = PaintCtx.Provider
 export const usePaint = () => useContext(PaintCtx)
@@ -57,14 +59,14 @@ export function Snapshot({ id, lines = 7 }: { id: string; lines?: number }) {
 
 /**
  * The page is the desktop: a neutral wallpaper and the system's top bar; the app is only its windows.
- * In J (the plain paint) the lab's colour scheme paints the windows — the terminal only, or the whole
+ * In K (the lab paint) the lab's colour scheme paints the windows — the terminal only, or the whole
  * window — and the lab's panel sits beside them.
  */
 export function Desktop({ children }: { children: ReactNode }) {
   const paint = usePaint()
   const lab = useLab2()
   const scheme = schemeOf(lab.scheme)
-  const vars = paint.plain ? { ...termVars(scheme), ...(lab.scope === 'window' ? windowVars(scheme) : {}) } as React.CSSProperties : undefined
+  const vars = paint.lab ? { ...termVars(scheme), ...(lab.scope === 'window' ? windowVars(scheme) : {}) } as React.CSSProperties : undefined
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ background: 'var(--r2-wall)' }}>
       <div className="h-[26px] flex items-center px-12 text-12 font-medium" style={{ background: 'var(--r2-topbar)', color: 'var(--r2-topbar-ink)' }} aria-hidden>
@@ -73,7 +75,7 @@ export function Desktop({ children }: { children: ReactNode }) {
         <span className="opacity-80">⏻</span>
       </div>
       {vars ? <div className="contents" style={vars} data-scheme={scheme.id} data-scope={lab.scope}>{children}</div> : children}
-      {paint.plain && <Lab2Panel />}
+      {paint.lab && <Lab2Panel />}
     </div>
   )
 }
@@ -103,9 +105,9 @@ export function TermArea({ chat, split, hints, onHintsDone, onNote, size = 13 }:
 }) {
   const st = useAqua()
   const s = sessionOf(chat)!
-  // J's lab (round3/lab2): ANSI output, message blocks with their menu, task menus
+  // K's lab (round3/lab2): ANSI output, message blocks with their menu, task menus
   const area = useRef<HTMLDivElement>(null)
-  const lab = useScreenLab(chat, area, !!usePaint().plain)
+  const lab = useScreenLab(chat, area, !!usePaint().lab)
   return (
     <div className="h-full flex flex-col min-h-0" style={{ background: 'var(--aq-term-bg)' }}>
       <div ref={area} className="flex-1 min-h-0 relative">

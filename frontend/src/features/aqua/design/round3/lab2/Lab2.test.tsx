@@ -9,7 +9,7 @@ import { blocksOf, type ScreenLine } from '../../term'
 import { SCHEMES, contrast, ratios } from './schemes'
 import { resetLab2, setMenu } from './store'
 
-const page = (q = '') => render(<MemoryRouter initialEntries={[`/aqua?v=j${q}`]}><AquaDesign /></MemoryRouter>)
+const page = (q = '') => render(<MemoryRouter initialEntries={[`/aqua?v=k${q}`]}><AquaDesign /></MemoryRouter>)
 const desk = () => document.querySelector('[data-scheme]') as HTMLElement
 const varOf = (name: string) => desk().style.getPropertyValue(name)
 const blocks = (who: 'you' | 'agent') => [...document.querySelectorAll(`.lab-block[data-who="${who}"]`)] as HTMLElement[]

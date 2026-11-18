@@ -1,0 +1,525 @@
+# What the feature map states by hand. Everything else is read from the
+# program by build.py. One item per command family; `src` says where the
+# statement was checked. build.py warns when a command, tool, skill, page or
+# ledger named here no longer exists, and when the program has a command no
+# item names.
+#
+# Field owners: o = operator (his words or his choice), s = the program
+# (server or capture hook, by itself), a = agent (through the MCP tools).
+# Wording: Russian, plain, short, impersonal.
+
+groups:
+  work: "Записать работу"
+  tasks: "Задачи"
+  keep: "Сохранить сообщение"
+  cores: "Ядра программы"
+  marks: "Пометить сообщение"
+  undo: "Отменить ошибку"
+  usage: "Расход токенов"
+  ask: "Спросить"
+
+commands:
+  # --- tasks ---------------------------------------------------------------
+  - id: now
+    cmds: [now, now-doing]
+    group: tasks
+    does: "Сообщение становится задачей, над которой работает этот чат."
+    operator: "Пишет #now и текст задачи; полосу можно назвать в {…}."
+    server: "Кладёт сообщение текстом задачи, колонка Doing. Если агент не записал карточку, пишет её сам."
+    agent: "Пишет заголовок и теги ag_*, делает работу. Свой текст — только комментарием после."
+    tools: [write_entry, task_update]
+    skill: write-a-task
+    record: tasks
+    fields: [[title, a], [description, o], [status, s], [lane, o], [tags, a], [priority, o]]
+    page: /kanban
+    src: "contract §2 #now; routers/tasks_extra.py; nowlib.py"
+
+  - id: now-col
+    cmds: [now-todo, now-to-do, now-next, now-backlog, now-review, now-parked, now-done]
+    group: tasks
+    does: "Сообщение подаётся задачей в названную колонку, работа не начинается."
+    operator: "Пишет #now-todo (или -next, -backlog, -review, -parked, -done) и текст."
+    server: "Кладёт сообщение текстом задачи в эту колонку. Если агент не записал карточку, пишет её сам."
+    agent: "Пишет заголовок и теги ag_*, работу не начинает."
+    tools: [write_entry]
+    skill: write-a-task
+    record: tasks
+    fields: [[title, a], [description, o], [status, s], [tags, a]]
+    page: /kanban
+    src: "capture.py _COMMANDS now-*; nowlib.py"
+
+  - id: task
+    cmds: [task]
+    group: tasks
+    does: "Агент пишет задачу из разговора в колонку «От агентов», на потом."
+    operator: "Пишет #task и подсказку, о какой задаче речь."
+    server: "Принимает задачу только в колонку agent; проверяет теги."
+    agent: "Пишет заголовок, 2–6 строк описания и 1–3 тега ag_*."
+    tools: [write_entry]
+    skill: write-a-task
+    record: tasks
+    fields: [[title, a], [description, a], [status, s], [tags, a], [priority, o], [lane, o]]
+    page: /kanban
+    src: "contract §4 Agent task; routers/schema_api.py task"
+
+  - id: done
+    cmds: [done]
+    group: tasks
+    does: "Задача закрывается из чата; её сообщения до этого места считаются её работой."
+    operator: "Пишет #done (с id задачи или без)."
+    server: "Переносит задачу в Done от имени оператора, отмечает участок чата."
+    agent: "Говорит, что сдвинулось; одна строка отчёта; строка «где остановились» для темы."
+    tools: [task_done, task_report, entrypoint_stop]
+    skill: finish-a-task
+    record: done
+    fields: [[status, s], [done_in_chat, s], [agent_done_note, a]]
+    page: /kanban
+    src: "donelib.py; contract §4 Done"
+
+  - id: evidence
+    cmds: [evidence]
+    group: tasks
+    does: "К задаче прикладываются доказательства: что затронуто и что сделано."
+    operator: "Пишет #evidence; заранее задаёт, какие доказательства нужны."
+    server: "Хук называет задачу; сервер отдаёт инструкции оператора."
+    agent: "Пишет пункты: текст, файлы, изменение, скриншот (до 8)."
+    tools: [task_evidence_ask, task_work, task_evidence]
+    skill: task-evidence
+    record: task_evidence
+    fields: [[evidence_prompt, o], [kind, a], [title, a], [body, a]]
+    page: /kanban
+    src: "contract §4 Finishing a task; capture.py _EVIDENCE_RE"
+
+  # --- record the work -----------------------------------------------------
+  - id: scan
+    cmds: [scan]
+    group: work
+    does: "Контрольная точка — что этот чат изменил со времени своего прошлого скана, включая незакоммиченное."
+    operator: "Пишет #scan. Только он: агент скан сам не пишет."
+    server: "Отдаёт коммиты чата, файлы, счётчики и инструкции."
+    agent: "Пишет скан, файловую запись и форму архитектуры."
+    tools: [scan_material, write_entry]
+    skill: make-a-scan
+    record: scans
+    fields: [[summary, a], [why, a], [deltas, a], [files_n, a]]
+    page: /scans
+    src: "contract §4 Checkpoint"
+
+  - id: architecture
+    cmds: [architecture, page, map]
+    group: work
+    does: "Архитектура проекта: форма скана, страница проекта, карта программы."
+    operator: "Пишет #architecture, #page или #map; на #map отвечает «да»."
+    server: "Говорит, что устарело и почему; проверяет пути и словарь."
+    agent: "Пишет устаревшее; карту пишет агент-помощник."
+    tools: [architecture_status, architecture_material, architecture_page, map_material, map_write]
+    skill: update-the-architecture
+    record: architecture
+    fields: [[op, a], [type, a], [path, a], [note, a]]
+    page: /architecture
+    src: "contract §4 Architecture, Map"
+
+  - id: decision
+    cmds: [decision]
+    group: work
+    does: "Записывается принятое решение, почему и что отклонено."
+    operator: "Пишет #decision или соглашается на предложение."
+    server: "Хук замечает фразы-решения и подсказывает агенту."
+    agent: "Пишет решение с весом: minor, normal, major. Может и без команды."
+    tools: [write_entry]
+    skill: log-a-decision
+    record: decisions
+    fields: [[decision, a], [why, a], [alternatives, a], [weight, a]]
+    page: /decisions
+    src: "contract §4 Decision; capture.py _DECISION_RE"
+
+  - id: standup
+    cmds: [standup]
+    group: work
+    does: "Стендап за вчера по всем чатам того дня."
+    operator: "Пишет #standup или отвечает на вопрос в первом чате дня."
+    server: "Хук спрашивает в первом сообщении дня; сервер отдаёт сообщения дня."
+    agent: "Агент-помощник пишет стендап."
+    tools: [standup_material, standup_postpone, write_entry]
+    skill: daily-standup
+    record: standups
+    fields: [[summary, a], [deviation, a], [movement, a]]
+    page: /standups
+    src: "contract §4 Standup; capture.py standup_asked"
+
+  # --- keep a message ------------------------------------------------------
+  - id: vision
+    cmds: [vision]
+    group: keep
+    does: "Сообщение сохраняется как видение — идея о направлении продукта."
+    operator: "Пишет #vision в сообщении. Его слова — сама запись."
+    server: "Сохраняет сообщение дословно, выдаёт id."
+    agent: "Пишет толкование: что имеется в виду, с контекстом чата."
+    tools: [interpret]
+    record: visions
+    fields: [[слова, o], [толкование, a], [category, a]]
+    page: /visions
+    src: "keeplib.py; contract §4 Kept messages"
+
+  - id: rule
+    cmds: [rule]
+    group: keep
+    does: "Сообщение сохраняется как правило для агентов."
+    operator: "Пишет #rule; решает, для всех ли агентов правило."
+    server: "Сохраняет дословно; правила попадают в AGENTS.md проектов."
+    agent: "Пишет толкование: правило в повелительной форме и случай за ним."
+    tools: [interpret]
+    record: rules
+    fields: [[слова, o], [толкование, a], [status, o], [kind, o]]
+    page: /rules
+    src: "keeplib.py; entitylib.OPERATOR_ONLY rule"
+
+  - id: problem
+    cmds: [problem, problem solved]
+    group: keep
+    does: "Сообщение сохраняется как проблема; #problem solved закрывает её."
+    operator: "Пишет #problem или #problem solved <id>."
+    server: "Сохраняет дословно, статус open."
+    agent: "Пишет толкование; по «solved» ставит статус resolved. Сам пишет проблему, если заблокирован."
+    tools: [interpret, update_entry, write_entry]
+    record: problems
+    fields: [[слова, o], [толкование, a], [status, a], [severity, a]]
+    page: /problems
+    src: "keeplib.py; contract §4 Problem"
+
+  - id: entrypoint
+    cmds: [entrypoint]
+    group: keep
+    does: "Тема, к которой оператор возвращается: где лежит, как запустить, где остановились."
+    operator: "Пишет #entrypoint; выбирает тему по номеру или даёт имя."
+    server: "Хранит команду, находит похожие темы, проверяет ответ и порты."
+    agent: "Предлагает темы, затем пишет запись (What, Where, How, State, Next), способы входа, остановку, скриншоты."
+    tools: [entrypoint_ask, entrypoint_answer, interpret, entrypoint_way, entrypoint_stop, entrypoint_shot, task_topic]
+    record: entrypoints
+    fields: [[name, o], [state, o], [запись, a], [способы входа, a], [остановки, a]]
+    page: /entrypoints
+    src: "entrypointlib.py; contract §4 Entry point"
+
+  - id: publish
+    cmds: [publish]
+    group: keep
+    does: "Карточка того, что выпущено и о чём стоит рассказать."
+    operator: "Пишет #publish и текст (или «про X»); #publish pu_… дополняет карточку."
+    server: "Сохраняет сообщение карточкой; каждая запись текста — версия."
+    agent: "Пишет контекст, текст если просили, прикладывает задачи, коммиты, файлы, скриншоты, ссылки."
+    tools: [publish_write]
+    record: publish
+    fields: [[текст, o], [контекст, a], [вложения, a], [документы, o]]
+    page: /publish
+    src: "publishlib.py; contract §4 Publish"
+
+  - id: prompt
+    cmds: [prompt]
+    group: keep
+    does: "Сообщение попадает в библиотеку промптов, чтобы отправить его снова."
+    operator: "Пишет #prompt (имя — в скобках)."
+    server: "Берёт сообщение из лога дословно; считает повторы."
+    agent: "Ничего не пишет."
+    tools: []
+    record: prompts
+    fields: [[текст, o], [title, o], [версии, o]]
+    page: /prompts
+    src: "promptlib.py; entitylib.OPERATOR_ONLY prompt"
+
+  - id: skill
+    cmds: [skill]
+    group: keep
+    does: "Сделанное в чате становится скиллом — процедурой для агентов."
+    operator: "Пишет #skill; читает черновик и ставит скилл."
+    server: "Хранит сообщение как черновик; проверяет SKILL.md; ставит копии в проекты."
+    agent: "Пишет SKILL.md и файлы из того, что было в чате."
+    tools: [skill_draft]
+    record: skills
+    fields: [[name, a], [description, a], [status, o], [установка, o]]
+    page: /skills
+    src: "skilllib.py; routers/skills.py _operator_only"
+
+  - id: artifact
+    cmds: [artifact]
+    group: keep
+    does: "Результат хранится папкой: набор данных, документ, страница, приложение."
+    operator: "Пишет #artifact и что сохранить."
+    server: "Хранит сообщение как черновик; читает папку."
+    agent: "Пишет папку в каталоге данных, затем запись."
+    tools: [artifact_write]
+    skill: make-an-artifact
+    record: artifacts
+    fields: [[name, a], [kind, a], [description, a], [status, s]]
+    page: /artifacts
+    src: "artifactlib.py; keeplib.KINDS"
+
+  # --- cores ---------------------------------------------------------------
+  - id: core-new
+    cmds: [core-new]
+    group: cores
+    does: "Новое ядро программы — возможность, функция, хранилище, часть интерфейса."
+    operator: "Пишет #core-new и что это."
+    server: "Сохраняет сообщение первой заметкой ядра."
+    agent: "Даёт ядру короткое имя, тип и известные файлы."
+    tools: [core_new]
+    skill: keep-a-core
+    record: cores
+    fields: [[name, a], [type, a], [файлы, a], [tracking_on, o], [position, o]]
+    page: /architecture
+    src: "corelib.py; capture.py _COMMANDS core-new"
+
+  - id: core-note
+    cmds: [core-note]
+    group: cores
+    does: "Сообщение добавляется заметкой к ядру."
+    operator: "Пишет #core-note и текст; выбирает ядро по номеру, если подходят два."
+    server: "Хранит заметку; одобрение заметки — за оператором."
+    agent: "Находит ядро, добавляет слова оператора и свою строку."
+    tools: [cores, core_note]
+    skill: keep-a-core
+    record: core_notes
+    fields: [[text, o], [comment, a], [approved_at, o]]
+    page: /architecture
+    src: "corelib.py"
+
+  - id: core
+    cmds: [core]
+    group: cores
+    does: "Сообщение и задача чата прикрепляются к ядру."
+    operator: "Пишет #core."
+    server: "Хранит связь."
+    agent: "Находит ядро и прикрепляет."
+    tools: [cores, core_attach]
+    skill: keep-a-core
+    record: core_links
+    fields: [[kind, a], [target, a]]
+    page: /architecture
+    src: "corelib.py"
+
+  - id: core-off
+    cmds: [core-off]
+    group: cores
+    does: "Ядро убирается из вида; заметки и связи остаются."
+    operator: "Пишет #core-off и подтверждает номер."
+    server: "Ставит отметку снятия."
+    agent: "Находит ядро, спрашивает номер, снимает."
+    tools: [cores, core_off]
+    skill: keep-a-core
+    record: cores
+    fields: [[off_at, s]]
+    page: /architecture
+    src: "corelib.py"
+
+  # --- marks ---------------------------------------------------------------
+  - id: important
+    cmds: [important, important-agent, important-task, important-message]
+    group: marks
+    does: "Звезда на сообщении, агенте чата и задачах из сообщения."
+    operator: "Пишет #important (или -agent, -task, -message); или ставит звезду кнопкой."
+    server: "Ставит звёзды по тегу из лога."
+    agent: "Ничего не пишет."
+    tools: []
+    record: marks
+    record_kinds: [agent, task, message]
+    fields: [[kind, o], [target, o]]
+    page: /important
+    src: "marklib.py"
+
+  - id: pin
+    cmds: [pin]
+    group: marks
+    does: "Сообщение закрепляется, чтобы к нему вернуться."
+    operator: "Пишет #pin или жмёт кнопку на сообщении."
+    server: "Ставит закреп по тегу из лога."
+    agent: "По просьбе «вернись к закрепу» читает его."
+    tools: [pins]
+    record: marks
+    record_kinds: [pin]
+    fields: [[kind, o], [target, o]]
+    page: /pins
+    src: "pinlib.py"
+
+  - id: carry
+    cmds: [carry, carry-brief]
+    group: marks
+    does: "Сообщение переживает сжатие контекста — целиком или кратким пересказом."
+    operator: "Пишет #carry или #carry-brief, или ставит кнопкой."
+    server: "Ставит метку; после сжатия хук отдаёт агенту сообщение (или пересказ)."
+    agent: "Для #carry-brief пишет пересказ до 4000 знаков."
+    tools: [carry_brief, pins]
+    record: marks
+    record_kinds: [carry, carry-brief]
+    fields: [[kind, o], [пересказ, a]]
+    page: /pins
+    src: "pinlib.py; contract §4 Marks"
+
+  - id: fork-later
+    cmds: [fork-later]
+    group: marks
+    does: "Сообщение — работа, которую потом может взять другой агент."
+    operator: "Пишет #fork-later; позже запускает форк из списка."
+    server: "Ставит метку, выдаёт команду запуска; ничего не запускает сам."
+    agent: "Продолжает работу как обычно."
+    tools: []
+    record: marks
+    record_kinds: [fork]
+    fields: [[kind, o], [state, o]]
+    page: /pins
+    src: "pinlib.py"
+
+  # --- undo ----------------------------------------------------------------
+  - id: undo
+    cmds: [undo, undo-yes]
+    group: undo
+    does: "Записи, созданные тегом по ошибке, уходят в архив."
+    operator: "Пишет #undo и что было ошибкой; выбирает номера; подтверждает #undo-yes."
+    server: "Проверяет запрос и подтверждение по логу чата; архивирует, не удаляет."
+    agent: "Перечисляет кандидатов по номерам, отправляет выбранные, показывает текст подтверждения."
+    tools: [undo_find, undo_propose, undo_apply, undo_restore]
+    skill: undo-a-mistake
+    record: undo
+    fields: [[hint, o], [proposal, a], [state, s]]
+    page: ""
+    src: "undolib.py"
+
+  # --- usage ---------------------------------------------------------------
+  - id: usage
+    cmds: [usage, usage-on, usage-off, usage-warnings-on, usage-warnings-off]
+    group: usage
+    does: "Токены чата, лимиты плана; показ токенов и предупреждений после ответов."
+    operator: "Пишет #usage, #usage-on/-off, #usage-warnings-on/-off."
+    server: "Хук отвечает сам. В Claude Code сообщение из одних этих команд до модели не доходит; в Codex и OpenCode текст приходит агенту в подсказке."
+    agent: "Ничего не добавляет; в Codex и OpenCode отдаёт текст хука как есть."
+    tools: [usage]
+    record: ""
+    fields: []
+    page: /usage
+    src: "capture.py usage_only, _USAGE_COMMANDS"
+
+  - id: usage-price
+    cmds: [usage-price]
+    group: usage
+    does: "Обновляются цены API, по которым страница Usage считает доллары."
+    operator: "Пишет #usage-price."
+    server: "Отдаёт модели чатов и текущие цены; хранит новые."
+    agent: "Агент-помощник читает страницы цен поставщиков и записывает цены."
+    tools: [usage_prices_material, usage_prices_write]
+    skill: update-usage-prices
+    record: ""
+    fields: []
+    page: /usage
+    src: "contract §4 Usage prices"
+
+  # --- ask -----------------------------------------------------------------
+  - id: sp
+    cmds: [sp]
+    group: ask
+    does: "Проверка, работает ли Slightly Parallel для этого чата и папки."
+    operator: "Пишет #sp и, если есть, что беспокоит."
+    server: "Выполняет проверки: запись, MCP, хуки, данные, копии, память."
+    agent: "Отчитывается в заданной форме; ничего не меняет без «да»."
+    tools: [checkup]
+    skill: sp-checkup
+    record: ""
+    fields: []
+    page: /monitor
+    src: "checkup.py"
+
+  - id: help
+    cmds: [help]
+    group: ask
+    does: "Список команд, что каждая делает и где видно."
+    operator: "Пишет #help."
+    server: "—"
+    agent: "Отвечает списком из скилла как есть."
+    tools: []
+    skill: sp-help
+    record: ""
+    fields: []
+    page: /guide
+    src: "sp-help SKILL.md"
+
+  - id: mute
+    cmds: [mute]
+    group: ask
+    does: "Все команды в сообщении выключены, теги — обычный текст."
+    operator: "Пишет #mute в сообщении (например, вставляя лог)."
+    server: "Хук не запускает ни одной команды из сообщения."
+    agent: "Ничего не делает по тегам."
+    tools: []
+    record: ""
+    fields: []
+    page: ""
+    src: "hookshared.command_text"
+
+# What the agent writes with no command (its own call).
+agent_own:
+  - text: "Решение после законченной работы, с весом."
+    tools: [write_entry]
+    src: "contract §4 Decision"
+  - text: "Заметка вместо длинного ответа или .md-файла."
+    tools: [note_write, note_image]
+    src: "contract §4 Note"
+  - text: "Проблема, когда сам заблокирован — сразу."
+    tools: [write_entry]
+    src: "contract §4 Problem"
+  - text: "Отчёт «задача сделана» — одна строка; статус не меняет."
+    tools: [task_report]
+    src: "contract §4 Finishing a task"
+  - text: "Комментарий к задаче после текста оператора."
+    tools: [task_update]
+    src: "routers/tasks_extra.py COMMENT_MARK"
+  - text: "Привязка коммитов без строки Task: к задаче."
+    tools: [task_commits]
+    src: "contract §1 commits notice"
+  - text: "Строка ядра, если законченная работа поменяла отслеживаемое ядро."
+    tools: [core_note]
+    src: "contract §4 Cores"
+  - text: "Новый способ входа, остановка, скриншот, тема задачи."
+    tools: [entrypoint_offer, entrypoint_way, entrypoint_stop, entrypoint_shot, task_topic]
+    src: "contract §4 Entry point"
+  - text: "Пересказ сообщения, помеченного оператором кнопкой."
+    tools: [carry_brief]
+    src: "contract §4 Marks"
+  - text: "Предлагает скан или стендап; сам не пишет."
+    tools: []
+    src: "contract §4 Checkpoint, Standup"
+
+# What the program does by itself (s): server and capture hook.
+server_own:
+  - text: "Записывает каждое сообщение и ответ в лог чата."
+    who: "хук"
+    src: "scripts/hooks/capture.py"
+  - text: "Считает токены каждого ответа."
+    who: "хук"
+    src: "capture.py usage; usagelib.py"
+  - text: "Подсказки агенту — identity, стендап, решение, обновить контракт, коммиты без Task:, ядра, файлы и архитектура скана."
+    who: "хук"
+    src: "capture.py format_signals"
+  - text: "Возвращает помеченные сообщения после сжатия контекста."
+    who: "хук"
+    src: "capture.py carried; pinlib.py"
+  - text: "Переносит помеченные тегом сообщения в реестры при чтении."
+    who: "сервер"
+    src: "keeplib.adopt, marklib.adopt"
+  - text: "Пишет карточку #now, если агент не записал её."
+    who: "сервер"
+    src: "nowlib.py"
+  - text: "Ставит подпись, проект, время каждой записи агента; отказывает записи в обход MCP (настройка agents.mcp_only, включена по умолчанию)."
+    who: "сервер"
+    src: "mcp.Translator._stamp; agents.mcp_only"
+  - text: "Связывает коммиты и файлы с задачей по участку чата и строке Task:."
+    who: "сервер"
+    src: "taskwork.py, gitwork.py"
+  - text: "Поднимает задачи по дате и продвигает стопку задач."
+    who: "сервер"
+    src: "actors.HOUSE_ACTORS resurface, stack"
+  - text: "Пишет блок правил в AGENTS.md и копии скиллов в проекты."
+    who: "сервер"
+    src: "AGENTS.md block; skilllib.py"
+  - text: "Авто-таймер — время по странице, терминалу и файлам; пауза при отсутствии."
+    who: "сервер"
+    src: "timeauto.py"
+  - text: "Резервные копии каталога данных."
+    who: "сервер"
+    src: "backup.py"

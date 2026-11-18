@@ -8,7 +8,7 @@ import { resetAqua } from '../../store'
 import { resetDesk } from '../../round2/desk'
 import { resetLab, resetStrip, tickLab } from './live'
 
-const page = (q = '') => render(<MemoryRouter initialEntries={[`/aqua?v=j${q}`]}><AquaDesign /></MemoryRouter>)
+const page = (q = '') => render(<MemoryRouter initialEntries={[`/aqua?v=k${q}`]}><AquaDesign /></MemoryRouter>)
 const strip = () => screen.getByRole('tablist', { name: 'Chats' })
 const tabs = () => within(strip()).getAllByRole('tab')
 

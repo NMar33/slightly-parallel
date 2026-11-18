@@ -41,9 +41,9 @@ function at(root: RefObject<HTMLElement | null>, e: React.MouseEvent) {
   return { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }
 }
 
-interface Item { id: string; label: string; icon: ReactNode; run?: () => void; on?: boolean; sub?: Item[] }
+export interface Item { id: string; label: string; icon: ReactNode; run?: () => void; on?: boolean; sub?: Item[] }
 
-function messageItems(b: Block, lab: Lab2State): Item[] {
+export function messageItems(b: Block, lab: Lab2State): Item[] {
   return [
     { id: 'pin', label: lab.pinned[b.id] ? t('Unpin') : t('Pin'), icon: lab.pinned[b.id] ? <PinOff size={15} /> : <Pin size={15} />, run: () => pin(b), on: !!lab.pinned[b.id] },
     {
@@ -123,7 +123,7 @@ function Marks({ b, lab }: { b: Block; lab: Lab2State }) {
 
 /* ------------------------------------------------------------ c: the bar on the edge */
 
-function EdgeBar({ b, name }: { b: Block; name: string }) {
+export function EdgeBar({ b, name }: { b: Block; name: string }) {
   const lab = useLab2()
   const items = messageItems(b, lab)
   return (
@@ -167,9 +167,9 @@ export function LabMenus({ chat, root }: { chat: string; root: RefObject<HTMLEle
 }
 
 /* a: the round menu */
-function Radial({ open, items, title, w, h }: { open: OpenMenu; items: Item[]; title: string; w: number; h: number }) {
+export function Radial({ open, items, title, w, h, openSub }: { open: OpenMenu; items: Item[]; title: string; w: number; h: number; openSub?: string }) {
   const [hot, setHot] = useState<Item | null>(null)
-  const [sub, setSub] = useState<Item | null>(null)
+  const [sub, setSub] = useState<Item | null>(() => items.find((x) => x.id === openSub) ?? null)
   const R = 74
   const pad = R + 64
   const cx = Math.min(Math.max(open.x, pad), Math.max(pad, w - pad))
@@ -213,7 +213,7 @@ function Radial({ open, items, title, w, h }: { open: OpenMenu; items: Item[]; t
 }
 
 /* b and the task menu of c: a compact list */
-function List({ open, items, title, w, h }: { open: OpenMenu; items: Item[]; title: string; w: number; h: number }) {
+export function List({ open, items, title, w, h }: { open: OpenMenu; items: Item[]; title: string; w: number; h: number }) {
   const W = 248
   const H = open.kind === 'msg' ? 250 : 196
   const x = Math.min(Math.max(8, open.x), w - W - 8)

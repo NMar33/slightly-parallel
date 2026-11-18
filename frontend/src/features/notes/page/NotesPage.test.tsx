@@ -99,6 +99,34 @@ describe('the Notes page on the server\'s notes', () => {
     await waitFor(() => expect(document.querySelector('img[src="/api/notes/images/ni_00112233aa/file"]')).toBeTruthy())
   })
 
+  it('opens a gallery picture large, steps through the series with the keys and the buttons, shows it at its own size, and closes', async () => {
+    const two: WireNote = {
+      ...REVIEW, id: 'nt_5a5a5a5a', title: 'Two sheets',
+      body: '# Two sheets\n\n```gallery\n![Sheet one](ni_aaaaaaaaaa)\n![Sheet two](ni_bbbbbbbbbb)\n```\n',
+      images: [
+        { id: 'ni_aaaaaaaaaa', caption: 'Sheet one', width: 3120, height: 3000, src: '/api/notes/images/ni_aaaaaaaaaa/file' },
+        { id: 'ni_bbbbbbbbbb', caption: 'Sheet two', width: 3120, height: 3000, src: '/api/notes/images/ni_bbbbbbbbbb/file' },
+      ],
+    }
+    serve({ ...FEED, notes: [two] })
+    render(wrap(<NotesPage />, '/notes?note=nt_5a5a5a5a'))
+    const open = (await screen.findAllByRole('button', { name: 'Open the picture large' }))[0]
+    fireEvent.click(open)
+    const dialog = await screen.findByRole('dialog', { name: 'Sheet one' })
+    expect(within(dialog).getByText('1 / 2')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(await screen.findByRole('dialog', { name: 'Sheet two' })).toBeTruthy()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Previous picture' }))
+    const back = await screen.findByRole('dialog', { name: 'Sheet one' })
+    const img = within(back).getByRole('img', { name: 'Sheet one' })
+    expect(img.className).toContain('cursor-zoom-in')
+    fireEvent.click(img)
+    expect(within(back).getByRole('img', { name: 'Sheet one' }).className).toContain('max-w-none')
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
   it('says how notes get written when there are none', async () => {
     serve({ ...FEED, notes: [] })
     render(wrap(<NotesPage />))

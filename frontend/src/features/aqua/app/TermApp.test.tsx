@@ -27,6 +27,8 @@ interface World {
   sessions: AquaSession[]
   groups?: Array<{ id: string; name: string; color: number }> | null
   restore?: { needed: number; sessions: Array<{ id: string; label: string }> } | null
+  /** The time routes: absent (404) unless given. */
+  time?: { running: unknown[]; project: Record<string, number>; total: number; working?: string[] }
 }
 let world: World
 const posts: Array<[string, unknown]> = []
@@ -60,6 +62,10 @@ beforeEach(() => {
     if (path === '/api/terminal/restore') return world.restore ? answer(world.restore) : answer({ detail: 'Not Found' }, 404)
     if (path.startsWith('/api/pins') || path.startsWith('/api/carries') || path.startsWith('/api/forks')) return answer({ items: [] })
     if (path.startsWith('/api/sessions')) return answer({ sessions: [] })
+    if (world.time && path === '/api/time/running') return answer({ running: world.time.running })
+    if (world.time && path === '/api/time/summary') return answer({ today_min: world.time.total })
+    if (world.time && path.startsWith('/api/time/summary?project=')) return answer({ today_min: world.time.project[new URL(path, 'http://x').searchParams.get('project')!] ?? 0 })
+    if (world.time && path === '/api/time/auto') return answer({ working: (world.time.working ?? []).map((p) => ({ project: p, entry_id: 'tm_a', task_id: '', top: 100 })), away: [], modes: {}, default_mode: 'remind' })
     return answer({ detail: 'Not Found' }, 404)
   }))
 })
@@ -356,6 +362,29 @@ describe('SP Aqua at /term', () => {
     const tabs = await screen.findByRole('tablist', { name: 'Chats' })
     await waitFor(() => expect(within(tabs).getAllByRole('tab').map((x) => x.textContent)).toEqual(['release-0.9']))
     expect(screen.queryByRole('button', { name: /\+1/ })).toBeNull()
+  })
+
+  it('says the time today on the tab\'s project and in all at the strip\'s end; a click opens the Timer page through the window', async () => {
+    const a = row({ label: 'api-limits', project: 'harbor' })
+    const b = row({ label: 'tide', project: 'harbor' })
+    world = { sessions: [a, b], time: { running: [], project: { harbor: 80 }, total: 185, working: ['harbor'] } }
+    const sent: unknown[] = []
+    ;(window as unknown as { spWindow: unknown }).spWindow = { postMessage: (m: unknown) => sent.push(m) }
+    page()
+    const chip = await screen.findByRole('button', { name: /^Timer: counting\. harbor 1h 20m · today 3h 05m\./ })
+    expect(chip.dataset.timer).toBe('counting')
+    // At the strip's right end, after the "+" button: the tabs never move for it.
+    const strip = screen.getByRole('tablist', { name: 'Chats' }).parentElement!
+    expect(strip.lastElementChild).toBe(chip)
+    fireEvent.click(chip)
+    expect(sent).toContainEqual({ op: 'open', url: `${window.location.origin}/time` })
+  })
+
+  it('draws no timer when the server has no time routes', async () => {
+    world = { sessions: [row({ label: 'api-limits' })] }
+    page()
+    await screen.findAllByRole('tab')
+    expect(screen.queryByRole('button', { name: /^Timer:/ })).toBeNull()
   })
 
   it('shows sleep and wake only when the server knows sleep', async () => {

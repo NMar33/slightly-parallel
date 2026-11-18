@@ -1,0 +1,394 @@
+# Layout of the two system maps (sysmap.py, tk_bba7c02c). Kept by hand.
+#
+# Coordinates are css px inside the map area (3200 wide). A station's `n` is
+# a count key resolved from feature-map.json (30 days):
+#   c:<card id>      commands of that card typed by the operator
+#   t:<cmd>,<cmd>    those commands typed
+#   l:<ledger>       records written      lt:<ledger>  records, all time
+#   f:<flow key>     program's own streams (commits, usage_rows, interpreted …)
+#   o:<origin>       where tasks came from   p:<part>  what agents added to tasks
+#   m:<key>          chat messages (d30, with_command30)
+# `who` letters: o operator, s program (hook and server), a agent, x outside.
+# `cmds` lists the commands a station stands for; build.py warns about any
+# command of the program that no station names.
+
+metro:
+  title: "Как всё связано: схема-метро"
+  lede: >-
+    Линия — процесс, станции на ней идут по порядку. Станция — команда или запись.
+    Пересадка — место, где процессы встречаются: сообщение, задача, коммиты,
+    AGENTS.md, агенты, стендап, релиз. Значок у станции — кто действует.
+  height: 1780
+  lines:
+    work:
+      name: "Работа"
+      note: "круг: задача → коммиты → #done → стендап → снова задача"
+      color: "#1f1e1c"
+      width: 15
+      closed: true
+      pts: [[800, 760], [2500, 760], [2500, 1300], [800, 1300]]
+      radius: 80
+      tag: [2060, 1130]
+    tasks:
+      name: "Поставить задачу"
+      note: "задачи на потом и с доски"
+      color: "#8a877f"
+      pts: [nowdone, board, nowcol, tasktag, [1140, 600], task]
+      tag: [560, 690]
+    words:
+      name: "Слова → поведение"
+      note: "слова оператора становятся правилом, правило меняет всех агентов"
+      color: "#7a4cc2"
+      pts: [vision, interp, rule, agentsmd, [1190, 200], agents]
+      tag: [60, 290]
+    words2:
+      color: "#7a4cc2"
+      pts: [prompt, problem, [560, 120], interp]
+      branch: words
+    skills:
+      color: "#7a4cc2"
+      pts: [skill, skillin, agents]
+      branch: words
+    dev:
+      name: "Разработка"
+      note: "агенты → master → CI на трёх системах → релиз"
+      color: "#0b8ba3"
+      pts: [agents, [1550, 450], commits, [2170, 450], ci, [2800, 450], linux, macos, windows, main, release]
+      tag: [2560, 405]
+    code:
+      name: "Код → понимание"
+      note: "что изменилось → архитектура → карта → ядра"
+      color: "#b8860b"
+      pts: [commits, [1860, 960], scan, files, arch, page, map, corenew, corenote]
+      tag: [2010, 905]
+    day:
+      name: "День"
+      note: "расход и чаты дня → стендап → карта"
+      color: "#3a4fb0"
+      pts: [usageprice, usage, tokens, [1300, 1700], firstchat, standupcmd, standup, map]
+      tag: [2130, 1690]
+    publish:
+      name: "Наружу"
+      note: "сделанное → статьи → релиз"
+      color: "#c2357c"
+      pts: [artifact, publish, card, articles, release]
+      tag: [2290, 1495]
+    context:
+      name: "Контекст"
+      note: "что должно пережить сжатие разговора"
+      color: "#96592a"
+      pts: [msg, [660, 1170], entry, important, carry, fork, [660, 1660], compress, back]
+      tag: [430, 1625]
+      tag_side: w
+    service:
+      name: "Служебные"
+      note: "проверить, отменить, выключить"
+      color: "#8d8b85"
+      dash: "2 14"
+      pts: [msg, [660, 890], mute, [340, 890], triple, undo, sp, help]
+      tag: [30, 960]
+  stations:
+    # --- the work ring
+    msg: {at: [800, 1030], hub: true, t: "Сообщение в чате", s: "хук записывает каждое; тег = команда", n: "m:d30", who: "os", lp: w}
+    now: {at: [1020, 760], t: "#now", s: "сообщение → задача в работе", n: "c:now", who: "o", cmds: [now, now-doing], lp: n}
+    task: {at: [1300, 760], hub: true, t: "ЗАДАЧА", s: "узел: к ней сходится вся работа", n: "l:tasks", who: "s", lp: s}
+    work: {at: [1500, 760], t: "Агент работает", s: "заголовок, код, тесты", who: "a", lp: n}
+    decision: {at: [1680, 760], t: "#decision", s: "решения после работы", n: "l:decisions", who: "a", cmds: [decision], lp: n}
+    commits: {at: [1860, 760], hub: true, t: "Коммиты", s: "программа привязывает к задаче", n: "f:commits", who: "as", lp: se}
+    tests: {at: [2180, 760], t: "Тесты", s: "pytest · vitest · e2e окна", who: "a", lp: n}
+    done: {at: [2500, 1030], t: "#done", s: "закрыть текущую задачу,|забрать её участок чата", n: "c:done", who: "o", cmds: [done], lp: w}
+    stretch: {at: [2260, 1300], t: "Участок чата", s: "коммиты, время, токены → задаче", n: "l:done", who: "s", lp: s}
+    evidence: {at: [1980, 1300], t: "#evidence", s: "доказательства к задаче", n: "c:evidence", who: "oa", cmds: [evidence], lp: s}
+    report: {at: [1700, 1300], t: "Отчёт", s: "одна строка агента", n: "p:отчёт агента", who: "a", lp: s}
+    standup: {at: [1300, 1300], hub: true, t: "Стендап", s: "вчерашний день из всех чатов", n: "l:standups", who: "a", lp: ne}
+    reads: {at: [1020, 1300], t: "Оператор читает", s: "доска, стендап → новое сообщение", who: "o", lp: s}
+    # --- tasks
+    nowdone: {at: [520, 600], t: "#now-done", s: "задача сразу в Done, без участка", n: "t:now-done", who: "o", cmds: [now-done], lp: s}
+    board: {at: [710, 600], t: "Доска", s: "задача вручную", n: "o:доска (вручную)", who: "o", lp: n}
+    nowcol: {at: [900, 600], t: "#now-todo …", s: "в колонку: todo, next, backlog, review, parked", n: "c:now-col", who: "o", cmds: [now-todo, now-to-do, now-next, now-backlog, now-review, now-parked], lp: s}
+    tasktag: {at: [1080, 600], t: "#task", s: "агент пишет задачу из разговора", n: "c:task", who: "oa", cmds: [task], lp: n}
+    # --- words
+    prompt: {at: [180, 120], t: "#prompt", s: "в библиотеку промптов", n: "c:prompt", who: "o", cmds: [prompt], lp: n}
+    problem: {at: [400, 120], t: "#problem", s: "открыта → решена", n: "c:problem", who: "o", cmds: [problem, problem solved], lp: n}
+    vision: {at: [420, 200], t: "#vision", s: "слова дословно", n: "c:vision", who: "o", cmds: [vision], lp: s}
+    interp: {at: [640, 200], t: "Толкование", s: "агент: смысл и контекст", n: "f:interpreted", who: "a", lp: s}
+    rule: {at: [860, 200], t: "#rule", s: "правило оператора", n: "c:rule", who: "o", cmds: [rule], lp: s}
+    agentsmd: {at: [1080, 200], hub: true, t: "AGENTS.md", s: "блок правил во всех проектах", who: "s", lp: n}
+    skill: {at: [500, 450], t: "#skill", s: "процедура для агентов", n: "c:skill", who: "oa", cmds: [skill], lp: s}
+    skillin: {at: [860, 450], t: "Скилл в проектах", s: "ставится во все проекты", who: "s", lp: s}
+    agents: {at: [1440, 450], hub: true, t: "Агенты в чатах", s: "Claude Code · Codex · OpenCode", who: "a", lp: ne}
+    # --- development
+    ci: {at: [2380, 450], t: "Ветки ci-*", s: "scripts/publish-ci.sh", who: "a", lp: n}
+    linux: {at: [2800, 620], t: "Linux", s: "GitHub Actions", who: "x", lp: e}
+    macos: {at: [2800, 780], t: "macOS", s: "GitHub Actions", who: "x", lp: e}
+    windows: {at: [2800, 940], t: "Windows", s: "GitHub Actions", who: "x", lp: e}
+    main: {at: [2800, 1100], t: "main", s: "сборка релиза", who: "o", lp: e}
+    release: {at: [2800, 1460], hub: true, t: "Релиз", s: "ветка release на GitHub", who: "ox", lp: e}
+    # --- code
+    scan: {at: [1760, 960], t: "#scan", s: "что изменилось", n: "c:scan", who: "oa", cmds: [scan], lp: n}
+    files: {at: [1640, 960], t: "Файловая запись", s: "файлы скана", n: "lt:files", who: "a", lp: s}
+    arch: {at: [1520, 960], t: "#architecture", s: "форма архитектуры", n: "lt:architecture", who: "oa", cmds: [architecture], lp: n}
+    page: {at: [1410, 960], t: "#page", s: "страница проекта", n: "t:page", who: "oa", cmds: [page], lp: s}
+    map: {at: [1300, 960], hub: true, t: "#map", s: "карта программы", n: "t:map", who: "oa", cmds: [map], lp: sw}
+    corenew: {at: [1130, 960], t: "#core-new · #core-off", s: "ядро в виду / убрать", n: "l:cores", who: "oa", cmds: [core-new, core-off], lp: n}
+    corenote: {at: [980, 960], t: "#core-note · #core", s: "заметка ядра, связь с задачей", n: "l:core_links", who: "oa", cmds: [core-note, core], lp: s}
+    # --- day
+    usageprice: {at: [2080, 1700], t: "#usage-price", s: "цены API от помощника", n: "c:usage-price", who: "oa", cmds: [usage-price], lp: n}
+    usage: {at: [1860, 1700], t: "#usage", s: "токены и лимиты плана", n: "c:usage", who: "o", cmds: [usage, usage-on, usage-off, usage-warnings-on, usage-warnings-off], lp: n}
+    tokens: {at: [1620, 1700], t: "Токены", s: "программа считает каждый ответ", n: "f:usage_rows", who: "s", lp: n}
+    firstchat: {at: [1300, 1580], t: "Первый чат дня", s: "хук напоминает про стендап", who: "s", lp: e}
+    standupcmd: {at: [1300, 1440], t: "#standup", s: "помощник читает все чаты дня", n: "c:standup", who: "oa", cmds: [standup], lp: e}
+    # --- publish
+    artifact: {at: [1700, 1460], t: "#artifact", s: "результат папкой", n: "c:artifact", who: "oa", cmds: [artifact], lp: s}
+    publish: {at: [1900, 1460], t: "#publish", s: "«выпущено» + задачи, коммиты", n: "c:publish", who: "o", cmds: [publish], lp: n}
+    card: {at: [2130, 1460], t: "Карточка", s: "вложения от агента", n: "l:publish_attachments", who: "a", lp: s}
+    articles: {at: [2400, 1460], t: "Статьи и посты", s: "проект текстов", who: "o", lp: n}
+    # --- context
+    entry: {at: [660, 1250], t: "#entrypoint", s: "где живёт тема, где остановились", n: "c:entrypoint", who: "oa", cmds: [entrypoint], lp: w}
+    important: {at: [660, 1360], t: "#important · #pin", s: "звёзды и закрепы", n: "l:marks", who: "o", cmds: [important, important-agent, important-task, important-message, pin], lp: w}
+    carry: {at: [660, 1470], t: "#carry · #carry-brief", s: "сообщение переживёт сжатие", n: "c:carry", who: "o", cmds: [carry, carry-brief], lp: w}
+    fork: {at: [660, 1580], t: "#fork-later", s: "работа для другого агента", n: "c:fork-later", who: "o", cmds: [fork-later], lp: w}
+    compress: {at: [880, 1660], t: "Сжатие контекста", s: "агент забывает разговор", who: "a", lp: s}
+    back: {at: [1100, 1660], t: "Слова снова у агента", s: "хук возвращает их", who: "s", lp: n}
+    # --- service
+    mute: {at: [500, 890], t: "#mute", s: "все теги выключены", n: "c:mute", who: "o", cmds: [mute], lp: s}
+    triple: {at: [340, 780], t: "###тег", s: "работает только этот тег", who: "o", lp: w}
+    undo: {at: [340, 670], t: "#undo · #undo-yes", s: "ошибочные записи → архив", n: "c:undo", who: "oa", cmds: [undo, undo-yes], lp: w}
+    sp: {at: [340, 560], t: "#sp", s: "проверка, что всё работает", n: "c:sp", who: "oa", cmds: [sp], lp: w}
+    help: {at: [340, 450], t: "#help", s: "список команд", n: "c:help", who: "oa", cmds: [help], lp: w}
+  inset:
+    at: [1640, 36]
+    title: "Задача — узел"
+    lede: "откуда приходит и что к ней прикрепляется, 30 дней"
+    from:
+      - ["#now-todo …", "o:#now-<колонка>", "o"]
+      - ["#now", "o:#now", "o"]
+      - ["#task", "o:#task (агент)", "a"]
+      - ["доска вручную", "o:доска (вручную)", "o"]
+    attach:
+      - ["коммиты по участку чата", "f:commits", "s"]
+      - ["время", "l:time_entries", "s"]
+      - ["участок чата (#done)", "l:done", "s"]
+      - ["отчёт агента, всё время", "p:отчёт агента", "a"]
+      - ["связи ядер с задачей", "f:core_links.task", "a"]
+      - ["заметки агента", "f:notes_on_task", "a"]
+      - ["доказательства", "l:task_evidence", "a"]
+      - ["вложения публикаций", "l:publish_attachments", "a"]
+  links: []
+
+flow:
+  title: "Как всё связано: потоки, как в экономике"
+  lede: >-
+    Шесть участников и всё, что идёт между ними. Цвет потока — кто действует.
+    Команды стоят на тех потоках, которые запускают. Номер в кружке — петля:
+    по ней результат возвращается и меняет следующую работу.
+  height: 1900
+  sectors:
+    operator:
+      box: [40, 560, 480, 600]
+      who: o
+      name: "Оператор"
+      sub: "один разработчик"
+      items:
+        - ["пишет сообщения агентам", "m:d30"]
+        - ["из них с командой", "m:with_command30"]
+        - ["решает только он: статус, колонка, приоритет, одобрение"]
+        - ["пишет статьи и посты"]
+        - ["выпускает релиз"]
+    program:
+      box: [940, 470, 1200, 820]
+      who: s
+      name: "Программа"
+      sub: "хук и сервер на том же ноутбуке"
+    agents:
+      box: [2580, 560, 436, 680]
+      who: a
+      name: "Агенты"
+      sub: "Claude Code · Codex · OpenCode"
+      items:
+        - ["ответов агентов", "f:replies"]
+        - ["делают работу в репозитории"]
+        - ["записи пишут только через MCP"]
+        - ["помощник пишет стендап и карту"]
+        - ["при старте читают AGENTS.md и скиллы"]
+    pages:
+      box: [940, 90, 1200, 200]
+      who: s
+      name: "Страницы"
+      sub: "что видит оператор"
+      chips: ["Доска", "Чаты", "Видения", "Правила", "Проблемы", "Промпты", "Скиллы", "Решения", "Стендапы", "Архитектура", "Ядра", "Публикации", "Точки входа", "Важное", "Таймер", "Расход", "Монитор", "Заметки"]
+    repo:
+      box: [1900, 1440, 1116, 300]
+      who: x
+      name: "Репозиторий и CI"
+      sub: "git на ноутбуке, GitHub"
+      chain: ["master", "ветки ci-*", ["Linux", "macOS", "Windows"], "main", "релиз"]
+      chain_note: "scripts/publish-ci.sh → GitHub Actions на трёх системах → scripts/release.sh"
+    outside:
+      box: [40, 1440, 1000, 300]
+      who: x
+      name: "Наружу"
+      sub: "что видят другие"
+      items:
+        - ["статьи и посты — проект текстов"]
+        - ["релиз — ветка release на GitHub"]
+        - ["артефакты — результат папкой", "c:artifact"]
+  # inner parts of the program
+  parts:
+    hook: {box: [962, 560, 250, 520], name: "Хук", items: [["записывает каждое сообщение и ответ"], ["узнаёт теги = команды"], ["подсказывает агенту, что сделать"], ["после сжатия возвращает слова"], ["#mute выключает, ###тег — один"]]}
+    mcp: {box: [1868, 560, 250, 520], name: "MCP", items: [["инструментов", "tools"], ["ставит подпись агента"], ["проверяет поля и словарь"], ["без MCP запись не принимается"]]}
+  hub: {at: [1540, 860], r: 92, t: "ЗАДАЧА", n: "l:tasks"}
+  satellites:
+    - ["участок чата", "l:done", "s", -150]
+    - ["коммиты", "f:commits", "s", -110]
+    - ["время", "l:time_entries", "s", -70]
+    - ["отчёт агента", "p:отчёт агента", "a", -30]
+    - ["заметки", "f:notes_on_task", "a", 30]
+    - ["доказательства", "l:task_evidence", "a", 70]
+    - ["ядра", "f:core_links.task", "a", 110]
+    - ["публикации", "l:publish", "o", 150]
+  records:
+    at: [962, 1110]
+    cols: 4
+    items:
+      - ["Видения", "l:visions", "o"]
+      - ["Правила", "l:rules", "o"]
+      - ["Проблемы", "l:problems", "o"]
+      - ["Промпты", "l:prompts", "o"]
+      - ["Скиллы", "l:skills", "o"]
+      - ["Точки входа", "l:entrypoints", "o"]
+      - ["Толкования", "f:interpreted", "a"]
+      - ["Решения", "l:decisions", "a"]
+      - ["Стендапы", "l:standups", "a"]
+      - ["Ядра", "l:cores", "a"]
+      - ["Звёзды", "l:marks", "o"]
+      - ["Токены", "f:usage_rows", "s"]
+  files_box:
+    box: [2190, 1060, 330, 170]
+    name: "AGENTS.md и скиллы"
+    sub: "в каждом репозитории"
+    items: [["блок правил переписывает программа"], ["скиллы ставятся во все проекты"]]
+  loops:
+    box: [1070, 1440, 800, 300]
+    items:
+      - ["Работа", "оператор → чат → агент → коммиты → задача → доска → оператор"]
+      - ["Слова → поведение", "#vision, #rule, #skill → AGENTS.md и скиллы → все агенты"]
+      - ["Код → понимание", "коммиты → #scan → архитектура, карта → оператор и агенты"]
+      - ["День", "все чаты дня → стендап → оператор утром"]
+      - ["Контекст", "#carry → после сжатия хук возвращает слова агенту"]
+  flows:
+    - id: msgs
+      who: o
+      pts: [[520, 680], [962, 680]]
+      loops: [1, 2]
+      t: "сообщения с тегами"
+      n: "m:with_command30"
+      s: "хук записывает все, команды узнаёт"
+      lab: [741, 666]
+      lp: n
+      catalog: true
+    - id: chat
+      who: o
+      pts: [[150, 560], [150, 40], [2900, 40], [2900, 560]]
+      radius: 90
+      loops: [1]
+      t: "разговор в чате: задание агенту"
+      s: "агент отвечает в том же чате"
+      n: "f:replies"
+      lab: [2240, 54]
+      lp: s
+    - id: notices
+      who: s
+      pts: [[1212, 610], [1290, 610], [1290, 420], [2700, 420], [2700, 560]]
+      radius: 40
+      loops: [4, 5]
+      t: "подсказки хука агенту"
+      s: "что сделать по команде"
+      chips: ["#now: запиши заголовок", "#done: допиши отчёт", "новый день: стендап", "#carry: слова после сжатия"]
+      lab: [2240, 406]
+      lp: n
+      chipcols: 2
+    - id: mcp
+      who: a
+      pts: [[2580, 760], [2118, 760]]
+      loops: [1, 3, 4]
+      t: "записи через MCP"
+      s: "заголовки, толкования, отчёты, сканы, решения, стендапы"
+      chips: ["#task", "#scan", "#architecture", "#page", "#map", "#decision", "#standup", "#evidence", "#skill", "#artifact", "#entrypoint", "#core-new", "#core-note", "#core", "#undo-yes", "#usage-price"]
+      chipcols: 3
+      lab: [2349, 784]
+      lp: s
+    - id: commits
+      who: a
+      pts: [[2760, 1240], [2760, 1440]]
+      loops: [1, 3]
+      t: "коммиты"
+      n: "f:commits"
+      s: "в master"
+      lab: [2780, 1340]
+      lp: e
+    - id: tie
+      who: s
+      pts: [[2000, 1440], [2000, 1370], [1720, 1370], [1720, 1290]]
+      radius: 40
+      loops: [1, 3]
+      t: "коммиты к задаче"
+      s: "по участку чата, сама"
+      lab: [1860, 1356]
+      lp: n
+    - id: rules
+      who: s
+      kind: behav
+      pts: [[2140, 1145], [2190, 1145]]
+      loops: [2]
+      t: ""
+    - id: read
+      who: a
+      kind: behav
+      pts: [[2520, 1145], [2580, 1145]]
+      loops: [2]
+      t: ""
+    - id: show
+      who: s
+      pts: [[1540, 470], [1540, 290]]
+      loops: [1, 3, 4]
+      t: "записи на страницах"
+      s: "слова оператора дословно + слой агента"
+      lab: [1560, 380]
+      lp: e
+    - id: reads
+      who: o
+      pts: [[940, 160], [300, 160], [300, 560]]
+      radius: 110
+      loops: [1, 4]
+      t: "читает"
+      s: "доска, стендап, архитектура"
+      lab: [620, 146]
+      lp: n
+    - id: decides
+      who: o
+      pts: [[420, 560], [420, 250], [940, 250]]
+      radius: 90
+      loops: [1]
+      t: "решает"
+      s: "двигает карточки, ставит ★, одобряет"
+      lab: [680, 264]
+      lp: s
+    - id: publish
+      who: o
+      pts: [[1000, 1290], [1000, 1440]]
+      t: "#publish → статьи и посты"
+      s: "карточка «выпущено» с задачами и коммитами"
+      lab: [1022, 1365]
+      lp: e
+    - id: release
+      who: o
+      pts: [[2400, 1740], [2400, 1800], [540, 1800], [540, 1740]]
+      radius: 40
+      t: "релиз"
+      s: "ветка release на GitHub"
+      lab: [1470, 1814]
+      lp: s
+  inner:
+    - [[1212, 960], [1258, 960], "s"]
+    - [[1868, 960], [1822, 960], "a"]

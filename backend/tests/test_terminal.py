@@ -186,6 +186,21 @@ def test_a_closed_terminal_stays_closed(env) -> None:
     assert c.get("/api/terminal/sessions").json()["sessions"] == []
 
 
+def test_terminals_opened_in_the_same_second_keep_their_order(tmp_path: Path) -> None:
+    # `created` orders the tabs. In whole seconds, two terminals opened in the
+    # same second tied and their random ids decided which tab came first: the
+    # window's "+" put the new shell first or second by chance.
+    root = tmp_path / "data"
+    root.mkdir()
+    ids = []
+    for _ in range(4):
+        ids.append(termlib.open_session(root, {"terminal.keep": "plain"}, kind="shell", project="", cwd="")["id"])
+        time.sleep(0.002)
+    rows = [termlib.get(root, i) for i in ids]
+    assert all(len(r["created"]) == 23 and r["created"][19] == "." for r in rows)
+    assert [r["id"] for r in sorted(rows, key=lambda r: (r["created"], r["id"]))] == ids
+
+
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
 def test_a_middle_click_is_not_a_second_paste_from_tmux(tmp_path: Path) -> None:
     # The page pastes on a middle click (the browser's selection); tmux's own
@@ -804,7 +819,7 @@ def test_a_hanging_tmux_still_lists_the_terminals(hanging_tmux) -> None:
 def test_a_hanging_tmux_reads_a_pane_as_empty(hanging_tmux) -> None:
     c, _ = hanging_tmux
     pos = c.get("/api/terminal/sessions/hang1/pos")
-    assert pos.status_code == 200 and pos.json() == {"history": 0, "scroll": 0, "rows": 0, "cursor": 0}
+    assert pos.status_code == 200 and pos.json() == {"history": 0, "scroll": 0, "rows": 0, "cursor": 0, "cols": 0, "alt": False, "mouse": False, "in_mode": False}
     cap = c.post("/api/terminal/sessions/hang1/capture", json={"mode": "screen"})
     assert cap.status_code == 200 and cap.json()["text"] == ""
 
@@ -839,3 +854,59 @@ def test_a_tmux_timeout_never_leaves_tmux_read(tmp_path: Path, monkeypatch) -> N
     assert termlib.pane_pos(tmp_path, "x")["history"] == 0
     with pytest.raises(termlib.TmuxError):
         termlib.tmux(tmp_path, "kill-session", "-t", "x")
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_the_reader_gets_the_pane_rows_with_colours_and_the_wheel_knows_what_the_pane_shows(env) -> None:
+    """The page's smooth reader (Screen.tsx, reader.ts): mode history gives the
+    last rows of the history and the screen, one row per line, colours kept,
+    with the anchor (history) and what the pane shows (alt, mouse, in_mode)."""
+    c, root, _ = env
+    _on(c)
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    termlib.wait_for_prompt(root, sid)
+    termlib.type_into(root, termlib.get(root, sid), "i=1; while [ $i -le 120 ]; do printf '\\033[31mR%03d\\033[0m\\n' $i; i=$((i+1)); done", enter=True)
+    deadline = time.time() + 5
+    while time.time() < deadline and "R120" not in termlib.capture(root, sid)["text"]:
+        time.sleep(0.1)
+    pos = c.get(f"/api/terminal/sessions/{sid}/pos").json()
+    assert pos["alt"] is False and pos["mouse"] is False and pos["in_mode"] is False and pos["cols"] > 0, pos
+
+    got = c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "history", "rows": 50}).json()
+    rows = got["text"].split("\n")
+    assert got["mode"] == "history" and got["above"] == 50 and got["complete"] is False
+    # 50 rows of history, then the screen: the reader's last rows are the live screen.
+    assert len(rows) == 50 + got["rows"], (len(rows), got["rows"])
+    assert any("\x1b[31m" in r and "R1" in r for r in rows), "the colours are kept"
+    # Row i of the answer is absolute line history - above + i: the same as a range capture of it.
+    i = next(k for k, r in enumerate(rows) if "R100" in r)
+    a = got["history"] - got["above"] + i
+    assert c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "range", "from": a, "to": a}).json()["text"] == "R100"
+
+    everything = c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "history", "rows": 10**9}).json()
+    assert everything["complete"] is True and everything["above"] == everything["history"]
+    assert c.post(f"/api/terminal/sessions/{sid}/capture", json={"mode": "history", "rows": "x"}).status_code == 422
+
+    # A full-screen program: the wheel goes to it, not to a reader.
+    termlib.type_into(root, termlib.get(root, sid), "printf '\\033[?1049h'; sleep 30", enter=True)
+    deadline = time.time() + 5
+    while time.time() < deadline and not c.get(f"/api/terminal/sessions/{sid}/pos").json()["alt"]:
+        time.sleep(0.1)
+    assert c.get(f"/api/terminal/sessions/{sid}/pos").json()["alt"] is True
+    c.post(f"/api/terminal/sessions/{sid}/close", json={})
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_the_wheel_over_a_full_screen_program_without_the_mouse_sends_arrow_keys(env) -> None:
+    """tmux's default enters copy mode there, which has no history on the
+    alternate screen: less, man and vim without the mouse did not move at all."""
+    c, root, _ = env
+    _on(c)
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    termlib.wait_for_prompt(root, sid)
+    keys = termlib.tmux(root, "list-keys", "-T", "root").stdout
+    up = next(l for l in keys.splitlines() if " WheelUpPane " in l)
+    down = next(l for l in keys.splitlines() if " WheelDownPane " in l)
+    assert "alternate_on" in up and "send-keys -t = Up" in up and "copy-mode -e" in up and "send-keys -M" in up
+    assert "alternate_on" in down and "send-keys -t = Down" in down
+    c.post(f"/api/terminal/sessions/{sid}/close", json={})

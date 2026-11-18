@@ -30,6 +30,8 @@ export interface NoteEnv {
   copied: (item: string) => void
   /** A picture by its src (`ni_…` on the page; `shot:…` in the mock). */
   Picture: ComponentType<{ src: string; alt: string; small?: boolean }>
+  /** The address of a picture to open large, or null where it has none (the mock). */
+  pictureUrl?: (src: string) => string | null
   now: () => Date
   /** The link to a note on the Notes page. */
   noteHref: (id: string) => string

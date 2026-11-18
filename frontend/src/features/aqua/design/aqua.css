@@ -424,7 +424,7 @@
 .aq-term-scroll { -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 26px); mask-image: linear-gradient(to bottom, transparent 0, black 26px); }
 
 /* ---- J (round 3): Slightly Parallel's own tokens, nothing of a separate palette ---- */
-.aq[data-v='j'] {
+.aq:is([data-v='j'], [data-v='k']) {
   --aq-bg: var(--bg-base); --aq-panel: var(--bg-surface); --aq-raise: var(--bg-base); --aq-hover: var(--bg-hover);
   --aq-line: var(--border-default); --aq-ink: var(--text-primary); --aq-ink2: var(--text-secondary); --aq-ink3: var(--text-tertiary);
   --aq-accent: var(--brand); --aq-accent-ink: var(--bg-base); --aq-accent-soft: var(--brand-glow);
@@ -441,11 +441,11 @@
   --r2-strip: var(--bg-surface); --r2-edge: var(--border-strong); --r2-over: var(--bg-base);
   --r2-shadow: var(--shadow-md); --r2-shadow-top: var(--shadow-lg);
 }
-.aq[data-v='j'] .aq-glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.aq:is([data-v='j'], [data-v='k']) .aq-glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
 /* nothing animates at rest: a waiting dot is a steady amber ring, the cursor does not blink */
-.aq[data-v='j'] .aq-dot.waiting { animation: none; }
-.aq[data-v='j'] .aq-cursor { animation: none; }
-.aq[data-v='j'] .aq-dot.working { box-shadow: none; }
+.aq:is([data-v='j'], [data-v='k']) .aq-dot.waiting { animation: none; }
+.aq:is([data-v='j'], [data-v='k']) .aq-cursor { animation: none; }
+.aq:is([data-v='j'], [data-v='k']) .aq-dot.working { box-shadow: none; }
 .r2-unfold { opacity: 0; color: var(--text-tertiary); transition: opacity var(--dur-fast); }
 .r2-win:hover .r2-unfold, .r2-unfold:focus-visible { opacity: 1; }
 

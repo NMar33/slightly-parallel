@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { Button } from '../../components/primitives'
-import { countOf, wordDiff, type CardImage, type DiffPart, type LifeNode } from './data'
+import { countOf, wordDiff, type DiffPart, type LifeNode } from './data'
 import { locale, t, tn } from '../../i18n/scope/system'
-import { letter } from '../../lib/typing'
 
 /** `2026-11-03T10:00:00` → `3 Nov` (the operator's language). */
 export function shortDay(iso: string): string {
@@ -179,31 +178,5 @@ export function LifeRail({ nodes, colorOf, lit, onOpenDoc }: {
   )
 }
 
-/** One image large over the page: arrows step through the card's images, Escape closes. */
-export function Zoom({ images, index, onIndex, onClose }: {
-  images: CardImage[]; index: number; onIndex: (i: number) => void; onClose: () => void
-}) {
-  const img = images[index]
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === ' ') { e.preventDefault(); e.stopImmediatePropagation(); onClose() }
-      if (e.key === 'ArrowRight' || letter(e) === 'l') { e.stopImmediatePropagation(); onIndex(Math.min(images.length - 1, index + 1)) }
-      if (e.key === 'ArrowLeft' || letter(e) === 'h') { e.stopImmediatePropagation(); onIndex(Math.max(0, index - 1)) }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [images.length, index, onClose, onIndex])
-  if (!img) return null
-  return (
-    <div role="dialog" aria-modal="true" aria-label={t('Image')} onClick={onClose}
-      className="fixed inset-0 z-modal flex flex-col items-center justify-center gap-10 p-24"
-      style={{ backgroundColor: 'var(--scrim-strong)' }}>
-      <img src={img.url} alt={img.label} className="max-w-[92vw] max-h-[82vh] object-contain rounded-card shadow-lg bg-base" onClick={(e) => e.stopPropagation()} />
-      <div className="flex items-center gap-10 text-11 font-mono rounded-pill bg-surface px-12 py-4 text-secondary" onClick={(e) => e.stopPropagation()}>
-        <span className="text-primary truncate max-w-[60vw]">{img.label || t('Image')}</span>
-        <span className="tabular">{index + 1} / {images.length}</span>
-        <span className="text-tertiary"><Kbd>←</Kbd> <Kbd>→</Kbd> · <Kbd>{t('esc')}</Kbd></span>
-      </div>
-    </div>
-  )
-}
+/** One image large over the page: the shared viewer (components/ImageZoom), here under its old name. */
+export { ImageZoom as Zoom } from '../../components/ImageZoom'

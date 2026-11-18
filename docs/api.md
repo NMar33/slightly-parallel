@@ -1004,6 +1004,11 @@ block, and kept current.
   one per block. Body: `project`, `sprint_id`, `goal_id`, `note`,
   `share_pct`, `actor`, `task_id`. Entries the auto-timer writes carry
   `source: auto`; their share is the top-up above the manual timers.
+  `started_at`, `ended_at` and `paused_at` are local ISO times with their
+  UTC offset (`2026-11-01T01:30:00-07:00`); a time sent without one is
+  read as local and stored with it. Rows from before the offset are given
+  it once at start (`time-offsets-migration-<stamp>/` in the backup folder
+  holds the file as it was).
 - `POST /api/time/{entry_id}/pause` — hold the clock without closing.
 - `POST /api/time/{entry_id}/resume` — bank the paused stretch, count again.
 - `POST /api/time/{entry_id}/stop` — close it and freeze the duration.
@@ -1014,9 +1019,12 @@ block, and kept current.
   the last seven days, and per block; `task_id` narrows it to one task.
 - `GET /api/time/auto` — the smart timer: idle seconds and where they are read
   from (`idle_source`), the away settings, each project's mode
-  (`remind`/`auto`/`manual`), the auto spans counting now, the away notices.
-- `POST /api/time/auto/beat` — `{project, task_id?}`: a page says someone is
-  working on this project now (sent every 20 s while there is input).
+  (`remind`/`auto`/`manual`), the auto spans counting now, the away notices,
+  and `signals`: the last beat per project (`source`, `task_id`, `sec_ago`).
+- `POST /api/time/auto/beat` — `{project, task_id?, source?}`: a page says
+  someone is working on this project now (sent every 20 s while there is
+  input, and at once on the first input after a quiet spell). `source`:
+  `page` (default) or `window` (the terminal window, the tab in front).
 - `POST /api/time/auto/mode` — `{project, mode}`.
 - `POST /api/time/auto/away/{entry_id}` — `{action}`: `count` (the away stretch
   counts after all), `resume`, `stop`, `dismiss`.

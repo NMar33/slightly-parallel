@@ -69,6 +69,12 @@ const listeners = new Set<() => void>()
 const emit = () => { for (const l of listeners) l() }
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } }
 export const useLab = () => useSyncExternalStore(subscribe, () => lab, () => lab)
+/** A frozen copy of the facts for K's compare view: the seeds, with `over` laid on top. */
+export function labWith(over: Record<string, Partial<Facts>>): Lab {
+  const l = fresh()
+  for (const [id, f] of Object.entries(over)) l.facts[id] = { ...l.facts[id]!, ...f }
+  return l
+}
 export const factsOf = (l: Lab, s: Session) => l.facts[s.id] ?? seedFacts(s)
 
 /** A mock minute. The waiting chats wait longer; every eighth minute a task closes in a working chat. */

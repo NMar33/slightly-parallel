@@ -21,18 +21,14 @@
  *   levels are still snapshots, not live terminals; nothing animates at
  *   rest (no ripple on a waiting dot, a steady cursor); an Instant setting
  *   besides prefers-reduced-motion.
- * - Lab (tk_3d4a834b, tk_c50ff865), in ./lab: the tab shows the chat's own
- *   title, a thin status strip on top and an Alt view; the "+" opens a new
- *   terminal, Ctrl+click a choice. Variants by &tabs= &strip= &plus=
- *   &plusmenu= and the «Варианты» panel.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, ChevronUp, LayoutGrid, Menu, PanelLeft, PanelRight, Search, X, Zap } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, LayoutGrid, Menu, PanelLeft, PanelRight, Plus, Search, X, Zap } from 'lucide-react'
 
 import { t } from '../../../../i18n/scope/aqua'
 import { SESSIONS, sessionOf } from '../mock'
-import { Keymap, MESSAGE_KEYS, Palette, Restore, commonActions, useKeys, type Action } from '../parts'
+import { Keymap, MESSAGE_KEYS, Palette, Restore, StateDot, commonActions, shownState, STATE_WORD, useKeys, type Action } from '../parts'
 import { flash, focus, useAqua } from '../store'
 import {
   chatsIn, closeWin, detachWin, isCustom, liveWorkspaces, moveChat, moveWin, raise, useDesk, wsById, wsOfChat, type Win,
@@ -42,10 +38,6 @@ import {
   type InspTab, type Paint, type Split,
 } from '../round2/parts'
 import { LineageTree } from './lineage'
-import { closeTab, tabTitle, useLab, useLabClock, useLabVariants } from './lab/live'
-import { AltCards, LabTab, StripSettingsButton, StripSettingsPopover, useAltHeld } from './lab/Tabs'
-import { PlusButton } from './lab/Plus'
-import { VariantSwitcher } from './lab/Switcher'
 import type { Theme } from '../AquaDesign'
 
 type Level = 'chat' | 'ws' | 'all'
@@ -154,12 +146,6 @@ function JWindow({ win, top, instant, setInstant }: { win: Win; top: boolean; in
   const setTabMenu = (v: null) => setTabMenuAt(v)
   const frameRef = useRef<HTMLDivElement>(null)
   const [others, setOthers] = useState(false)
-  // round 3 lab (tk_3d4a834b, tk_c50ff865): the tabs' Alt view, the status strip, the "+"
-  const lab = useLab()
-  const alt = useAltHeld() && top
-  const [pick] = useLabVariants()
-  const [stripSet, setStripSet] = useState(false)
-  const colRef = useRef<HTMLDivElement>(null)
   const slid = useRef(0)
   // the levels stay mounted but unpainted once the zoom back in has finished
   const [settled, setSettled] = useState(true)
@@ -242,11 +228,11 @@ function JWindow({ win, top, instant, setInstant }: { win: Win; top: boolean; in
     'alt+h': () => { if (top) setHints((h) => !h) },
     'alt+w': () => { if (top) waitingNext() },
     '?': () => { if (top) setKeys(true) },
-    Escape: () => { if (!top) return; setPalette(false); setKeys(false); setHints(false); setMenu(null); setTabMenu(null); setOthers(false); setStripSet(false); if (level !== 'chat') setLevel('chat') },
+    Escape: () => { if (!top) return; setPalette(false); setKeys(false); setHints(false); setMenu(null); setTabMenu(null); setOthers(false); if (level !== 'chat') setLevel('chat') },
   })
 
   // ---- the strip: the current workspace open, the others folded behind "+N"
-  const current = chatsIn(d, ws).filter((c) => visible(c.id) && !lab.closed[c.id])
+  const current = chatsIn(d, ws).filter((c) => visible(c.id))
   const foldedWs = kind === 'main' ? liveWorkspaces(d).filter((w) => w.id !== ws && chatsIn(d, w.id).some((c) => visible(c.id))) : []
   const waitingIn = (w: string) => chatsIn(d, w).filter((c) => c.state === 'waiting' && !st.asleep[c.id] && visible(c.id)).length
   const custom = isCustom(d, ws)
@@ -261,19 +247,16 @@ function JWindow({ win, top, instant, setInstant }: { win: Win; top: boolean; in
       <div className="flex items-end gap-1 min-w-0 overflow-x-auto overflow-y-hidden r2-tabs">
         {current.map((c) => {
           const on = c.id === chat
+          const dim = on && level !== 'chat'
           return (
-            <LabTab key={c.id} c={c} st={st} lab={lab} on={on} dim={on && level !== 'chat'} under={custom && !on ? SP_PAINT.ink(wsObj!.hue) : null}
-              alt={alt} pick={pick} canClose={current.length > 1}
-              onSelect={() => go(c.id)}
-              onClose={() => {
-                const i = current.findIndex((x) => x.id === c.id)
-                closeTab(c.id)
-                if (on) go(current[i + 1]?.id ?? current[i - 1]!.id)
-                flash(`${t('Tab closed')}: ${tabTitle(c)}`)
-              }}
-              onContextMenu={(e) => { e.preventDefault(); const r = frameRef.current?.getBoundingClientRect(); setTabMenuAt({ id: c.id, x: e.currentTarget.getBoundingClientRect().left - (r?.left ?? 0) }) }}
-              onDragStart={(e) => e.dataTransfer.setData('text/chat', c.id)}
-              onDrop={(e) => { const dr = e.dataTransfer.getData('text/chat'); if (dr) dropOn(c.id, dr) }} />
+            <button key={c.id} type="button" role="tab" aria-selected={on} draggable data-nodrag
+              onDragStart={(e) => e.dataTransfer.setData('text/chat', c.id)} onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { const dr = e.dataTransfer.getData('text/chat'); if (dr) dropOn(c.id, dr) }}
+              onClick={() => go(c.id)} onContextMenu={(e) => { e.preventDefault(); const r = frameRef.current?.getBoundingClientRect(); setTabMenuAt({ id: c.id, x: e.currentTarget.getBoundingClientRect().left - (r?.left ?? 0) }) }} title={`${c.name} · ${STATE_WORD[shownState(st, c)]}`}
+              className="h-[26px] px-10 inline-flex items-center gap-6 text-12 rounded-t-[6px] max-w-[170px] shrink-0"
+              style={{ background: dim ? 'var(--aq-hover)' : on ? 'var(--aq-term-bg)' : undefined, color: dim ? 'var(--aq-ink)' : on ? 'var(--aq-term-fg)' : 'var(--aq-ink2)', boxShadow: on ? 'inset 0 2px 0 var(--brand)' : custom ? `inset 0 -2px 0 ${SP_PAINT.ink(wsObj!.hue)}` : undefined }}>
+              <StateDot s={c} st={st} /><span className="truncate">{c.name}</span>
+            </button>
           )
         })}
       </div>
@@ -305,9 +288,8 @@ function JWindow({ win, top, instant, setInstant }: { win: Win; top: boolean; in
           )}
         </span>
       )}
-      <PlusButton look={pick.plus} menu={pick.plusmenu} chat={s} onOpen={go} onServer={(id) => { setSplit({ server: id }); setLevel('chat') }} />
-      <span className="self-center shrink-0 ml-auto"><StripSettingsButton open={stripSet} onToggle={() => setStripSet(!stripSet)} /></span>
-      <button type="button" data-nodrag className="aq-btn self-center shrink-0" aria-pressed={level !== 'chat'} onClick={level === 'chat' || (level === 'ws' && kind === 'main') ? out : into}
+      <button type="button" data-nodrag className="aq-btn icon self-center shrink-0" aria-label={t('New chat')} title={t('New chat')}><Plus size={13} /></button>
+      <button type="button" data-nodrag className="aq-btn self-center shrink-0 ml-auto" aria-pressed={level !== 'chat'} onClick={level === 'chat' || (level === 'ws' && kind === 'main') ? out : into}
         title={t('Workspaces (Ctrl+Shift+↑)')} aria-label={t('Workspaces')}>
         <LayoutGrid size={13} />{wsObj && <span className="text-11">{wsObj.name}</span>}
         {waitingIn(ws) > 0 && <span className="text-11 font-semibold" style={{ color: 'var(--aq-wait)' }}>● {waitingIn(ws)}</span>}
@@ -367,7 +349,7 @@ function JWindow({ win, top, instant, setInstant }: { win: Win; top: boolean; in
         : <Inspector chat={chat} tab={tab} setTab={setTab} note={note} onNote={openNote} onChat={go} branches={<LineageTree chat={chat} onChat={go} />} />}
     </aside>
   )
-  const title = kind === 'chat' ? `${tabTitle(s)} — ${t('from')} ${wsObj?.name ?? ''}` : `${tabTitle(s)} — ${wsObj?.name ?? ''}`
+  const title = kind === 'chat' ? `${s.name} — ${t('from')} ${wsObj?.name ?? ''}` : `${s.name} — ${wsObj?.name ?? ''}`
   // the toggles' places: the terminal column's corners, whatever is open
   const lt = place.lw + TOGGLE_INSET
   const rt = place.lw + size.w - TOGGLE_INSET - 24
@@ -412,11 +394,9 @@ function JWindow({ win, top, instant, setInstant }: { win: Win; top: boolean; in
         </div>
         <div className="flex min-h-0" style={{ background: 'var(--aq-panel)' }}>
           {leftSide.map(panel)}
-          <div ref={colRef} className="flex flex-col min-w-0 relative" style={{ width: size.w }}>
+          <div className="flex flex-col min-w-0 relative" style={{ width: size.w }}>
             {strip}
             {body}
-            {strip && alt && pick.tabs === 'c' && <AltCards root={colRef} chats={current} st={st} lab={lab} top={STRIP + 2} />}
-            {strip && stripSet && <StripSettingsPopover onClose={() => setStripSet(false)} style={{ top: STRIP + 2, right: 120 }} />}
           </div>
           {rightSide.map(panel)}
         </div>
@@ -463,14 +443,11 @@ export function J({ theme }: { theme: Theme }) {
     if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('edge')) moveWin('main', window.innerWidth - 1012, 96)
   }, [])
   const topZ = Math.max(...d.windows.map((w) => w.z))
-  useLabClock()
-  const [pick, setPick] = useLabVariants()
   return (
     <PaintProvider value={SP_PAINT}>
       <Desktop>
         {d.windows.map((w) => <JWindow key={w.id} win={w} top={w.z === topZ} instant={instant === 'instant'} setInstant={setInstant} />)}
         <Restore className="absolute right-24 top-48 w-[520px] z-[200]" />
-        <VariantSwitcher pick={pick} onPick={setPick} />
       </Desktop>
     </PaintProvider>
   )

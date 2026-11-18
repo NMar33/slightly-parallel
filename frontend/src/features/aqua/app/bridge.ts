@@ -15,6 +15,8 @@ export type BridgeOp =
   | { op: 'grow'; left: number; right: number }
   | { op: 'detach'; url: string }
   | { op: 'title'; text: string }
+  /** A page outside the window (http/https), in the browser. */
+  | { op: 'open'; url: string }
 
 function handler(): Handler | null {
   if (typeof window === 'undefined') return null

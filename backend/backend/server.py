@@ -676,6 +676,18 @@ def create_app(
                          len(got["migrated"]), got["ways"])
         except (OSError, RuntimeError) as exc:
             log.warning("entry point migration skipped: %s", exc)
+    # Time entries written before their moments carried a UTC offset get it,
+    # once (timelib.migrate_offsets, tk_3a363c87; the file is copied to the
+    # backup folder first). Never on the shipped fixtures.
+    if root.resolve() != FIXTURES.resolve():
+        try:
+            from .timelib import migrate_offsets
+            got = migrate_offsets(root)
+            if got["changed"]:
+                log.info("time entries migrated: %d of %d rows given their UTC offset (copy before: %s)",
+                         got["changed"], got["rows"], got["backup"])
+        except (OSError, RuntimeError, ValueError, DamagedFile) as exc:
+            log.warning("time entry migration skipped: %s", exc)
     store = ViewStore(data_root=root)
     # Publish cards whose task the server used to guess at every read: the
     # sound guesses frozen into stored links once (publishlib.migrate).
@@ -756,10 +768,13 @@ def create_app(
             except Exception as exc:  # noqa: BLE001 — no psutil, no monitor; the rest runs
                 log.warning("system monitor not started: %s", exc)
             # The smart timer reads the operator's idle time and pauses their
-            # timers: the served app only, never a sandbox's demo data.
-            if run_monitor:
+            # timers: the served app only, never a sandbox's demo data — but
+            # SP_SMART_TIMER=1 runs it on a sandbox too (the terminal window's
+            # end-to-end suite checks that typing there counts).
+            if run_monitor or os.environ.get("SP_SMART_TIMER") == "1":
                 from . import timeauto
                 timeauto.of(app).start()
+            if run_monitor:
                 # Old Claude Code chats get their answers' ends from the
                 # transcripts, once, off the request path (turntimes.py);
                 # then old chats their tokens, once each (usagebackfill.py).
