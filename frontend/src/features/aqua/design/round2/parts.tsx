@@ -13,6 +13,10 @@ import { MESSAGES, messagesOf, projectOf, sessionOf } from '../mock'
 import { Branches, Editor, MessageRow, Messages, NoteBody, NoteMeta, Pins, ServerLog, StateDot, Stats, shownState, STATE_WORD } from '../parts'
 import { flash, setChatsAsleep, toggleServer, useAqua, type AquaState } from '../store'
 import { Screen } from '../term'
+import { LabMenus, useScreenLab } from '../round3/lab2/MsgMenu'
+import { Lab2Panel } from '../round3/lab2/Panel'
+import { schemeOf, termVars, windowVars } from '../round3/lab2/schemes'
+import { useLab2 } from '../round3/lab2/store'
 import {
   chatsIn, detachWin, group, isCustom, liveWorkspaces, moveWin, raise, recolour, rename, serversFor, ungroup, useDesk, workspaceSleepPlan, wsById, wsHue,
   type Win,
@@ -51,8 +55,16 @@ export function Snapshot({ id, lines = 7 }: { id: string; lines?: number }) {
 
 /* ------------------------------------------------------------ desktop */
 
-/** The page is the desktop: a neutral wallpaper and the system's top bar; the app is only its windows. */
+/**
+ * The page is the desktop: a neutral wallpaper and the system's top bar; the app is only its windows.
+ * In J (the plain paint) the lab's colour scheme paints the windows — the terminal only, or the whole
+ * window — and the lab's panel sits beside them.
+ */
 export function Desktop({ children }: { children: ReactNode }) {
+  const paint = usePaint()
+  const lab = useLab2()
+  const scheme = schemeOf(lab.scheme)
+  const vars = paint.plain ? { ...termVars(scheme), ...(lab.scope === 'window' ? windowVars(scheme) : {}) } as React.CSSProperties : undefined
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ background: 'var(--r2-wall)' }}>
       <div className="h-[26px] flex items-center px-12 text-12 font-medium" style={{ background: 'var(--r2-topbar)', color: 'var(--r2-topbar-ink)' }} aria-hidden>
@@ -60,7 +72,8 @@ export function Desktop({ children }: { children: ReactNode }) {
         <span className="mx-auto tabular-nums">Mon 16 Nov  10:48</span>
         <span className="opacity-80">⏻</span>
       </div>
-      {children}
+      {vars ? <div className="contents" style={vars} data-scheme={scheme.id} data-scope={lab.scope}>{children}</div> : children}
+      {paint.plain && <Lab2Panel />}
     </div>
   )
 }
@@ -90,11 +103,15 @@ export function TermArea({ chat, split, hints, onHintsDone, onNote, size = 13 }:
 }) {
   const st = useAqua()
   const s = sessionOf(chat)!
+  // J's lab (round3/lab2): ANSI output, message blocks with their menu, task menus
+  const area = useRef<HTMLDivElement>(null)
+  const lab = useScreenLab(chat, area, !!usePaint().plain)
   return (
     <div className="h-full flex flex-col min-h-0" style={{ background: 'var(--aq-term-bg)' }}>
-      <div className="flex-1 min-h-0 relative">
-        <Screen session={s} asleep={st.asleep[chat]} hints={hints} onHintsDone={onHintsDone} onNote={onNote} size={size}
+      <div ref={area} className="flex-1 min-h-0 relative">
+        <Screen session={s} asleep={st.asleep[chat]} hints={hints} onHintsDone={onHintsDone} onNote={onNote} size={size} lab={lab}
           draft={chat === 'cc-b03d55e1' && !st.asleep[chat] ? 'staff are exempt, same as /login' : ''} />
+        {lab && <LabMenus chat={chat} root={area} />}
         {hints && <div className="absolute top-6 right-10 aq-chip" style={{ background: 'var(--aq-term-hint)', color: 'var(--aq-term-hint-ink)' }}>{t('press a letter to copy · Esc')}</div>}
       </div>
       {split && (

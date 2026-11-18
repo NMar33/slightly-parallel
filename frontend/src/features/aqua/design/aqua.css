@@ -348,7 +348,7 @@
 .aq-term .link { color: var(--aq-term-link); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; cursor: pointer; }
 .aq-term .hint { background: var(--aq-term-hint); color: var(--aq-term-hint-ink); font-weight: 600; padding: 0 3px; border-radius: 3px; margin-right: 2px; }
 .aq-term mark { background: var(--aq-term-match); color: inherit; border-radius: 2px; }
-.aq-cursor { display: inline-block; width: 0.6em; height: 1.15em; vertical-align: -0.2em; background: var(--aq-term-fg); animation: aq-blink 1.1s steps(1) infinite; }
+.aq-cursor { display: inline-block; width: 0.6em; height: 1.15em; vertical-align: -0.2em; background: var(--aq-term-cursor, var(--aq-term-fg)); animation: aq-blink 1.1s steps(1) infinite; }
 @keyframes aq-blink { 50% { opacity: 0; } }
 
 /* B's gel: on small controls only */
@@ -458,3 +458,119 @@
    sidebar toggles sit on the tab strip but are not in it) must say no-drag
    itself: the window system cuts out only what is marked. */
 [data-aqua-frame] [data-nodrag] { -webkit-app-region: no-drag; }
+
+/* ---- J lab 2 (round3/lab2): colour schemes and the message menu -------------
+   The scheme's variables are set on the J desktop (round2/parts.tsx Desktop);
+   these defaults are xterm's 16 colours, for a terminal outside the lab. */
+.aq {
+  --ansi-0: #000000; --ansi-1: #cd3131; --ansi-2: #0dbc79; --ansi-3: #e5e510; --ansi-4: #2472c8; --ansi-5: #bc3fbc; --ansi-6: #11a8cd; --ansi-7: #e5e5e5;
+  --ansi-8: #666666; --ansi-9: #f14c4c; --ansi-10: #23d18b; --ansi-11: #f5f543; --ansi-12: #3b8eea; --ansi-13: #d670d6; --ansi-14: #29b8db; --ansi-15: #ffffff;
+}
+.aq-term .a-f0 { color: var(--ansi-0); }
+.aq-term .a-f1 { color: var(--ansi-1); }
+.aq-term .a-f2 { color: var(--ansi-2); }
+.aq-term .a-f3 { color: var(--ansi-3); }
+.aq-term .a-f4 { color: var(--ansi-4); }
+.aq-term .a-f5 { color: var(--ansi-5); }
+.aq-term .a-f6 { color: var(--ansi-6); }
+.aq-term .a-f7 { color: var(--ansi-7); }
+.aq-term .a-f8 { color: var(--ansi-8); }
+.aq-term .a-f9 { color: var(--ansi-9); }
+.aq-term .a-f10 { color: var(--ansi-10); }
+.aq-term .a-f11 { color: var(--ansi-11); }
+.aq-term .a-f12 { color: var(--ansi-12); }
+.aq-term .a-f13 { color: var(--ansi-13); }
+.aq-term .a-f14 { color: var(--ansi-14); }
+.aq-term .a-f15 { color: var(--ansi-15); }
+.aq-term .a-b0 { background: var(--ansi-0); }
+.aq-term .a-b1 { background: var(--ansi-1); }
+.aq-term .a-b2 { background: var(--ansi-2); }
+.aq-term .a-b3 { background: var(--ansi-3); }
+.aq-term .a-b4 { background: var(--ansi-4); }
+.aq-term .a-b5 { background: var(--ansi-5); }
+.aq-term .a-b6 { background: var(--ansi-6); }
+.aq-term .a-b7 { background: var(--ansi-7); }
+.aq-term .a-b8 { background: var(--ansi-8); }
+.aq-term .a-b9 { background: var(--ansi-9); }
+.aq-term .a-b10 { background: var(--ansi-10); }
+.aq-term .a-b11 { background: var(--ansi-11); }
+.aq-term .a-b12 { background: var(--ansi-12); }
+.aq-term .a-b13 { background: var(--ansi-13); }
+.aq-term .a-b14 { background: var(--ansi-14); }
+.aq-term .a-b15 { background: var(--ansi-15); }
+.aq-term ::selection { background: var(--aq-term-sel, Highlight); color: var(--aq-term-sel-fg, inherit); }
+
+/* the lab panel: outside the window, in SP's own colours */
+.lab-panel { background: var(--bg-base); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-card, 10px); box-shadow: var(--shadow-md); }
+.lab-scheme { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; border: 1px solid transparent; }
+.lab-scheme:hover { background: var(--bg-hover); }
+.lab-scheme[data-on] { border-color: var(--brand); background: var(--brand-glow); }
+.lab-swatch { width: 50px; height: 34px; flex: none; border-radius: 6px; border: 1px solid; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 7px; }
+.lab-swatch-dot { width: 6px; height: 6px; border-radius: 2px; }
+.lab-panel [data-grade='—'], .lab-panel [data-grade='AA large'] { color: var(--status-red-ink); }
+
+/* a message block: a faint frame when pointed at, a left edge when pinned */
+.lab-block { position: relative; margin: 0 -6px; padding: 0 6px; border-radius: 6px; box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 120ms var(--aq-ease); }
+.lab-block:hover, .lab-block[data-open] { box-shadow: inset 0 0 0 1px var(--aq-term-frame); }
+.lab-block[data-pinned] { box-shadow: inset 2px 0 0 var(--aq-term-accent); }
+.lab-block[data-pinned]:hover, .lab-block[data-pinned][data-open] { box-shadow: inset 2px 0 0 var(--aq-term-accent), inset 0 0 0 1px var(--aq-term-frame); }
+.lab-marks { position: absolute; right: 6px; top: -7px; display: flex; gap: 4px; z-index: 2; pointer-events: none; }
+.lab-mark { display: inline-flex; align-items: center; gap: 3px; height: 15px; padding: 0 5px; border-radius: 4px; font-size: 10px; line-height: 1;
+  color: var(--aq-term-fg); background: color-mix(in srgb, var(--aq-term-fg) 10%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); }
+.lab-mark.on { color: var(--aq-term-accent); border-color: color-mix(in srgb, var(--aq-term-accent) 50%, transparent); }
+
+/* a task id: its column's colour */
+.aq-term .task, .lab-mark.task { text-decoration: none; padding: 0 4px; border-radius: 4px; color: var(--aq-term-link); background: color-mix(in srgb, var(--aq-term-link) 15%, transparent); }
+.aq-term .task[data-column='doing'], .lab-mark.task[data-column='doing'] { color: var(--ansi-3); background: color-mix(in srgb, var(--ansi-3) 18%, transparent); }
+.aq-term .task[data-column='done'], .lab-mark.task[data-column='done'] { color: var(--aq-term-ok); background: color-mix(in srgb, var(--aq-term-ok) 18%, transparent); }
+.lab-col-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--aq-term-link); }
+.lab-col-dot[data-column='doing'] { background: var(--ansi-3); }
+.lab-col-dot[data-column='done'] { background: var(--aq-term-ok); }
+
+/* the menus: in the terminal's own colours */
+.lab-menu { position: absolute; z-index: 20; font-family: var(--font-sans); font-size: 12px; color: var(--aq-term-fg); }
+.lab-list { background: color-mix(in srgb, var(--aq-term-fg) 6%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); border-radius: 8px; padding: 4px;
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.45); animation: lab-in 110ms var(--aq-ease); }
+.lab-list-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 6px; font-size: 11px; color: var(--aq-term-dim); }
+.lab-list-sub { color: var(--aq-term-fg); }
+.lab-list-row { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border-radius: 5px; text-align: left; color: inherit; }
+button.lab-list-row:hover, button.lab-list-row:focus-visible { background: color-mix(in srgb, var(--aq-term-fg) 10%, transparent); outline: none; }
+.lab-list-row[data-on] svg { color: var(--aq-term-accent); }
+.lab-list-row.static { cursor: default; }
+.lab-list-label { color: var(--aq-term-dim); margin-right: auto; }
+.lab-pill { height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; color: var(--aq-term-fg); border: 1px solid var(--aq-term-frame); }
+.lab-pill:hover { background: color-mix(in srgb, var(--aq-term-fg) 10%, transparent); }
+.lab-pill[data-on] { background: var(--aq-term-accent); border-color: var(--aq-term-accent); color: var(--aq-term-bg); }
+.lab-pill[data-on][data-column='todo'] { background: var(--aq-term-link); border-color: var(--aq-term-link); }
+.lab-pill[data-on][data-column='doing'] { background: var(--ansi-3); border-color: var(--ansi-3); }
+.lab-pill[data-on][data-column='done'] { background: var(--aq-term-ok); border-color: var(--aq-term-ok); }
+.lab-card { font-size: 12px; }
+@keyframes lab-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* a: the round menu, centred on the pointer */
+.lab-radial { width: 0; height: 0; }
+.lab-radial-ring { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--aq-term-bg) 97%, transparent) 0 72%, transparent 73%);
+  border: 1px solid var(--aq-term-frame); box-shadow: 0 16px 40px -10px rgb(0 0 0 / 0.5); animation: lab-pop 140ms var(--aq-ease); }
+.lab-radial-centre { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); width: 96px; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; pointer-events: none; }
+.lab-radial-title { font-size: 10px; color: var(--aq-term-dim); }
+.lab-radial-hot { font-size: 11px; font-weight: 600; line-height: 1.2; }
+.lab-radial-btn { position: absolute; left: -20px; top: -20px; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--aq-term-fg); background: color-mix(in srgb, var(--aq-term-fg) 9%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame);
+  transition: background 100ms, border-color 100ms, color 100ms; animation: lab-pop 160ms var(--aq-ease) both; }
+.lab-radial-btn:hover, .lab-radial-btn:focus-visible, .lab-radial-btn[data-open] { background: var(--aq-term-accent); border-color: var(--aq-term-accent); color: var(--aq-term-bg); outline: none; }
+.lab-radial-btn[data-on]:not(:hover):not([data-open]) { color: var(--aq-term-accent); border-color: var(--aq-term-accent); }
+.lab-radial-sub { position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 999px; white-space: nowrap;
+  color: var(--aq-term-fg); background: color-mix(in srgb, var(--aq-term-fg) 9%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); box-shadow: 0 6px 16px -6px rgb(0 0 0 / 0.5); animation: lab-in 110ms var(--aq-ease); }
+.lab-radial-sub:hover, .lab-radial-sub[data-on] { background: var(--aq-term-accent); border-color: var(--aq-term-accent); color: var(--aq-term-bg); }
+@keyframes lab-pop { from { opacity: 0; scale: 0.85; } to { opacity: 1; scale: 1; } }
+
+/* c: the bar on the block's top edge */
+.lab-edge { position: absolute; right: 6px; top: -13px; z-index: 3; display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 7px;
+  background: color-mix(in srgb, var(--aq-term-fg) 7%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); box-shadow: 0 6px 18px -6px rgb(0 0 0 / 0.5);
+  font-family: var(--font-sans); font-size: 11px; animation: lab-in 90ms var(--aq-ease); }
+.lab-edge-btn { height: 22px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--aq-term-fg); white-space: nowrap; }
+.lab-edge-btn.icon { width: 24px; padding: 0; justify-content: center; }
+.lab-edge-btn:hover, .lab-edge-btn:focus-visible { background: color-mix(in srgb, var(--aq-term-fg) 12%, transparent); outline: none; }
+.lab-edge-btn[data-on] { color: var(--aq-term-accent); }
+@media (prefers-reduced-motion: reduce) { .lab-list, .lab-radial-ring, .lab-radial-btn, .lab-radial-sub, .lab-edge { animation: none; } }

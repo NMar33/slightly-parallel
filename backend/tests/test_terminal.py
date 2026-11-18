@@ -187,6 +187,23 @@ def test_a_closed_terminal_stays_closed(env) -> None:
 
 
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_a_middle_click_is_not_a_second_paste_from_tmux(tmp_path: Path) -> None:
+    # The page pastes on a middle click (the browser's selection); tmux's own
+    # binding pasted its buffer as well, and a line just copied in the
+    # terminal reached the shell twice. A mouse-reading program keeps the click.
+    root = tmp_path / "data"
+    root.mkdir()
+    try:
+        assert termlib.tmux(root, "new-session", "-d", "-s", "mk-probe", "sleep 30").returncode == 0
+        keys = termlib.tmux(root, "list-keys", "-T", "root", "MouseDown2Pane").stdout
+        assert "MouseDown2Pane" in keys
+        assert "paste" not in keys
+        assert "send -M" in keys or "send-keys -M" in keys
+    finally:
+        termlib.tmux(root, "kill-server")
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
 def test_typed_text_keeps_its_semicolons_and_dashes(env) -> None:
     c, root, _ = env
     _on(c)

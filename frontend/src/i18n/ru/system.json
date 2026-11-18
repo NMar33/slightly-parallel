@@ -891,7 +891,7 @@
   "The terminal could not be copied: {error}": "Не удалось скопировать терминал: {error}",
   "Opened {file}": "Открыто: {file}",
   "The terminal could not be read: {error}": "Не удалось прочитать терминал: {error}",
-  "The browser blocked the clipboard. Press Ctrl+V instead.": "Браузер заблокировал буфер обмена. Нажмите Ctrl+V.",
+  "The browser blocked the clipboard. Press {key} instead.": "Браузер заблокировал буфер обмена. Нажмите {key}.",
   "— the terminal ended —": "— терминал завершён —",
   "— the terminal is off —": "— терминал выключен —",
   "— refused: {why} —": "— отказ: {why} —",

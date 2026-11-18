@@ -92,6 +92,11 @@ set -g fill-character " "
 set -g mode-style "fg=#E6E8EB,bg=#1F4A40"
 set -g pane-border-style "fg=#2A2E35"
 set -g pane-active-border-style "fg=#2A2E35"
+# A middle click is the page's paste (the browser pastes the selection into
+# the terminal), never tmux's too: its default pastes its own buffer as well,
+# and a line just copied in the terminal reached the shell twice, glued.
+# A program that reads the mouse still gets the click.
+bind -n MouseDown2Pane select-pane -t = \\; if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" "send -M"
 """
 
 _lock = threading.Lock()

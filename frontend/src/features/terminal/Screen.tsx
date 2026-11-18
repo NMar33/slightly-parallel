@@ -33,6 +33,7 @@ import { setWork } from '../../lib/timer'
 import { t as tr, tn } from '../../i18n/scope/system'
 import { THEME } from './palette'
 import { letter } from '../../lib/typing'
+import { IS_MAC, pasteKey, pasteKeyName } from './pasteKeys'
 
 const INVALID_TOKEN = 4401
 const OFF = 4409
@@ -311,7 +312,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       const text = await navigator.clipboard.readText()
       if (text) termRef.current?.paste(text)
     } catch {
-      toast.error(tr('The browser blocked the clipboard. Press Ctrl+V instead.'))
+      toast.error(tr('The browser blocked the clipboard. Press {key} instead.', { key: pasteKeyName(IS_MAC) }))
     }
     termRef.current?.focus()
   }, [])
@@ -431,7 +432,11 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
           if (t.hasSelection()) { void copyText(t.getSelection()); t.clearSelection() }
           return false
         }
-        if (e.ctrlKey && e.shiftKey && letter(e) === 'v') { void paste(); return false }
+        // A paste key pastes once: the browser's own paste (its paste event
+        // reaches xterm), or the page's where the browser has none.
+        const by = pasteKey(e, IS_MAC)
+        if (by === 'native') return false
+        if (by === 'page') { e.preventDefault(); void paste(); return false }
         if (e.ctrlKey && e.shiftKey && letter(e) === 'f') { toggleFind(); return false }
         // Ctrl+` belongs to the drawer.
         if (e.ctrlKey && e.key === '`') return false
@@ -631,7 +636,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
               {tr('Copy')} <span className="ml-auto text-10 text-[var(--term-muted)]">Ctrl+C</span>
             </button>
             <button type="button" role="menuitem" className={menuItem} onClick={() => { void paste(); setMenu(null) }}>
-              {tr('Paste')} <span className="ml-auto text-10 text-[var(--term-muted)]">Ctrl+V</span>
+              {tr('Paste')} <span className="ml-auto text-10 text-[var(--term-muted)]">{pasteKeyName(IS_MAC)}</span>
             </button>
             <div className="h-1 my-3 bg-white/10" />
             <button type="button" role="menuitem" className={menuItem} onClick={() => { void copyWhole('last'); setMenu(null) }}>{tr('Copy the last output')}</button>
