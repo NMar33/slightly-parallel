@@ -42,6 +42,8 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             desktop/package-lock.json
+      - name: "No two paths differ only by case (one file on macOS and Windows: scripts/ci/case_clash_check.py)"
+        run: python scripts/ci/case_clash_check.py
       - name: tmux, and Xvfb for a display (Linux); tmux (macOS)
         if: runner.os != 'Windows'
         run: |

@@ -1,6 +1,6 @@
 /**
  * Round 5 (tk_d2e11125): what a tab draws for its state in each variant
- * (./tabState.ts), the «Состояние вкладки» row of the «Варианты» panel with
+ * (./tabStateModel.ts), the «Состояние вкладки» row of the «Варианты» panel with
  * its jump buttons, and the compare tiles: each variant on the same tabs in
  * three frozen moments (all calm, one chat waits 25 min, context 80%), with
  * the changed tab at twice the size.
@@ -21,7 +21,7 @@ import { SeeHint } from '../round4/SeeHint'
 import {
   CTX_CHAT, LEVEL_INK, MOMENTS, MOMENT_CHAT, MOMENT_FACTS, TABSTATE, TABSTATE_DEFAULT, jumpTab, signal, useTabState,
   type Moment, type TabState,
-} from './tabState'
+} from './tabStateModel'
 import {
   PATTERNS, addCommits, freshMood, moodOf, setCheck, useMoodFrozen, useMoodLab, usePattern, values, warmDots, warmth, MoodFrozen,
   type Pattern,

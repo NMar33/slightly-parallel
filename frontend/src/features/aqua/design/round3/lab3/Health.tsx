@@ -36,7 +36,7 @@ import {
   ACTS, AGAIN_MIN, CLOCKS, HEALTH_DEFAULT, HEALTH_VARIANTS, LATER_MIN, addReminder, breakNow, clockOf, didIt, dueOf, endBreak, finishBreak,
   jumpTo, jumpToReminder, later, openUi, remOf, removeReminder, setHealthSettings, setReminder, startBreak, timeOfDay, useHealth, useHealthPick, zoneOf,
   type ActId, type Clock, type Due, type HealthLook, type HealthSettings, type HealthState, type Reminder, type Zone,
-} from './health'
+} from './healthModel'
 
 /* ------------------------------------------------------------ words */
 

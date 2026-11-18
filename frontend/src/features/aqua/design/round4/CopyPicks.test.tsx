@@ -7,7 +7,7 @@ import { getAqua, resetAqua } from '../store'
 import { resetDesk } from '../round2/desk'
 import { resetLab, resetStrip } from '../round3/lab/live'
 import { getLab2, resetLab2 } from '../round3/lab2/store'
-import { resetHealth } from '../round3/lab3/health'
+import { resetHealth } from '../round3/lab3/healthModel'
 import { picksText, picksUrl, type Picks } from './CopyPicks'
 
 const page = (q: string) => render(<MemoryRouter initialEntries={[`/aqua${q}`]}><AquaDesign /></MemoryRouter>)

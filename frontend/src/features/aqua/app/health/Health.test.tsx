@@ -10,7 +10,7 @@ vi.mock('../../../../lib/getJson', () => ({
 vi.mock('../../../../lib/uiPrefs', () => ({ persistPref: vi.fn((k: string, v: string) => localStorage.setItem(k, v)) }))
 
 import { HealthLayer, HealthSettings, HealthTint, HealthTitle, useHealthEdge } from '.'
-import { getHealth, resetHealthStore, setHealthSettings, tick } from './health'
+import { getHealth, resetHealthStore, setHealthSettings, tick } from './healthModel'
 
 const T0 = new Date(2026, 10, 18, 9, 0, 0).getTime()
 let now = T0

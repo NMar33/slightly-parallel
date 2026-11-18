@@ -6,7 +6,7 @@
  * gives every tab the picked look, puts the new row at the top of the
  * «Варианты» panel (the «Полоса» row leaves: «как сейчас» is the dots),
  * opens «Сравнить» on the new feature and adds its line to «Скопировать
- * выбор». The variants and their thresholds: ./tabState.ts.
+ * выбор». The variants and their thresholds: ./tabStateModel.ts.
  *
  * `/aqua?v=l&tabstate=now|a|b|c|d|e|f`, `&pattern=1|2|3` (f's pattern), `&compare=tabstate`.
  */
@@ -17,7 +17,7 @@ import { MoreContext, type More } from '../round4/more'
 import type { Feature } from '../round4/compareState'
 import type { Theme } from '../AquaDesign'
 import { TabStateCompare, TabStateRow, decorFor } from './TabState'
-import { useContextClock, useTabState } from './tabState'
+import { useContextClock, useTabState } from './tabStateModel'
 import { usePattern } from './mood'
 import { patternLabel, patternWords, tabStateLabel, tabStateWords } from './words'
 

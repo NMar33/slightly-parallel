@@ -8,9 +8,9 @@ import { resetAqua } from '../store'
 import { resetDesk } from '../round2/desk'
 import { getLab, labWith, resetLab, resetStrip, type Facts } from '../round3/lab/live'
 import { resetLab2 } from '../round3/lab2/store'
-import { resetHealth } from '../round3/lab3/health'
+import { resetHealth } from '../round3/lab3/healthModel'
 import { picksText, picksUrl, type Picks } from '../round4/CopyPicks'
-import { CTX_CHAT, MOMENTS, MOMENT_FACTS, WAIT_CHAT, signal, tickContext, type Moment, type TabState } from './tabState'
+import { CTX_CHAT, MOMENTS, MOMENT_FACTS, WAIT_CHAT, signal, tickContext, type Moment, type TabState } from './tabStateModel'
 import { activity, freshMood, getMood, moodOf, resetMood, values, warmDots, warmth } from './mood'
 
 const page = (q: string) => render(<MemoryRouter initialEntries={[`/aqua${q}`]}><AquaDesign /></MemoryRouter>)

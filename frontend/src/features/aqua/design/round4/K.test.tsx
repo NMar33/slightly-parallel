@@ -8,7 +8,7 @@ import { resetDesk } from '../round2/desk'
 import { resetLab, resetStrip } from '../round3/lab/live'
 import { SCHEMES } from '../round3/lab2/schemes'
 import { getLab2, resetLab2 } from '../round3/lab2/store'
-import { getHealth, resetHealth } from '../round3/lab3/health'
+import { getHealth, resetHealth } from '../round3/lab3/healthModel'
 import { FEATURES } from './compareState'
 
 const page = (q: string) => render(<MemoryRouter initialEntries={[`/aqua${q}`]}><AquaDesign /></MemoryRouter>)

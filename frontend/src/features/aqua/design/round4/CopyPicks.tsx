@@ -17,7 +17,7 @@ import { labWords } from '../round3/lab/words'
 import { schemeOf } from '../round3/lab2/schemes'
 import { useLab2, type MenuKind, type Scope } from '../round3/lab2/store'
 import { clockWord, lookWord } from '../round3/lab3/Health'
-import { useHealthPick, type Clock, type HealthLook } from '../round3/lab3/health'
+import { useHealthPick, type Clock, type HealthLook } from '../round3/lab3/healthModel'
 import { useMore, type More } from './more'
 
 export interface Picks { lab: LabPick; menu: MenuKind; scheme: string; scope: Scope; health: HealthLook; clock: Clock }

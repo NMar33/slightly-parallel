@@ -24,7 +24,7 @@ import { useSearchParams } from 'react-router-dom'
 import { SESSIONS, type Session } from '../mock'
 import { getAqua } from '../store'
 import type { Facts } from '../round3/lab/live'
-import { CTX_AMBER, CTX_RED } from './tabState'
+import { CTX_AMBER, CTX_RED } from './tabStateModel'
 
 export const PATTERNS = ['1', '2', '3'] as const
 export type Pattern = (typeof PATTERNS)[number]

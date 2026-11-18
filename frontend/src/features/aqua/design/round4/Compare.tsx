@@ -26,7 +26,7 @@ import { SCHEMES, grade, ratios, termVars, type Scheme } from '../round3/lab2/sc
 import { setMenu, setScheme, useLab2, type Block, type MenuKind } from '../round3/lab2/store'
 import { Ansi } from '../term'
 import { HealthChip, HealthFrozen, HealthLayer, HealthTint, HealthTitle, lookWord, useHealthEdge } from '../round3/lab3/Health'
-import { healthAt, jumpTo, startBreak, tickHealth, useHealthPick, type HealthLook, type HealthState, type Zone } from '../round3/lab3/health'
+import { healthAt, jumpTo, startBreak, tickHealth, useHealthPick, type HealthLook, type HealthState, type Zone } from '../round3/lab3/healthModel'
 import { FEATURES, useCompare, type Feature, type KFeature } from './compareState'
 import { useMore } from './more'
 import { SeeHint } from './SeeHint'

@@ -56,6 +56,16 @@ Measures how long rebuilding the tables takes for a data root. Its published
 numbers date from the August 2026 data model; re-measure before quoting
 them.
 
+## `ci/case_clash_check.py` — the case guard
+
+Fails when two tracked paths are one path on macOS and Windows: names that
+differ only by case, or modules in one folder that do once the extension is
+dropped (`Health.tsx` beside `health.ts`: `./health` is either file there).
+Rename the logic file `<name>Model.ts`. It runs first in CI's frontend job
+and in the terminal workflow, and in the backend tests on every system.
+
+    python3 scripts/ci/case_clash_check.py
+
 ## `check-no-raw-hex.sh` — the colour guard
 
 Fails when a raw hex colour appears outside `tokens.css`. It runs only by hand.

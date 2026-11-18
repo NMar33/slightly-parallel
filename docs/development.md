@@ -44,6 +44,7 @@ mv requirements.lock.new requirements.lock
 cd frontend && npm ci
 npm test && npm run typecheck && npm run lint && npm run build
 bash ../scripts/check-no-raw-hex.sh                          # colours come from the tokens, never a raw hex
+python3 ../scripts/ci/case_clash_check.py                    # no two paths differ only by case (one file on macOS and Windows)
 
 # In the browser, on a copy of the test data. It starts its own server from
 # backend/.venv and serves the build above. Once: npx playwright install chromium

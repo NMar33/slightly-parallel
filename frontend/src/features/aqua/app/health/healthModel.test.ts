@@ -12,7 +12,7 @@ import { persistPref } from '../../../../lib/uiPrefs'
 import {
   DAY_KEY, HEALTH_DEFAULT, SETTINGS_KEY, adoptServerBreak, breakNow, cleanSettings, didIt, dueOf, finishBreak, flushDay, freshDay,
   getHealth, later, laterDay, readDay, resetHealthStore, setHealthSettings, startBreak, step, tick, zoneOf, type Day,
-} from './health'
+} from './healthModel'
 
 const MIN = 60_000
 const S = HEALTH_DEFAULT

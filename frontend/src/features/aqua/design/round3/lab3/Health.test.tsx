@@ -8,7 +8,7 @@ import { resetDesk } from '../../round2/desk'
 import { resetLab, resetStrip } from '../lab/live'
 import {
   AGAIN_MIN, LATER_MIN, breakNow, didIt, finishBreak, dueOf, endBreak, getHealth, later, resetHealth, setHealthSettings, startBreak, tickHealth, zoneOf,
-} from './health'
+} from './healthModel'
 
 const page = (q = '') => render(<MemoryRouter initialEntries={[`/aqua?v=k${q}`]}><AquaDesign /></MemoryRouter>)
 const zone = () => { const h = getHealth(); return zoneOf(h.run, h.s) }

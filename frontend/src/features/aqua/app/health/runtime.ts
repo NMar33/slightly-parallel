@@ -9,7 +9,7 @@ import { useEffect } from 'react'
 
 import { getJson } from '../../../../lib/getJson'
 import { useTimeAuto } from '../../../../lib/timer'
-import { SETTINGS_KEY, adoptServerBreak, flushDay, nowMs, reloadSettings, setProject, tick, useHealth } from './health'
+import { SETTINGS_KEY, adoptServerBreak, flushDay, nowMs, reloadSettings, setProject, tick, useHealth } from './healthModel'
 
 /** A step this often with no input: the label moves by whole minutes, so nothing redraws in between. */
 export const STEP_MS = 15_000

@@ -1,7 +1,7 @@
 /**
  * Health and time in the terminal window, variant a «quiet» (tk_810245f2,
  * tk_caf2b06a). The look was chosen in the mockup
- * (design/round3/lab3/health.ts, Health.tsx); this is the product's state,
+ * (design/round3/lab3/healthModel.ts, Health.tsx); this is the product's state,
  * on real time and real activity.
  *
  * What the counter counts — continuous work, in minutes:

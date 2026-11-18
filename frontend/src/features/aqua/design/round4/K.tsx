@@ -34,7 +34,7 @@ import { AltCards, LabTab, StripSettingsButton, StripSettingsPopover, useAltHeld
 import { PlusButton } from '../round3/lab/Plus'
 import { VariantSwitcher } from '../round3/lab/Switcher'
 import { HealthChip, HealthLayer, HealthTint, HealthTitle, useHealthEdge } from '../round3/lab3/Health'
-import { useHealthClock } from '../round3/lab3/health'
+import { useHealthClock } from '../round3/lab3/healthModel'
 import { LW, RW, SP_PAINT, placeSide, seatBoth } from '../round3/J'
 import type { Theme } from '../AquaDesign'
 import { CompareView } from './Compare'

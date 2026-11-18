@@ -1,7 +1,7 @@
 /** Round 5: the words of the «Состояние вкладки» switch, shared by the panel, the compare view and «Скопировать выбор». */
 
 import { t } from '../../../../i18n/scope/aqua'
-import type { Moment, TabState } from './tabState'
+import type { Moment, TabState } from './tabStateModel'
 import type { Pattern } from './mood'
 
 export const tabStateLabel = () => t('Tab state')
