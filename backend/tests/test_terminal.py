@@ -910,3 +910,72 @@ def test_the_wheel_over_a_full_screen_program_without_the_mouse_sends_arrow_keys
     assert "alternate_on" in up and "send-keys -t = Up" in up and "copy-mode -e" in up and "send-keys -M" in up
     assert "alternate_on" in down and "send-keys -t = Down" in down
     c.post(f"/api/terminal/sessions/{sid}/close", json={})
+
+
+# ------------------------------------------------- typing, not xterm's replies
+# A click in a tmux terminal (tmux runs with the mouse on) made xterm send
+# mouse reports through the socket, and attaching made it answer tmux's
+# questions; the server took each for typing and beat the timer, so the
+# window's own beat (source "window") was overwritten by "terminal" at once
+# (desktop/e2e/timer.spec.ts, 2026-11-18). What xterm sent then:
+SEEN_ON_A_CLICK = ["\x1b[?1;2c", "\x1b[>0;276;0c", "\x1b]10;rgb:e6e6/e8e8/ebeb\x1b\\",
+                   "\x1b]11;rgb:0e0e/1010/1313\x1b\\", "\x1b[I", "\x1b[O", "\x1b[<0;65;17M", "\x1b[<0;65;17m"]
+
+
+@pytest.mark.parametrize("data", SEEN_ON_A_CLICK + [
+    "\x1b[12;40R", "\x1b[?12;40;1R", "\x1b[0n", "\x1b[?2004;2$y", "\x1b[8;34;128t", "\x1b[?0u",
+    "\x1bP1$r0m\x1b\\", "\x1b]4;1;rgb:ffff/0000/0000\x07", "\x1b[64;10;5M", "\x1b[M !!",
+    "\x1b[<0;1;1M\x1b[<0;1;1m\x1b[<64;3;3M",
+])
+def test_reports_and_replies_are_not_typing(data: str) -> None:
+    assert termlib.is_terminal_reply(data)
+    assert termlib.is_terminal_reply(data.encode())
+
+
+@pytest.mark.parametrize("data", ["a", "ls\r", "\r", "\x7f", "\x03", "\x1b", "\x1b[A", "\x1bOP", "\x1b[15~",
+                                  "\x1b[200~pasted\x1b[201~", "привет", "\x1b[Ix", "x\x1b[<0;1;1M", ""])
+def test_keys_and_pastes_are_typing(data: str) -> None:
+    assert not termlib.is_terminal_reply(data)
+
+
+def test_only_keys_and_pastes_on_the_socket_beat_the_timer(env, monkeypatch) -> None:
+    """Marked by the page (`typed`) or, unmarked, read by the bytes: a report
+    or a reply never beats; a key or a paste does, once each."""
+    from backend import timeauto
+    from backend.routers import terminal
+
+    c, root, _ = env
+    _on(c)
+    beats: list[tuple[str, str]] = []
+    monkeypatch.setattr(timeauto.of(c.app), "beat", lambda project, task_id="", source="page": beats.append((project, source)))
+    monkeypatch.setattr(terminal.PtySession, "write", lambda self, data: None)   # nothing reaches a shell
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    tok = c.get("/api/terminal/state").json()["token"]
+
+    def wait(n: int) -> None:
+        deadline = time.time() + 5
+        while len(beats) < n and time.time() < deadline:
+            time.sleep(0.02)
+        assert len(beats) == n, beats
+
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}") as ws:
+        for data in SEEN_ON_A_CLICK:
+            ws.send_text(json.dumps({"type": "input", "data": data}))               # unmarked: the bytes say
+            ws.send_text(json.dumps({"type": "input", "data": data, "typed": False}))
+            ws.send_text(data)                                                    # a raw text frame
+            ws.send_bytes(data.encode())                                          # a binary frame
+        # The page's word wins: a "reply" that came from a key (Ctrl+F3) is typing,
+        # and a key the page says is not typing (its own wheel report) is not.
+        ws.send_text(json.dumps({"type": "input", "data": "x", "typed": False}))
+        ws.send_text(json.dumps({"type": "input", "data": "\x1b[1;5R", "typed": True}))
+        wait(1)
+        ws.send_text(json.dumps({"type": "input", "data": "ls\r", "typed": True}))
+        wait(2)
+        ws.send_text(json.dumps({"type": "input", "data": "\x1b[200~a paste\x1b[201~"}))
+        wait(3)
+        ws.send_bytes(b"q")
+        wait(4)
+        ws.send_text("y")
+        wait(5)
+    assert beats == [("alpha", "terminal")] * 5
+    c.post(f"/api/terminal/sessions/{sid}/close", json={})

@@ -44,7 +44,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import app_settings, clocktime, idle
+from . import app_settings, clocktime, idle, timebreak
 from .csvio import DamagedFile
 from .db import ViewStore
 from .file_safety import atomic_write
@@ -386,6 +386,8 @@ class AutoTimer:
             if auto and project in folders:
                 signal = max(signal, changed.get(project, 0.0))
             live = auto and present and signal > 0 and wall - signal <= grace
+            if live and timebreak.held(self, project):
+                live = False   # a break the operator took: nothing counts (timebreak.py)
             span = self.spans.get(project)
             if not live:
                 if span:

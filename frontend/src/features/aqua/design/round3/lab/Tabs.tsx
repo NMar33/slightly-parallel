@@ -30,6 +30,7 @@ import {
   PART_KINDS, STRIP_DEFAULT, factsOf, setStrip, shownSlots, tabTitle, useStripSettings,
   type Facts, type LabPick, type PartKind, type StripSettings, type useLab,
 } from './live'
+import { useMore } from '../../round4/more'
 
 /* ------------------------------------------------------------ Alt held */
 
@@ -143,6 +144,8 @@ export function LabTab({ c, st, lab, on, dim, under, alt, pick, canClose, onSele
   const f = factsOf(lab, c)
   const shown = shownState(st, c)
   const waiting = shown === 'waiting'
+  // a later version (round5/L) may draw the tab's state its own way; in K this is undefined
+  const decor = useMore()?.tabDecor?.({ c, st, f, waiting, alt })
   const title = tabTitle(c)
   const tip = [title, c.name !== title ? c.name : null, STATE_WORD[shown], ...shownSlots(settings).map((i) => factWords(settings.kinds[i]!, f, waiting))].filter(Boolean).join(' · ')
   const look = pick.tabs
@@ -169,7 +172,7 @@ export function LabTab({ c, st, lab, on, dim, under, alt, pick, canClose, onSele
           background: dim ? 'var(--aq-hover)' : on ? 'var(--aq-term-bg)' : undefined, color,
           boxShadow: under ? `inset 0 -2px 0 ${under}` : undefined,
         }}>
-        {!(showClose && look === 'b') && <StateDot s={c} st={st} />}
+        {!(showClose && look === 'b') && (decor?.dot ?? <StateDot s={c} st={st} />)}
         {alt && look === 'b' ? (
           <span className="flex flex-col items-start min-w-0 pt-[3px]" data-alt="b">
             <span className="truncate max-w-full text-[9px] leading-[10px] opacity-75">{title}</span>
@@ -184,7 +187,7 @@ export function LabTab({ c, st, lab, on, dim, under, alt, pick, canClose, onSele
         )}
         {alt && look === 'a' && <span className="inline-flex items-center gap-6 shrink-0" data-alt="a">{branch}{tasks}</span>}
       </button>
-      <StatusStrip f={f} waiting={waiting} look={pick.strip} s={settings} />
+      {decor ? decor.strip : <StatusStrip f={f} waiting={waiting} look={pick.strip} s={settings} />}
       {showClose && (
         <button type="button" data-nodrag className="absolute top-[7px] w-[16px] h-[16px] inline-flex items-center justify-center rounded-[4px] hover:bg-[var(--aq-hover)]"
           style={{ [look === 'b' ? 'left' : 'right']: 6, color }} aria-label={`${t('Close the tab')} ${title}`} title={`${t('Close the tab')} ${title}`} onClick={onClose}>

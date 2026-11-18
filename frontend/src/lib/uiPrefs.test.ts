@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { adoptOldKeys, isSyncable, readPref } from './uiPrefs'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { adoptOldKeys, hydratePrefs, isSyncable, readPref } from './uiPrefs'
 
 describe('isSyncable — what reaches the server', () => {
   it('syncs view preferences', () => {
@@ -13,8 +13,29 @@ describe('isSyncable — what reaches the server', () => {
     for (const k of [
       'sp-note-draft:tk_x', 'sp-note-edit:nt_x',
       'sp-task-draft:slightly-parallel', 'sp-doc-block-draft:dc_x',
-      'pdr.sidebar',
+      'pdr.sidebar', 'sp-term-health-day',
     ]) expect(isSyncable(k), k).toBe(false)
+  })
+})
+
+describe('hydratePrefs — the terminal window\'s health day stays in the browser (tk_a9306fb1)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
+
+  it('a copy the server kept never comes back over the live day, is removed there, and the day is never sent up', async () => {
+    localStorage.clear()
+    const live = JSON.stringify({ date: '2026-11-18', run: 3 })
+    localStorage.setItem('sp-term-health-day', live)
+    const posts: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response('{}') }
+      return new Response(JSON.stringify({ prefs: { 'sp-theme': 'dark', 'sp-term-health-day': JSON.stringify({ date: '2026-11-18', run: 95 }) } }),
+        { headers: { 'Content-Type': 'application/json' } })
+    }))
+    await hydratePrefs()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(localStorage.getItem('sp-term-health-day')).toBe(live)
+    expect(localStorage.getItem('sp-theme')).toBe('dark')
+    expect(posts).toEqual([{ values: { 'sp-term-health-day': null } }])
   })
 })
 

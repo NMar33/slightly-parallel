@@ -13,6 +13,7 @@
  *   /aqua?v=f  Lineage  — the tree of chats, tasks and forks is the navigation
  *   round 2: g h i (one terminal window on a desktop); round 3: j (I refined)
  *   round 4: k (J and the labs of 18.11, with a compare view)
+ *   round 5: l (K and quieter tab states instead of the dots over the tabs)
  *
  * Every round is a new version; an earlier one is never changed. The bar shows
  * the latest version and the one before it; the earlier ones fold behind
@@ -39,9 +40,10 @@ import { Tide } from './variants/Tide'
 import { R2 } from './round2/R2'
 import { J } from './round3/J'
 import { K } from './round4/K'
+import { L } from './round5/L'
 import { resetDesk } from './round2/desk'
 
-export type VariantKey = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k'
+export type VariantKey = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k' | 'l'
 export type Theme = 'light' | 'dark'
 
 interface Variant { key: VariantKey; name: string; idea: string; themes: Theme[]; C: ComponentType<{ theme: Theme }> }
@@ -61,10 +63,12 @@ export const VARIANTS: Variant[] = [
   { key: 'j', name: t('J · Zoom, refined'), idea: t('I refined: folded groups, sidebar toggles that never move, a title row that folds away, Slightly Parallel\'s own colours, a cheap zoom'), themes: ['dark', 'light'], C: J },
   // Round 4: J and the labs of 18.11 (tabs, the strip, the "+", schemes, the message menu, health), with a compare view.
   { key: 'k', name: t('K · J + variants 18.11'), idea: t('J with the variants of 18.11: tabs and the Alt view, the status strip, the + button, colour schemes, the message menu, health and time. «Compare» shows the variants side by side'), themes: ['dark', 'light'], C: K },
+  // Round 5: K and one switch, the tab's state, quieter than the dots over the tabs.
+  { key: 'l', name: t('L · K + tab state'), idea: t('K with quieter ways to show a tab\'s state than the dots over the tabs. «Compare» shows each at three moments'), themes: ['dark', 'light'], C: L },
 ]
 /** The latest version and the one before it are shown up front; the rest fold away. */
-export const LATEST: VariantKey = 'k'
-export const UP_FRONT: VariantKey[] = ['k', 'j']
+export const LATEST: VariantKey = 'l'
+export const UP_FRONT: VariantKey[] = ['l', 'k']
 const isVariant = (v: string | null): v is VariantKey => VARIANTS.some((x) => x.key === v)
 
 function systemTheme(): Theme {
@@ -114,7 +118,7 @@ export function AquaDesign() {
               className={`h-24 px-10 rounded-pill text-12 whitespace-nowrap ${x.key === v ? 'bg-brand text-on-brand' : 'text-secondary hover:bg-hover'}`}>{x.name}</button>
           ))}
         </div>
-        <button type="button" aria-expanded={showEarly} onClick={() => setShowEarly(!showEarly)} title={t('Versions A to I: rounds 1 and 2')}
+        <button type="button" aria-expanded={showEarly} onClick={() => setShowEarly(!showEarly)} title={t('Versions A to J: rounds 1 to 3')}
           className="h-24 px-8 inline-flex items-center gap-2 rounded-pill text-12 whitespace-nowrap text-tertiary hover:bg-hover shrink-0">
           {showEarly ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}{showEarly ? t('Hide early versions') : `${t('Early versions')} (${early.length})`}
         </button>

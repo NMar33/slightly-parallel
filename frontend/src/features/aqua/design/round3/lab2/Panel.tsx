@@ -3,6 +3,7 @@
  * colour scheme (the way the settings page would list them: a swatch, the
  * name, the contrast of text on background) and the message-menu variant.
  * `&scheme=<id>`, `&scope=term|window` and `&msgmenu=a|b|c` in the address.
+ * In K it starts with «Скопировать выбор» (round4/CopyPicks), as «Варианты» does.
  */
 
 import { useEffect, useState } from 'react'
@@ -15,6 +16,7 @@ import { SCHEMES, dimOf, grade, ratios, type Scheme } from './schemes'
 import { isMenu, isScheme, setMenu, setScheme, setScope, useLab2, type MenuKind, type Scope } from './store'
 import { useCompare } from '../../round4/compareState'
 import { SeeHint } from '../../round4/SeeHint'
+import { CopyPicks } from '../../round4/CopyPicks'
 
 const fmt = (r: number) => r.toFixed(1)
 
@@ -76,6 +78,7 @@ export function Lab2Panel() {
       </div>
       {!folded && (
         <div className="flex flex-col gap-8 p-10 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 150px)' }}>
+          <CopyPicks />
           <div className="flex items-center gap-6 flex-wrap">
             <span className="text-11 text-tertiary w-full">{t('Colours')}</span>
             <Segmented<Scope> label={t('Colours')} value={lab.scope} onChange={pickScope}

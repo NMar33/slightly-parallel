@@ -17,8 +17,41 @@ import tempfile
 # whatever folder the shell exports. Every session gets a fresh folder of its
 # own, removed when the session ends; the sandbox flag keeps skills out of
 # the home folder and the system monitor off.
-for _name in ("SCAN_DATA_ROOT", "DATA_ROOT"):
-    os.environ.pop(_name, None)
+#
+# The run starts from a clean environment, as on a CI machine. A shell inside
+# Slightly Parallel's own terminal exports SP_ENABLE_TERMINAL, SP_TERMINAL,
+# the data root, the port; an agent's shell exports its session (CLAUDE_*,
+# CODEX_THREAD_ID) and tmux's. Left in place they switch the terminal on, aim
+# the hooks at the operator's session, and four terminal tests fail for
+# every agent working in that terminal. Every SP_* variable goes, except the
+# knobs this suite reads itself to change how it runs (the clock job, the
+# real-CLI jobs, golden files, seeds); a test that needs one of the others
+# sets it with monkeypatch. test_clean_environment.py keeps this.
+TEST_KNOBS = frozenset({
+    "SP_TEST_CLOCK", "SP_CRASH_SEED", "SP_HYPOTHESIS", "SP_REAL_CLI",
+    "SP_REAL_CODEX", "SP_GOLDEN_WRITE", "SP_UPDATE_GOLDEN",
+})
+#: Variables the backend or its hooks read that a developer's shell carries.
+LEAKED_NAMES = frozenset({
+    # the product's former names and the plain ones config.py still reads
+    "SCAN_DATA_ROOT", "DATA_ROOT", "SCAN_PORT", "SCAN_CORS_ORIGINS",
+    "PORT", "HOST", "RELOAD", "VITE_PORT",
+    # an agent's session and its terminal (hookshared, termlib)
+    "CLAUDECODE", "CLAUDE_PID", "CLAUDE_CONFIG_DIR", "CODEX_THREAD_ID",
+    "CODEX_HOME", "TMUX", "TMUX_PANE",
+})
+LEAKED_PREFIXES = ("SP_", "CLAUDE_CODE_")
+
+
+def leaked(name: str) -> bool:
+    """A variable from the developer's shell the run must not see."""
+    if name in TEST_KNOBS:
+        return False
+    return name in LEAKED_NAMES or name.startswith(LEAKED_PREFIXES)
+
+
+for _name in [n for n in os.environ if leaked(n)]:
+    del os.environ[_name]
 os.environ["SP_SANDBOX"] = "1"
 _SESSION_ROOT = tempfile.mkdtemp(prefix="sp-tests-")
 os.environ["SP_DATA_ROOT"] = _SESSION_ROOT

@@ -280,6 +280,81 @@ test('tmux: the reader closes at the bottom and with Esc, and find searches the 
   await expect.poll(async () => page.locator('.sp-reader .xterm-rows > div').evaluateAll((els) => els.some((e) => (e.textContent ?? '').startsWith('L00042')))).toBe(true)
 })
 
+/** Esc in the reader: the live terminal is in front again. */
+async function closeReader(page: Page) {
+  await page.locator('.sp-reader textarea').last().focus()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.sp-reader')).toHaveCount(0)
+}
+
+test('tmux: the first frame after the first wheel event already moves, the terminal rested or busy (tk_0d123cd5)', async ({ win, shell }) => {
+  test.skip(shell.backend !== 'tmux', 'the reader is for tmux terminals')
+  test.skip(MODE === 'rows', 'the smooth view only')
+  const { page } = win
+  await ready(page)
+  await fill(page)
+  const h0 = await runPlan(page, [], 2).then((m) => m.rowH)
+  const touch = touchpad(24)
+  const first = async (what: string) => {
+    const s = stats(await runPlan(page, touch, 20))
+    keep('first gesture in tmux', what, s)
+    // Before: 4–5 still frames (70–85 ms) while the page fetched the history and built the reader.
+    expect(s.latency, `the first frame after the first wheel event moves (${what}): ${fmt(s)}`).toBe(1)
+    expect(s.stalls, fmt(s)).toBeLessThanOrEqual(1)
+    // The reader takes over where the screen was led to: no jump bigger than a frame's input and a row.
+    expect(s.maxJump, fmt(s)).toBeLessThanOrEqual(perFrame(touch, h0) + h0)
+    expect(Math.abs(s.moved - s.asked), fmt(s)).toBeLessThanOrEqual(h0 + 1)
+    await expect(page.locator('.sp-reader')).toHaveCount(1)
+    await closeReader(page)
+  }
+  // At rest, the pointer over the terminal: the history is taken ahead, no round trip when the gesture starts.
+  const box = (await page.locator('.aqua-screen').boundingBox())!
+  const captures: string[] = []
+  page.on('request', (r) => { if (r.url().includes('/capture')) captures.push(r.postData() ?? '') })
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.waitForTimeout(1500)
+  // Taken once for this rest, the first 2000 rows; nothing more while it rests.
+  expect(captures.map((c) => JSON.parse(c).rows)).toEqual([2000])
+  await first('rested')
+  // Output every 100 ms (an agent at work): nothing taken ahead, the screen is led while the reader loads.
+  // (Typed: what the pane shows is asked again a second later, the pointer still over it.)
+  await typeLine(page, '(while :; do printf .; sleep 0.1; done) &')
+  await page.waitForTimeout(1600)
+  await first('busy')
+  await typeLine(page, 'kill $!')
+})
+
+test('tmux: a reader closed in the frame it scrolled in throws nothing (tk_988aeb37)', async ({ win, shell }) => {
+  test.skip(shell.backend !== 'tmux', 'the reader is for tmux terminals')
+  test.skip(MODE === 'rows', 'the smooth view only')
+  const { page } = win
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await ready(page)
+  await fill(page)
+  const reader = page.locator('.sp-reader')
+  for (let i = 0; i < 8; i++) {
+    await runPlan(page, touchpad(6), 4)
+    await expect(reader).toHaveCount(1)
+    // A wheel step on the reader, and in the same task «↓ newest» closes it: xterm's frame for that step comes after.
+    await page.evaluate(() => {
+      const r = [...document.querySelectorAll<HTMLElement>('.sp-reader')].pop()!
+      const sc = r.querySelector('.xterm-screen')!
+      const b = sc.getBoundingClientRect()
+      sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -24, clientX: b.left + 20, clientY: b.top + 20, bubbles: true, cancelable: true, composed: true, view: window }))
+      ;[...document.querySelectorAll<HTMLButtonElement>('.aqua-screen button')].find((x) => x.title === 'Back to the newest line')!.click()
+    })
+    await expect(reader).toHaveCount(0)
+    await page.waitForTimeout(100)
+  }
+  // Also the swap to the longer history (3000 rows > the first 2000), mid-glide, then closed at once.
+  await runPlan(page, notches(3, 2, -100), 2)
+  await page.waitForTimeout(400)
+  await closeReader(page)
+  await page.waitForTimeout(200)
+  expect(errors, 'page errors').toEqual([])
+})
+
 test('plain: smooth scrolling keeps search and the newest pill', async ({ win, shell }) => {
   test.skip(shell.backend !== 'plain', 'plain terminals (the tmux one is the test above)')
   test.skip(MODE === 'rows', 'the smooth view only')

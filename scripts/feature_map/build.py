@@ -41,6 +41,17 @@ What it does:
    flows between them, like an economy's circular flow), each with a dated
    HTML copy and a PNG; a command of the program with no metro station is a
    warning.
+5. DRAWS the command scene (scene.py, layout hand-kept there):
+   feature-map-scene.html — terminal, hook, server, the task, the browser,
+   the agent, AGENTS.md and skills, repository and CI on one sheet; each
+   command one row from where it is typed to where it is seen.
+6. DRAWS the series (series.py, texts hand-kept there): feature-map-series.html,
+   five sheets — s1 the program as a cut through the earth (surface, SP
+   layer, key mechanisms / cores, foundation; commands as drill shafts),
+   s2-s5 a panel per command (tasks; your words; structure and rhythm; marks
+   and service): what is typed and kept, what the program does, what the
+   agent writes and how much, whether it can change it later, the record,
+   where it is seen. A command of the program with no panel is a warning.
 """
 
 from __future__ import annotations
@@ -832,6 +843,22 @@ def main() -> int:
         p.write_text(text, encoding="utf-8")
         p.with_name(f"feature-map-sys-{kind}-{stamp}.html").write_text(text, encoding="utf-8")
         htmls.append((p, f"feature-map-sys-{kind}"))
+    import scene
+    for cmd in scene.missing_commands(model):
+        warn(f"scene: command #{cmd} exists in the program but is not drawn (add it to scene.py ROWS)")
+    p = OUT / "feature-map-scene.html"
+    text = scene.render(model)
+    p.write_text(text, encoding="utf-8")
+    p.with_name(f"feature-map-scene-{stamp}.html").write_text(text, encoding="utf-8")
+    htmls.append((p, "feature-map-scene"))
+    import series
+    for cmd in series.missing_commands(model):
+        warn(f"series: command #{cmd} exists in the program but has no panel on sheets 2-5 (add it to series.py FAMILIES)")
+    p = OUT / "feature-map-series.html"
+    text = series.render(model)
+    p.write_text(text, encoding="utf-8")
+    p.with_name(f"feature-map-series-{stamp}.html").write_text(text, encoding="utf-8")
+    htmls.append((p, "feature-map-series"))
     shots = [] if a.no_png else render_pngs(htmls, stamp)
     took = time.time() - t0
     for s in shots:

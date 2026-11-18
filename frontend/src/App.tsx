@@ -8,6 +8,7 @@ import { useFreshness } from './lib/settings'
 import { WaitingNotice } from './features/terminal/waiting'
 import { SmartTimer } from './features/time/SmartTimer'
 import { useApplyAppearance } from './lib/appearance'
+import { useApplyTermScheme } from './features/terminal/useScheme'
 import { useSidebarCollapsed } from './hooks/useSidebarCollapsed'
 import { Sidebar } from './features/shell/Sidebar'
 import { Topbar } from './features/shell/Topbar'
@@ -100,6 +101,8 @@ export function App() {
   const appLocation = useLocation()
   // Skin, accent and interface scale — the operator's appearance choices.
   useApplyAppearance()
+  // The terminal's colour scheme on the page's terminal tokens (the drawer, /term).
+  useApplyTermScheme()
   const [collapsed, toggleSidebar] = useSidebarCollapsed()
   useDockShortcut()
   // /term is a window of its own (the desktop app's, or a browser tab): no

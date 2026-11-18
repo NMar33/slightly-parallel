@@ -57,6 +57,7 @@ from typing import Any, Mapping
 from .csvio import read_rows
 from .docs_md import resolve_under
 from .file_safety import edit_json, safe_read_json
+from . import termlog
 
 log = logging.getLogger("sp.terminal")
 
@@ -229,10 +230,15 @@ def tmux(data_root: Path, *args: str, timeout: float | None = None, input: str |
     """A tmux command. A failing command comes back with its returncode; a
     tmux that does not answer in `timeout` seconds (WRITE_TIMEOUT) raises TmuxError."""
     timeout = WRITE_TIMEOUT if timeout is None else timeout
+    cmd = args[0] if args else "tmux"
+    t0 = time.perf_counter()
     try:
-        return subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout)
+        out = subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=timeout)
+        termlog.REC.tmux_call(cmd, (time.perf_counter() - t0) * 1000)
+        return out
     except subprocess.TimeoutExpired:
+        termlog.REC.tmux_call(cmd, (time.perf_counter() - t0) * 1000, timed_out=True)
         raise TmuxError(f"tmux did not answer in {timeout:g} s ({args[0] if args else 'tmux'})") from None
     except OSError as exc:
         raise TmuxError(f"tmux could not run: {exc}") from None
@@ -935,6 +941,37 @@ def group_remove(data_root: Path, gid: str) -> bool:
     if gone and rows(data_root):
         _edit(data_root, clear)
     return gone
+
+
+#: What a terminal (xterm in the page) sends for itself, not for the operator:
+#: mouse reports (SGR, urxvt, X10), focus in/out, its answers to a program's
+#: questions — device attributes, cursor and status reports, mode reports,
+#: window sizes, colours (OSC) and DCS replies. tmux with `mouse on` turns a
+#: click into two of these, and attaching asks for the attributes and colours.
+_REPLY = (
+    r"\x1b\[<\d+;\d+;\d+[Mm]"            # SGR mouse
+    r"|\x1b\[\d+;\d+;\d+M"               # urxvt mouse
+    r"|\x1b\[M[\x20-\U0010ffff]{3}"      # X10 mouse
+    r"|\x1b\[[IO]"                       # focus in / out
+    r"|\x1b\[[?>=][\d;]*c"               # device attributes
+    r"|\x1b\[\??\d+;\d+(?:;\d+)?R"       # cursor position (a modified F3 looks the same: the page marks keys)
+    r"|\x1b\[\??\d*n"                    # status report
+    r"|\x1b\[\??[\d;]*\$y"               # mode report
+    r"|\x1b\[\d+(?:;\d+)*t"              # window size
+    r"|\x1b\[\?\d*u"                     # keyboard flags
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC answer (colours)
+    r"|\x1bP[^\x1b]*\x1b\\"              # DCS answer
+)
+_REPLIES_ONLY = re.compile(f"(?:{_REPLY})+")
+
+
+def is_terminal_reply(data: str | bytes) -> bool:
+    """Is this input only the terminal's own reports and replies, with no key
+    the operator typed in it? Then it is not typing. The page marks its
+    input (`typed`); this is for a message that does not say."""
+    if isinstance(data, bytes):
+        data = data.decode("utf-8", "replace")
+    return bool(data) and _REPLIES_ONLY.fullmatch(data) is not None
 
 
 def note_typing(data_root: Path, row: dict[str, Any], keys: int) -> None:

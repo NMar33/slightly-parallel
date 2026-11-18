@@ -6,7 +6,7 @@
  * bridge, the sidebars grow inside the page and a detach is a new tab.
  */
 
-type Handler = { postMessage: (msg: unknown) => void }
+type Handler = { postMessage: (msg: unknown) => void; restoreOffer?: () => Promise<number> }
 
 export type BridgeOp =
   | { op: 'drag' }
@@ -17,6 +17,8 @@ export type BridgeOp =
   | { op: 'title'; text: string }
   /** A page outside the window (http/https), in the browser. */
   | { op: 'open'; url: string }
+  /** The answer to restoreOffer: open the windows of last time, or not. */
+  | { op: 'restore'; open: boolean }
 
 function handler(): Handler | null {
   if (typeof window === 'undefined') return null
@@ -37,4 +39,13 @@ export function post(msg: BridgeOp): boolean {
 /** Another window on this address: the app's own, or a browser tab. */
 export function openWindow(url: string) {
   if (!post({ op: 'detach', url })) window.open(url, '_blank', 'noopener')
+}
+
+/** How many windows of last time wait for the operator's answer (Settings ›
+ *  Terminal › On start: ask). 0 outside the app, in a window that is not the
+ *  main one, or when nothing waits. */
+export async function restoreOffer(): Promise<number> {
+  const h = handler()
+  if (!h || typeof h.restoreOffer !== 'function') return 0
+  try { const n = await h.restoreOffer(); return typeof n === 'number' && n > 0 ? n : 0 } catch { return 0 }
 }

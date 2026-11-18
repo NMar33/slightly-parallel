@@ -4,19 +4,21 @@
  * so switching one shows nothing new at first sight. Here a feature's
  * variants stand side by side, each frozen in the state where it differs,
  * with one line on what differs and how to see it live. «Открыть живьём»
- * switches the live mockup to that variant and closes the view.
+ * switches the live mockup to that variant and closes the view; «Выбрать
+ * этот вариант» switches it and stays, ✓ marking the live pick, so the
+ * operator picks here and copies the picks («Скопировать выбор»).
  *
  * `&compare=tabs|strip|plus|msgmenu|scheme|health`; Esc or × closes it.
  * The previews are inert: a click in them does nothing.
  */
 
 import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
-import { Columns3, Play, X } from 'lucide-react'
+import { Check, Columns3, Play, X } from 'lucide-react'
 
 import { t } from '../../../../i18n/scope/aqua'
 import { sessionOf, type Session } from '../mock'
 import { useAqua } from '../store'
-import { LAB_DEFAULT, labWith, tabTitle, type LabPick } from '../round3/lab/live'
+import { LAB_DEFAULT, labWith, tabTitle, useLabVariants, type LabPick } from '../round3/lab/live'
 import { AltCards, LabTab } from '../round3/lab/Tabs'
 import { PlusButton } from '../round3/lab/Plus'
 import { EdgeBar, List, Radial, messageItems } from '../round3/lab2/MsgMenu'
@@ -24,18 +26,19 @@ import { SCHEMES, grade, ratios, termVars, type Scheme } from '../round3/lab2/sc
 import { setMenu, setScheme, useLab2, type Block, type MenuKind } from '../round3/lab2/store'
 import { Ansi } from '../term'
 import { HealthChip, HealthFrozen, HealthLayer, HealthTint, HealthTitle, lookWord, useHealthEdge } from '../round3/lab3/Health'
-import { healthAt, jumpTo, startBreak, tickHealth, type HealthLook, type HealthState, type Zone } from '../round3/lab3/health'
-import { FEATURES, useCompare, type Feature } from './compareState'
+import { healthAt, jumpTo, startBreak, tickHealth, useHealthPick, type HealthLook, type HealthState, type Zone } from '../round3/lab3/health'
+import { FEATURES, useCompare, type Feature, type KFeature } from './compareState'
+import { useMore } from './more'
 import { SeeHint } from './SeeHint'
 
 /* ------------------------------------------------------------ the frame */
 
-const featureWord = (f: Feature): string => ({
+const featureWord = (f: KFeature): string => ({
   tabs: t('Tabs with Alt'), strip: t('Strip'), plus: t('Button +'), msgmenu: t('Message menu'), scheme: t('Colour schemes'), health: t('Health and time'),
 })[f]
 
 /** One line on the feature: what the tiles show. */
-const featureLine = (f: Feature): string => ({
+const featureLine = (f: KFeature): string => ({
   tabs: t('The tabs as they are, then the view while Alt is held, in each variant.'),
   strip: t('The same tabs and the same numbers in each variant. One chat has waited 25 min, so its part is red.'),
   plus: t('The three buttons, then both menus open.'),
@@ -46,13 +49,18 @@ const featureLine = (f: Feature): string => ({
 
 export function CompareView() {
   const [f, open] = useCompare()
+  // a later version (round5/L) lists its own features and draws their tiles
+  const more = useMore()
+  const list: readonly Feature[] = more?.features ?? FEATURES
+  const own = f ? more?.compare?.[f] : undefined
+  const word = (x: Feature) => more?.compare?.[x]?.word ?? featureWord(x as KFeature)
   useEffect(() => {
     if (!f) return
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); open(null) } }
     window.addEventListener('keydown', key, true)
     return () => window.removeEventListener('keydown', key, true)
   })
-  if (!f) return null
+  if (!f || !list.includes(f)) return null
   return (
     <div className="absolute inset-0 z-[260] flex flex-col" role="dialog" aria-label={t('Compare variants')} data-compare={f}
       style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
@@ -60,9 +68,9 @@ export function CompareView() {
         <Columns3 size={14} className="text-tertiary" />
         <span className="text-13 font-semibold shrink-0">{t('Compare variants')}</span>
         <div className="flex gap-2 ml-8 min-w-0 overflow-x-auto" role="tablist" aria-label={t('Feature')}>
-          {FEATURES.map((x) => (
+          {list.map((x) => (
             <button key={x} type="button" role="tab" aria-selected={x === f} onClick={() => open(x)}
-              className={`h-24 px-10 rounded-pill text-12 whitespace-nowrap ${x === f ? 'bg-brand text-on-brand' : 'text-secondary hover:bg-hover'}`}>{featureWord(x)}</button>
+              className={`h-24 px-10 rounded-pill text-12 whitespace-nowrap ${x === f ? 'bg-brand text-on-brand' : 'text-secondary hover:bg-hover'}`}>{word(x)}</button>
           ))}
         </div>
         <button type="button" className="ml-auto h-24 px-8 inline-flex items-center gap-4 rounded-input text-secondary hover:bg-hover shrink-0" onClick={() => open(null)} title="Esc">
@@ -70,7 +78,8 @@ export function CompareView() {
         </button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-16 py-12">
-        <p className="text-12 text-secondary m-0 mb-12">{featureLine(f)}</p>
+        <p className="text-12 text-secondary m-0 mb-12">{own ? own.line : featureLine(f as KFeature)}</p>
+        {own?.body}
         {f === 'tabs' && <TabsCompare />}
         {f === 'strip' && <StripCompare />}
         {f === 'plus' && <PlusCompare />}
@@ -83,11 +92,13 @@ export function CompareView() {
 }
 
 /** One variant: its name, what differs, the frozen preview, how to see it live and «Открыть живьём». */
-function Tile({ name, what, see, onLive, children, className = '' }: {
+export function Tile({ name, what, see, onLive, pick, children, className = '' }: {
   name: string
   what: string
   see?: string
   onLive?: () => void
+  /** «Выбрать этот вариант»: switches the live pick to this variant and stays here; `on` when it is the live pick. */
+  pick?: { on: boolean; choose: () => void }
   children: ReactNode
   className?: string
 }) {
@@ -96,8 +107,16 @@ function Tile({ name, what, see, onLive, children, className = '' }: {
       style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-default)' }}>
       <div className="flex items-center gap-8 min-w-0">
         <span className="text-13 font-semibold truncate">{name}</span>
+        {pick && (pick.on
+          ? <span className="ml-auto h-24 px-8 inline-flex items-center gap-4 text-12 font-medium shrink-0" style={{ color: 'var(--brand)' }} data-picked><Check size={12} />{t('chosen')}</span>
+          : (
+            <button type="button" className="ml-auto h-24 px-8 inline-flex items-center gap-4 rounded-input text-12 shrink-0 border border-border-default hover:bg-hover" onClick={pick.choose}
+              title={t('Makes it the live pick; «Copy the picks» takes it along')}>
+              <Check size={11} />{t('Choose this variant')}
+            </button>
+          ))}
         {onLive && (
-          <button type="button" className="ml-auto h-24 px-8 inline-flex items-center gap-4 rounded-input text-12 shrink-0 bg-brand text-on-brand" onClick={onLive}>
+          <button type="button" className={`${pick ? '' : 'ml-auto '}h-24 px-8 inline-flex items-center gap-4 rounded-input text-12 shrink-0 bg-brand text-on-brand`} onClick={onLive}>
             <Play size={11} />{t('Open live')}
           </button>
         )}
@@ -109,12 +128,12 @@ function Tile({ name, what, see, onLive, children, className = '' }: {
   )
 }
 
-const noop = () => {}
+export const noop = () => {}
 
 /* ------------------------------------------------------------ tabs and the strip */
 
 /** The chats of the mock's first workspace, as K's main window shows them. */
-const TAB_CHATS = ['cc-4e7a19d2', 'cc-b03d55e1', 'cc-c37d2e86', 'cx-0d4b8e37'].map((id) => sessionOf(id)!).filter(Boolean)
+export const TAB_CHATS = ['cc-4e7a19d2', 'cc-b03d55e1', 'cc-c37d2e86', 'cx-0d4b8e37'].map((id) => sessionOf(id)!).filter(Boolean)
 /** The same numbers everywhere: one chat has waited 25 min, another 6; context 78 % on the busy one. */
 const FROZEN = labWith({ 'cc-c37d2e86': { waited: 25 }, 'cc-b03d55e1': { waited: 6 }, 'cc-4e7a19d2': { ctx: 78 } })
 
@@ -136,8 +155,16 @@ function MiniStrip({ pick, alt, chats = TAB_CHATS, tail }: { pick: LabPick; alt:
   )
 }
 
+/** «Выбрать этот вариант» for a «Варианты» switch: the address takes the variant, the view stays open. */
+function useLabChoose() {
+  const [f, open] = useCompare()
+  const [live] = useLabVariants()
+  return <K extends keyof LabPick>(k: K, v: LabPick[K]) => ({ on: live[k] === v, choose: () => open(f, { [k]: v }) })
+}
+
 function TabsCompare() {
   const [, open] = useCompare()
+  const choose = useLabChoose()
   const looks: Array<[LabPick['tabs'], string, string]> = [
     ['a', t('inline'), t('The title stays; branches, tasks and × are added on the right')],
     ['b', t('facts'), t('The title gives way to branches, tasks and minutes waited; × on the left')],
@@ -149,7 +176,7 @@ function TabsCompare() {
         <MiniStrip pick={LAB_DEFAULT} alt={false} />
       </Tile>
       {looks.map(([v, word, what]) => (
-        <Tile key={v} name={`${v.toUpperCase()} · ${word}`} what={what} see={t('Hold Alt')} onLive={() => open(null, { tabs: v })}>
+        <Tile key={v} name={`${v.toUpperCase()} · ${word}`} what={what} see={t('Hold Alt')} onLive={() => open(null, { tabs: v })} pick={choose('tabs', v)}>
           <MiniStrip pick={{ ...LAB_DEFAULT, tabs: v }} alt />
         </Tile>
       ))}
@@ -159,6 +186,7 @@ function TabsCompare() {
 
 function StripCompare() {
   const [, open] = useCompare()
+  const choose = useLabChoose()
   const st = useAqua()
   const waiting = sessionOf('cc-c37d2e86')!
   const looks: Array<[LabPick['strip'], string, string]> = [
@@ -172,7 +200,7 @@ function StripCompare() {
         const pick = { ...LAB_DEFAULT, strip: v }
         return (
           <Tile key={v} name={`${v.toUpperCase()} · ${word}`} what={`${what}. ${t('Parts: closed tasks, context, waiting.')}`}
-            see={t('A line above each tab: it reddens while the agent waits')} onLive={() => open(null, { strip: v })}>
+            see={t('A line above each tab: it reddens while the agent waits')} onLive={() => open(null, { strip: v })} pick={choose('strip', v)}>
             <MiniStrip pick={pick} alt={false} />
             <div className="mt-8 text-11 text-tertiary">{t('Close-up: {name}, waits 25 min', { name: tabTitle(waiting) })}</div>
             <div className="mt-4 overflow-hidden rounded-[6px]" style={{ width: 2.5 * 180, height: 2.5 * 30, background: 'var(--r2-strip)', border: '1px solid var(--border-default)' }}>
@@ -192,6 +220,7 @@ function StripCompare() {
 
 function PlusCompare() {
   const [, open] = useCompare()
+  const choose = useLabChoose()
   const chat = TAB_CHATS[0]!
   const looks: Array<[LabPick['plus'], string, string]> = [
     ['a', t('split'), t('+ and ⌄ side by side, as in Windows Terminal')],
@@ -202,7 +231,7 @@ function PlusCompare() {
     <div className="flex flex-col gap-10">
       <div className="grid gap-10" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(460px, 1fr))' }}>
         {looks.map(([v, word, what]) => (
-          <Tile key={v} name={`${t('Button')} ${v.toUpperCase()} · ${word}`} what={what} see={t('After the last tab. A click opens a new tab, Ctrl+click the choice.')} onLive={() => open(null, { plus: v })}>
+          <Tile key={v} name={`${t('Button')} ${v.toUpperCase()} · ${word}`} what={what} see={t('After the last tab. A click opens a new tab, Ctrl+click the choice.')} onLive={() => open(null, { plus: v })} pick={choose('plus', v)}>
             <MiniStrip pick={{ ...LAB_DEFAULT, plus: v }} alt={false} chats={TAB_CHATS.slice(0, 2)}
               tail={<PlusButton look={v} menu="a" chat={chat} onOpen={noop} onServer={noop} />} />
           </Tile>
@@ -210,7 +239,7 @@ function PlusCompare() {
       </div>
       <div className="grid gap-10" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(600px, 1fr))' }}>
         {([['a', t('list'), t('Rows with a hint and a key')], ['b', t('cards'), t('A grid of cards with keys')]] as const).map(([v, word, what]) => (
-          <Tile key={v} name={`${t('Menu')} ${v.toUpperCase()} · ${word}`} what={what} see={t('Ctrl+click on +')} onLive={() => open(null, { plusmenu: v })}>
+          <Tile key={v} name={`${t('Menu')} ${v.toUpperCase()} · ${word}`} what={what} see={t('Ctrl+click on +')} onLive={() => open(null, { plusmenu: v })} pick={choose('plusmenu', v)}>
             <div style={{ height: v === 'a' ? 500 : 370 }}>
               <PlusButton look="a" menu={v} chat={chat} onOpen={noop} onServer={noop} shown />
             </div>
@@ -250,21 +279,22 @@ function MsgCompare() {
   const [, open] = useCompare()
   const items = messageItems(AGENT, lab)
   const live = (v: MenuKind) => { setMenu(v); open(null, { msgmenu: v }) }
+  const pick = (v: MenuKind) => ({ on: lab.menu === v, choose: () => { setMenu(v); open('msgmenu', { msgmenu: v }) } })
   const W = 440, H = 420
   return (
     <div className="grid gap-10" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(460px, 1fr))' }}>
       <Tile name={`A · ${t('round')}`} what={t('A ring of buttons round the pointer; the centre names the one under it. Carry after compaction opens a second ring.')}
-        see={t('Right click on a message')} onLive={() => live('a')}>
+        see={t('Right click on a message')} onLive={() => live('a')} pick={pick('a')}>
         <MiniTerm height={H}><Reply />
           <Radial open={{ kind: 'msg', block: AGENT, x: W / 2, y: H / 2 + 20 }} items={items} title={t('Agent\'s reply')} w={W} h={H} openSub="carry" />
         </MiniTerm>
       </Tile>
-      <Tile name={`B · ${t('list')}`} what={t('A compact list under the pointer.')} see={t('Right click on a message')} onLive={() => live('b')}>
+      <Tile name={`B · ${t('list')}`} what={t('A compact list under the pointer.')} see={t('Right click on a message')} onLive={() => live('b')} pick={pick('b')}>
         <MiniTerm height={H}><Reply />
           <List open={{ kind: 'msg', block: AGENT, x: 60, y: 96 }} items={items} title={t('Agent\'s reply')} w={W} h={H} />
         </MiniTerm>
       </Tile>
-      <Tile name={`C · ${t('bar')}`} what={t('Buttons on the message\'s top edge while the pointer is on it. No click needed.')} see={t('Point at a message')} onLive={() => live('c')}>
+      <Tile name={`C · ${t('bar')}`} what={t('Buttons on the message\'s top edge while the pointer is on it. No click needed.')} see={t('Point at a message')} onLive={() => live('c')} pick={pick('c')}>
         <MiniTerm height={H}><div className="h-[14px]" /><Reply bar /></MiniTerm>
       </Tile>
     </div>
@@ -302,7 +332,8 @@ function SchemeCompare() {
         return (
           <Tile key={s.id} name={`${s.name}${lab.scheme === s.id ? ` · ${t('now')}` : ''}`}
             what={`${s.sp ? t('Slightly Parallel\'s own scheme') : t('Known scheme')} · ${s.dark ? t('dark') : t('light')} · ${t('text')} ${r.text.toFixed(1)} ${grade(r.text)} · ${t('dim')} ${r.dim.toFixed(1)} · ${t('colours')} ≥ ${r.colours.toFixed(1)}`}
-            onLive={() => { setScheme(s.id); open(null, { scheme: s.id }) }}>
+            onLive={() => { setScheme(s.id); open(null, { scheme: s.id }) }}
+            pick={{ on: lab.scheme === s.id, choose: () => { setScheme(s.id); open('scheme', { scheme: s.id }) } }}>
             <SchemePreview s={s} />
           </Tile>
         )
@@ -348,6 +379,7 @@ function Frozen({ h, look }: { h: HealthState; look: HealthLook }) {
 
 function HealthCompare() {
   const [, open] = useCompare()
+  const { look } = useHealthPick()
   const looks: Array<[HealthLook, string]> = [
     ['a', t('The title row and the window edge tint; the suggestion shows on hover')],
     ['b', t('A time chip in the tab strip; on a new zone a one-line notice with Done and Later')],
@@ -364,7 +396,8 @@ function HealthCompare() {
             {zones.map((z) => (
               <Tile key={z} name={`${v.toUpperCase()} · ${zoneName(z)}`} what={t('{t} without a break', { t: `${ZONE_RUN[z]} ${t('min')}` })}
                 see={z === 'green' ? t('Speed up the clock') : t('Speed up the clock, or jump to a zone below')}
-                onLive={() => { jumpTo(z); if (z !== 'green') tickHealth(1); open(null, { health: v }) }}>
+                onLive={() => { jumpTo(z); if (z !== 'green') tickHealth(1); open(null, { health: v }) }}
+                pick={{ on: look === v, choose: () => open('health', { health: v }) }}>
                 <Frozen h={healthAt(ZONE_RUN[z])} look={v} />
               </Tile>
             ))}

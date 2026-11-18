@@ -18,6 +18,9 @@ const MODES: Array<readonly [ArchMode, string, string]> = [
   ['ledger', t('changes'), t('What each scan changed: register, stream, codebase')],
 ]
 
+/** A link to one core (the terminal's core card) opens the page on the cores, as a click on «cores» would. */
+export function chooseCoresMode() { persistPref(MODE_KEY, 'cores') }
+
 /** The page is the default; the operator's last choice is remembered. */
 export function useArchMode(): [ArchMode, (m: ArchMode) => void] {
   const [mode, setMode] = useState<ArchMode>(() => {

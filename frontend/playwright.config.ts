@@ -4,6 +4,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, devices } from '@playwright/test'
+import { cleanEnv } from './tests/e2e/cleanEnv'
+import { buildIfStale } from './tests/e2e/buildDist'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -21,6 +23,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  * resolves ::1 before 127.0.0.1, and FastAPI listens on IPv4 by default.
  */
 
+// Before anything reads it: the run and its server see none of the
+// developer's shell (SP_ENABLE_TERMINAL, SP_UI_DEV, an agent's session…).
+cleanEnv()
+
 const REPO = path.resolve(__dirname, '..')
 // SP_E2E_PORT lets two runs share a machine (each boots its own server).
 const E2E_PORT = Number(process.env.SP_E2E_PORT) || 8129
@@ -32,6 +38,8 @@ const E2E_PORT = Number(process.env.SP_E2E_PORT) || 8129
  */
 function dataRoot(): string {
   if (process.env.TEST_WORKER_INDEX !== undefined || process.env.SP_E2E_URL) return ''
+  // The runner, once: the server is about to start and serves frontend/dist.
+  buildIfStale(__dirname)
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-e2e-'))
   fs.cpSync(path.join(REPO, 'fixtures'), root, { recursive: true })
   addUsageGolden(root)

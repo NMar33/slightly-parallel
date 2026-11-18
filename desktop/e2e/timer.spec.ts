@@ -1,4 +1,6 @@
-import { test, expect, PROJECT, linksOut, ready, typeLine } from './fixtures'
+import fs from 'node:fs'
+import path from 'node:path'
+import { test, expect, KEEP_PLAIN, PROJECT, ROOT, linksOut, ready, typeLine } from './fixtures'
 
 /**
  * The window and the smart timer: working in a tab counts on that tab's
@@ -12,7 +14,45 @@ type Auto = {
   signals: Array<{ project: string; source: string; sec_ago: number }>
 }
 
+/** typing.csv rows of the project: one per tick of keys the window sent. */
+const typingRows = () => {
+  try {
+    return fs.readFileSync(path.join(ROOT, 'data', 'terminal', 'typing.csv'), 'utf8')
+      .split('\n').filter((l) => l.split(',')[2] === PROJECT).length
+  } catch { return 0 }
+}
+
 test.describe('smart timer', () => {
+  test('clicks in a terminal are not typing: the window beats, the socket does not, and no keys are counted', async ({ win, server }) => {
+    const { page } = win
+    const api = server.api
+    await ready(page)
+    const auto = async () => (await (await api.get('/api/time/auto')).json()) as Auto
+    const before = typingRows()
+    const screen = page.locator('.aqua-screen .xterm-screen')
+    const clickedAt = Date.now() - 1000
+    // In tmux (mouse on) each click is a press and a release report, and
+    // focus reports come with it; xterm answered tmux's questions on attach.
+    for (const [x, y] of [[40, 30], [200, 60], [120, 90], [300, 40], [60, 120]]) {
+      await screen.click({ position: { x, y } })
+      await page.waitForTimeout(150)
+    }
+    const focused = await page.evaluate(() => document.hasFocus())
+    if (focused) {
+      await expect.poll(async () => (await auto()).signals.find((s) => s.project === PROJECT)?.source,
+        { message: 'a beat from the window' }).toBe('window')
+    }
+    // Long enough for the socket's messages and a first typing tick (sent at once).
+    await page.waitForTimeout(2_000)
+    // A beat from typing in an earlier spec may still be listed: only one
+    // newer than the first click would be the clicks'.
+    const signal = (await auto()).signals.find((s) => s.project === PROJECT)
+    const sinceClicks = (Date.now() - clickedAt) / 1000
+    const fromClicks = signal?.source === 'terminal' && signal.sec_ago <= sinceClicks
+    expect(fromClicks, `clicks beat the timer through the socket (${KEEP_PLAIN ? 'plain' : 'tmux'}): ${JSON.stringify(signal)}`).toBe(false)
+    expect(typingRows(), 'clicks counted as keys').toBe(before)
+  })
+
   test('a click in the tab is a window beat; typing there starts the project\'s auto time, it grows, and the strip shows it', async ({ win, server }) => {
     test.setTimeout(120_000)
     const { page } = win

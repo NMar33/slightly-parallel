@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  chordOf, deriveWorkspaces, detachUrl, foldTabs, isLive, laneOf, nextWaiting, parseView, placeSide, resolveWs, roleOf, seatBoth,
-  cycleLevel, shownOf, stepIn, stepOut, tabsOf, tilesOf, wsIdOf, type AquaSession, type Group,
+  allLevelOrder, chordOf, deriveWorkspaces, detachUrl, foldTabs, isLive, laneOf, nextWaiting, parseView, placeSide, resolveWs, roleOf, seatBoth,
+  cycleLevel, shownOf, stepIn, stepOut, tabsOf, tilesOf, wsIdOf, lastTabIn, rememberTab, type AquaSession, type Group,
 } from './model'
 
 let n = 0
@@ -59,6 +59,16 @@ describe('the workspaces', () => {
   it('counts an empty group as live, an empty project not', () => {
     const ws = deriveWorkspaces([], ['harbor'], groups)
     expect(ws.filter(isLive).map((w) => w.id)).toEqual(['g:g1'])
+  })
+
+  it('the top level: live workspaces as before, then every project without a terminal, the most recently active first (tk_2ac8748d)', () => {
+    const a = row({ project: 'kelp' })
+    const ws = deriveWorkspaces([a], ['harbor', 'kelp', 'lumen', 'otter', 'reed'], groups)
+    const { live, idle } = allLevelOrder(ws, { harbor: '2611-02', otter: '2611-17', lumen: '' })
+    expect(live.map((w) => w.id)).toEqual(['p:kelp', 'g:g1'])
+    // otter (17 Nov) before harbor (2 Nov); lumen and reed, never active, by name
+    expect(idle.map((w) => w.id)).toEqual(['p:otter', 'p:harbor', 'p:lumen', 'p:reed'])
+    expect(allLevelOrder(ws).idle.map((w) => w.key)).toEqual(['harbor', 'lumen', 'otter', 'reed'])
   })
 })
 
@@ -153,5 +163,30 @@ describe('chords', () => {
   it('reads the physical key, so a Russian layout keeps the shortcuts', () => {
     expect(chordOf({ ctrlKey: true, metaKey: false, altKey: false, shiftKey: true, code: 'ArrowUp', key: 'ArrowUp' })).toBe('mod+shift+ArrowUp')
     expect(chordOf({ ctrlKey: false, metaKey: false, altKey: true, shiftKey: false, code: 'BracketLeft', key: 'х' })).toBe('alt+BracketLeft')
+  })
+})
+
+describe('the tab a workspace opens on (tk_f7a924a6)', () => {
+  it('is the one last in front there; else the one that printed last; else the first', () => {
+    const a = row({ last_output: 100 })
+    const b = row({ last_output: 300 })
+    const c = row({ last_output: 200 })
+    const [w] = deriveWorkspaces([a, b, c], ['harbor'], null)
+    expect(lastTabIn(w, { [w!.id]: c.id })?.id).toBe(c.id)
+    expect(lastTabIn(w, { [w!.id]: 'gone' })?.id).toBe(b.id)
+    expect(lastTabIn(w, {})?.id).toBe(b.id)
+    const [quiet] = deriveWorkspaces([row({ project: 'kelp' }), row({ project: 'kelp' })], [], null)
+    expect(lastTabIn(quiet, {})?.id).toBe(quiet!.sessions[0]!.id)
+    expect(lastTabIn(undefined, {})).toBeUndefined()
+  })
+
+  it('remembers one tab per workspace, the newest 100 workspaces', () => {
+    const l = rememberTab({}, 'p:harbor', 't1')
+    expect(rememberTab(l, 'p:harbor', 't1')).toBe(l)
+    expect(rememberTab(l, 'p:kelp', 't2')).toEqual({ 'p:harbor': 't1', 'p:kelp': 't2' })
+    let big = {}
+    for (let i = 0; i < 120; i++) big = rememberTab(big, `p:${i}`, `t${i}`)
+    expect(Object.keys(big)).toHaveLength(100)
+    expect(Object.keys(big)[0]).toBe('p:20')
   })
 })

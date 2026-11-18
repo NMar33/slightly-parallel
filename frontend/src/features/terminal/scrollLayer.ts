@@ -57,6 +57,33 @@ function drawNow(t: Terminal) {
   } catch { /* drawn in its own frame then */ }
 }
 
+type ViewportCore = { _core?: { viewport?: { _innerRefresh?: () => void; syncScrollArea?: (immediate?: boolean) => void; _refreshAnimationFrame?: number | null } } }
+
+/**
+ * Dispose an xterm that may have an animation frame of its own pending.
+ *
+ * xterm 5.3's Viewport asks for a frame after every scroll (syncScrollArea,
+ * _innerRefresh) and does not cancel it on dispose: a reader closed in the
+ * frame it scrolled in (the wheel down at the newest line, a key, the swap to
+ * the longer history) ran that frame on a disposed renderer — "Cannot read
+ * properties of undefined (reading 'dimensions')" (tk_988aeb37, found by the
+ * terminal log). The pending frame is cancelled and the instance's two
+ * callbacks become no-ops before the dispose, so a frame already queued finds
+ * nothing to do. Private internals, looked up defensively.
+ */
+export function disposeTerminal(t: Terminal): void {
+  const v = (t as unknown as ViewportCore)._core?.viewport
+  if (v) {
+    try {
+      if (typeof v._refreshAnimationFrame === 'number') cancelAnimationFrame(v._refreshAnimationFrame)
+      v._refreshAnimationFrame = null
+      v._innerRefresh = () => {}
+      v.syncScrollArea = () => {}
+    } catch { /* a newer xterm: its own dispose then */ }
+  }
+  try { t.dispose() } catch { /* disposed already */ }
+}
+
 export function attachSmoothLayer(t: Terminal, opts: { onMove?: (fromBottom: number) => void } = {}): SmoothLayer {
   const el = t.element!
   const screen = el.querySelector('.xterm-screen') as HTMLElement

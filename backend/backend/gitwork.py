@@ -633,6 +633,26 @@ def session_work(
 
 _SHA_RE = _re.compile(r"^[0-9a-f]{4,40}$")
 
+#: A hash a reader may name: 7 to 40 hex digits, never an option or a ref name.
+_ONE_SHA_RE = _re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def one_commit(repo: Path, sha: str) -> Commit | None:
+    """One commit of ``repo`` by its hash (short or full), with its files.
+
+    ``None`` when ``sha`` is not a hash, names no commit of this repository
+    (a blob or tree id is no commit), or is a prefix of two. Whatever its
+    age: the terminal names a hash it printed, not one inside the log's
+    horizon.
+    """
+    if not _ONE_SHA_RE.match(sha or ""):
+        return None
+    full = (git(repo, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}") or "").strip()
+    if not _SHA_RE.match(full) or not full.startswith(sha):
+        return None
+    got = _parse_log(git(repo, "log", "-1", "--date=iso-strict", "--numstat", f"--format={_FORMAT}", full) or "")
+    return got[0] if got else None
+
 
 def _inside(repo: Path, rel: str) -> Path | None:
     """The file's absolute path, refused if it escapes the repository."""

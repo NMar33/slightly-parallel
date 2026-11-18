@@ -4,8 +4,10 @@
  *
  * At rest it is an ordinary terminal: a title row (folds with alt+T or a
  * double click), the tab strip of the current workspace with the others
- * folded behind "+N", and the live terminal of the tab in front — the
- * only terminal mounted. Around it, on demand:
+ * folded behind "+N", and the live terminal of the tab in front. The last
+ * few tabs in front (KEEP_SCREENS) stay mounted, hidden, socket and all: a
+ * switch back shows them in the same frame instead of a new xterm waiting on
+ * a new tmux client to draw (tk_74f2d3ba). Around it, on demand:
  *
  * - the sidebars (alt+[ and alt+]): workspaces, chats and servers on the
  *   left; the chat's messages, pins, branches and stats on the right. In
@@ -28,27 +30,36 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ChevronRight, ChevronUp, Keyboard, LayoutGrid, Menu, Minus, PanelLeft, PanelRight, Plus, RotateCcw, Server, SquareTerminal, Sun, X, Zap } from 'lucide-react'
+import { ChevronRight, ChevronUp, Keyboard, LayoutGrid, Menu, Minus, PanelLeft, PanelRight, Plus, RotateCcw, SquareTerminal, Sun, X, Zap } from 'lucide-react'
 import { smoothOn } from '../../terminal/smoothScroll'
 
 import '../design/aqua.css'
 import { Screen } from '../../terminal/Screen'
+import { MessageLayer } from '../../terminal/messageMenu/MessageMenu'
 import { PYWINPTY, useTerminalActions, useTerminalStatus } from '../../../lib/terminal'
 import type { MsgMark } from '../../../lib/pins'
 import { useMsgMarkActions } from '../../../lib/pins'
 import { sendTyping, useAquaActions, useGroups, useRestoreNeeded, useSessions, type RestoreResult } from './api'
 import { isNative, openWindow, post } from './bridge'
 import {
-  LW, RW, chordOf, deriveWorkspaces, detachUrl, foldTabs, groupWs, isAsleep, nextWaiting, parseView, placeSide, projectWs,
-  cycleLevel, resolveWs, roleOf, seatBoth, shownOf, stepIn, stepOut, tabsOf, tilesOf, widths, wsIdOf,
-  type AquaSession, type Level, type Seats, type Side, type Workspace,
+  LW, RW, chordOf, deriveWorkspaces, lastTabIn, rememberTab, detachUrl, foldTabs, groupWs, isAsleep, nextWaiting, parseView, placeSide, projectWs,
+  cycleLevel, resolveWs, roleOf, seatBoth, shownOf, stepIn, stepOut, tilesOf, widths, wsIdOf,
+  type AquaSession, type LastTabs, type Level, type Seats, type Side, type Workspace,
 } from './model'
 import { AllLevel, GAP, HEAD, PAD, TILE_H, WsLevel } from './overview'
-import { Dot, Float, GroupForm, GroupMenu, Item, RestoreCard, RoleIcon, SHOWN_WORD, Swatch, lane, moveTargets } from './parts'
+import { Float, GroupForm, GroupMenu, Item, RestoreCard, Swatch, lane, moveTargets } from './parts'
 import { LeftSidebar, RightSidebar, type RightTab } from './sidebars'
+import { RestoreOffer } from './restoreOffer'
 import { TypingBatcher } from './typing'
 import { useWorkBeats } from '../../time/beats'
 import { TimerChip } from './timer'
+import { SchemeButton, useWindowScheme } from './scheme'
+import { HealthLayer, HealthTint, HealthTitle, useHealthEdge, useHealthRuntime } from './health'
+import { factsOf, markNamed, noteOscTitle, tabTitle, useNamed, useOscTitles, useTabInfo } from './tabs/facts'
+import { StripSettingsButton, StripTab, useAltHeld } from './tabs/Tab'
+import { refreshStripFromServer } from './tabs/strip'
+import { PlusButton, agentOf, type AgentCmd, type PlusProps } from './tabs/Plus'
+import { getJson } from '../../../lib/getJson'
 import { t, tn } from '../../../i18n/scope/aqua'
 
 type Status = NonNullable<ReturnType<typeof useTerminalStatus>['data']>
@@ -60,6 +71,14 @@ const INSET = 6
 /** In a browser, the window stands on the page with this margin. */
 const MARGIN = 24
 const ACTIVE_KEY = 'sp-aqua-active'
+/**
+ * Terminals kept mounted: the tab in front and the ones last in front before
+ * it (tk_74f2d3ba). A switch to one of them is a CSS change, no reconnect. Each
+ * costs one xterm and one socket (the window's bench: desktop/e2e/bench).
+ */
+export const KEEP_SCREENS = 4
+/** The tab last in front in each workspace (tk_f7a924a6): a workspace opens on it again. */
+const WS_TABS_KEY = 'sp-aqua-ws-tabs'
 /** A quiet button on the terminal's dark ground, in either theme. */
 const ON_TERM = { color: 'var(--term-text)', borderColor: 'var(--term-muted)' }
 const MOTION_KEY = 'sp-aqua-motion'
@@ -97,6 +116,16 @@ export function TermApp() {
   return <AquaWindow status={st.data} />
 }
 
+/** Now, in ms, read again every 30 s: the minutes a chat waited move on. */
+function useMinuteClock() {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const h = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(h)
+  }, [])
+  return now
+}
+
 function useViewport() {
   const read = () => ({ w: typeof window !== 'undefined' ? window.innerWidth : 1280, h: typeof window !== 'undefined' ? window.innerHeight : 800 })
   const [vp, setVp] = useState(read)
@@ -112,7 +141,6 @@ type Menu =
   | null
   | { kind: 'tab'; id: string; x: number; form?: 'group' | 'rename' }
   | { kind: 'others' }
-  | { kind: 'new' }
   | { kind: 'group'; ws: string }
   | { kind: 'keys' }
 
@@ -130,6 +158,21 @@ function AquaWindow({ status }: { status: Status }) {
   const marks = useMsgMarkActions()
   const [native] = useState(isNative)
   const vp = useViewport()
+  // The colour scheme (Settings › Terminal › Colour scheme) on the window's tokens.
+  const scheme = useWindowScheme()
+  // The tab strip (tk_a9306fb1): titles the programs set, the chats' facts, Alt held.
+  const tabInfo = useTabInfo()
+  const oscTitles = useOscTitles()
+  const named = useNamed()
+  const alt = useAltHeld()
+  const nowMs = useMinuteClock()
+  const titleOf = useCallback((s: AquaSession) => tabTitle(s, tabInfo?.[s.id], oscTitles, named), [tabInfo, oscTitles, named])
+  const [plusOpen, setPlusOpen] = useState(false)
+  useEffect(() => {
+    const again = () => void refreshStripFromServer((u) => getJson(u))
+    window.addEventListener('focus', again)
+    return () => window.removeEventListener('focus', again)
+  }, [])
 
   const fixedChat = view.detached
   const fixedWs = view.ws ? resolveWs(view.ws, workspaces) : ''
@@ -137,6 +180,9 @@ function AquaWindow({ status }: { status: Status }) {
 
   /* ------------------------------------------------ which terminal is in front */
   const [picked, setPicked] = useState(() => fixedChat || store.get(ACTIVE_KEY) || '')
+  const [lastTabs, setLastTabs] = useState<LastTabs>(() => {
+    try { const v = JSON.parse(store.get(WS_TABS_KEY) ?? 'null') as unknown; return v && typeof v === 'object' ? v as LastTabs : {} } catch { return {} }
+  })
   const [wsSel, setWsSel] = useState('')
   const byId = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions])
   const pickedS = byId.get(picked)
@@ -150,8 +196,21 @@ function AquaWindow({ status }: { status: Status }) {
   const wsObj = workspaces.find((w) => w.id === ws)
   const active: AquaSession | undefined = kind === 'chat'
     ? byId.get(fixedChat)
-    : pickedS && wsIdOf(pickedS, groups) === ws ? pickedS : tabsOf(wsObj)[0]
+    : pickedS && wsIdOf(pickedS, groups) === ws ? pickedS : lastTabIn(wsObj, lastTabs)
 
+  // Whatever brought a tab to the front, its workspace opens on it next time.
+  const activeId = active?.id ?? ''
+  const activeWs = active ? wsIdOf(active, groups) : ''
+  useEffect(() => {
+    if (kind === 'chat' || !activeId || !activeWs) return
+    setLastTabs((l) => { const n = rememberTab(l, activeWs, activeId); if (n !== l) store.set(WS_TABS_KEY, JSON.stringify(n)); return n })
+  }, [kind, activeId, activeWs])
+  // The tabs last in front, newest first: their terminals stay mounted (KEEP_SCREENS).
+  const [recent, setRecent] = useState<string[]>([])
+  useEffect(() => {
+    if (!activeId) return
+    setRecent((r) => r[0] === activeId ? r : [activeId, ...r.filter((x) => x !== activeId)].slice(0, KEEP_SCREENS))
+  }, [activeId])
   const [level, setLevel] = useState<Level>('chat')
   const [settled, setSettled] = useState(true)
   useEffect(() => {
@@ -198,12 +257,12 @@ function AquaWindow({ status }: { status: Status }) {
     if (fixedWs || kind === 'chat') return
     const w = workspaces.find((x) => x.id === id)
     setWsSel(id)
-    const first = tabsOf(w)[0]
+    const first = lastTabIn(w, lastTabs)
     if (first) setPicked(first.id)
     setMenu(null)
     setLevel(to)
     if (to === 'chat') refocus()
-  }, [fixedWs, kind, workspaces, refocus])
+  }, [fixedWs, kind, workspaces, refocus, lastTabs])
 
   const out = () => { if (kind !== 'chat') { setLevel((l) => stepOut(l, kind === 'ws')); (document.activeElement as HTMLElement | null)?.blur?.() } }
   const into = () => setLevel((l) => { const n = stepIn(l); if (n === 'chat') refocus(); return n })
@@ -273,7 +332,8 @@ function AquaWindow({ status }: { status: Status }) {
   }
 
   /* ------------------------------------------------------------- the title */
-  const title = active ? (kind === 'chat' ? `${active.label} — ${t('from')} ${wsObj?.name ?? active.project}` : `${active.label} — ${wsObj?.name ?? ''}`) : 'SP Aqua'
+  const activeTitle = active ? titleOf(active) : ''
+  const title = active ? (kind === 'chat' ? `${activeTitle} — ${t('from')} ${wsObj?.name ?? active.project}` : `${activeTitle} — ${wsObj?.name ?? ''}`) : 'SP Aqua'
   useEffect(() => {
     document.title = title
     post({ op: 'title', text: title })
@@ -286,6 +346,12 @@ function AquaWindow({ status }: { status: Status }) {
   const workProject = active?.project ?? ''
   const workTask = active?.task_id ?? ''
   useWorkBeats(() => (workProject ? { project: workProject, taskId: workTask } : null), 'window', `${workProject}\n${workTask}`)
+
+  /* ------------------------------------------------- health and time */
+  // Variant a «quiet» (tk_810245f2): the main window only, so two windows never count the same work twice.
+  const health = kind === 'main'
+  useHealthRuntime(health ? workProject : '')
+  const healthEdge = useHealthEdge()
 
   /* ------------------------------------------------------------- typing */
   const typing = useMemo(() => new TypingBatcher(sendTyping), [])
@@ -307,12 +373,31 @@ function AquaWindow({ status }: { status: Status }) {
   /* --------------------------------------------------------- the actions */
   const projectHere = wsObj?.kind === 'project' ? wsObj.key : active?.project || wsObj?.sessions[0]?.project || projects[0] || ''
   const groupHere = wsObj?.kind === 'group' ? wsObj.key : ''
-  const newTerminal = async (role: 'chat' | 'server' | 'shell') => {
+  /** A plain terminal or a server, here or in `project` (an idle project's tile on the top level). */
+  const newTerminal = async (role: 'server' | 'shell', project?: string) => {
     setMenu(null)
-    const req = role === 'chat'
-      ? { kind: 'shell' as const, project: projectHere, label: status.agent, command: status.agent, role, group: groupHere }
-      : { kind: 'shell' as const, project: projectHere, label: role === 'server' ? t('server') : projectHere || t('shell'), role, group: groupHere }
-    const s = await act.open(req)
+    const where = project ?? projectHere
+    const s = await act.open({ kind: 'shell', project: where, label: role === 'server' ? t('server') : where || t('shell'), role, group: project === undefined ? groupHere : '' })
+    if (s) go(s.id, s)
+  }
+  /** The agent the chat in front runs: the list offers it while the installed ones are read. */
+  const currentAgent: AgentCmd = agentOf(active ? tabInfo?.[active.id]?.chat?.tool : undefined, active?.program, active?.command, status.agent)
+  const openAgent = async (a: AgentCmd) => {
+    setMenu(null)
+    const s = await act.open({ kind: 'shell', project: projectHere, label: a, command: a, role: 'chat', group: groupHere })
+    if (s) go(s.id, s)
+  }
+  const activeAgentId = active ? (tabInfo?.[active.id]?.agent_id || active.agent_id || '') : ''
+  const activeTool = active ? tabInfo?.[active.id]?.chat?.tool ?? '' : ''
+  const branchActive = active && activeAgentId && (activeTool === 'claude-code' || activeTool === 'codex') ? async () => {
+    const d = await getJson<{ command: string; project: string; name: string }>(`/api/terminal/branch/${encodeURIComponent(activeAgentId)}`)
+      .catch((e: unknown) => { flash(e instanceof Error ? e.message : String(e)); return null })
+    if (!d) return
+    const s = await act.open({ kind: 'shell', project: d.project || projectHere, label: `${activeTitle} ⑂`, command: d.command, role: 'chat', group: groupHere })
+    if (s) { flash(`${t('Branched')}: ${activeTitle}`); go(s.id, s) }
+  } : undefined
+  const fromTask = async (taskId: string) => {
+    const s = await act.open({ kind: 'start', task_id: taskId, project: projectHere, role: 'chat', group: groupHere })
     if (s) go(s.id, s)
   }
   const sleepOne = async (s: AquaSession, asleep: boolean) => { await (asleep ? act.sleep(s.id) : act.wake(s.id)); refocus() }
@@ -341,7 +426,8 @@ function AquaWindow({ status }: { status: Status }) {
     'alt+BracketRight': () => toggle('right'),
     'alt+KeyT': () => { setFolded((f) => !f); refocus() },
     'alt+KeyW': () => { const n = nextWaiting(kind === 'ws' ? workspaces.filter((w) => w.id === fixedWs) : workspaces, active?.id ?? '', hidden); if (n) go(n); else flash(t('No chat is waiting on you')) },
-    'alt+KeyN': () => { if (kind !== 'chat') setMenu({ kind: 'new' }) },
+    'alt+KeyN': () => { if (kind !== 'chat') { setMenu(null); setPlusOpen((o) => !o) } },
+    'mod+shift+KeyT': () => { if (kind === 'chat') return false; void newTerminal('shell') },
     'alt+Slash': () => setMenu({ kind: 'keys' }),
     'alt+shift+Slash': () => setMenu({ kind: 'keys' }),
     Escape: () => {
@@ -381,6 +467,16 @@ function AquaWindow({ status }: { status: Status }) {
     const frame = el.closest('[data-aqua-frame]')?.getBoundingClientRect()
     setMenu({ kind: 'tab', id, x: el.getBoundingClientRect().left - (frame?.left ?? 0) })
   }
+  const plusProps: PlusProps = {
+    agent: currentAgent, project: projectHere, path: status.projects?.[projectHere] ?? '', chatTitle: activeTitle,
+    asleep: (wsObj?.sessions ?? []).filter((x) => isAsleep(x)).map((x) => ({ id: x.id, title: titleOf(x) })),
+    act: {
+      agent: (a) => void openAgent(a), shell: () => void newTerminal('shell'), server: () => void newTerminal('server'),
+      branch: branchActive ? () => void branchActive() : undefined,
+      wake: (id) => { const x = byId.get(id); if (x) void sleepOne(x, false).then(() => go(id)) },
+      resume: (aid) => void resume(aid), task: (id) => void fromTask(id),
+    },
+  }
   const waitingHere = wsObj ? wsObj.sessions.filter((s) => shownOf(s) === 'waiting').length : 0
   const stripEl = kind === 'chat' ? null : (
     <div className={`shrink-0 flex items-end gap-2 px-6 min-w-0 relative ${native && folded ? 'aq-app-drag' : ''}`} style={{ height: STRIP, background: 'var(--r2-strip)', borderBottom: '1px solid var(--aq-line)', paddingLeft: folded ? 24 : undefined, paddingRight: folded ? 24 : undefined }}>
@@ -394,23 +490,15 @@ function AquaWindow({ status }: { status: Status }) {
         }}>
         {strip_.tabs.map((s, i) => {
           const on = s.id === active?.id
-          const dim = on && level !== 'chat'
           const server = roleOf(s) === 'server'
           return (
-            <button key={s.id} ref={(el) => { if (el) tabRefs.current.set(s.id, el); else tabRefs.current.delete(s.id) }} type="button" role="tab" aria-selected={on} data-nodrag aria-label={`${s.label} · ${SHOWN_WORD[shownOf(s)]}`}
-              onClick={() => go(s.id)}
-              onContextMenu={(e) => { e.preventDefault(); openTabMenu(s.id, e.currentTarget) }}
-              onKeyDown={(e) => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); openTabMenu(s.id, e.currentTarget) } }}
-              title={`${s.label} · ${SHOWN_WORD[shownOf(s)]}${i < 9 ? ` · alt+${i + 1}` : ''}\n${t('Right-click: the tab menu')}`}
-              className={`h-[26px] px-10 inline-flex items-center gap-6 text-12 rounded-t-[6px] max-w-[190px] shrink-0 ${server && i > 0 && roleOf(strip_.tabs[i - 1]!) !== 'server' ? 'ml-8' : ''}`}
-              style={{
-                background: dim ? 'var(--aq-hover)' : on ? 'var(--aq-term-bg)' : undefined,
-                color: dim ? 'var(--aq-ink)' : on ? 'var(--aq-term-fg)' : 'var(--aq-ink2)',
-                boxShadow: on ? 'inset 0 2px 0 var(--brand)' : wsObj?.kind === 'group' ? `inset 0 -2px 0 ${lane(wsObj.color)}` : undefined,
-                opacity: isAsleep(s) ? 0.6 : 1,
-              }}>
-              <Dot s={s} /><span className="truncate">{s.label}</span><RoleIcon s={s} />
-            </button>
+            <StripTab key={s.id} s={s} title={titleOf(s)} f={factsOf(s, tabInfo?.[s.id], nowMs)} index={i} on={on} dim={on && level !== 'chat'} alt={alt}
+              under={wsObj?.kind === 'group' ? lane(wsObj.color) : undefined} gapBefore={server && i > 0 && roleOf(strip_.tabs[i - 1]!) !== 'server'} canClose
+              tabRef={(el) => { if (el) tabRefs.current.set(s.id, el); else tabRefs.current.delete(s.id) }}
+              onSelect={() => go(s.id)}
+              onClose={() => void act.close(s.id).then(refocus)}
+              onRename={(v) => { markNamed(s.id); void act.rename(s.id, v).then(refocus) }}
+              onMenu={(el) => openTabMenu(s.id, el)} />
           )
         })}
         {!strip_.tabs.length && <span className="self-center px-8 text-12 aq-ink3">{t('No terminal here yet.')}</span>}
@@ -440,18 +528,8 @@ function AquaWindow({ status }: { status: Status }) {
           )}
         </span>
       )}
-      <span className="self-center relative shrink-0">
-        <button type="button" data-nodrag className="aq-btn icon" aria-label={t('New terminal (alt+N)')} title={t('New terminal (alt+N)')} aria-haspopup="menu" aria-expanded={menu?.kind === 'new'}
-          onClick={() => setMenu(menu?.kind === 'new' ? null : { kind: 'new' })}><Plus size={13} /></button>
-        {menu?.kind === 'new' && (
-          <Float label={t('New terminal')} className="top-[24px] left-0 w-[260px]">
-            <span className="aq-label px-6 py-4">{projectHere || t('no project')}{groupHere ? ` · ${wsObj?.name}` : ''}</span>
-            <Item autoFocus onClick={() => void newTerminal('chat')}><Plus size={12} />{t('New chat ({agent})', { agent: status.agent })}</Item>
-            <Item onClick={() => void newTerminal('shell')}><SquareTerminal size={12} />{t('Shell')}</Item>
-            <Item onClick={() => void newTerminal('server')}><Server size={12} />{t('New server')}</Item>
-          </Float>
-        )}
-      </span>
+      <PlusButton {...plusProps} open={plusOpen} setOpen={setPlusOpen} />
+      <StripSettingsButton />
       <TimerChip project={active?.project ?? ''} />
     </div>
   )
@@ -464,13 +542,39 @@ function AquaWindow({ status }: { status: Status }) {
   const tileW = (termW - 2 * PAD - (cols - 1) * GAP) / cols
   const zoomTo = `translate(${PAD + (tileIndex % cols) * (tileW + GAP)}px, ${CRUMB + PAD + HEAD + GAP + Math.floor(tileIndex / cols) * (TILE_H + GAP)}px) scale(${tileW / termW})`
   const showLevels = level !== 'chat' || !settled
-  const terminal = active ? (
+  /** A terminal that can show its screen: not asleep, not ended (unless a shell was opened in it). */
+  const screenable = (x: AquaSession) => !isAsleep(x) && !(x.state === 'ended' && reopened !== x.id)
+  const front = active && screenable(active) ? active : undefined
+  // The tab in front and the ones last in front, mounted; in a fixed order, so a switch moves no DOM.
+  const kept = [activeId, ...recent].filter((id, i, all) => id && all.indexOf(id) === i)
+    .map((id) => byId.get(id)).filter((x): x is AquaSession => !!x && screenable(x)).slice(0, KEEP_SCREENS)
+    .sort((a, b) => a.id.localeCompare(b.id))
+  // Only the terminal in front wears .aqua-screen (refocus, the tests); the others are hidden whole.
+  const screenOf = (x: AquaSession) => {
+    const on = x.id === front?.id
+    return (
+      <div key={x.id} className={`absolute inset-0 ${on ? 'aqua-screen' : 'aqua-kept'}`} style={on ? undefined : { display: 'none' }} aria-hidden={on ? undefined : true}>
+        {/* A right click on a message opens its menu; ids are links (messageMenu/). */}
+        <MessageLayer agentId={tabInfo?.[x.id]?.agent_id || x.agent_id || ''} project={x.project} say={flash} refocus={refocus} goTo={kind === 'chat' ? undefined : go}>
+          {(layer) => (
+            <Screen sid={x.id} token={status.token} fontSize={status.font_size} scrollback={status.scrollback} smooth={smoothOn(status.smooth_scroll)} editor={status.editor}
+              project={x.project} taskId={x.task_id} backend={x.backend} visible={on} autoFocus={on && level === 'chat'}
+              onInput={() => typing.tick(x.id)}
+              onTitle={(title) => noteOscTitle(x.id, title)}
+              hooks={layer.hooks} bind={layer.bind}
+              onZoom={(d) => void termAct.setting({ 'terminal.font_size': Math.max(10, Math.min(22, status.font_size + d)) })} />
+          )}
+        </MessageLayer>
+      </div>
+    )
+  }
+  const placeholder = front ? null : active ? (
     isAsleep(active) ? (
       <div className="h-full flex flex-col items-center justify-center gap-10" style={{ background: 'var(--term-ground)', color: 'var(--term-text)' }}>
         <span className="text-13">{t('{name} is asleep: the agent is stopped, the chat is kept.', { name: active.label })}</span>
         {canSleep && <button type="button" className="aq-btn solid" onClick={() => void sleepOne(active, false)}><Sun size={12} />{t('Wake')}</button>}
       </div>
-    ) : active.state === 'ended' && reopened !== active.id ? (
+    ) : (
       // Attaching to an ended terminal would start a bare shell in it, and its
       // agent would not come back: waking it runs what it ran.
       <div className="h-full flex flex-col items-center justify-center gap-10" style={{ background: 'var(--term-ground)', color: 'var(--term-text)' }}>
@@ -481,16 +585,11 @@ function AquaWindow({ status }: { status: Status }) {
           <button type="button" className="aq-btn line" style={ON_TERM} onClick={() => void act.close(active.id)}><X size={12} />{t('Close the terminal')}</button>
         </span>
       </div>
-    ) : (
-      <Screen key={active.id} sid={active.id} token={status.token} fontSize={status.font_size} scrollback={status.scrollback} smooth={smoothOn(status.smooth_scroll)} editor={status.editor}
-        project={active.project} taskId={active.task_id} backend={active.backend} visible autoFocus={level === 'chat'}
-        onInput={() => typing.tick(active.id)}
-        onZoom={(d) => void termAct.setting({ 'terminal.font_size': Math.max(10, Math.min(22, status.font_size + d)) })} />
     )
   ) : (
     <div className="h-full flex flex-col items-center justify-center gap-10" style={{ background: 'var(--term-ground)', color: 'var(--term-muted)' }}>
       <span className="text-13">{!loaded ? '' : kind === 'chat' ? t('This terminal is gone.') : t('No terminal in this workspace.')}</span>
-      {loaded && kind !== 'chat' && <button type="button" className="aq-btn solid" onClick={() => void newTerminal('chat')}><Plus size={12} />{t('New chat ({agent})', { agent: status.agent })}</button>}
+      {loaded && kind !== 'chat' && <button type="button" className="aq-btn solid" onClick={() => void newTerminal('shell')}><Plus size={12} />{t('New terminal')}</button>}
     </div>
   )
   const body = (
@@ -516,19 +615,22 @@ function AquaWindow({ status }: { status: Status }) {
               </div>
               {kind === 'main' && (
                 <div className="absolute inset-0" style={{ transform: level === 'all' ? 'none' : 'scale(1.05)', opacity: level === 'all' ? 1 : 0, transition: `transform ${dur}ms var(--aq-ease), opacity ${dur}ms`, pointerEvents: level === 'all' ? 'auto' : 'none' }}>
-                  {showLevels && <AllLevel workspaces={workspaces} current={active?.id ?? ''} cols={cols} onWs={(id) => goWs(id, 'ws')} onChat={go} />}
+                  {showLevels && <AllLevel workspaces={workspaces} current={active?.id ?? ''} cols={cols} onWs={(id) => goWs(id, 'ws')} onChat={go}
+                    onIdle={(id) => goWs(id)} onNewShell={(code) => void newTerminal('shell', code)}
+                    onNewSpace={canGroup ? async (name, color) => { const g = await act.newGroup(name, color); if (g) { goWs(groupWs(g.id)); flash(t('New workspace {name}', { name: g.name })) } } : undefined} />}
                 </div>
               )}
             </div>
           </div>
         </div>
       )}
-      <div className="absolute inset-0 origin-top-left aqua-screen" style={{
+      <div className="absolute inset-0 origin-top-left aqua-stage" style={{
         transform: level === 'chat' ? 'none' : zoomTo, opacity: level === 'chat' ? 1 : 0,
         transition: `transform ${dur}ms var(--aq-ease), opacity ${Math.round(dur * 0.7)}ms`, pointerEvents: level === 'chat' ? 'auto' : 'none',
         willChange: instant || settled ? undefined : 'transform', background: 'var(--term-ground)',
       }}>
-        {terminal}
+        {kept.map(screenOf)}
+        {!front && <div className="absolute inset-0 aqua-screen">{placeholder}</div>}
       </div>
     </div>
   )
@@ -541,7 +643,7 @@ function AquaWindow({ status }: { status: Status }) {
       style={{ width: k === 'left' ? LW : RW, height: strip + bodyH, background: 'var(--aq-panel)', borderLeft: '1px solid var(--aq-line)', borderRight: '1px solid var(--aq-line)' }}>
       {k === 'left'
         ? <LeftSidebar workspaces={workspaces} ws={ws} active={active?.id ?? ''} canSleep={canSleep} onChat={go} onWs={(id) => goWs(id)}
-            onSleep={(s, a) => void sleepOne(s, a)} onSleepWs={(w, a) => void sleepWs(w, a)} onNew={(r) => void newTerminal(r)}
+            onSleep={(s, a) => void sleepOne(s, a)} onSleepWs={(w, a) => void sleepWs(w, a)} onNew={(r) => void newTerminal(r)} plus={<PlusButton {...plusProps} look="side" />}
             onGroupMenu={(w) => setMenu({ kind: 'group', ws: w.id })} />
         : <RightSidebar s={active} tab={rtab} setTab={setRtab} workspaces={workspaces} onChat={go} onResume={(a) => void resume(a)} onFork={(m) => void fork(m)} />}
     </aside>
@@ -581,17 +683,21 @@ function AquaWindow({ status }: { status: Status }) {
       data-folded={folded || undefined}
       style={native ? { left: 0, top: 0, width: lw + termW + rw, height: frameH } : { left: termX - lw, top: MARGIN, height: frameH }}>
       <div className={`flex flex-col overflow-hidden ${native ? 'h-full' : 'rounded-[8px] h-full'}`} style={native ? undefined : {
-        boxShadow: 'var(--shadow-lg)', border: '1px solid var(--border-strong)', borderTop: kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined,
+        boxShadow: 'var(--shadow-lg)', border: `1px solid ${health && healthEdge ? healthEdge : 'var(--border-strong)'}`, borderTop: kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined,
       }}>
         {/* the title row: folds to a 12px strip */}
         <div className={`relative shrink-0 select-none ${native ? 'aq-app-drag' : ''}`} style={{ height: bar, background: 'var(--r2-bar)', color: 'var(--r2-bar-ink)', transition: instant ? undefined : 'height 120ms var(--aq-ease)', borderTop: native && kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined }}
           onPointerDown={onBarDown} onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest('button') && Date.now() - unfoldedAt.current > 600) { setFolded(!folded); refocus() } }}>
+          {health && <HealthTint />}
+          {/* In the app's own window there is no frame: the zone's colour is a line along the window's edge. */}
+          {health && native && healthEdge && <span aria-hidden data-health-edge className="fixed inset-0 pointer-events-none z-[1]" style={{ boxShadow: `inset 0 0 0 1px ${healthEdge}` }} />}
           {kind !== 'chat' && !folded && toggleBtn('left')}
           <span className="absolute truncate text-center pointer-events-none" style={{ left: lw + (folded ? 40 : 110), width: Math.max(40, termW - (folded ? 80 : 220)), top: 0, lineHeight: `${bar}px`, fontSize: folded ? 9 : 13, fontWeight: folded ? 500 : 600, color: folded ? 'var(--text-tertiary)' : 'var(--r2-bar-ink)' }}>
             {title}
           </span>
           {!folded && (
             <span className="absolute flex items-center gap-2" style={{ right: rw + (kind === 'chat' ? 8 : 36), top: 5 }}>
+              {health && <HealthTitle folded={false} />}
               {kind === 'chat' && <TimerChip project={active?.project ?? ''} />}
               {kind !== 'chat' && (
                 <button type="button" data-nodrag className="aq-btn" aria-pressed={level !== 'chat'} onClick={cycle}
@@ -601,6 +707,7 @@ function AquaWindow({ status }: { status: Status }) {
                 </button>
               )}
               <button type="button" data-nodrag className="aq-btn icon" aria-label={t('Keys')} title={t('Keys (alt+/)')} onClick={() => setMenu({ kind: 'keys' })}><Keyboard size={13} /></button>
+              <SchemeButton onClose={refocus} />
               <button type="button" data-nodrag className="aq-btn icon" aria-pressed={instant} aria-label={instant ? t('Motion: instant') : t('Motion: fluid')} title={instant ? t('Motion: instant') : t('Motion: fluid')} onClick={() => { setInstant(!instant); refocus() }}><Zap size={13} /></button>
               <button type="button" data-nodrag className="aq-btn icon" aria-label={t('Fold the title row (alt+T)')} title={t('Fold the title row (alt+T)')} onClick={() => { setFolded(true); refocus() }}><ChevronUp size={14} /></button>
               {native && <button type="button" data-nodrag className="aq-btn icon" aria-label={t('Minimise')} title={t('Minimise')} onClick={() => post({ op: 'minimize' })}><Minus size={13} /></button>}
@@ -612,6 +719,7 @@ function AquaWindow({ status }: { status: Status }) {
             <button type="button" data-nodrag className="absolute inset-0 w-full cursor-pointer hover:bg-[var(--aq-hover)]" aria-label={t('Unfold the title row (alt+T)')} title={t('Unfold the title row (alt+T)')}
               onClick={() => { unfoldedAt.current = Date.now(); setFolded(false); refocus() }} />
           )}
+          {folded && health && <span className="absolute z-[2]" style={{ right: rw + 40, top: 0 }}><HealthTitle folded /></span>}
           {kind !== 'chat' && !folded && toggleBtn('right')}
         </div>
         <div className="flex min-h-0 flex-1" style={{ background: 'var(--aq-panel)' }}>
@@ -621,6 +729,7 @@ function AquaWindow({ status }: { status: Status }) {
             {kind !== 'chat' && folded && toggleBtn('left')}
             {kind !== 'chat' && folded && toggleBtn('right')}
             {body}
+            {health && <HealthLayer top={strip} project={workProject} />}
           </div>
           {rightSeated.map(panel)}
         </div>
@@ -629,10 +738,10 @@ function AquaWindow({ status }: { status: Status }) {
       {menu && menu.kind !== 'keys' && <button type="button" aria-label={t('Close the menu')} tabIndex={-1} className="fixed inset-0 z-[35] cursor-default" onClick={() => { setMenu(null); refocus() }} />}
       {tabMenuS && menu?.kind === 'tab' && (
         <Float label={tabMenuS.label} className="w-[280px]" style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + STRIP + 2 }}>
-          <span className="aq-label px-6 py-4 truncate">{tabMenuS.label}</span>
+          <span className="aq-label px-6 py-4 truncate">{titleOf(tabMenuS)}</span>
           {menu.form === 'rename' ? (
-            <form className="p-4" onSubmit={(e) => { e.preventDefault(); const v = String(new FormData(e.currentTarget).get('label') ?? '').trim(); if (v) void act.rename(tabMenuS.id, v); setMenu(null); refocus() }}>
-              <input name="label" autoFocus defaultValue={tabMenuS.label} aria-label={t('Name')} maxLength={80}
+            <form className="p-4" onSubmit={(e) => { e.preventDefault(); const v = String(new FormData(e.currentTarget).get('label') ?? '').trim(); if (v) { markNamed(tabMenuS.id); void act.rename(tabMenuS.id, v) } setMenu(null); refocus() }}>
+              <input name="label" autoFocus defaultValue={titleOf(tabMenuS)} aria-label={t('Name')} maxLength={80}
                 className="w-full h-[26px] px-8 rounded-[6px] text-12 outline-none" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }} />
             </form>
           ) : menu.form === 'group' ? (
@@ -673,6 +782,7 @@ function AquaWindow({ status }: { status: Status }) {
           onClose={() => { setMenu(null); refocus() }} />
       )}
       {menu?.kind === 'keys' && <Keys onClose={() => { setMenu(null); refocus() }} />}
+      {kind === 'main' && native && <RestoreOffer refocus={refocus} />}
       {showRestore && <RestoreCard rows={restoreRows} results={restoreOut} running={restoring} onRun={() => void runRestore()} onClose={() => { setRestoreShut(true); refocus() }} />}
       {flashText && (
         <div key={flashText.n} role="status" className="absolute bottom-16 left-1/2 -translate-x-1/2 z-[50] rounded-[999px] px-14 py-6 text-12 aq-fade"
@@ -682,7 +792,7 @@ function AquaWindow({ status }: { status: Status }) {
   )
 
   return (
-    <div className="aq fixed inset-0 overflow-hidden" data-v="j" style={{ background: native ? 'var(--aq-panel)' : 'var(--r2-wall)' }}>
+    <div className="aq fixed inset-0 overflow-hidden" data-v="j" data-scheme={scheme.id} data-scheme-scope={scheme.scope} style={{ ...scheme.style, background: native ? 'var(--aq-panel)' : 'var(--r2-wall)' }}>
       {frame}
     </div>
   )
@@ -692,7 +802,9 @@ function Keys({ onClose }: { onClose: () => void }) {
   const rows: Array<[string, string]> = [
     ['Ctrl Shift ↑', t('zoom out: the workspace, then every workspace')], ['Ctrl Shift ↓', t('zoom back in')], ['Esc', t('back to the terminal')],
     ['alt [', t('left sidebar')], ['alt ]', t('right sidebar')], ['alt T', t('fold or unfold the title row')], ['alt W', t('next chat waiting on you')],
-    ['alt N', t('new terminal')], ['alt 1…9', t('the tab with that number')], ['alt /', t('these keys')],
+    ['alt N', t('new terminal: the list')], ['Ctrl Shift T', t('new terminal: a shell in the project')], ['alt 1…9', t('the tab with that number')], ['alt /', t('these keys')],
+    ['alt', t('held: each tab\'s branches, tasks and minutes waited')], [t('Ctrl+click +'), t('the list of what to open; keys 1–9 pick')],
+    [t('double click a tab'), t('rename it')],
     [t('right-click a tab'), t('its menu: rename, sleep, group, detach, close')], ['Shift F10', t('the focused tab\'s menu')],
   ]
   return (

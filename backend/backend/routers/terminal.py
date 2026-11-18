@@ -51,7 +51,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Res
 from anyio import from_thread as anyio_from_thread
 from fastapi.concurrency import run_in_threadpool
 
-from .. import app_settings, conpty, termlib, timeauto
+from .. import app_settings, conpty, termlib, termlog, timeauto
 from ..config import Settings
 from ..db import ViewStore
 from .deps import foreign_origin, get_store, not_found, operator_only, to_int
@@ -970,7 +970,20 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
 
         # Typing in a project's terminal is working on it (the smart timer).
         timer = timeauto.of(app)
-        typed = lambda: timer.beat(str(row.get("project") or ""), str(row.get("task_id") or ""), "terminal")  # noqa: E731
+        # Only what the operator typed or pasted: a click (a mouse report,
+        # with tmux's mouse on), focus in/out and xterm's answers to a
+        # program's questions come through here too, and are not typing. The
+        # page says which is which (`typed` on an input message); a message
+        # that does not say is read by its bytes.
+        def typed(data: str | bytes, marked: Any = None) -> None:
+            if marked is False or (marked is not True and termlib.is_terminal_reply(data)):
+                return
+            timer.beat(str(row.get("project") or ""), str(row.get("task_id") or ""), "terminal")
+
+        async def write(b: bytes) -> None:
+            # Timed for the terminal log (termlog.py): a slow write is a stall.
+            with termlog.timed("write", session_id, len(b)):
+                await run_in_threadpool(session.write, b)
 
         # A write to the terminal waits while the program in it reads no
         # input and the tty's queue is full (a long paste into a running
@@ -985,8 +998,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                     # the echo has already moved the cursor past the line.
                     if in_tmux and b"\r" in msg["bytes"]:
                         await run_in_threadpool(_stamp_enter, root, session_id)
-                    await run_in_threadpool(session.write, msg["bytes"])
-                    typed()
+                    await write(msg["bytes"])
+                    typed(msg["bytes"])
                 elif msg.get("text"):
                     try:
                         payload = json.loads(msg["text"])
@@ -995,8 +1008,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                     except ValueError:
                         if in_tmux and "\r" in msg["text"]:
                             await run_in_threadpool(_stamp_enter, root, session_id)
-                        await run_in_threadpool(session.write, msg["text"].encode())
-                        typed()
+                        await write(msg["text"].encode())
+                        typed(msg["text"])
                         continue
                     kind = payload.get("type")
                     if kind == "resize":
@@ -1005,8 +1018,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                         data = str(payload.get("data") or "")
                         if in_tmux and "\r" in data:
                             await run_in_threadpool(_stamp_enter, root, session_id)
-                        await run_in_threadpool(session.write, data.encode())
-                        typed()
+                        await write(data.encode())
+                        typed(data, payload.get("typed"))
                     elif kind == "close":
                         # Off the event loop: ending a shell's tree takes a while on Windows.
                         await run_in_threadpool(_drop, session_id)
@@ -1050,7 +1063,9 @@ async def _pump(session: PtySession) -> None:
             del session.buffer[: len(session.buffer) - _BUFFER_BYTES]
         for ws in list(session.subscribers):
             try:
-                await ws.send_bytes(data)
+                # Timed for the terminal log: a slow view holds up every view's output.
+                with termlog.timed("send", session.session_id, len(data)):
+                    await ws.send_bytes(data)
             except Exception:  # noqa: BLE001 — drop dead subscribers
                 session.subscribers.discard(ws)
     if session.closed:

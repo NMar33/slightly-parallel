@@ -10,10 +10,11 @@ the checks still to build, and the limits the release notes must name.
 
 1. **One candidate.** Freeze the commit; run the whole CI on it
    (`scripts/publish-ci.sh ci-windows "…"`, then
-   `gh workflow run ci.yml --ref ci-windows`). Every job green on the same
-   commit, no unexplained retry: `scripts/release-ready.sh ci-windows vX.Y.Z`
-   checks that for the branch's head commit and prints the merge and tag
-   commands.
+   `gh workflow run ci.yml --ref ci-windows` and
+   `gh workflow run terminal.yml --ref ci-windows`). Every job green on the
+   same commit, no unexplained retry: `scripts/release-ready.sh ci-windows
+   vX.Y.Z` checks CI and the Terminal window for the branch's head commit
+   (the terminal bench does not gate) and prints the merge and tag commands.
 2. **Real agents.** Run `Agents` (`.github/workflows/agents.yml`) by hand:
    Claude Code, Codex and OpenCode on cheap models, eight messages each,
    `#sp` among them.

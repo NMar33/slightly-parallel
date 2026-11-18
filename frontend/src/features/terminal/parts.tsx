@@ -5,7 +5,7 @@
  */
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Power, RotateCcw, SquareTerminal, X } from 'lucide-react'
 
 import { Segmented } from '../../components/Segmented'
@@ -15,7 +15,10 @@ import {
 } from '../../lib/terminal'
 import { agentLabel } from '../../utils/agentLabel'
 import { useWaitingNotify } from './waiting'
-import { useStrSetting } from '../../lib/settings'
+import { SETTINGS_QUERY_KEY, useStrSetting } from '../../lib/settings'
+import { postJson } from '../../lib/getJson'
+import { termLog, type LogMode } from './telemetry'
+import { TermWindowSettings } from '../aqua/app/tabs/WindowSettings'
 import { t, tn } from '../../i18n/scope/system'
 
 export function StateDot({ state, size = 8 }: { state: TermState; size?: number }) {
@@ -186,6 +189,8 @@ export function TerminalSettings() {
   const act = useTerminalActions()
   const notify = useWaitingNotify()
   const editorChoice = useStrSetting('terminal.editor', 'auto')
+  const logMode = useStrSetting('terminal.log', 'light') as LogMode
+  const qc = useQueryClient()
   if (!st) return null
   return (
     <div className="flex flex-col w-[360px] p-12 gap-2">
@@ -232,6 +237,18 @@ export function TerminalSettings() {
           onChange={(v) => act.setting({ 'terminal.smooth_scroll': v === 'on' })}
           options={[['on', t('on')], ['off', t('off')]] as const} />
       </Row>
+      <Row label={t('Terminal log')} hint={logMode === 'full'
+        ? t('Full: every key, paste, wheel and frame with its time, to find a bug. Uses more memory and disk; goes back to light after 2 hours.')
+        : t('Light: counts slow frames, stalls, errors and lost connections; a small file a day, shown on the Monitor. Typed and printed text is never kept.')}>
+        <Segmented label={t('Terminal log')} shape="pill" height={20} value={logMode}
+          onChange={(v) => {
+            void postJson<{ mode: LogMode }>('/api/terminal/log/mode', { mode: v })
+              .then((got) => termLog.setMode(got.mode), () => undefined)
+              .finally(() => void qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY }))
+          }}
+          options={[['off', t('off')], ['light', t('light')], ['full', t('full')]] as const} />
+      </Row>
+      <TermWindowSettings />
       <Row label={t('Text')}>
         <Segmented label={t('Text')} shape="pill" height={20} value={String(st.font_size)} onChange={(v) => act.setting({ 'terminal.font_size': Number(v) })}
           options={[['12', 'S'], ['13', 'M'], ['15', 'L'], ['17', 'XL']] as const} />

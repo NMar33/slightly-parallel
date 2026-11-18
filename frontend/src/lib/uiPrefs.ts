@@ -37,6 +37,11 @@ const EXCLUDE_PREFIXES = [
   'sp-task-draft:',
   'sp-doc-block-draft:',
   'sp-release-draft:',
+  // The terminal window's health day (features/aqua/app/health): a running
+  // count the page saves every few seconds by itself. Synced, the server's
+  // first copy came back over the live one on every reload, and a new window
+  // started from another window's day (tk_a9306fb1).
+  'sp-term-health-day',
 ]
 
 export function isSyncable(key: string): boolean {
@@ -136,9 +141,14 @@ export async function hydratePrefs(timeoutMs = 1500): Promise<void> {
     ])
     if (!data) return
     const server = data?.prefs && typeof data.prefs === 'object' ? data.prefs : {}
+    const stale: Record<string, null> = {}
     for (const [k, v] of Object.entries(server)) {
+      // A key that stays in the browser: a copy the server kept from before
+      // is never written over the browser's own, and goes from the server.
+      if (k.startsWith(PREFIX) && !isSyncable(k)) { stale[k] = null; continue }
       try { localStorage.setItem(k, String(v)) } catch { /* quota */ }
     }
+    if (Object.keys(stale).length > 0) void postJson('/api/prefs', { values: stale }).catch(() => { /* next boot retries */ })
     // The server's copy may still be under the old prefix: adopted now,
     // the new keys go up with the orphans below.
     adoptOldKeys()

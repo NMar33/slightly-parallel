@@ -430,9 +430,41 @@ SPECS: tuple[SettingSpec, ...] = (
         type="bool", default=True, group="Terminal",
     ),
     SettingSpec(
+        key="terminal.log", label="Terminal log",
+        description="light: counts how the terminal works (slow frames, stalls, errors, reconnects) and keeps a small file a day; the Monitor shows it. full: also every key, paste, wheel and frame with its time, for finding a bug; uses more memory and disk, and turns back to light after 2 hours. What you type and what the terminal prints is never kept.",
+        type="choice", default="light", group="Terminal", options=("off", "light", "full"),
+    ),
+    SettingSpec(
         key="terminal.font_size", label="Terminal text",
         description="The size of the text in every terminal.",
         type="int", default=13, group="Terminal", unit="px", minimum=10, maximum=22,
+    ),
+    # The colour schemes (frontend/src/features/terminal/schemes.ts holds
+    # their colours; the ids here and there are the same, a test checks).
+    SettingSpec(
+        key="terminal.scheme", label="Colour scheme",
+        description="The colours of every terminal: its ground, text, cursor, selection and the 16 colours programs print in. sp-now is the terminal's colours as they were.",
+        type="choice", default="sp-now", group="Terminal",
+        options=("sp-now", "sp-graphite", "sp-paper", "catppuccin-mocha", "catppuccin-latte", "tokyo-night",
+                 "gruvbox-dark", "one-dark", "nord", "solarized-light", "dracula", "rose-pine"),
+    ),
+    SettingSpec(
+        key="terminal.scheme_scope", label="Where the scheme applies",
+        description="terminal: the terminal only. window: the terminal window's title row, tabs, sidebars and menus take the scheme's colours too.",
+        type="choice", default="terminal", group="Terminal", options=("terminal", "window"),
+    ),
+    # The terminal window (desktop/main.js) reads this at start: the windows
+    # besides the main one that were open when the app was closed.
+    SettingSpec(
+        key="terminal.restore_windows", label="On start",
+        description=(
+            "The terminal window, started again after it was closed with detached windows open. "
+            "restore: they open again with their chat or workspace, size and place. "
+            "ask: the main window asks whether to open them. main: only the main window. "
+            "A window you closed yourself does not come back. "
+            "On Wayland they come back in their size only: the desktop decides where a window stands."
+        ),
+        type="choice", default="restore", group="Terminal", options=("restore", "ask", "main"),
     ),
     # --------------------------------------------------------------- time ---
     # The smart timer (timeauto.py): what counts as away, and what a project

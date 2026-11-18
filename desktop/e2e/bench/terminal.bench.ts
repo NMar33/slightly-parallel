@@ -18,8 +18,9 @@ import { makeData } from './data'
  * - memory by windows: the main window and windows detached from it (op:
  *   detach, one Electron app, one session), each with a live terminal that
  *   has printed 12 000 lines;
- * - memory by tabs: N terminals as tabs of one window (only the front one is
- *   mounted), each opened by "+" and filled the same way;
+ * - memory by tabs: N terminals as tabs of one window (the front one and the
+ *   ones last in front are mounted, TermApp.tsx KEEP_SCREENS), each opened
+ *   by "+" and filled the same way;
  * - speed: 20 MB of coloured output (data.ts) through the real path (`cat`
  *   in the terminal's shell; PowerShell on Windows), and written straight
  *   into the page's xterm (plain terminals only), plus scrolling.
@@ -309,8 +310,9 @@ test('memory by tabs (one window)', async ({ server }) => {
             const have = await strip.getByRole('tab').count()
             await phase(step, 150_000 * Math.max(1, n - have) + SETTLE + 60_000, async () => {
               for (let k = await strip.getByRole('tab').count(); k < n; k++) {
-                await page.getByRole('button', { name: 'New terminal (alt+N)' }).click()
-                await page.getByRole('menuitem', { name: 'Shell' }).click()
+                // "+"'s list, 3: a plain terminal (1 would start an agent; tabs.spec.ts)
+                await page.getByRole('button', { name: 'Choose what to open' }).click()
+                await page.keyboard.press('3')
                 await expect(strip.getByRole('tab')).toHaveCount(k + 1)
                 await ready(page)
                 await fill(page, k + 1)

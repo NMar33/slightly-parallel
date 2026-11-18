@@ -3,7 +3,8 @@
  *
  * Left: the workspaces (a project each, and the operator's groups), the
  * chats of the open one, sleep and wake per chat and per workspace, the
- * servers apart, and "new chat / new server".
+ * servers apart, and «New terminal ⌄» (a shell at once, the "+" list
+ * beside it) and «New server».
  *
  * Right: the chat in front, read from what Slightly Parallel captured —
  * Messages (with pin, carry and fork-later on each, the marks API),
@@ -14,7 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, Bot, ChevronDown, ChevronRight, GitBranch, GitFork, Link2, Menu, MessageSquare, Moon, Pin, Play, Plus, Server, Sun, X } from 'lucide-react'
+import { Activity, Bot, ChevronDown, ChevronRight, GitBranch, GitFork, Link2, Menu, MessageSquare, Moon, Pin, Play, Server, Sun, X } from 'lucide-react'
 
 import { getJson } from '../../../lib/getJson'
 import { useMsgMarkActions, useMsgMarks, type MsgMark } from '../../../lib/pins'
@@ -27,11 +28,13 @@ import { t, tn } from '../../../i18n/scope/aqua'
 
 /* ================================================================ left */
 
-export function LeftSidebar({ workspaces, ws, active, canSleep, onChat, onWs, onSleep, onSleepWs, onNew, onGroupMenu }: {
+export function LeftSidebar({ workspaces, ws, active, canSleep, onChat, onWs, onSleep, onSleepWs, onNew, onGroupMenu, plus }: {
   workspaces: Workspace[]; ws: string; active: string; canSleep: boolean
   onChat: (id: string) => void; onWs: (id: string) => void
   onSleep: (s: AquaSession, asleep: boolean) => void; onSleepWs: (w: Workspace, asleep: boolean) => void
-  onNew: (role: 'chat' | 'server') => void; onGroupMenu: (w: Workspace) => void
+  onNew: (role: 'server') => void; onGroupMenu: (w: Workspace) => void
+  /** «New terminal ⌄»: the "+" of the tab strip in the sidebar's look (tabs/Plus.tsx). */
+  plus: ReactNode
 }) {
   const [others, setOthers] = useState(false)
   const live = workspaces.filter(isLive)
@@ -108,8 +111,8 @@ export function LeftSidebar({ workspaces, ws, active, canSleep, onChat, onWs, on
           </button>
         ))}
         {!servers.length && <span className="text-11 aq-ink3 px-6">{t('none')}</span>}
-        <div className="flex gap-4 pt-6">
-          <button type="button" data-nodrag className="aq-btn line" onClick={() => onNew('chat')}><Plus size={12} />{t('New chat')}</button>
+        <div className="flex flex-wrap gap-4 pt-6">
+          {plus}
           <button type="button" data-nodrag className="aq-btn line" onClick={() => onNew('server')}><Server size={12} />{t('New server')}</button>
         </div>
       </div>

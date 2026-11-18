@@ -94,6 +94,8 @@ from .routers import (
     timelapse,
     tour,
     terminal,
+    termlog as termlog_routes,
+    termwin as termwin_routes,
     time_tracking,
     evidence,
     calendar,
@@ -1085,6 +1087,10 @@ def create_app(
     # (setting terminal.enabled, or SP_ENABLE_TERMINAL); the token is
     # made here and handed to Slightly Parallel's own pages (routers/terminal.py).
     app.include_router(terminal.build_router(settings))
+    # The terminal's own log (termlog.py): answers whether the terminal is on or not.
+    app.include_router(termlog_routes.router)
+    # The window's tab strip (termwin.py): titles, chat facts, the "+" menu's reads.
+    app.include_router(termwin_routes.router)
 
     _mount_frontend(app)
     return app

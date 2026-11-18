@@ -16,8 +16,8 @@ test.describe('tabs', () => {
     const strip = page.getByRole('tablist', { name: 'Chats' })
     await expect(strip.getByRole('tab')).toHaveCount(1)
 
-    await page.getByRole('button', { name: 'New terminal (alt+N)' }).click()
-    await page.getByRole('menuitem', { name: 'Shell' }).click()
+    // a plain click on "+": the shell, no list (tk_e7649e7c)
+    await page.getByRole('button', { name: 'New terminal', exact: true }).click()
     await expect(strip.getByRole('tab')).toHaveCount(2)
     const first = strip.getByRole('tab', { name: new RegExp(`^${shell.label} `) })
     const second = strip.getByRole('tab', { name: new RegExp(`^${PROJECT} `) })
@@ -27,10 +27,11 @@ test.describe('tabs', () => {
     await typeLine(page, echoCalc('in-', '1+1', '-second'))
     await expectLine(page, 'in-2-second')
 
-    // Only the tab in front is mounted: switching swaps the one terminal.
+    // One terminal in front; the tab left stays mounted, hidden (TermApp KEEP_SCREENS, tk_74f2d3ba).
     await first.click()
     await expect(first).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('.xterm')).toHaveCount(1)
+    await expect(page.locator('.aqua-screen .xterm')).toHaveCount(1)
+    await expect(page.locator('.aqua-kept .xterm')).toHaveCount(1)
     await ready(page)
     await expect.poll(async () => (await lines(page)).some((l) => l.trim() === 'in-2-second')).toBe(false)
     await page.keyboard.press('Alt+Digit2')
@@ -41,6 +42,7 @@ test.describe('tabs', () => {
     await page.getByRole('menuitem', { name: 'Close the terminal' }).click()
     await expect(strip.getByRole('tab')).toHaveCount(1)
     await expect(first).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('.xterm')).toHaveCount(1)
     await expect.poll(async () => (await sessions(server.api)).map((s) => s.id)).toEqual([shell.id])
   })
 })

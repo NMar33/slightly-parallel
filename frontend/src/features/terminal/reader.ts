@@ -21,7 +21,7 @@
 import type { Terminal } from 'xterm'
 import type { SearchAddon } from 'xterm-addon-search'
 import { postJson } from '../../lib/getJson'
-import { attachSmoothLayer, type SmoothLayer } from './scrollLayer'
+import { attachSmoothLayer, disposeTerminal, type SmoothLayer } from './scrollLayer'
 
 export interface HistoryRows {
   text: string
@@ -80,7 +80,7 @@ export async function buildReader(make: Make, host: HTMLElement, live: Terminal,
   const layer = attachSmoothLayer(term)
   return {
     term, layer, search, history: got.history, above: got.above, el,
-    dispose: () => { layer.dispose(); try { term.dispose() } catch { /* fine */ } el.remove() },
+    dispose: () => { layer.dispose(); disposeTerminal(term); el.remove() },
   }
 }
 

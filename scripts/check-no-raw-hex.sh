@@ -16,6 +16,7 @@ ALLOW=(
   'frontend/src/features/timelapse/spmark.ts'
   'frontend/src/features/timelapse/scene.ts'
   'frontend/src/features/terminal/palette.ts'
+  'frontend/src/features/terminal/schemes.ts'
   'frontend/src/features/tour/scene.ts'
   'frontend/src/features/tour/yard.ts'
   'frontend/src/components/Brand.tsx'

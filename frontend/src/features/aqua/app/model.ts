@@ -92,6 +92,20 @@ export function deriveWorkspaces(sessions: AquaSession[], projects: string[], gr
 /** A workspace with any terminal in it (a group always counts: it was made on purpose). */
 export const isLive = (w: Workspace) => w.sessions.length > 0 || w.kind === 'group'
 
+/**
+ * The top level's tiles (tk_2ac8748d): the live workspaces as before, then
+ * every registered project without a terminal, the most recently active
+ * first (`lastActivity`: project code → the snapshot's last_activity), then
+ * by name. A project the Setup page removed (the example project, hidden)
+ * is not registered, so it has no tile.
+ */
+export function allLevelOrder(workspaces: Workspace[], lastActivity: Record<string, string> = {}) {
+  const live = workspaces.filter(isLive)
+  const idle = workspaces.filter((w) => !isLive(w) && w.kind === 'project' && w.key)
+    .sort((a, b) => (lastActivity[b.key] ?? '').localeCompare(lastActivity[a.key] ?? '') || a.name.localeCompare(b.name))
+  return { live, idle }
+}
+
 export const waitingIn = (w: Workspace) => w.sessions.filter((s) => shownOf(s) === 'waiting').length
 
 /** The tabs of a workspace: chats and shells first, servers after, each in creation order. */
@@ -225,4 +239,34 @@ export function seatBoth(x: number, w: number, deskW: number): Seats | null {
 export function chordOf(e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'code' | 'key'>): string {
   const mods = `${e.ctrlKey || e.metaKey ? 'mod+' : ''}${e.altKey ? 'alt+' : ''}${e.shiftKey ? 'shift+' : ''}`
   return `${mods}${e.code || e.key}`
+}
+
+/* ------------------------------------------------- the last tab per workspace */
+
+/** workspace id → the terminal last in front there (tk_f7a924a6). */
+export type LastTabs = Record<string, string>
+
+/**
+ * The tab a workspace opens on: the one last in front there, if it is still
+ * a tab of it; else the one that printed most recently; else the first.
+ */
+export function lastTabIn(w: Workspace | undefined, last: LastTabs, hidden: (sid: string) => boolean = () => false): AquaSession | undefined {
+  const tabs = tabsOf(w, hidden)
+  if (!w || !tabs.length) return undefined
+  const kept = tabs.find((s) => s.id === last[w.id])
+  if (kept) return kept
+  const awake = tabs.filter((s) => !isAsleep(s) && s.state !== 'ended')
+  const newest = [...awake].sort((a, b) => (Number(b.last_output) || 0) - (Number(a.last_output) || 0))[0]
+  return newest && (Number(newest.last_output) || 0) > 0 ? newest : tabs[0]
+}
+
+/** `last` with `sid` as the tab of `wsId`; the newest 100 workspaces kept. */
+export function rememberTab(last: LastTabs, wsId: string, sid: string): LastTabs {
+  if (!wsId || !sid || last[wsId] === sid) return last
+  const next = { ...last }
+  delete next[wsId]
+  next[wsId] = sid
+  const keys = Object.keys(next)
+  for (const k of keys.slice(0, Math.max(0, keys.length - 100))) delete next[k]
+  return next
 }

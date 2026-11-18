@@ -76,6 +76,14 @@ export function labWith(over: Record<string, Partial<Facts>>): Lab {
   return l
 }
 export const factsOf = (l: Lab, s: Session) => l.facts[s.id] ?? seedFacts(s)
+export const getLab = () => lab
+/** Lays new facts over some chats (round 5: context that grows, the jump buttons). */
+export function patchFacts(patch: Record<string, Partial<Facts>>) {
+  const facts = { ...lab.facts }
+  for (const [id, f] of Object.entries(patch)) { const s = SESSIONS.find((x) => x.id === id); if (s) facts[id] = { ...factsOf(lab, s), ...f } }
+  lab = { ...lab, facts }
+  emit()
+}
 
 /** A mock minute. The waiting chats wait longer; every eighth minute a task closes in a working chat. */
 export function tickLab() {

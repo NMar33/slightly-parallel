@@ -257,6 +257,14 @@ The board, its blocks, and everything hung off a task.
 - `GET /api/commits/signed?project=&days=7` — per project with a repository:
   commits in the last `days` days, how many carry a `Task:` line (`signed`),
   how many were linked later (`linked`), and the same by the `Agent:` line.
+- `GET /api/git/commit?repo=<project>&sha=<7–40 hex>[&diff=1]` — one commit
+  of a project's repository, read only (the terminal window's commit card,
+  and its check before a printed hash is underlined). `repo` is a project
+  code, never a path. Answers `sha`, `short`, `subject`, `author`, `at`,
+  `files` (`path`, `add`, `del`), `add`, `del`, `tasks` (its `Task:` lines),
+  `agent`; with `diff=1` also `diff` (cut at 400 000 characters, `diff_cut`).
+  404 for an unknown project, a project with no repository, or a hash that
+  is not one of its commits.
 - `GET /api/tasks/{task_id}/mentions` — every captured turn naming this
   task, newest first. Copying a task puts its id in the text (`tk_… · Title`)
   and the chat reading scans every turn for task ids (`tk_…`, readable ids too), so
@@ -1028,6 +1036,18 @@ block, and kept current.
 - `POST /api/time/auto/mode` — `{project, mode}`.
 - `POST /api/time/auto/away/{entry_id}` — `{action}`: `count` (the away stretch
   counts after all), `resume`, `stop`, `dismiss`.
+- `GET /api/time/auto/break` — a break the operator took: `on`, and while
+  it lasts `since`, `sec`, `project`, `note`, `paused` (manual timers it
+  paused) and `closed` (auto spans it closed); `today`: today's breaks
+  (`from`, `to`, `sec`, `project`, `note`, `resumed`).
+- `POST /api/time/auto/break` — `{on: true, project?, note?}` starts a break:
+  the smart timer's open auto spans close and count nothing while it lasts,
+  whatever beats arrive; every running manual timer pauses. `project` holds
+  one project only (empty: all). `{on: false, note?}` ends it: the manual
+  timers it paused resume, only those still paused from its start; the
+  note stays with the break. Either again changes nothing. Kept in
+  `timer/break.json`, so a restart keeps a break under way. The terminal
+  window's «Перерыв» / «Готово» send it.
 - The entries themselves are the `time-entries` lens (see **Entries**).
 
 ### Cores
@@ -1511,9 +1531,53 @@ Every route refuses a foreign `Origin` or a cross-site request.
   keys into a terminal since the last report (the window sends it; the text
   is never sent). `GET /api/terminal/typing?day=YYYY-MM-DD` — `minutes` per
   project in which the operator typed, and `total`.
+- `GET /api/terminal/tabs` — what the window's tab strip shows, per terminal
+  id: `title` (the title its program set, OSC 0/2, as tmux keeps it; `""`
+  for plain terminals and programs that set none), `agent_id` and `chat`
+  (`null`, or `name`, `tool`, `tasks_done`, `tasks_all` — tasks named in
+  its turns —, `branches` — `branch` links from it and the chats it
+  started, helpers left out —, `ctx_pct`, `ctx_size`, `ctx_at` — Claude
+  Code's context from its status line, `null` when not known —, `rhythm`:
+  `period_min` (60) and `periods`, the last six clock hours oldest first,
+  the last the hour now running, each `start`, `end`, `msgs` — the
+  operator's messages and the agent's answers, from the turn stamps —,
+  `commits` — the chat's repository, signed `Agent:` by it, or unsigned and
+  naming one of its tasks or listed in its own turn stamps —, `tasks` — its
+  tasks moved to done —, `tokens` — the main agent's new input + output; the
+  tab's six dots, tk_d2e11125).
+- `GET /api/terminal/agents` — `agents: {claude, codex, opencode}`: which of
+  them this computer has (the "+" menu offers only those).
+- `GET /api/terminal/resumable?project=` — `chats`: the newest chats of the
+  project (at most 12) that a terminal can resume and no open terminal
+  holds: `agent_id`, `name`, `tool`, `last_active`.
+- `GET /api/terminal/branch/{agent_id}` — `command`, `project`, `cwd`,
+  `name`: the command that opens a copy of the chat from where it stands
+  (`claude -r <session> --fork-session`, `codex fork <session>`); 422 for a
+  tool that cannot.
 - `WS /ws/terminal/{id}?token=&project=&cols=&rows=` — the screen. Not an
   HTTP route and not in the OpenAPI document. Closed with 4000 when the
   terminal ended, 4500 when its shell did not start (the reason says why).
+
+The terminal log (`backend/termlog.py`): how the terminal works, for
+finding its bugs and slowdowns. Counts, sizes and times only — never what
+was typed, pasted or printed. Kept under `<data root>/terminal/log/`.
+
+- `POST /api/terminal/log` — a page's batch: `{page, rows, events}`. `rows`
+  are minute counters (at most 20), `events` the Full stream as
+  `[t_ms, kind, sid, a, b]` (at most 20 000); 2 MB at most. A wrong batch is
+  refused whole (422) and writes nothing. Answers the mode in force
+  (`mode`, `setting`, `full_until`) and how much was `kept`.
+- `GET /api/terminal/log/mode` · `POST /api/terminal/log/mode`
+  `{mode: off|light|full, hours?}` — read or switch it; Full turns back to
+  Light after `hours` (2 by default, at most 24). The operator's.
+- `GET /api/terminal/log/summary?day=YYYY-MM-DD` — a day for the Monitor:
+  `totals` (frames, p50/p95/max, slow frames, stalls, errors, reconnects,
+  findings, bytes), `hours` (24), `findings` (newest first), `by_kind`,
+  `scroll` and `paste` paths, `mem`, `server` (tmux calls per command,
+  writes, sends), `files`, `days` kept.
+- `GET /api/terminal/log/report` — one JSON file for a bug report: versions,
+  system, the terminal settings, today's and yesterday's rows, the last hour
+  of the full log.
 
 ---
 

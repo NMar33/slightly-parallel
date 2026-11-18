@@ -2133,5 +2133,14 @@
   "click: actual size": "щелчок — настоящий размер",
   "Smooth scrolling": "Плавная прокрутка",
   "The history moves by pixels under the touchpad and the wheel, as in a native terminal. Off: steps of whole lines.": "История движется по пикселям под тачпадом и колесом, как в обычном терминале. Выключено: шагами по целой строке.",
-  "The wheel and the touchpad move a terminal's history by pixels, as a native terminal does; a mouse notch glides. Off: xterm's own steps of whole lines (in tmux, five lines a step).": "Колесо и тачпад двигают историю терминала по пикселям, как в обычном терминале; щелчок колеса мыши скользит. Выключено: шаги xterm по целой строке (в tmux — по пять строк)."
+  "The wheel and the touchpad move a terminal's history by pixels, as a native terminal does; a mouse notch glides. Off: xterm's own steps of whole lines (in tmux, five lines a step).": "Колесо и тачпад двигают историю терминала по пикселям, как в обычном терминале; щелчок колеса мыши скользит. Выключено: шаги xterm по целой строке (в tmux — по пять строк).",
+  "full": "полный",
+  "Terminal log": "Журнал терминала",
+  "Full: every key, paste, wheel and frame with its time, to find a bug. Uses more memory and disk; goes back to light after 2 hours.": "Полный: каждая клавиша, вставка, прокрутка и кадр со временем — для поиска ошибок. Требует больше памяти и места на диске; через 2 часа сам переходит в лёгкий.",
+  "Light: counts slow frames, stalls, errors and lost connections; a small file a day, shown on the Monitor. Typed and printed text is never kept.": "Лёгкий: считает медленные кадры, зависания, ошибки и обрывы связи; небольшой файл в день, виден на странице «Монитор». Набранный и выведенный текст не сохраняется.",
+  "light: counts how the terminal works (slow frames, stalls, errors, reconnects) and keeps a small file a day; the Monitor shows it. full: also every key, paste, wheel and frame with its time, for finding a bug; uses more memory and disk, and turns back to light after 2 hours. What you type and what the terminal prints is never kept.": "лёгкий: считает, как работает терминал (медленные кадры, зависания, ошибки, переподключения), и пишет небольшой файл в день; показывается на странице «Монитор». полный: ещё каждая клавиша, вставка, прокрутка и кадр со временем — для поиска ошибок; требует больше памяти и места на диске, через 2 часа сам переходит в лёгкий. Набранный и выведенный терминалом текст не сохраняется.",
+  "Colour scheme": "Цветовая схема",
+  "The colours of every terminal: its ground, text, cursor, selection and the 16 colours programs print in. sp-now is the terminal's colours as they were.": "Цвета каждого терминала: фон, текст, курсор, выделение и 16 цветов, которыми печатают программы. sp-now — цвета терминала, какими они были.",
+  "Where the scheme applies": "Где действует схема",
+  "terminal: the terminal only. window: the terminal window's title row, tabs, sidebars and menus take the scheme's colours too.": "terminal: только терминал. window: строка заголовка, вкладки, боковые панели и меню окна терминала тоже берут цвета схемы."
 }

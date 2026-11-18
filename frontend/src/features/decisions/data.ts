@@ -69,7 +69,7 @@ function verdictOf(word: string): Verdict {
  * ways: "option — rejected: reason", "Rejected: option — reason", and
  * "Alternative: option — rejected, reason". A line in no shape stays whole.
  */
-function parseAlternative(line: string): Alternative {
+export function parseAlternative(line: string): Alternative {
   const text = line.trim().replace(/^alternative:\s*/i, '')
   const lead = text.match(VERDICT_RE)
   if (lead) {

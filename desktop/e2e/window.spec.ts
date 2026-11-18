@@ -151,7 +151,9 @@ test.describe('drag', () => {
     const folded = await regions()
     expect(folded.row).toBe('drag')
     // Folded, the thin row is one button (a click unfolds it): no drag there.
-    expect(folded.rowButtons).toEqual([expect.stringMatching(/^Unfold the title row.*=no-drag$/)])
+    // and the health label (tk_810245f2) sits on it, no drag either.
+    expect(folded.rowButtons.filter((b) => !b.startsWith('Time without a break'))).toEqual([expect.stringMatching(/^Unfold the title row.*=no-drag$/)])
+    for (const b of folded.rowButtons) expect(b).toMatch(/=no-drag$/)
     expect(folded.strip).toBe('drag')
     for (const b of folded.stripButtons) expect(b).toMatch(/=no-drag$/)
     expect(folded.toggles).toEqual(['left=no-drag', 'right=no-drag'])

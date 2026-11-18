@@ -3,13 +3,18 @@
  * still text tiles (each terminal's screen, read every few seconds and
  * only while this level shows), the sleeping chats as a row, the servers
  * as a row. Level 2, every workspace: a pool each with its counts,
- * sleeping ones dimmed, waiting chats with an amber edge.
+ * sleeping ones dimmed, waiting chats with an amber edge; then every
+ * registered project without a terminal as a quiet tile, the most recently
+ * active first, and a tile that makes a new workspace (tk_2ac8748d).
  */
 
-import { ExternalLink, Menu, Moon, Sun } from 'lucide-react'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { ExternalLink, Menu, Moon, Plus, Sun } from 'lucide-react'
 
-import { isAsleep, isLive, roleOf, shownOf, tilesOf, waitingIn, type AquaSession, type Workspace } from './model'
-import { Dot, SHOWN_WORD, Swatch, Tile, lane } from './parts'
+import { api, qk } from '../../../lib/api'
+import { allLevelOrder, isAsleep, roleOf, shownOf, tilesOf, waitingIn, type AquaSession, type Workspace } from './model'
+import { Dot, GroupForm, SHOWN_WORD, Swatch, Tile, lane } from './parts'
 import { t, tn } from '../../../i18n/scope/aqua'
 
 export const TILE_H = 168
@@ -76,10 +81,20 @@ export function WsLevel({ ws, current, on, cols, onChat, onWake, onSleepWs, onDe
   )
 }
 
-export function AllLevel({ workspaces, current, cols, onWs, onChat }: {
+export function AllLevel({ workspaces, current, cols, onWs, onChat, onIdle, onNewShell, onNewSpace }: {
   workspaces: Workspace[]; current: string; cols: number; onWs: (id: string) => void; onChat: (id: string) => void
+  /** An idle project's tile: open its workspace, empty, with the "+". */
+  onIdle: (id: string) => void
+  /** «New terminal» on an idle project's tile: a shell in that project's folder. */
+  onNewShell: (code: string) => void
+  /** «New workspace»: a group of the operator's, named here; absent when the server has no groups. */
+  onNewSpace?: (name: string, color: number) => void
 }) {
-  const live = workspaces.filter(isLive)
+  // The projects' last activity, from the snapshot every page reads: idle projects in that order.
+  const snap = useQuery({ queryKey: qk.snapshot(), queryFn: ({ signal }) => api.snapshot(signal), staleTime: 5 * 60_000, retry: false })
+  const lastActivity = Object.fromEntries((snap.data?.projects ?? []).map((p) => [p.code, p.last_activity || '']))
+  const { live, idle } = allLevelOrder(workspaces, lastActivity)
+  const [naming, setNaming] = useState(false)
   return (
     <div className="h-full flex flex-col min-h-0" style={{ padding: PAD, gap: GAP }}>
       <div className="flex items-center gap-8 shrink-0" style={{ height: HEAD }}>
@@ -126,6 +141,29 @@ export function AllLevel({ workspaces, current, cols, onWs, onChat }: {
             </section>
           )
         })}
+        {idle.map((w) => (
+          <section key={w.id} className="rounded-[12px] p-8 flex flex-col gap-6" aria-label={w.name} data-idle
+            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-default)', boxShadow: `inset 3px 0 0 ${lane(w.color)}`, opacity: 0.8 }}>
+            <button type="button" data-nodrag className="flex items-center gap-6 min-w-0" onClick={() => onIdle(w.id)} title={t('Open the workspace')}>
+              <Swatch w={w} size={9} />
+              <b className="text-13 truncate" style={{ color: 'var(--text-secondary)' }}>{w.name}</b>
+              <span className="text-10 aq-ink3 ml-auto shrink-0">{t('no terminals')}</span>
+            </button>
+            <button type="button" data-nodrag className="aq-btn line self-start" onClick={() => onNewShell(w.key)}><Plus size={12} />{t('New terminal')}</button>
+          </section>
+        ))}
+        {onNewSpace && (
+          <section className="rounded-[12px] p-8 flex flex-col gap-6" aria-label={t('New workspace')} style={{ border: '1px dashed var(--border-default)' }}>
+            {naming ? (
+              <GroupForm submit={t('Make the workspace')} onSubmit={(name, color) => { setNaming(false); onNewSpace(name, color) }} />
+            ) : (
+              <button type="button" data-nodrag className="flex items-center gap-6 h-[24px] text-12 aq-ink2" onClick={() => setNaming(true)}>
+                <Plus size={12} />{t('New workspace')}
+              </button>
+            )}
+            <span className="text-11 aq-ink3">{t('A group of your own: chats from any project, under one name')}</span>
+          </section>
+        )}
       </div>
     </div>
   )

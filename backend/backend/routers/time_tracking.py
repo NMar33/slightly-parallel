@@ -26,7 +26,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
 from ..date_utils import today_yymm_dd
 from ..db import ViewStore
-from .. import timeauto
+from .. import timeauto, timebreak
 from .deps import create_answer, etag_for, get_store, json_response, maybe_304
 from .lenses import create_entity
 
@@ -315,3 +315,35 @@ def time_auto_away(
         # Ends where you left: the pause up to now is not work.
         return time_stop(entry_id, {}, store)
     return decorate(row)
+
+
+# ---------------------------------------------------------------------------
+# A break the operator takes (timebreak.py, tk_810245f2 · tk_caf2b06a)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/time/auto/break")
+def time_auto_break_status(request: Request) -> dict:
+    """Whether a break is under way (``on``, ``since``, ``sec``, what it
+    paused) and today's breaks with their notes."""
+    return timebreak.status(timeauto.of(request.app))
+
+
+@router.post("/api/time/auto/break")
+def time_auto_break(request: Request, body: dict = Body(...)) -> dict:
+    """``{on: true, project?, note?}`` starts a break: the smart timer's
+    auto spans close and count nothing until it ends, every running manual
+    timer pauses. ``{on: false, note?}`` ends it: the timers it paused
+    resume (only those still paused from it), the note stays with the
+    break. Either again changes nothing."""
+    on = body.get("on")
+    if not isinstance(on, bool):
+        raise HTTPException(status_code=422, detail="on must be true or false")
+    project = body.get("project") or ""
+    note = body.get("note") or ""
+    if not isinstance(project, str) or not isinstance(note, str):
+        raise HTTPException(status_code=422, detail="project and note must be text")
+    timer = timeauto.of(request.app)
+    if on:
+        return timebreak.start(timer, project.strip(), note.strip())
+    return timebreak.finish(timer, note.strip())

@@ -6,8 +6,11 @@
 import { useSearchParams } from 'react-router-dom'
 
 export const FEATURES = ['tabs', 'strip', 'plus', 'msgmenu', 'scheme', 'health'] as const
-export type Feature = (typeof FEATURES)[number]
-export const isFeature = (v: string | null): v is Feature => (FEATURES as readonly string[]).includes(v ?? '')
+/** K's features; a later version adds its own (round 5: `tabstate`). */
+export type KFeature = (typeof FEATURES)[number]
+export const ALL_FEATURES = [...FEATURES, 'tabstate'] as const
+export type Feature = (typeof ALL_FEATURES)[number]
+export const isFeature = (v: string | null): v is Feature => (ALL_FEATURES as readonly string[]).includes(v ?? '')
 
 /** The feature in the compare view, or null; `open(f)` shows it, `open(null)` closes the view. */
 export function useCompare(): [Feature | null, (f: Feature | null, also?: Record<string, string>) => void] {

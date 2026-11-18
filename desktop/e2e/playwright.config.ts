@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { defineConfig } from '@playwright/test'
+import { cleanEnv } from '../../frontend/tests/e2e/cleanEnv'
+import { buildIfStale } from '../../frontend/tests/e2e/buildDist'
 
 /**
  * The terminal window's end-to-end suite: the real Electron window of
@@ -17,6 +19,10 @@ import { defineConfig } from '@playwright/test'
  * The specs run one at a time: they share the server's terminals, and each
  * opens real windows on the desktop.
  */
+
+// Before anything reads it: the run, its server and its windows see none of
+// the developer's shell (SP_ENABLE_TERMINAL, SP_UI_DEV, an agent's session…).
+cleanEnv()
 
 const REPO = path.resolve(__dirname, '..', '..')
 const PORT = Number(process.env.SP_DESKTOP_E2E_PORT) || 8131
@@ -42,6 +48,8 @@ function dataRoot(): string {
   fs.mkdirSync(tmux, { recursive: true })
   process.env.SP_DESKTOP_E2E_ROOT = root
   process.env.SP_DESKTOP_E2E_TMUX = tmux
+  // The runner, once: the server is about to start and serves frontend/dist.
+  buildIfStale(path.join(REPO, 'frontend'))
   return root
 }
 

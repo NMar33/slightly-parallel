@@ -22,13 +22,12 @@ beforeEach(() => {
 })
 
 describe('the round bar', () => {
-  it('opens K by default and shows K and J up front, the earlier versions folded', () => {
-    page('')
+  // round 5: L is the latest now; the bar's own test is in round5/L.test.tsx
+  it('opens K by its key, up front beside L', () => {
+    page('?v=k')
     expect(document.querySelector('.aq[data-v="k"]')).toBeTruthy()
     const bar = screen.getByRole('tablist', { name: 'Variant' })
-    expect(within(bar).getAllByRole('tab').map((b) => b.textContent)).toEqual(['K · J + variants 18.11', 'J · Zoom, refined'])
-    fireEvent.click(screen.getByRole('button', { name: /Early versions/ }))
-    expect(within(bar).getAllByRole('tab')).toHaveLength(11)
+    expect(within(bar).getAllByRole('tab').map((b) => b.textContent)).toEqual(['L · K + tab state', 'K · J + variants 18.11'])
   })
 
   it('unfolds the earlier versions when one of them is open', () => {
