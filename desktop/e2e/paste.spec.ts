@@ -368,10 +368,9 @@ test('Shift-click extends a selection across scrollback without an automatic cop
       shiftClick: JSON.parse(document.body.dataset.shiftClickTarget ?? 'null'),
       copyKey: JSON.parse(document.body.dataset.copyKeyTarget ?? 'null'),
     }))
-    await info.attach('copy key target and selection', {
-      body: JSON.stringify({ first, last, ...targets }, null, 2),
-      contentType: 'application/json',
-    })
+    const diagnostic = info.outputPath('selection-state.json')
+    fs.writeFileSync(diagnostic, JSON.stringify({ first, last, ...targets }, null, 2))
+    await info.attach('copy key target and selection', { path: diagnostic, contentType: 'application/json' })
     throw error
   }
   if (x11) expect(primaryOwner(x11)).toBe(primary)

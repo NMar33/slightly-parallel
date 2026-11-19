@@ -94,6 +94,9 @@ test('inward sidebar controls can be clicked again at the same points in wide, n
     for (const folded of [false, true]) {
       if (folded) await page.keyboard.press('Alt+KeyT')
       await expect(page.locator('[data-aqua-frame][data-folded]')).toHaveCount(folded ? 1 : 0)
+      // The folded buttons are below the animated title row. Measure after
+      // the row reaches its final height, before changing either sidebar.
+      await expect(page.locator('[data-window-title]')).toHaveCSS('height', folded ? '12px' : '34px')
       const buttons = sidebarControls(page)
       for (const button of buttons) await button.click({ trial: true })
       const controls = folded ? buttons : [...buttons, page.getByRole('button', { name: 'Window settings' })]
