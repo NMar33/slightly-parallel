@@ -1301,6 +1301,9 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const flashHi = flash ? rowOf(flash.b, pos) : null
 
   const menuItem = 'w-full text-left px-10 h-[26px] text-12 text-[var(--term-soft)] hover:bg-white/10 hover:text-[var(--term-text)] inline-flex items-center gap-8 disabled:opacity-40'
+  // Shift+right-click opens Screen's own menu. Keep both mouse reports away
+  // from the pane, including on macOS where xterm does not reserve Shift.
+  const takesMouse = (event: MouseEvent) => (event.button === 2 && event.shiftKey) || hooksRef.current?.mouse?.(event)
 
   return (
     <div className="relative w-full h-full min-h-0" style={{ background: TERMINAL_GROUND }}
@@ -1313,9 +1316,9 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         onWheelCapture={(e) => { if (e.deltaY < 0 || behind.up) watchTmux() }}
         onMouseMoveCapture={hintAt}
         onMouseLeave={() => setLinkHint(null)}
-        onMouseUpCapture={(e) => { if (hooksRef.current?.mouse?.(e.nativeEvent)) { e.preventDefault(); e.stopPropagation() } }}
+        onMouseUpCapture={(e) => { if (takesMouse(e.nativeEvent)) { e.preventDefault(); e.stopPropagation() } }}
         onMouseDownCapture={(e) => {
-          if (hooksRef.current?.mouse?.(e.nativeEvent)) { e.preventDefault(); e.stopPropagation(); return }
+          if (takesMouse(e.nativeEvent)) { e.preventDefault(); e.stopPropagation(); return }
           if (!(e.ctrlKey || e.metaKey) || e.button !== 0) return
           const hit = pathAt(e)
           if (!hit) return

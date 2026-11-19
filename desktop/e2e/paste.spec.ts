@@ -221,6 +221,22 @@ test('a mouse selection writes to the clipboard only on explicit copy', async ({
   await expect.poll(async () => bare(await sent(page))).toBe('\x03')
 })
 
+test('Shift-right-click opens the window menu without sending a right button to tmux', async ({ win, shell }) => {
+  test.skip(shell.backend !== 'tmux', 'tmux mouse reporting')
+  const { page } = win
+  // xterm interprets Shift differently on macOS. Exercise that path on Linux too.
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { value: 'MacIntel' }))
+  await page.reload()
+  await ready(page)
+  await recordInput(page)
+  const at = await middle(page)
+  await page.keyboard.down('Shift')
+  await page.mouse.click(at.x, at.y, { button: 'right' })
+  await page.keyboard.up('Shift')
+  await expect(page.getByRole('menu').getByRole('menuitem', { name: /^Copy / }).first()).toBeVisible()
+  expect(await sent(page)).not.toMatch(/\x1b\[<6;\d+;\d+[mM]/)
+})
+
 test('typing after a mouse drag reaches the shell without copying', async ({ win, shell }) => {
   const { app, page } = win
   const tmux = (command: string, ...args: string[]) => {
