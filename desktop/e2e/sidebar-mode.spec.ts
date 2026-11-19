@@ -25,7 +25,10 @@ test('switching the sidebar mode with both panels open preserves the window and 
   const left = page.getByRole('button', { name: 'Left sidebar', exact: true })
   const right = page.getByRole('button', { name: 'Right sidebar', exact: true })
   const start = await outerWidth()
-  const tty = await ptySize(page)
+  const screen = page.locator('.aqua-screen [data-rows][data-cols]')
+  const tty = await screen.evaluate((element) => [Number(element.dataset.rows), Number(element.dataset.cols)])
+  // The renderer can finish fitting before the resize reaches the shell.
+  await expect.poll(() => ptySize(page), { message: 'the PTY has reached the starting window size' }).toEqual(tty)
 
   const termRelativeCenters = async () => {
     const terminal = (await page.locator('.aqua-screen').boundingBox())!
@@ -42,7 +45,7 @@ test('switching the sidebar mode with both panels open preserves the window and 
   await expect.poll(outerWidth).toBe(start + LW + RW)
   await expect.poll(termRelativeCenters).toEqual(outwardControls)
   await expect.poll(async () => (await termWidth(page)).frame).toBe(start)
-  expect(await ptySize(page)).toEqual(tty)
+  await expect.poll(() => ptySize(page)).toEqual(tty)
 
   await chooseMode(page, 'inward')
   await expect.poll(outerWidth).toBe(start)
@@ -50,7 +53,7 @@ test('switching the sidebar mode with both panels open preserves the window and 
   await expect(left).toHaveAttribute('aria-pressed', 'true')
   await expect(right).toHaveAttribute('aria-pressed', 'true')
   await expect(input).toBeFocused()
-  expect((await ptySize(page))[1]).toBeLessThan(tty[1])
+  await expect.poll(async () => (await ptySize(page))[1]).toBeLessThan(tty[1]!)
 
   await chooseMode(page, 'outward')
   await expect.poll(outerWidth).toBe(start + LW + RW)
