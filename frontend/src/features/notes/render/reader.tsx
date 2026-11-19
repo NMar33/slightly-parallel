@@ -56,16 +56,17 @@ export function NoteHead({ note, size = 'big', omit, ver, onVer, older }: {
 /** The head and the whole body, at reading width; the version switch reads an earlier version in place. */
 export function NoteRead({ note, density = 'read', size = 'big', omit }: { note: Note; density?: Density; size?: 'big' | 'mid'; /** An id the page already shows above the note. */ omit?: string }) {
   const env = useNoteEnv()
-  const [ver, setVer] = useState(String(note.versions))
-  const n = ver === String(note.versions) ? null : Number(ver)
+  const [n, setVersion] = useState<number | null>(null)
+  const ver = String(n ?? note.versions)
   const older = env.useVersion(note, n)
   const body = n != null && older ? older : note
   return (
     <article data-note={note.id} className="flex flex-col gap-16 min-w-0">
-      <NoteHead note={note} size={size} omit={omit} ver={ver} onVer={setVer} older={n != null ? older : undefined} />
-      {body === note
+      <NoteHead note={note} size={size} omit={omit} ver={ver}
+        onVer={(next) => setVersion(next === String(note.versions) ? null : Number(next))} older={n != null ? older : undefined} />
+      {n == null
         ? <NoteBody note={note} density={density} />
-        : <NoteEnvProvider value={{ ...env, readOnly: true }}><NoteBody note={body} density={density} /></NoteEnvProvider>}
+        : <NoteEnvProvider value={{ ...env, readOnly: true, commentVersion: n }}><NoteBody note={body} density={density} /></NoteEnvProvider>}
     </article>
   )
 }

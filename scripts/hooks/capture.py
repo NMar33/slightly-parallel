@@ -494,6 +494,21 @@ def _briefs_owed(data_root: Path, agent: str, turn: int, tagged: bool) -> list[s
     return owed
 
 
+def _titles_owed(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
+    """The tasks made from this chat's messages (the terminal's message menu)
+    whose title waits for this agent and that it was not told of yet; each
+    is marked told in ``meta`` (titles_told), so the notice comes once."""
+    try:
+        waits = shared.title_waits(data_root, agent)
+    except Exception:  # noqa: BLE001 — a notice never costs the turn
+        return []
+    told = [t for t in meta.get("titles_told") or [] if isinstance(t, str)]
+    owed = [w for w in waits if str(w.get("task_id") or "") not in told]
+    if owed:
+        meta["titles_told"] = (told + [str(w["task_id"]) for w in owed])[-50:]
+    return owed
+
+
 class TurnCapture:
     """Capture state for one agent in one project."""
 
@@ -740,6 +755,9 @@ class TurnCapture:
             notified = list(meta.get("architecture_notified") or [])
             notified.append(architecture_due)
             meta["architecture_notified"] = notified[-20:]
+        # Tasks the operator made from this chat's messages whose title waits
+        # for this agent: told once each, on the chat's next turn.
+        titles_owed = [] if quiet or helper else _titles_owed(self.data_root, self.agent_name, meta)
         _atomic_write_json(self.meta_path, meta)
 
         return {
@@ -778,6 +796,7 @@ class TurnCapture:
             # and any the operator marked by hand on the chat page.
             "briefs_owed": [] if quiet or helper else _briefs_owed(
                 self.data_root, self.agent_name, turn, "carry-brief" in commands),
+            "titles_owed": titles_owed,
             # The cores the operator tracks right now: the agent may write a
             # one-line note when work it finishes changes one (corelib.py).
             "cores_tracking": shared.tracked_cores(self.data_root, self.project)
@@ -1995,6 +2014,13 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             "Write each brief now, before other work: MCP tool carry_brief {message, text}; the text is what the "
             "message says and the context needed to understand it after the chat is compacted (who asked, what for, "
             "what was decided), in a few sentences. It is given back instead of the message.")
+    for w in signals.get("titles_owed") or []:
+        whose = "your reply in turn" if w.get("side") == shared.REPLY_SIDE else "the operator's message in turn"
+        notes.append(
+            f"[slightly-parallel] #task-title — the operator made {w.get('task_id')} from {whose} "
+            f"{w.get('turn')}; give it a title now (≤ 80 characters, what it is about, in the operator's "
+            f"language) with task_update {{id: \"{w.get('task_id')}\", title}}. Its title for now: "
+            f"\"{w.get('provisional') or ''}\". The skill write-a-task holds the rule.")
     ev = signals.get("evidence_for")
     if ev is not None:
         if ev.get("id"):

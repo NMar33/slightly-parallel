@@ -24,6 +24,8 @@ from .file_safety import edit_json, safe_read_json
 log = logging.getLogger("sp.settings")
 
 SETTINGS_FILENAME = "settings.json"
+RESOURCE_YELLOW = "terminal.resource_yellow"
+RESOURCE_RED = "terminal.resource_red"
 
 
 @dataclass(frozen=True)
@@ -430,6 +432,26 @@ SPECS: tuple[SettingSpec, ...] = (
         type="bool", default=True, group="Terminal",
     ),
     SettingSpec(
+        key="terminal.resource_meter", label="Show resource indicators",
+        description="Show temperature, CPU, memory and network in the terminal title bar when the system monitor is on.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_color", label="Color resource bars by load",
+        description="On: bars turn green, yellow or red. Off: bars stay gray.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key=RESOURCE_YELLOW, label="Yellow resource threshold",
+        description="Temperature uses °C, CPU and memory use percent, and network uses a percentage of its recent peak rate with a 1 MiB/s minimum scale.",
+        type="int", default=75, group="Terminal", minimum=0, maximum=99,
+    ),
+    SettingSpec(
+        key=RESOURCE_RED, label="Red resource threshold",
+        description="The level at which a bar turns red. Keep it above the yellow threshold.",
+        type="int", default=90, group="Terminal", minimum=1, maximum=100,
+    ),
+    SettingSpec(
         key="terminal.log", label="Terminal log",
         description="light: counts how the terminal works (slow frames, stalls, errors, reconnects) and keeps a small file a day; the Monitor shows it. full: also every key, paste, wheel and frame with its time, for finding a bug; uses more memory and disk, and turns back to light after 2 hours. What you type and what the terminal prints is never kept.",
         type="choice", default="light", group="Terminal", options=("off", "light", "full"),
@@ -668,6 +690,10 @@ def _merged(stored_raw: Any) -> dict[str, Any]:
             values[key] = coerce(key, value)
         except ValueError as exc:
             log.warning("settings.json: %s — using default", exc)
+    if values[RESOURCE_YELLOW] >= values[RESOURCE_RED]:
+        log.warning("settings.json: yellow resource threshold must be below red — using defaults")
+        for key in (RESOURCE_YELLOW, RESOURCE_RED):
+            values[key] = _SPEC_BY_KEY[key].default
     return values
 
 
@@ -697,6 +723,8 @@ def save(data_root: Path, updates: dict[str, Any]) -> dict[str, Any]:
         values = _merged(stored_raw)
         for key, value in updates.items():
             values[key] = coerce(key, value)  # raises on invalid input
+        if values[RESOURCE_YELLOW] >= values[RESOURCE_RED]:
+            raise ValueError("The yellow resource threshold must be below the red threshold.")
         saved.append(values)
         return _nest(values)
 

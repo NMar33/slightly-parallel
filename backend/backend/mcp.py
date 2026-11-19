@@ -104,7 +104,7 @@ TOOLS: dict[str, str] = {
     "usage_prices_write": "After #usage-price: one update of the API prices, read from the providers' own pages.",
     "note_write": "Write a note for the operator instead of a long reply or a file: context, a text to paste, a review, a plan, a report, manual steps.",
     "note_image": "Add a picture to a note; answers the markdown line that shows it.",
-    "notes": "The project's notes, or one note with what the operator ticked and answered.",
+    "notes": "The project's notes, or one note with the operator's ticks, answers and comments.",
 }
 
 
@@ -496,7 +496,8 @@ class Translator:
                  "compacted (who asked, what for, what was decided), a few sentences, at most 4000 "
                  "characters. After the next compaction it is given back to you instead of the message. "
                  "`message` is <agent_id>#<turn> (or …/reply) as the notice names it; or `turn`, a turn "
-                 "of this chat. Writing it again replaces it."),
+                 "of this chat. Only a message of this chat: another chat's, a branch's parent included, "
+                 "is refused. Writing it again replaces it."),
              "inputSchema": {"type": "object", "properties": {
                  "message": {"type": "string"}, "turn": {"type": "integer"}, "text": {"type": "string"}},
                  "required": ["text"]}},
@@ -871,7 +872,12 @@ class Translator:
                  "your work is done. The one exception: a card you created "
                  "in the `agent` column you may drop with "
                  "`status: \"done-archived\"`. Priority, sprint, due date "
-                 "and the operator's switches are refused by name."),
+                 "and the operator's switches are refused by name. Title, "
+                 "description and today_on: only on a task you created; on "
+                 "the operator's or another agent's task they are refused — "
+                 "add a comment instead (open on any task). A task the "
+                 "operator made from a message of your chat (the #task-title "
+                 "notice names it): you set its title once, ≤ 80 characters."),
              "inputSchema": {
                  "type": "object",
                  "properties": {
@@ -879,7 +885,8 @@ class Translator:
                      "status": {"type": "string", "enum": task_status},
                      "title": {"type": "string"},
                      "today_on": {"type": "string",
-                                  "description": "ISO date to plan it for that day; empty clears"},
+                                  "description": "ISO date to plan it for that day; empty clears "
+                                                 "(a task you created only)"},
                      "description": {"type": "string",
                                      "description": "the task's text: what is wrong or wanted, and where "
                                                     "(not on a #now card: its text is the operator's message)"},
@@ -1045,7 +1052,8 @@ class Translator:
              "description": (
                  "The project's notes, one line each with what waits on the operator; with `task_id` the "
                  "notes of that task. With `id`: one note whole, and `operator` — each checklist item "
-                 "ticked or not, each choice's answer. Reads only."),
+                 "ticked or not, each choice's answer, plus `comments` on the note and its items. "
+                 "A comment carries the original item label, section and note version. Reads only."),
              "inputSchema": {"type": "object", "properties": {
                  "id": {"type": "string"}, "project": {"type": "string"}, "task_id": {"type": "string"}}}},
         ]

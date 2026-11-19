@@ -171,7 +171,8 @@ def test_a_fork_has_its_command_and_a_state(env):
 
 
 def test_fork_command_per_tool():
-    assert termlib.fork_command("codex", "01a1-x", "/w", "go").startswith("cd /w && codex fork 01a1-x $'go'")
+    assert termlib.fork_command("codex", "01a1-x", "/w", "go").startswith(
+        f"cd /w && {termlib.codex_in_terminal()} fork 01a1-x $'go'")
     assert termlib.fork_command("opencode", "x", "/w", "go") == ""
     assert termlib.fork_command("claude-code", "-rm", "/w", "go") == ""
     assert termlib.fork_command("claude-code", "x", "", "go") == ""

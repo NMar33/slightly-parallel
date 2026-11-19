@@ -24,6 +24,8 @@ jobs:
     name: Terminal window (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      SP_E2E_NO_BUILD: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +49,7 @@ jobs:
       - name: tmux, and Xvfb for a display (Linux); tmux (macOS)
         if: runner.os != 'Windows'
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux xvfb; else brew install tmux; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux xvfb libxtst6; else brew install tmux; fi
       - name: Backend environment (the suite starts the server from backend/.venv)
         working-directory: backend
         shell: bash
@@ -67,25 +69,38 @@ jobs:
       - name: The window's unit tests
         working-directory: desktop
         run: npm test
+      - name: Codex CLI for the interactive terminal check
+        if: runner.os == 'Linux'
+        run: npm install -g @openai/codex@0.170.0
+      # Playwright clears its output directory before each run. Keep the
+      # three Linux modes apart so a later run cannot erase an earlier failure.
       - name: "End to end, Linux: an X11 window under Xvfb (no GPU there)"
         if: runner.os == 'Linux'
         working-directory: desktop
         env:
           SP_E2E_NO_GPU: "1"
-        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run e2e
+          SP_E2E_REAL_CODEX: "1"
+          SP_E2E_VISIBLE: "1"
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" bash -ec '
+            export SP_E2E_X11_DISPLAY="$DISPLAY"
+            SP_E2E_X11_PID=$(pgrep -f "^([^ ]*/)?Xvfb $DISPLAY ")
+            export SP_E2E_X11_PID
+            npm run e2e -- --output=e2e/test-results/x11
+          '
       - name: "End to end, Linux: no display at all (Chromium's headless Ozone, as on a laptop with SP_E2E_HEADLESS=1)"
         if: always() && runner.os == 'Linux'
         working-directory: desktop
         env:
           SP_E2E_HEADLESS: "1"
-        run: npm run e2e
+        run: npm run e2e -- --output=e2e/test-results/headless
       - name: "End to end, Linux, plain terminals (no tmux, what Windows has): restore skips, named"
         if: always() && runner.os == 'Linux'
         working-directory: desktop
         env:
           SP_E2E_KEEP: plain
           SP_E2E_HEADLESS: "1"
-        run: npm run e2e
+        run: npm run e2e -- --output=e2e/test-results/plain
       - name: End to end, ${{ runner.os }}
         if: runner.os != 'Linux'
         working-directory: desktop

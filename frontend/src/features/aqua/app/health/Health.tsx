@@ -104,6 +104,8 @@ export function HealthTint() {
 }
 
 const BTN = 'aq-btn line !h-[22px] text-11'
+/** The hover card's width. */
+const HOVER_W = 300
 
 function DueButtons({ due }: { due: Shown }) {
   return (
@@ -123,21 +125,36 @@ function DueButtons({ due }: { due: Shown }) {
 export function HealthTitle({ folded }: { folded: boolean }) {
   const { h, zone, due, away, breakMin } = useView()
   const today = useToday(h.project)
-  const [hover, setHover] = useState(false)
+  // The card hangs left from the label's right edge; in a narrow window it moves right so it stays inside (8 px from the edge).
+  const [hover, setHover] = useState<number | null>(null)
   if (!h.s.on) return null
   const ink = away !== null ? 'var(--brand)' : due?.kind === 'pomo' ? 'var(--brand)' : zone === 'green' ? 'var(--aq-ink3, var(--text-tertiary))' : ZONE_INK[zone]
   return (
     // pointerdown stays here: the title row drags the window and, folded, unfolds on a click
     <span className="relative inline-flex items-center" data-nodrag data-health-title onPointerDown={(e) => e.stopPropagation()}
-      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      onMouseEnter={(e) => setHover(Math.max(0, HOVER_W + 8 - e.currentTarget.getBoundingClientRect().right))} onMouseLeave={() => setHover(null)}>
       <button type="button" data-nodrag data-health-label={away !== null ? 'break' : zone} className="font-mono tabular-nums rounded-[4px] hover:bg-[var(--aq-hover)]"
         style={{ fontSize: folded ? 9 : 11, lineHeight: folded ? '12px' : '22px', padding: folded ? '0 4px' : '0 6px', color: ink }}
-        aria-label={`${t('Time without a break')}: ${clockOf(h.d.run)}`} onMouseDown={keepFocus} onClick={() => openUi({ summary: !h.ui.summary, settings: false })}>
+        aria-label={`${t('Time without a break')}: ${clockOf(h.d.run)}`} onMouseDown={keepFocus} onClick={() => {
+          setHover(null)
+          openUi({ summary: !h.ui.summary, settings: false })
+        }}>
         {away !== null ? <>{t('break')} {clockOf(breakMin)}</> : clockOf(h.d.run)}
       </button>
-      {hover && (
-        <span className="absolute right-0 z-[60] w-[300px] rounded-[8px] p-10 flex flex-col gap-6 text-12 cursor-default" role="status" data-health-hover
-          style={{ top: folded ? 12 : 22, background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)', color: 'var(--aq-ink)' }}>
+      {hover !== null && !h.ui.summary && !h.ui.settings && (
+        <span className="absolute z-[60] rounded-[8px] p-10 flex flex-col gap-6 text-12 cursor-default" role="status" data-health-hover
+          onWheel={(e) => {
+            if (!e.deltaY || e.ctrlKey || e.shiftKey) return
+            const terminal = document.elementsFromPoint(e.clientX, e.clientY)
+              .find((element) => element.closest('.aqua-screen .xterm'))
+            if (!terminal) return
+            // The hover card covers the terminal here. Dismiss it and pass
+            // the first wheel step through the same path as the next ones.
+            e.stopPropagation()
+            setHover(null)
+            terminal.dispatchEvent(new WheelEvent('wheel', e.nativeEvent))
+          }}
+          style={{ top: folded ? 12 : 22, right: -hover, width: HOVER_W, background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)', color: 'var(--aq-ink)' }}>
           <span className="flex items-center gap-6">
             <span className="w-[8px] h-[8px] rounded-full shrink-0" style={{ background: away !== null ? 'var(--brand)' : ZONE_INK[zone] }} />
             <span className="font-semibold">{away !== null ? `${t('On a break')}: ${durOf(breakMin)}` : `${zoneWord(zone)} · ${t('{t} without a break', { t: durOf(h.d.run) })}`}</span>

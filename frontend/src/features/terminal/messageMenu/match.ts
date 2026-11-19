@@ -12,6 +12,14 @@
  *   ✻ Worked for 42s · done             (a status line)
  *   ──────── / ❯ draft / ────────       (the input box: never a message)
  *
+ * Codex draws the same parts with its own marks (tk_86712550):
+ *
+ *   › the operator's message            (its next lines indented)
+ *   • the agent's text, • Ran …, • Edited …, └ output, indented
+ *     Worked for 6s • 7:44 PM            (a status line, indented)
+ *   › draft                              (its input box, no rules around:
+ *                                         never in the record, so never found)
+ *
  * Slightly Parallel records each turn: the operator's message whole and the
  * agent's final answer (its last message; what it said between tool calls
  * is not recorded). So a row is matched in two ways:
@@ -47,8 +55,10 @@ export interface Found {
 
 export type RowKind = 'user' | 'agent' | 'status' | 'input' | 'other' | 'cont'
 
-const USER = /^(❯|>)(\s|$)/
-const AGENT = /^(●|⏺)(\s|$)/
+const USER = /^(❯|>|›)(\s|$)/
+const AGENT = /^(●|⏺|•)(\s|$)/
+/** Claude Code's "› Message from …" (another session's message): a status line, not the operator's. */
+const PEER = /^› Message from /
 // Spinner and status glyphs Claude Code starts a line with, and "› Message from …".
 const STATUS = /^[✻✶✳✢✽✺·*›⎿]\s/
 const RULE = /^[─━]+$/
@@ -67,6 +77,7 @@ function shownReply(s: string): string {
 
 export function rowKind(row: string, prev?: string): RowKind {
   if (!row.trim() || /^\s/.test(row)) return 'cont'
+  if (PEER.test(row)) return 'status'
   if (USER.test(row)) return prev !== undefined && RULE.test(prev.trim()) ? 'input' : 'user'
   if (AGENT.test(row)) return 'agent'
   if (STATUS.test(row)) return 'status'
@@ -74,7 +85,7 @@ export function rowKind(row: string, prev?: string): RowKind {
 }
 
 /** A row's words without the block's marker. */
-const content = (row: string) => row.replace(/^(❯|>|●|⏺)\s?/, '')
+const content = (row: string) => row.replace(/^(❯|>|›|●|⏺|•)\s?/, '')
 
 export interface Block { start: number; end: number; kind: Exclude<RowKind, 'cont'> }
 
@@ -232,6 +243,31 @@ function userTurn(rows: string[], blocks: Block[], bi: number, rec: Record, focu
   return c.length ? settle(rows, blocks, bi, rec, c) : null
 }
 
+/**
+ * The operator's message block `bi` as a turn, and whether only its first
+ * row is the message. Codex, scrolled up, pins the prompt of the turn on
+ * view to the screen's top row while the turn's output scrolls under it
+ * (tk_86712550): the output's indented rows join the prompt's block, and
+ * the block as a whole is no message. Its first row alone, when that is
+ * one, is the message; the rows under it are that turn's.
+ */
+function userTurnOrHead(rows: string[], blocks: Block[], bi: number, rec: Record, focus: number | null): { t: CapturedTurn; head: boolean } | null {
+  const b = blocks[bi]!
+  const head = (): CapturedTurn | null => {
+    if (b.end === b.start) return null
+    const c = candidates(rows, { start: b.start, end: b.start, kind: 'user' }, rec.user, null)
+    return c.length ? settle(rows, blocks, bi, rec, c) : null
+  }
+  // On the screen's top row it is the pinned prompt first: the output glued
+  // under it may hold words of another message (one that quoted a reply).
+  const pinned = b.start === 0 ? head() : null
+  if (pinned) return { t: pinned, head: true }
+  const t = userTurn(rows, blocks, bi, rec, focus)
+  if (t) return { t, head: false }
+  const h = b.start === 0 ? null : head()
+  return h ? { t: h, head: true } : null
+}
+
 /** How far up a click in the agent's output walks to find the operator's message. */
 const WALK = 400
 
@@ -246,8 +282,10 @@ export function messageAt(rows: string[], at: number, rec: Record): Found | null
   const b = blocks[bi]!
   if (b.kind === 'input' || b.kind === 'other') return null
   if (b.kind === 'user') {
-    const t = userTurn(rows, blocks, bi, rec, at)
-    return t ? { n: t.n, side: '', sid: t.sid, how: 'text' } : null
+    const got = userTurnOrHead(rows, blocks, bi, rec, at)
+    if (!got) return null
+    const { t, head } = got
+    return head && at > b.start ? { n: t.n, side: 'reply', sid: t.sid, how: 'turn' } : { n: t.n, side: '', sid: t.sid, how: 'text' }
   }
   // The agent's side: its text where it was recorded, the turn above in any case.
   const own = b.kind === 'agent' ? candidates(rows, b, rec.reply, at) : []
@@ -256,7 +294,7 @@ export function messageAt(rows: string[], at: number, rec: Record): Found | null
     const k = blocks[j]!.kind
     if (k === 'other' || k === 'input') break
     if (k !== 'user') continue
-    above = userTurn(rows, blocks, j, rec, null)
+    above = userTurnOrHead(rows, blocks, j, rec, null)?.t
     break
   }
   // The operator's message above decides: the record keeps only the agent's

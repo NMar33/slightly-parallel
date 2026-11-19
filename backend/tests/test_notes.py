@@ -174,6 +174,86 @@ def test_the_operator_marks_and_an_agent_cannot(env) -> None:
     assert choice not in c.get("/api/notes/feed").json()["marks"]["answers"]
 
 
+def test_comments_are_visible_on_the_page_and_to_agents_across_revisions(env) -> None:
+    tr, c, _root, task, who = env
+    nid = _write(tr, task)["id"]
+    feed = f"/api/notes/feed?project=alpha&task={task}"
+    full = f"/api/notes/{nid}/full"
+    endpoint = f"/api/notes/{nid}/comments"
+    original = c.get(full).json()
+    initial = c.get(feed)
+    assert initial.json()["comments"] == []
+    parsed = N.parse(nid, original["body"])["items"]
+    point = next(i["id"] for i in parsed if i.get("text") == "Rotate the signing key")
+    choice = next(i["id"] for i in parsed if i["type"] == "choice")
+
+    payload = {"item": point, "section": "By hand", "text": "  Need one more check.\nTry it offline.  ",
+               "request_id": "offline-check"}
+    posted = c.post(endpoint, json=payload)
+    assert posted.status_code == 200, posted.text
+    comment = posted.json()["comment"]
+    assert comment == {
+        "id": comment["id"], "note_id": nid, "item": point, "text": "Need one more check.\nTry it offline.",
+        "at": comment["at"], "version": 1, "section": "By hand", "label": "Rotate the signing key",
+    }
+    assert c.post(endpoint, json=payload).json()["comment"] == comment
+    assert c.post(endpoint, json={**payload, "text": "Different"}).status_code == 422
+    note_level = c.post(endpoint, json={"text": "Overall comment"}).json()["comment"]
+    assert note_level["item"] is None and note_level["section"] == note_level["label"] == ""
+    answered = c.post(endpoint, json={"item": choice, "text": "Why?"}).json()["comment"]
+    assert answered["label"] == "Which icon?"
+    updated = c.get(feed, headers={"If-None-Match": initial.headers["ETag"]})
+    assert updated.status_code == 200
+    assert updated.json()["comments"] == [comment, note_level, answered]
+    assert c.get(full).json()["body"] == original["body"]
+    assert c.get("/api/notes/feed?task=tk_00000000").json()["comments"] == []
+
+    who.update(project="beta", agent_id=OTHER)
+    other = tr.call("note_write", {"text": "# Other project", "kind": "report"})["id"]
+    assert c.post(f"/api/notes/{other}/comments", json={"text": "Other project"}).status_code == 200
+    assert c.get(feed).json()["comments"] == [comment, note_level, answered]
+    who.update(project="alpha", agent_id=AGENT)
+
+    before_revision = c.get(feed).headers["ETag"]
+    tr.call("note_write", {"id": nid, "base": 1, "kind": "actions", "text": "# Revised\n\n- [ ] An unrelated item"})
+    revised = c.get(feed, headers={"If-None-Match": before_revision})
+    assert revised.status_code == 200
+    assert revised.json()["notes"][0]["versions"] == 2
+    assert revised.json()["comments"] == [comment, note_level, answered]
+    assert c.post(endpoint, json=payload).json()["comment"] == comment
+    assert c.post(endpoint, json={**payload, "request_id": "new"}).status_code == 422
+    assert c.get(full).json()["comments"] == [comment, note_level, answered]
+    assert tr.call("notes", {"id": nid})["comments"] == [comment, note_level, answered]
+    assert c.post(f"/api/notes/{nid}/archive", json={"archived": True}).status_code == 200
+    assert c.post(endpoint, json={"text": "Closed"}).status_code == 422
+    assert c.post(endpoint, json=payload).json()["comment"] == comment
+    assert c.get("/api/notes/feed?archived=true").json()["comments"] == [comment, note_level, answered]
+
+
+def test_comments_validate_the_writer_and_distinguish_identical_points_by_section(env) -> None:
+    tr, c, root, task, _who = env
+    nid = tr.call("note_write", {"text": "# Review\n\n- [ ] Check\n\n## Again\n\n- [ ] Check",
+                                 "kind": "review"})["id"]
+    other = _write(tr, task)["id"]
+    point = f"{nid}:k:{N.hash_of('Check')}"
+    endpoint = f"/api/notes/{nid}/comments"
+    before = snapshot(root, skip=("logs/",))
+    for extra in (
+        {"text": " \n "}, {"text": "🌱" * 1001}, {"text": ["word"]},
+        {"item": point}, {"item": point, "section": "Absent"},
+        {"item": f"{other}:k:{N.hash_of('Rotate the signing key')}"},
+        {"section": ""}, {"request_id": "invalid whitespace"},
+    ):
+        r = c.post(endpoint, json={"text": "Comment", **extra})
+        assert r.status_code == 422, r.text
+    denied = c.post(endpoint, json={"text": "Agent comment", "actor": "operator", "agent_id": AGENT})
+    assert denied.status_code in (403, 422)
+    assert not changed(before, snapshot(root, skip=("logs/",)))
+    for section in ("", "Again"):
+        r = c.post(endpoint, json={"item": point, "section": section, "text": "Comment"})
+        assert r.status_code == 200 and r.json()["comment"]["section"] == section
+
+
 def test_pictures_are_stored_and_the_text_names_them_by_id(env, tmp_path: Path) -> None:
     tr, c, root, task, _who = env
     shot = tmp_path / "shots" / "home.png"

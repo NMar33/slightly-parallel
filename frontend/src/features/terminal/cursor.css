@@ -1,0 +1,6 @@
+/* In xterm's DOM renderer, a cell with RGB colors has inline styles.
+   A steady block cursor on that cell must still paint over the cell colors. */
+.sp-steady-cursor .xterm-rows .xterm-cursor-block[style*="background-color"]:not(.xterm-cursor-blink) {
+  background-color: var(--sp-cursor-fill) !important;
+  color: var(--sp-cursor-text) !important;
+}

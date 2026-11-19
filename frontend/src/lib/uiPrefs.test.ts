@@ -14,11 +14,12 @@ describe('isSyncable — what reaches the server', () => {
       'sp-note-draft:tk_x', 'sp-note-edit:nt_x',
       'sp-task-draft:slightly-parallel', 'sp-doc-block-draft:dc_x',
       'pdr.sidebar', 'sp-term-health-day',
+      'sp-aqua-active', 'sp-aqua-workspace', 'sp-aqua-ws-tabs',
     ]) expect(isSyncable(k), k).toBe(false)
   })
 })
 
-describe('hydratePrefs — the terminal window\'s health day stays in the browser (tk_a9306fb1)', () => {
+describe('hydratePrefs — live terminal state stays in the browser', () => {
   afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
 
   it('a copy the server kept never comes back over the live day, is removed there, and the day is never sent up', async () => {
@@ -36,6 +37,26 @@ describe('hydratePrefs — the terminal window\'s health day stays in the browse
     expect(localStorage.getItem('sp-term-health-day')).toBe(live)
     expect(localStorage.getItem('sp-theme')).toBe('dark')
     expect(posts).toEqual([{ values: { 'sp-term-health-day': null } }])
+  })
+
+  it('ignores stale tab selections and keeps a locally selected workspace', async () => {
+    localStorage.clear()
+    const tabs = JSON.stringify({ 'p:kelp': 'rightmost' })
+    localStorage.setItem('sp-aqua-active', 'rightmost')
+    localStorage.setItem('sp-aqua-workspace', 'p:kelp')
+    localStorage.setItem('sp-aqua-ws-tabs', tabs)
+    const posts: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response('{}') }
+      return new Response(JSON.stringify({ prefs: { 'sp-aqua-active': 'leftmost', 'sp-aqua-ws-tabs': '{}' } }),
+        { headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await hydratePrefs()
+    expect(localStorage.getItem('sp-aqua-active')).toBe('rightmost')
+    expect(localStorage.getItem('sp-aqua-workspace')).toBe('p:kelp')
+    expect(localStorage.getItem('sp-aqua-ws-tabs')).toBe(tabs)
+    expect(posts).toEqual([{ values: { 'sp-aqua-active': null, 'sp-aqua-ws-tabs': null } }])
   })
 })
 

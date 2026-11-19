@@ -6,16 +6,13 @@
  * servers apart, and «New terminal ⌄» (a shell at once, the "+" list
  * beside it) and «New server».
  *
- * Right: the chat in front, read from what Slightly Parallel captured —
- * Messages (with pin, carry and fork-later on each, the marks API),
- * Pins (its pinned and carried messages, the first pin on top), Branches
- * (the tasks it handed, the chats linked to it, the runs it started, its
- * fork-later queue) and Stats (terminals by state, per workspace).
+ * Right: recorded messages, linked chats and pins for the chat in front,
+ * tasks and a Markdown draft for its project, and workspace statistics.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, Bot, ChevronDown, ChevronRight, GitBranch, GitFork, Link2, Menu, MessageSquare, Moon, Pin, Play, Server, Sun, X } from 'lucide-react'
+import { Activity, Bot, ChevronDown, ChevronRight, FilePenLine, GitFork, Link2, ListTodo, Menu, MessageSquare, Moon, Pin, Play, Server, Sun, X } from 'lucide-react'
 
 import { getJson } from '../../../lib/getJson'
 import { useMsgMarkActions, useMsgMarks, type MsgMark } from '../../../lib/pins'
@@ -24,6 +21,8 @@ import { MarkGlyph } from '../../chats/ChatPins'
 import { useSessionTurns, type SessionTurn } from '../../agents/sessionTurns'
 import { isAsleep, isLive, roleOf, shownOf, type AquaSession, type Shown, type Workspace } from './model'
 import { Dot, SHOWN_WORD, Swatch } from './parts'
+import { InspectorDraft, useInspectorDraft } from './InspectorDraft'
+import { InspectorTasks } from './InspectorTasks'
 import { t, tn } from '../../../i18n/scope/aqua'
 
 /* ================================================================ left */
@@ -122,34 +121,55 @@ export function LeftSidebar({ workspaces, ws, active, canSleep, onChat, onWs, on
 
 /* =============================================================== right */
 
-export type RightTab = 'messages' | 'pins' | 'branches' | 'stats'
+export type RightTab = 'messages' | 'pins' | 'tasks' | 'draft' | 'stats'
 
-export function RightSidebar({ s, tab, setTab, workspaces, onChat, onResume, onFork }: {
-  s: AquaSession | undefined; tab: RightTab; setTab: (t: RightTab) => void; workspaces: Workspace[]
+export function RightSidebar({ s, project, agent, tab, setTab, workspaces, onChat, onResume, onFork }: {
+  s: AquaSession | undefined; project: string; agent: string; tab: RightTab; setTab: (t: RightTab) => void; workspaces: Workspace[]
   onChat: (id: string) => void
   /** Bring a chat back in a terminal (a link to a chat with no terminal open). */
   onResume: (agentId: string) => void
   /** Start a fork-later message in a new terminal with its command. */
   onFork: (m: MsgMark) => void
 }) {
-  const TABS: Array<[RightTab, string, typeof Pin]> = [['messages', t('Messages'), MessageSquare], ['pins', t('Pins'), Pin], ['branches', t('Branches'), GitBranch], ['stats', t('Stats'), Activity]]
-  const agent = s?.agent_id ?? ''
+  const draft = useInspectorDraft(project)
+  const currentProject = useRef(project)
+  currentProject.current = project
+  const [branchesOpen, setBranchesOpen] = useState(false)
+  const tabs: Array<[RightTab, string, typeof Pin]> = [
+    ['messages', t('Messages'), MessageSquare], ['pins', t('Pins'), Pin],
+    ['tasks', t('Tasks'), ListTodo], ['draft', t('Draft'), FilePenLine], ['stats', t('Stats'), Activity],
+  ]
+  const appendTask = async (text: string) => {
+    const ok = await draft.append(text)
+    if (ok && currentProject.current === project) setTab('draft')
+    return ok
+  }
   return (
     <div className="h-full flex flex-col min-h-0">
-      <div className="h-[30px] shrink-0 flex items-center gap-1 px-4" role="tablist" aria-label={t('Inspector')} style={{ borderBottom: '1px solid var(--border-default)' }}>
-        {TABS.map(([k, w, Icon]) => (
-          <button key={k} type="button" data-nodrag role="tab" aria-selected={tab === k} aria-label={w} title={w} className="aq-btn" data-on={tab === k} onClick={() => setTab(k)}>
+      <div className="h-[30px] min-w-0 shrink-0 flex items-center gap-1 px-4 overflow-x-auto r2-tabs" role="tablist" aria-label={t('Inspector')} style={{ borderBottom: '1px solid var(--border-default)' }}>
+        {tabs.map(([k, w, Icon]) => (
+          <button key={k} type="button" data-nodrag role="tab" aria-selected={tab === k} aria-label={w} title={w} className="aq-btn shrink-0" data-on={tab === k} onClick={() => setTab(k)}>
             <Icon size={12} />{tab === k && w}</button>
         ))}
       </div>
       <div className="flex-1 min-h-0 flex flex-col" role="tabpanel">
-        {tab === 'stats'
-          ? <Stats workspaces={workspaces} />
-          : !agent
-            ? <p className="m-0 p-12 text-12 aq-ink3">{s ? t('This terminal has no chat that Slightly Parallel recorded: no messages, pins or branches.') : t('No terminal is open.')}</p>
-            : tab === 'messages' ? <Messages agentId={agent} project={s!.project} />
-              : tab === 'pins' ? <Pins agentId={agent} />
-                : <Branches agentId={agent} workspaces={workspaces} onChat={onChat} onResume={onResume} onFork={onFork} />}
+        {tab === 'stats' && <Stats workspaces={workspaces} />}
+        {tab === 'tasks' && <InspectorTasks key={project} project={project} agent={agent} onAppend={appendTask} />}
+        {tab === 'draft' && <InspectorDraft key={project} project={project} draft={draft} />}
+        {(tab === 'messages' || tab === 'pins') && !agent &&
+          <p className="m-0 p-12 text-12 aq-ink3">{s ? t('This terminal has no chat that Slightly Parallel recorded: no messages, pins or branches.') : t('No terminal is open.')}</p>}
+        {tab === 'pins' && agent && <Pins agentId={agent} />}
+        {tab === 'messages' && agent && (
+          <>
+            <button type="button" data-nodrag className="aq-row shrink-0 gap-6 px-8 py-4 text-12"
+              aria-expanded={branchesOpen} onClick={() => setBranchesOpen((open) => !open)}>
+              {branchesOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              {t('Linked chats and branches')}
+            </button>
+            {branchesOpen && <Branches key={agent} agentId={agent} workspaces={workspaces} onChat={onChat} onResume={onResume} onFork={onFork} />}
+            <Messages agentId={agent} project={s?.project ?? project} />
+          </>
+        )}
       </div>
     </div>
   )
@@ -247,13 +267,16 @@ function Pins({ agentId }: { agentId: string }) {
 
 interface Brief { agent_id: string; agent_name?: string; chat_title?: string }
 interface Profile {
-  tasks: Array<{ id: string; title: string; status: string }>
   links: Array<{ id: string; kind: string; from_id: string; to_id: string; from: Brief; to: Brief }>
   parent: Brief | null
   children: Brief[]
   helpers: Array<Brief & { first?: string; tool?: string }>
 }
-const nameOf = (b: Brief) => b.agent_name || b.chat_title || b.agent_id
+function nameOf(b: Brief): string {
+  const name = b.agent_name?.trim()
+  if (name && name !== b.agent_id) return name
+  return b.chat_title?.trim() || b.agent_id
+}
 
 function Branches({ agentId, workspaces, onChat, onResume, onFork }: {
   agentId: string; workspaces: Workspace[]; onChat: (id: string) => void; onResume: (agentId: string) => void; onFork: (m: MsgMark) => void
@@ -282,24 +305,11 @@ function Branches({ agentId, workspaces, onChat, onResume, onFork }: {
   if (q.isLoading) return <p className="m-0 p-12 text-12 aq-ink3">{t('Reading the chat…')}</p>
   const p = q.data
   const links = (p?.links ?? []).map((l) => (l.from_id === agentId ? { b: l.to, how: l.kind } : { b: l.from, how: l.kind }))
-  const empty = !p || (!p.tasks.length && !links.length && !p.parent && !p.children.length && !p.helpers.length && !forks.length)
+  const empty = !links.length && !p?.parent && !p?.children.length && !p?.helpers.length && !forks.length
   return (
-    <div className="flex-1 min-h-0 aq-scroll p-8 flex flex-col gap-10" aria-label={t('Branches')}>
+    <div className="shrink-0 max-h-[min(38vh,280px)] aq-scroll p-8 flex flex-col gap-10" aria-label={t('Branches')}>
       {q.isError && <p className="m-0 text-12 aq-ink3">{t('The chat\'s branches could not be read.')}</p>}
-      {empty && !q.isError && <p className="m-0 text-12 aq-ink3">{t('No branches: this chat handed no task, has no linked chat and started no helper.')}</p>}
-      {p && p.tasks.length > 0 && (
-        <section><span className="aq-label">{t('tasks it worked on')}</span>
-          <ul className="m-0 p-0 list-none">
-            {p.tasks.map((x) => (
-              <li key={x.id} className="flex items-center gap-6 h-[24px] text-12 min-w-0">
-                <span className="w-[8px] h-[8px] rounded-[2px] shrink-0" style={{ background: x.status === 'done' ? 'var(--status-green)' : x.status === 'doing' ? 'var(--brand)' : 'var(--text-tertiary)' }} />
-                <span className="truncate" style={{ color: 'var(--text-primary)' }} title={x.title}>{x.title || x.id}</span>
-                <span className="ml-auto text-10 font-mono aq-ink3 shrink-0">{x.id}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {empty && !q.isError && <p className="m-0 text-12 aq-ink3">{t('No linked chats, helpers or deferred branches.')}</p>}
       {p && (p.parent || p.children.length > 0 || links.length > 0) && (
         <section><span className="aq-label">{t('linked chats')}</span>
           <ul className="m-0 p-0 list-none">

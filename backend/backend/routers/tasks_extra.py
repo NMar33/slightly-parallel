@@ -8,7 +8,7 @@ import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
-from .. import limits
+from .. import hookshared, limits, titlelib
 from ..csvio import rewrite_rows
 from ..db import ViewStore
 from ..docs_md import resolve_under
@@ -31,7 +31,7 @@ from .lenses import check_enum_fields, doc_path, task_membership
 from ..tasklib import (  # noqa: F401
     AGENT_TAGS, AGENT_TAGS_MAX, AGENT_TITLE_MAX, agent_tags, DESCRIPTION_MAX, TASK_STATUSES, TITLE_MAX, _board_lanes,
     _gate_agent_create, _lane_for, _operator_command, _set_archived, _task_doc, _write_task_doc,
-    after_status_change, create_task, maybe_resurface, resurface_sweep,
+    after_status_change, create_task, maybe_resurface, resurface_sweep, OWN_CARD_FIELDS, own_card_refusal,
 )
 
 
@@ -119,7 +119,25 @@ def tasks_update(
             body["_agent_tags"] = tags
     if "title" in body and len(str(body.get("title") or "")) > TITLE_MAX:
         raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
-    every = str(body.get("resurface_every_days") or "").strip()
+    # A task made from a message (titlelib): its title waits for the source
+    # chat's agent, who sets it once; no other agent, and none after the
+    # operator renamed it. A task with no such row keeps the usual rules.
+    title_wait = titlelib.state_of(store.data_root, task_id) if "title" in body else None
+    if title_wait is not None and is_agent:
+        refused = titlelib.agent_refusal(title_wait, actor, task_id)
+        if refused:
+            refuse_agent(*refused)
+        given = str(body.get("title") or "").strip()
+        if not given or len(given) > AGENT_TITLE_MAX:
+            raise HTTPException(status_code=422, detail=(
+                f"the title is 1–{AGENT_TITLE_MAX} characters ({len(given)} sent)"))
+        body["title"] = given
+    # The title, the text and the day of a card are its creator's: an agent
+    # changes them only on a card it created (tasklib.own_card_refusal, asked
+    # in mutate against the row). The waiting title above is the exception.
+    own_fields = [f for f in OWN_CARD_FIELDS
+                  if f in body and not (f == "title" and title_wait is not None)] if is_agent else []
+    every =str(body.get("resurface_every_days") or "").strip()
     if every.isdigit() and int(every) > RESURFACE_EVERY_MAX:
         # A day count past the calendar raised OverflowError: a 500. Text
         # that is not a number is stored and never acted on, as before.
@@ -153,6 +171,9 @@ def tasks_update(
         target = next((r for r in rows if r.get("id") == task_id), None)
         if target is None:
             raise not_found("task", task_id)
+        not_yours = own_card_refusal(target, actor, task_id, own_fields) if own_fields else None
+        if not_yours:
+            refuse_agent(*not_yours)
         # Task status belongs to the operator. An agent may move a card
         # only when the task opts in (auto_manage) — and the honest path
         # even then is POST /api/tasks/{id}/report, which moves it to
@@ -257,6 +278,12 @@ def tasks_update(
 
     for other_id, other_actor, other_changes in side_events:
         _append_events(store, other_id, other_actor, other_changes)
+    if title_wait is not None and title_wait.get("state") == hookshared.TITLE_WAITING:
+        if is_agent:
+            titlelib.close_wait(store.data_root, title_wait, hookshared.TITLE_BY_AGENT, actor)
+        elif any(f == "title" for f, _old, _new in changes):
+            # The operator's own name for it: the agent no longer gives one.
+            titlelib.close_wait(store.data_root, title_wait, hookshared.TITLE_BY_OPERATOR, actor or _DEFAULT_ACTOR)
     if changes:
         _append_events(store, task_id, actor, changes)
 

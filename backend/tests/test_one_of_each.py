@@ -234,7 +234,7 @@ def test_deleting_a_project_sweeps_kept_versions_and_story_images(
 def test_deleting_a_project_takes_the_side_ledgers_of_its_notes_entry_points_cards_and_cores(
     client: TestClient, data_root: Path
 ) -> None:
-    """A note's versions, pictures and marks, an entry point's ways and shots,
+    """A note's versions, pictures, marks and comments, an entry point's ways and shots,
     a publish document's versions and a core's notes live in ledgers of their
     own, keyed by the note, topic, document or core. They go with the project
     and come back with a restored archive (the example project is built that
@@ -242,7 +242,7 @@ def test_deleting_a_project_takes_the_side_ledgers_of_its_notes_entry_points_car
     from backend import project_admin
     from backend.csvio import append_row, read_rows
     from backend.entities import (CORE_COLUMNS, CORE_NOTE_COLUMNS, ENTITIES, ENTRYPOINT_WAY_COLUMNS,
-                                  NOTE_MARK_COLUMNS, NOTE_VERSION_COLUMNS, PUBLISH_DOC_COLUMNS,
+                                  NOTE_COMMENT_COLUMNS, NOTE_MARK_COLUMNS, NOTE_VERSION_COLUMNS, PUBLISH_DOC_COLUMNS,
                                   PUBLISH_VERSION_COLUMNS)
 
     def put(ledger: str, cols: tuple[str, ...], **row: str) -> None:
@@ -258,6 +258,7 @@ def test_deleting_a_project_takes_the_side_ledgers_of_its_notes_entry_points_car
         put("note_versions.csv", NOTE_VERSION_COLUMNS, id=f"{nid}#1", note_id=nid, n="1",
             file=f"note_details/{nid}/v001.md")
         put("note_marks.csv", NOTE_MARK_COLUMNS, id=f"nm_{nid}", note_id=nid, item=f"{nid}:k:1", kind="tick", value="1")
+        put("note_comments.csv", NOTE_COMMENT_COLUMNS, id=f"nc_{nid}", note_id=nid, text="A comment", version="1")
         touch(f"note_details/{nid}/v001.md")
         touch(f"note_images/{nid}/ni_0000000001.png")
         put(ENTITIES["entrypoint"].csv, ENTITIES["entrypoint"].columns, id=ep, project=code, l1="A topic")
@@ -274,6 +275,7 @@ def test_deleting_a_project_takes_the_side_ledgers_of_its_notes_entry_points_car
     out = project_admin.delete_project_data(client.app.state.store, "ALPHA")
     trash = Path(out["trash"])
     for name, key in (("note_versions.csv", "note_id"), ("note_marks.csv", "note_id"),
+                      ("note_comments.csv", "note_id"),
                       ("entrypoint_ways.csv", "entrypoint_id"), ("publish_versions.csv", "doc_id"),
                       ("core_notes.csv", "core_id"), ("publish_docs.csv", "project"), ("cores.csv", "project")):
         left = {r[key] for r in read_rows(data_root / name)}
@@ -288,6 +290,7 @@ def test_deleting_a_project_takes_the_side_ledgers_of_its_notes_entry_points_car
     project_admin.restore_project_archive(client.app.state.store, trash)
     assert (data_root / "note_details/nt_aaaa0001/v001.md").exists()
     assert {r["note_id"] for r in read_rows(data_root / "note_versions.csv")} == {"nt_aaaa0001", "nt_bbbb0001"}
+    assert {r["note_id"] for r in read_rows(data_root / "note_comments.csv")} == {"nt_aaaa0001", "nt_bbbb0001"}
 
 
 # ---------------------------------------------------------------------------

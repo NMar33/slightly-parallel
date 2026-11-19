@@ -1,4 +1,6 @@
 import fs from 'node:fs'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron, type APIRequestContext, type ElectronApplication, type Page } from '@playwright/test'
@@ -34,8 +36,9 @@ const savedIn = (dir: string): Saved[] => {
   try { return (JSON.parse(fs.readFileSync(path.join(dir, 'windows.json'), 'utf-8')) as { windows: Saved[] }).windows } catch { return [] }
 }
 
-async function start(userData: string): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await _electron.launch({ executablePath: ELECTRON, args: launchArgs(userData), env: launchEnv(), timeout: 30_000 })
+async function start(userData: string, origin?: string): Promise<{ app: ElectronApplication; page: Page }> {
+  const args = launchArgs(userData).map((arg) => origin && arg.startsWith('--url=') ? `--url=${origin}` : arg)
+  const app = await _electron.launch({ executablePath: ELECTRON, args, env: launchEnv(), timeout: 30_000 })
   await catchLinksOut(app)
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
@@ -77,7 +80,7 @@ test.describe('windows after a restart', () => {
     fs.rmSync(userData, { recursive: true, force: true })
     await onStart(server.api, 'restore')
   })
-  const launch = async () => { const s = await start(userData); open.push(s.app); return s }
+  const launch = async (origin?: string) => { const s = await start(userData, origin); open.push(s.app); return s }
   const quit = async (app: ElectronApplication) => { await app.close(); open.splice(open.indexOf(app), 1) }
 
   test('a detached chat and workspace come back after a quit with their addresses and sizes; one closed by hand does not', async ({ server, shell }) => {
@@ -160,6 +163,43 @@ test.describe('windows after a restart', () => {
     await closed
     open.splice(open.indexOf(app), 1)
     expect(savedIn(userData).map((w) => w.url)).toEqual([chatUrl])
+  })
+
+  test('closing during startup preserves previous windows and a newly detached window', async () => {
+    let requestWaiting = false
+    let holdSettings = true
+    const local = createServer((req, res) => {
+      if (req.url === '/api/settings') {
+        if (holdSettings) { requestWaiting = true; return }
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}')
+        return
+      }
+      res.writeHead(200, { 'content-type': 'text/html' }).end('<title>Restore test</title>')
+    })
+    await new Promise<void>((resolve) => local.listen(0, '127.0.0.1', resolve))
+    try {
+      const origin = `http://127.0.0.1:${(local.address() as AddressInfo).port}`
+      const previous = [`${origin}/term?detached=old`, `${origin}/term?ws=old`]
+      const fresh = `${origin}/term?detached=new`
+      fs.writeFileSync(path.join(userData, 'windows.json'), JSON.stringify({ version: 1,
+        windows: previous.map((url) => ({ url, width: 700, height: 500 })) }))
+      const { app, page } = await launch(origin)
+      await expect.poll(() => requestWaiting).toBe(true)
+      await page.evaluate((url) => (window as unknown as { spWindow: { postMessage: (m: unknown) => void } }).spWindow.postMessage({ op: 'detach', url }), fresh)
+      await pageAt(app, fresh)
+      const expected = [...previous, fresh].sort()
+      await expect.poll(() => savedIn(userData).map((w) => w.url).sort()).toEqual(expected)
+      await quit(app)
+      expect(savedIn(userData).map((w) => w.url).sort()).toEqual(expected)
+
+      holdSettings = false
+      const again = await launch(origin)
+      expect(await decided(again.app)).toEqual({ choice: 'restore', saved: 3, opened: 3, asked: 0 })
+      for (const url of [...previous, fresh]) await pageAt(again.app, url)
+    } finally {
+      local.closeAllConnections()
+      local.close()
+    }
   })
 
   test('«only the main window»: none come back, and the set is let go', async ({ server, shell }) => {

@@ -16,6 +16,7 @@ import { ImageZoom } from '../../../components/ImageZoom'
 import { Button } from '../../../components/primitives/Button'
 import { LABEL } from '../../../components/ui'
 import { t, tn } from '../../../i18n/scope/notes'
+import { CommentSection, CommentThread, NoteComments } from './comments'
 import { isTicked, useMarks, useNoteEnv } from './env'
 import { blocksOf, ID_RE, type Block, type CheckItem, type Note, type Section } from './model'
 
@@ -118,13 +119,21 @@ export function CheckRow({ item }: { item: CheckItem }) {
   const env = useNoteEnv()
   const on = isTicked(env.marks, item.id, item.done)
   return (
-    <li className="flex items-start gap-8 min-w-0">
-      <input type="checkbox" checked={on} disabled={env.readOnly} onChange={(e) => env.tick(item.id, e.target.checked)} aria-label={item.text.slice(0, 80)}
-        className="mt-[3px] h-14 w-14 shrink-0 accent-[var(--brand)] cursor-pointer" />
-      <span className={`min-w-0 ${on ? 'text-tertiary line-through decoration-border-strong' : ''}`}>
-        <NoteText text={item.text} density="compact" />
-      </span>
-    </li>
+    <CommentThread noteId={item.id.split(':')[0]!} item={item.id} label={item.text.slice(0, 80)}>
+      {(button, panel) => (
+        <li className="flex flex-col gap-4 min-w-0">
+          <div className="flex items-start gap-8 min-w-0">
+            <input type="checkbox" checked={on} disabled={env.readOnly} onChange={(e) => env.tick(item.id, e.target.checked)} aria-label={item.text.slice(0, 80)}
+              className="mt-[3px] h-14 w-14 shrink-0 accent-[var(--brand)] cursor-pointer" />
+            <div className={`flex-1 min-w-0 ${on ? 'text-tertiary line-through decoration-border-strong' : ''}`}>
+              <NoteText text={item.text} density="compact" />
+            </div>
+            {button}
+          </div>
+          {panel && <div className="ml-[22px] min-w-0">{panel}</div>}
+        </li>
+      )}
+    </CommentThread>
   )
 }
 
@@ -164,26 +173,32 @@ export function Choice({ block }: { block: Extract<Block, { type: 'choice' }> })
   const env = useNoteEnv()
   const picked = env.marks.answers[block.id]
   return (
-    <div data-block="choice" className={`rounded-card border px-12 py-10 flex flex-col gap-8 min-w-0 ${picked == null ? 'border-status-amber/50 bg-status-amber/5' : 'border-border-subtle bg-surface'}`}>
-      <div className="flex items-center gap-8 flex-wrap">
-        <span className={`${LABEL} ${picked == null ? 'text-status-amber' : ''}`}>{picked == null ? t('your answer is needed') : t('answered')}</span>
-        <span className="text-13 text-primary font-medium">{block.question}</span>
-      </div>
-      <div className="flex flex-col gap-4">
-        {block.options.map((o, i) => {
-          const on = picked === i
-          return (
-            <button key={o} type="button" aria-pressed={on} disabled={env.readOnly} onClick={() => env.answer(block.id, on ? null : i)}
-              className={`text-left flex items-start gap-8 rounded-input border px-8 py-6 text-13 transition-colors ${
-                on ? 'border-brand bg-brand-glow text-primary' : picked != null ? 'border-border-subtle text-tertiary hover:text-secondary' : 'border-border-default text-primary hover:bg-hover'}`}>
-              <span className={`font-mono text-11 mt-[2px] w-16 shrink-0 ${on ? 'text-brand' : 'text-tertiary'}`}>{i + 1}</span>
-              <span className="min-w-0">{o}</span>
-            </button>
-          )
-        })}
-      </div>
-      {picked != null && <span className="text-11 font-mono text-tertiary">{t('The agent reads the answer at its next turn. Click the answer again to take it back.')}</span>}
-    </div>
+    <CommentThread noteId={block.id.split(':')[0]!} item={block.id} label={block.question.slice(0, 80)}>
+      {(button, panel) => (
+        <div data-block="choice" className={`rounded-card border px-12 py-10 flex flex-col gap-8 min-w-0 ${picked == null ? 'border-status-amber/50 bg-status-amber/5' : 'border-border-subtle bg-surface'}`}>
+          <div className="flex items-center gap-8 flex-wrap">
+            <span className={`${LABEL} ${picked == null ? 'text-status-amber' : ''}`}>{picked == null ? t('your answer is needed') : t('answered')}</span>
+            <span className="text-13 text-primary font-medium flex-1 min-w-0 break-words">{block.question}</span>
+            {button}
+          </div>
+          <div className="flex flex-col gap-4">
+            {block.options.map((o, i) => {
+              const on = picked === i
+              return (
+                <button key={o} type="button" aria-pressed={on} disabled={env.readOnly} onClick={() => env.answer(block.id, on ? null : i)}
+                  className={`text-left flex items-start gap-8 rounded-input border px-8 py-6 text-13 transition-colors ${
+                    on ? 'border-brand bg-brand-glow text-primary' : picked != null ? 'border-border-subtle text-tertiary hover:text-secondary' : 'border-border-default text-primary hover:bg-hover'}`}>
+                  <span className={`font-mono text-11 mt-[2px] w-16 shrink-0 ${on ? 'text-brand' : 'text-tertiary'}`}>{i + 1}</span>
+                  <span className="min-w-0">{o}</span>
+                </button>
+              )
+            })}
+          </div>
+          {picked != null && <span className="text-11 font-mono text-tertiary">{t('The agent reads the answer at its next turn. Click the answer again to take it back.')}</span>}
+          {panel}
+        </div>
+      )}
+    </CommentThread>
   )
 }
 
@@ -375,10 +390,11 @@ export function NoteBody({ note, density = 'read', from = 0, heading }: {
 }) {
   return (
     <div className="flex flex-col gap-10 min-w-0">
+      <NoteComments note={note} />
       {note.sections.slice(from).map((s, i) => (
         <section key={s.id} id={anchorOf(note, s)} aria-label={s.title || note.title} className="flex flex-col gap-10 min-w-0 scroll-mt-[16px]">
           {s.title && (heading ? heading(s, i + from) : <h2 className="text-16 font-semibold text-primary mt-12 m-0">{s.title}</h2>)}
-          <Blocks blocks={s.blocks} density={density} />
+          <CommentSection.Provider value={s.title}><Blocks blocks={s.blocks} density={density} /></CommentSection.Provider>
         </section>
       ))}
     </div>

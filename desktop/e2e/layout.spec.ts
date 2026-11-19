@@ -119,6 +119,9 @@ test.describe('workspaces', () => {
   test('Ctrl+Shift+↑ steps out, Ctrl+Shift+↓ and Esc step back in', async ({ win }) => {
     const { page } = win
     await ready(page)
+    await page.getByRole('button', { name: 'Keys', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Keys' }).getByText('back one level in the overview')).toBeVisible()
+    await page.keyboard.press('Escape')
     await page.getByRole('textbox', { name: 'Terminal input' }).focus()
     const out = 'ControlOrMeta+Shift+ArrowUp'
     const into = 'ControlOrMeta+Shift+ArrowDown'
@@ -126,10 +129,13 @@ test.describe('workspaces', () => {
     await expect.poll(() => level(page)).toBe('ws')
     await page.keyboard.press(out)
     await expect.poll(() => level(page)).toBe('all')
+    const breadcrumb = page.getByRole('navigation', { name: 'Where you are' })
+    await expect(breadcrumb.getByText('Esc back to the workspace')).toBeVisible()
     await page.keyboard.press(out)               // the top: it stays
     await expect.poll(() => level(page)).toBe('all')
     await page.keyboard.press('Escape')
     await expect.poll(() => level(page)).toBe('ws')
+    await expect(breadcrumb.getByText('Esc back to the terminal')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect.poll(() => level(page)).toBe('chat')
     await page.keyboard.press(out)

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HIDE_KEY, BY_KEY } from '../render/state'
 import { hashOf } from '../render/model'
+import type { NoteComment } from '../render/env'
 import type { Feed, WireNote } from './data'
 import { NotesPage } from './NotesPage'
 import { TaskNotesSection } from './TaskNotesSection'
@@ -29,15 +30,34 @@ const FEED: Feed = {
 }
 
 let posts: Array<{ url: string; body: Record<string, unknown> }> = []
-function serve(feed: Feed) {
+function serve(feed: Feed, options: { failFirstComment?: boolean } = {}) {
   posts = []
+  const comments = [...(feed.comments ?? [])]
+  let failComment = options.failFirstComment
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
-    if (init?.method === 'POST') { posts.push({ url, body: JSON.parse(String(init.body)) }); return json({ ok: true }) }
+    if (init?.method === 'POST') {
+      const body = JSON.parse(String(init.body))
+      posts.push({ url, body })
+      if (url.endsWith('/comments')) {
+        if (failComment) {
+          failComment = false
+          return new Response(JSON.stringify({ detail: 'Connection interrupted' }), { status: 503 })
+        }
+        const comment: NoteComment = {
+          id: `nc_${comments.length}`, note_id: PLAN.id, item: body.item, text: body.text,
+          section: body.section ?? '', label: '', version: PLAN.versions, at: '2026-11-16T10:05:00',
+        }
+        comments.push(comment)
+        return json({ comment })
+      }
+      return json({ ok: true })
+    }
     if (url.startsWith('/api/notes/feed')) {
       const task = new URL(url, 'http://x').searchParams.get('task')
-      return json(task ? { ...feed, notes: feed.notes.filter((n) => n.task === task || n.body.includes(task)) } : feed)
+      const notes = task ? feed.notes.filter((n) => n.task === task || n.body.includes(task)) : feed.notes
+      return json({ ...feed, notes, comments: comments.filter((c) => notes.some((n) => n.id === c.note_id)) })
     }
     return new Response('{}', { status: 404 })
   }))
@@ -92,6 +112,42 @@ describe('the Notes page on the server\'s notes', () => {
     fireEvent.click(screen.getByRole('button', { name: /The moon/ }))
     await waitFor(() => expect(posts).toHaveLength(2))
     expect(posts[1]!.body).toMatchObject({ kind: 'answer', value: 1 })
+  })
+
+  it('keeps an item comment draft after a failed write and scopes replies to their section or note', async () => {
+    const note = { ...PLAN, body: PLAN.body + '\n## Later\n\n- [ ] Rotate the signing key\n' }
+    serve({ ...FEED, notes: [note] }, { failFirstComment: true })
+    render(wrap(<NotesPage />, `/notes?note=${note.id}`))
+    const section = await screen.findByRole('region', { name: 'By hand' })
+    const item = within(section).getByRole('button', { name: 'Comment on: Rotate the signing key' })
+    fireEvent.click(item)
+    const editor = within(section).getByRole('textbox', { name: 'Comment' })
+    expect(editor).toHaveFocus()
+    fireEvent.change(editor, { target: { value: 'Before the release\n<a>waiting</a>' } })
+    const send = within(section).getByRole('button', { name: 'Send comment' })
+    fireEvent.click(send)
+    expect(await within(section).findByRole('alert')).toHaveTextContent('Connection interrupted')
+    expect(editor).toHaveValue('Before the release\n<a>waiting</a>')
+    fireEvent.click(send)
+    const saved = await within(section).findByText(/<a>waiting<\/a>/)
+    expect(saved.querySelector('a')).toBeNull()
+    expect(posts[1]).toEqual(posts[0])
+    expect(posts[1].body).toMatchObject({
+      item: `${note.id}:k:${hashOf('Rotate the signing key')}`, section: 'By hand',
+    })
+    await waitFor(() => expect(item).toHaveFocus())
+    const later = screen.getByRole('region', { name: 'Later' })
+    fireEvent.click(within(later).getByRole('button', { name: 'Comment on: Rotate the signing key' }))
+    expect(within(later).queryByText(/waiting/)).toBeNull()
+    fireEvent.click(within(later).getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(item)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on the note' }))
+    const field = screen.getByRole('textbox', { name: 'Comment' })
+    fireEvent.change(field, { target: { value: 'Whole note feedback' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send comment' }))
+    expect(await screen.findByText('Whole note feedback')).toBeTruthy()
+    expect(posts[2].body).toMatchObject({ item: null, text: 'Whole note feedback' })
   })
 
   it('draws a note\'s pictures from the server by id', async () => {

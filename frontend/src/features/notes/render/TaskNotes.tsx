@@ -16,6 +16,7 @@ import { Button } from '../../../components/primitives/Button'
 import { LABEL } from '../../../components/ui'
 import { t, tn } from '../../../i18n/scope/notes'
 import { Checklist, Choice, CopyBlock, Gallery, NoteBody } from './blocks'
+import { CommentSection, NoteComments } from './comments'
 import { isTicked, openOf, useMarks, useNoteEnv } from './env'
 import { allBlocks, type Block, type Note } from './model'
 import { KindMark, OpenWords, Outline, goTo, stampOf, useOpen } from './parts'
@@ -25,11 +26,13 @@ function Entry({ note, own, taskId, others }: { note: Note; own: boolean; taskId
   const env = useNoteEnv()
   const open = useOpen(note)
   const [read, setRead] = useState(false)
-  const flat = allBlocks(note).map((x) => x.block)
+  const blocks = allBlocks(note)
+  const flat = blocks.map((x) => x.block)
   const gallery = flat.find((b): b is Extract<Block, { type: 'gallery' }> => b.type === 'gallery')
   const choices = flat.filter((b): b is Extract<Block, { type: 'choice' }> => b.type === 'choice' && m.answers[b.id] == null)
   const check = flat.find((b): b is Extract<Block, { type: 'check' }> => b.type === 'check' && b.items.some((it) => !isTicked(m, it.id, it.done)))
   const paste = note.kind === 'paste' ? flat.find((b): b is Extract<Block, { type: 'copy' }> => b.type === 'copy') : undefined
+  const sectionOf = (block: Block) => blocks.find((x) => x.block === block)?.section.title ?? ''
   return (
     <li data-note={note.id} className="flex flex-col gap-6 rounded-input border border-border-subtle bg-surface px-10 py-8 min-w-0">
       <div className="flex items-start gap-8 min-w-0">
@@ -44,8 +47,9 @@ function Entry({ note, own, taskId, others }: { note: Note; own: boolean; taskId
       </div>
       <p className="m-0 text-12 text-secondary leading-relaxed line-clamp-3">{note.lead}</p>
       {gallery && <Gallery block={gallery} size="strip" />}
-      {!read && choices.map((c) => <Choice key={c.id} block={c} />)}
-      {!read && check && <Checklist block={check} limit={3} />}
+      {!read && <NoteComments note={note} />}
+      {!read && choices.map((c) => <CommentSection.Provider key={c.id} value={sectionOf(c)}><Choice block={c} /></CommentSection.Provider>)}
+      {!read && check && <CommentSection.Provider value={sectionOf(check)}><Checklist block={check} limit={3} /></CommentSection.Provider>}
       {!read && paste && <CopyBlock block={paste} density="compact" lines={4} />}
       <div className="flex items-center gap-12 flex-wrap">
         <Button variant="link" size="bare" className="text-12" onClick={() => setRead((r) => !r)}>

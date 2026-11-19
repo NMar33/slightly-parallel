@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Terminal } from 'xterm'
-import { AlignLeft, ClipboardPaste, Clock, Copy, ExternalLink, GitBranch, Globe, Layers, Link2, ListPlus, Pin, PinOff, Quote, SquareTerminal, X } from 'lucide-react'
+import { AlignLeft, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Clock, Copy, ExternalLink, GitBranch, Globe, Layers, Link2, ListPlus, Pin, PinOff, Quote, SquareTerminal, X } from 'lucide-react'
 
 import '../../notes/render/notes.css'
 import { writeClipboard } from '../../../lib/useCopy'
@@ -40,7 +40,7 @@ import { ServerNoteEnv } from '../../notes/page/ServerEnv'
 import { NoteRead } from '../../notes/render/reader'
 import { getJson } from '../../../lib/getJson'
 import { useQuery } from '@tanstack/react-query'
-import { t } from '../../../i18n/scope/msgmenu'
+import { t, tn } from '../../../i18n/scope/msgmenu'
 import type { ScreenApi, ScreenHooks } from '../Screen'
 import { findIds, type FoundId, type IdKind } from './ids'
 import { AgentCard, CommitCard, CoreCard, DecisionCard, EntryCard, PublishCard, SkillCard, type CardProps } from './IdCards'
@@ -52,12 +52,16 @@ import { blocksOf, messageAt, type Found } from './match'
 import { commandAt, commandSpans, forClaudeCode, type Command } from './commands'
 import { CommandCopy, CommandScanner, type HoverFeed } from './CommandCopy'
 import { rowTop, useView } from './rowAnchor'
+import { foldSaid, messageRange, spansOf, type Span } from '../fold'
+import { foldViewOf } from '../reader'
 import { firstLine, marksOf, refOf, useChatRecord, useKept, useMessageActions, useTask, type CarryLevel, type MessageMarks } from './data'
 
 const COLUMNS = ['todo', 'doing', 'done'] as const
 
 type Open =
-  | { kind: 'msg'; x: number; y: number; cx: number; cy: number; state: 'reading' | 'done'; found: Found | null; line: string; link: TermLink | null; cmd: Command | null }
+  | { kind: 'msg'; x: number; y: number; cx: number; cy: number; state: 'reading' | 'done'; found: Found | null; line: string; link: TermLink | null; cmd: Command | null
+      /** The message's rows as fold.ts names them (collapse, expand), and the rows read: «collapse all replies» reads them again. */
+      span?: Span | null; rows?: string[] }
   | { kind: 'id'; x: number; y: number; id: FoundId; card?: boolean }
 
 /** What the layer hands the screen: its hooks, and where to put the screen's actions. */
@@ -212,7 +216,8 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
         const found = rows && rec ? messageAt(rows.rows, rows.at, rec) : null
         // The command on the clicked row, read in the whole history (a tmux pane's from tmux) when the screen's scan had none.
         const more = rows ? commandAt(commandSpans(rows.rows, rec, { from: rows.at, to: rows.at }), rows.at, null)?.cmd ?? null : null
-        setOpen((o) => (o?.kind === 'msg' && n === seq.current ? { ...o, state: 'done', found, line: rows ? rows.rows[rows.at] ?? '' : '', cmd: o.cmd ?? more } : o))
+        const span = rows ? messageRange(rows.rows.map((text) => ({ text })), rows.at) : null
+        setOpen((o) => (o?.kind === 'msg' && n === seq.current ? { ...o, state: 'done', found, line: rows ? rows.rows[rows.at] ?? '' : '', cmd: o.cmd ?? more, span, rows: rows?.rows } : o))
       }, () => setOpen((o) => (o?.kind === 'msg' && n === seq.current ? { ...o, state: 'done' } : o)))
       return true
     },
@@ -292,6 +297,7 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
   }
   const copy = run(async () => {
     const sel = api.current?.selection() ?? ''
+    if (!sel && await api.current?.copyTmuxSelection?.()) return
     const what = sel || text || open.line.trim()
     if (!(await writeClipboard(what))) { say(t('The browser did not allow copying')); return }
     say(sel ? t('Selection copied') : text ? t('Message copied') : t('Line copied'))
@@ -328,16 +334,35 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
     api.current?.paste?.(cmd!.text)
     say(t('Pasted into the terminal: Enter runs it'))
   })
-  const row = (key: string, icon: ReactNode, label: string, onClick: () => void, on = false) => (
-    <button key={key} type="button" role="menuitem" className="lab-list-row" data-on={on || undefined} onClick={onClick}>{icon}{label}</button>
+  const row = (key: string, icon: ReactNode, label: string, onClick: () => void, on = false, title?: string) => (
+    <button key={key} type="button" role="menuitem" className="lab-list-row" data-on={on || undefined} title={title} onClick={onClick}>{icon}{label}</button>
   )
+  // Collapsing (fold.ts): the message under the click, every reply read, all of them back.
+  const fold = api.current?.fold
+  const span = open.span ?? null
+  const folded = !!span && !!fold?.has(span.id)
+  const foldCount = fold?.count() ?? 0
+  const foldRows = fold && span ? 2 + (foldCount ? 1 : 0) : fold && foldCount ? 1 : 0
+  const toggleFold = run(async () => {
+    const got = await fold!.set([span!.id], !folded)
+    say(folded ? foldSaid.open() : foldSaid[got]())
+  })
+  const foldAll = run(async () => {
+    const ids = spansOf((open.rows ?? []).map((text) => ({ text }))).filter((s) => s.side === 'reply').map((s) => s.id)
+    const got = await fold!.set(ids, true)
+    say(got === 'off' ? foldSaid.off() : tn(ids.length, '{n} reply collapsed', '{n} replies collapsed'))
+  })
+  const unfoldAll = run(async () => {
+    await fold!.clear()
+    say(t('All messages expanded'))
+  })
   const carry = (level: CarryLevel) => run(() => {
     actions.carry(ref!, m!.carry, level)
     say(m!.carry === level ? t('Not carried after compaction') : level === 'carry' ? t('After compaction: word for word') : t('After compaction: as a summary'))
   })
   return (
     <div ref={box} className="mm-pop lab-menu lab-list" role="menu" aria-label={title} data-found={f ? 'yes' : open.state === 'reading' ? 'reading' : 'no'}
-      style={place(open.x, open.y, 256, (f ? 262 : agentId ? 118 : 60) + (link ? linkRows * 28 + 30 : 0) + (cmd ? cmdRows * 28 + 30 : 0), w, h)}>
+      style={place(open.x, open.y, 256, (f ? 262 : agentId ? 118 : 60) + foldRows * 28 + (link ? linkRows * 28 + 30 : 0) + (cmd ? cmdRows * 28 + 30 : 0), w, h)}>
       {link && (
         <>
           <div className="lab-list-head"><span className="truncate font-mono" title={link.text}>{link.text}</span></div>
@@ -394,10 +419,16 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
           }), m.branched)}
           {row('task', <ListPlus size={15} />, m.task ? t('Task {id}', { id: m.task }) : t('Make a task'), run(async () => {
             const got = await actions.makeTask(ref, text, t('From the chat: {target}', { target }))
-            say(got.existing ? t('Already a task: {id}', { id: got.id }) : t('Task made in todo: {id}', { id: got.id }))
+            say(got.existing ? t('Already a task: {id}', { id: got.id })
+              : got.title ? t('Task made in todo: {id} · {title}', { id: got.id, title: got.title })
+                : t('Task made in todo: {id}', { id: got.id }))
           }), !!m.task)}
         </>
       )}
+      {agentId && fold && span && row('fold', folded ? <ChevronsUpDown size={15} /> : <ChevronsDownUp size={15} />, folded ? t('Expand') : t('Collapse to one line'), toggleFold, folded,
+        t('Shown as one line in the history, when you scroll up; the live screen at the bottom stays as the program drew it'))}
+      {agentId && fold && span && row('fold-all', <ChevronsDownUp size={15} />, t('Collapse all replies'), foldAll)}
+      {agentId && fold && foldCount > 0 && row('unfold-all', <ChevronsUpDown size={15} />, t('Expand all'), unfoldAll)}
       {agentId && row('copy', <Copy size={15} />, t('Copy'), copy)}
       <div className="h-px my-3" style={{ background: 'var(--aq-term-frame, rgba(255,255,255,0.1))' }} />
       {row('own', <SquareTerminal size={15} />, t('Terminal menu…'), () => { close(); api.current?.ownMenu(open.cx, open.cy) })}
@@ -504,7 +535,7 @@ function NoteCard({ id, close }: { id: string; close: () => void }) {
         </div>
         <div className="flex-1 min-h-0 overflow-auto px-20 py-16">
           {note ? (
-            <ServerNoteEnv feed={feed.data}>
+            <ServerNoteEnv feed={feed.data} extraNote={inFeed ? undefined : alone.data}>
               <NoteRead note={note} size="mid" />
             </ServerNoteEnv>
           ) : (
@@ -546,13 +577,19 @@ function BlockMarks({ terms, agentId, record }: { terms: React.RefObject<Set<Ter
       const host = term?.element?.querySelector('.xterm-screen') as HTMLElement | null
       if (!term || !host || !term.rows) { setShown(null); return }
       const b = term.buffer.active
-      const from = Math.max(0, b.viewportY - 300)
+      // A reader with collapsed messages (fold.ts): its source rows, each mark on the row its text is on now (a label for a collapsed one).
+      const fv = foldViewOf(term)
+      const toView = (src: number) => (fv ? fv.map.toView(src) : src)
+      const top = fv ? fv.map.toSrc(b.viewportY) : b.viewportY
+      const end = fv ? Math.min(fv.src.length, fv.map.toSrc(b.viewportY + term.rows)) : b.viewportY + term.rows
+      const from = Math.max(0, top - 300)
       const rows: string[] = []
-      for (let i = from; i < b.viewportY + term.rows; i++) rows.push(b.getLine(i)?.translateToString(true) ?? '')
+      for (let i = from; i < end; i++) rows.push(fv ? fv.src[i]?.text ?? '' : b.getLine(i)?.translateToString(true) ?? '')
       const items: Shown[] = []
       const seen = new Set<string>()
       for (const blk of blocksOf(rows)) {
-        const r = blk.start + from - b.viewportY
+        const line = toView(blk.start + from)
+        const r = line - b.viewportY
         // A screen's worth above too: a scroll brings them in before the next read.
         if (r < -term.rows || r >= term.rows || (blk.kind !== 'user' && blk.kind !== 'agent')) continue
         const f = messageAt(rows, blk.start, record)
@@ -561,13 +598,15 @@ function BlockMarks({ terms, agentId, record }: { terms: React.RefObject<Set<Ter
         if (seen.has(target)) continue
         seen.add(target)
         const m = marksOf(of, kept, target)
-        if (m.pinned || m.carry || m.later || m.branched || m.task) items.push({ line: blk.start + from, target, m })
+        if (m.pinned || m.carry || m.later || m.branched || m.task) items.push({ line, target, m })
       }
       setShown({ host, term, items })
     }
     tick()
     const id = window.setInterval(tick, 500)
-    return () => window.clearInterval(id)
+    // The reader made again (a message collapsed or expanded): the marks move with their text now, not at the next read.
+    window.addEventListener('sp-reader-swap', tick)
+    return () => { window.clearInterval(id); window.removeEventListener('sp-reader-swap', tick) }
   }, [any, record, agentId, of, kept, terms])
   if (!shown || !shown.items.length || !view) return null
   return createPortal(

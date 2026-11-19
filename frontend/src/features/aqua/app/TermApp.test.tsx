@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AquaSession } from './model'
+import type { AquaSession, Group } from './model'
 
 // The live terminal is xterm on a socket: here a stub that says which terminal it is and types on request.
 // A terminal kept mounted behind the one in front (TermApp KEEP_SCREENS) is a bare mark.
@@ -38,12 +38,13 @@ const row = (p: Partial<AquaSession>): AquaSession => ({
 interface World {
   enabled?: boolean
   sessions: AquaSession[]
-  groups?: Array<{ id: string; name: string; color: number }> | null
+  groups?: Group[] | null
   restore?: { needed: number; sessions: Array<{ id: string; label: string }> } | null
   /** The time routes: absent (404) unless given. */
   time?: { running: unknown[]; project: Record<string, number>; total: number; working?: string[] }
   /** GET /api/terminal/tabs: absent (404) unless given. */
   tabs?: Record<string, { title: string; agent_id: string; chat: Record<string, unknown> | null }>
+  agentProfile?: Record<string, unknown>
 }
 let world: World
 const posts: Array<[string, unknown]> = []
@@ -66,18 +67,32 @@ beforeEach(() => {
       const body = JSON.parse(String(init.body ?? '{}'))
       posts.push([path, body])
       if (path === '/api/terminal/restore') return answer({ results: [{ id: 'r1', label: 'release-notes', ok: true }, { id: 'r2', label: 'api-limits', ok: false, error: 'the session id is gone' }] })
-      if (path === '/api/terminal/groups') return answer({ group: { id: 'g9', name: body.name, color: body.color } })
+      if (path === '/api/terminal/groups') {
+        const group = { id: 'g9', name: body.name, color: body.color, project: body.project }
+        world.groups?.push(group)
+        return answer({ group })
+      }
+      if (path.endsWith('/group')) {
+        const session = world.sessions.find((s) => s.id === path.split('/')[4])!
+        session.group = body.group
+        return answer({ session })
+      }
       if (path.endsWith('/capture')) return answer({ text: '$ make test\n41 passed' })
+      if (path.endsWith('/wake') && body.shell === true) {
+        const id = path.split('/')[4]
+        world.sessions = world.sessions.map((s) => s.id === id ? { ...s, state: 'shell' } : s)
+      }
       return answer({ ok: true })
     }
     if (path === '/api/terminal/state') {
-      return answer({ enabled: world.enabled ?? true, supported: true, token: 'tok', font_size: 13, scrollback: 1000, editor: '', agent: 'claude', projects: { harbor: '/h', kelp: '/k', lumen: '/l' } })
+      return answer({ enabled: world.enabled ?? true, supported: true, token: 'tok', open_shell: true, font_size: 13, scrollback: 1000, editor: '', agent: 'claude', projects: { harbor: '/h', kelp: '/k', lumen: '/l' } })
     }
     if (path === '/api/terminal/sessions') return answer({ sessions: world.sessions, counts: {} })
     if (path === '/api/terminal/tabs') return world.tabs ? answer({ tabs: world.tabs }) : answer({ detail: 'Not Found' }, 404)
     if (path === '/api/terminal/agents') return answer({ agents: { claude: true, codex: true, opencode: false } })
     if (path.startsWith('/api/terminal/resumable')) return answer({ chats: [{ agent_id: 'cc-old', name: 'old chat', tool: 'claude-code' }] })
     if (path.startsWith('/api/terminal/branch/')) return answer({ command: 'cd /h && claude -r ref --fork-session', project: 'harbor', name: 'x' })
+    if (path === '/api/agents/codex-current/profile' && world.agentProfile) return answer(world.agentProfile)
     if (path.startsWith('/api/tasks?project=')) return answer({ tasks: [{ id: 'tk_1', title: 'Fix the bill', status: 'todo' }, { id: 'tk_2', title: 'Old', status: 'done' }] })
     if (path === '/api/terminal/groups') return world.groups ? answer({ groups: world.groups }) : answer({ detail: 'Not Found' }, 404)
     if (path === '/api/terminal/restore') return world.restore ? answer(world.restore) : answer({ detail: 'Not Found' }, 404)
@@ -166,7 +181,8 @@ describe('SP Aqua at /term', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start it again' }))
     await waitFor(() => expect(posts.find(([p]) => p === `/api/terminal/sessions/${a.id}/wake`)).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: 'Open a shell in it' }))
-    expect(screen.getByTestId('screen').getAttribute('data-sid')).toBe(a.id)
+    expect((await screen.findByTestId('screen')).getAttribute('data-sid')).toBe(a.id)
+    expect(posts).toContainEqual([`/api/terminal/sessions/${a.id}/wake`, { actor: 'operator', shell: true }])
   })
 
   it('goes to another workspace from the folded list', async () => {
@@ -222,6 +238,34 @@ describe('SP Aqua at /term', () => {
     fireEvent.click(button); expect(level()).toBe('ws')
     fireEvent.click(button); expect(level()).toBe('all')
     fireEvent.click(button); expect(level()).toBe('chat')
+  })
+
+  it('reads the inspector chat from resolved tab data and labels its branches', async () => {
+    const current = row({ label: 'current terminal', state: 'waiting' })
+    const linked = row({ agent_id: 'cc-with-title', label: 'linked terminal' })
+    world = {
+      sessions: [current, linked],
+      tabs: { [current.id]: { title: '', agent_id: 'codex-current', chat: null } },
+      agentProfile: {
+        tasks: [], parent: null, helpers: [], links: [],
+        children: [
+          { agent_id: 'cc-named', agent_name: 'Release review', chat_title: 'Review draft' },
+          { agent_id: 'cc-with-title', agent_name: 'cc-with-title', chat_title: 'Check keyboard navigation' },
+          { agent_id: 'cc-unnamed', agent_name: 'cc-unnamed', chat_title: ' ' },
+        ],
+      },
+    }
+    page()
+    await screen.findByTestId('screen')
+    fireEvent.click(screen.getByRole('button', { name: 'Right sidebar' }))
+    const sidebar = within(screen.getByRole('complementary', { name: 'Right sidebar' }))
+    fireEvent.click(sidebar.getByRole('button', { name: 'Linked chats and branches' }))
+    const titled = await sidebar.findByText('Check keyboard navigation')
+    expect(sidebar.getByText('Release review')).toBeVisible()
+    expect(sidebar.getByText('cc-unnamed')).toBeVisible()
+    expect(titled.title).toBe(linked.agent_id)
+    fireEvent.click(within(titled.closest('li')!).getByRole('button', { name: / Open$/ }))
+    expect(screen.getByTestId('screen').getAttribute('data-sid')).toBe(linked.id)
   })
 
   it('opens the sidebars with alt+[ and alt+]; in a browser the toggles never move', async () => {
@@ -365,8 +409,43 @@ describe('SP Aqua at /term', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Colour 6' }))
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Make the group' })) })
     await waitFor(() => expect(posts.find(([p]) => p === `/api/terminal/sessions/${a.id}/group`)).toBeTruthy())
-    expect(posts.find(([p]) => p === '/api/terminal/groups')![1]).toMatchObject({ name: 'Release week', color: 6 })
+    expect(posts.find(([p]) => p === '/api/terminal/groups')![1]).toMatchObject({ name: 'Release week', color: 6, project: 'harbor' })
     expect(posts.find(([p]) => p === `/api/terminal/sessions/${a.id}/group`)![1]).toMatchObject({ group: 'g9' })
+    expect(await screen.findByRole('group', { name: 'Release week' })).toBeTruthy()
+    expect(localStorage.getItem('sp-aqua-workspace')).not.toBe('g:g9')
+  })
+
+  it('collapses a tab group in its project, remembers it on reload and keeps its terminal active', async () => {
+    const a = row({ label: 'first' })
+    const b = row({ label: 'middle' })
+    const c = row({ label: 'last', group: 'g9', state: 'waiting' })
+    world = { sessions: [a, b, c], groups: [
+      { id: 'g9', name: 'Release', color: 6, project: 'harbor' },
+      { id: 'g10', name: 'Other project', color: 2, project: 'kelp' },
+    ] }
+    const one = page('?ws=harbor')
+    const strip = await screen.findByRole('tablist', { name: 'Chats' })
+    const group = await within(strip).findByRole('group', { name: 'Release' })
+    const tab = await within(strip).findByRole('tab', { name: /first/ })
+    fireEvent.contextMenu(tab)
+    expect(screen.queryByRole('menuitem', { name: /Other project/ })).toBeNull()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add to tab group Release' }))
+    await waitFor(() => expect(within(strip).getAllByRole('tab').map((el) => el.textContent)).toEqual(['first', 'last', 'middle']))
+    fireEvent.click(within(group).getByRole('tab', { name: /last/ }))
+    fireEvent.click(within(group).getByRole('button', { name: 'Release' }))
+    expect(within(group).queryAllByRole('tab')).toHaveLength(0)
+    expect(within(group).getByRole('button', { name: 'Release' }).getAttribute('aria-current')).toBe('true')
+    expect(screen.getByTestId('screen').getAttribute('data-sid')).toBe(c.id)
+    one.unmount()
+
+    page('?ws=harbor')
+    const restored = await screen.findByRole('button', { name: 'Release' })
+    expect(restored.getAttribute('aria-expanded')).toBe('false')
+    await waitFor(() => expect(screen.getByTestId('screen').getAttribute('data-sid')).toBe(c.id))
+    fireEvent.click(restored)
+    fireEvent.contextMenu(screen.getByRole('tab', { name: /first/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from tab group' }))
+    await waitFor(() => expect(within(screen.getByRole('group', { name: 'Release' })).getAllByRole('tab')).toHaveLength(1))
   })
 
   it('offers Restore all after a restart and shows each chat\'s result, failures with their reason', async () => {
@@ -643,12 +722,25 @@ describe('switching workspaces (tk_f7a924a6)', () => {
     await waitFor(() => expect(screen.getByTestId('screen').getAttribute('data-sid')).toBe(b1.id))
     first.unmount()
     // the window reopens on kelp's tab; harbor still opens on a-two
-    localStorage.setItem('sp-aqua-active', b1.id)
     page()
     await waitFor(() => expect(screen.getByTestId('screen').getAttribute('data-sid')).toBe(b1.id))
     fireEvent.click(await screen.findByRole('button', { name: /\+1/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: /harbor/ }))
     await waitFor(() => expect(screen.getByTestId('screen').getAttribute('data-sid')).toBe(a2.id))
+  })
+
+  it('remembers an empty project selected in the sidebar', async () => {
+    world = { sessions: [row({ label: 'harbor-one' })] }
+    const first = page()
+    fireEvent.click(await screen.findByRole('button', { name: 'Left sidebar' }))
+    const sidebar = within(screen.getByRole('navigation', { name: 'Workspaces' }))
+    fireEvent.click(sidebar.getByRole('button', { name: /projects without terminals/ }))
+    fireEvent.click(sidebar.getByRole('button', { name: 'lumen' }))
+    expect(screen.getByText('No terminal in this workspace.')).toBeTruthy()
+    first.unmount()
+    page()
+    expect(await screen.findByText('No terminal in this workspace.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Workspaces' })).toHaveTextContent('lumen')
   })
 })
 

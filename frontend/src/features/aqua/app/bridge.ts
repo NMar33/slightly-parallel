@@ -6,7 +6,11 @@
  * bridge, the sidebars grow inside the page and a detach is a new tab.
  */
 
-type Handler = { postMessage: (msg: unknown) => void; restoreOffer?: () => Promise<number> }
+type Handler = {
+  postMessage: (msg: unknown) => void
+  restoreOffer?: () => Promise<number>
+  saveDraft?: (name: string, text: string) => Promise<boolean>
+}
 
 export type BridgeOp =
   | { op: 'drag' }
@@ -34,6 +38,12 @@ export function post(msg: BridgeOp): boolean {
   const h = handler()
   if (!h) return false
   try { h.postMessage(msg); return true } catch { return false }
+}
+
+
+/** Let the native Save As dialog choose the destination. Undefined on the web or an older desktop shell. */
+export function saveNativeDraft(name: string, text: string): Promise<boolean> | undefined {
+  return handler()?.saveDraft?.(name, text)
 }
 
 /** Another window on this address: the app's own, or a browser tab. */

@@ -669,6 +669,7 @@ NOTE_IMAGE_COLUMNS: tuple[str, ...] = (
     "id", "note_id", "file", "caption", "at", "agent_id", "width", "height", "removed_at",
 )
 NOTE_MARK_COLUMNS: tuple[str, ...] = ("id", "note_id", "item", "kind", "value", "at", "actor")
+NOTE_COMMENT_COLUMNS: tuple[str, ...] = ("id", "note_id", "item", "text", "at", "version", "section", "label")
 
 # Every append-only ledger that is not a full Entity but still needs a
 # typed view: (view name, csv file, columns).
@@ -706,4 +707,5 @@ LEDGERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("note_versions_mutual", "note_versions.csv", NOTE_VERSION_COLUMNS),
     ("note_images_mutual", "note_images.csv", NOTE_IMAGE_COLUMNS),
     ("note_marks_mutual", "note_marks.csv", NOTE_MARK_COLUMNS),
+    ("note_comments_mutual", "note_comments.csv", NOTE_COMMENT_COLUMNS),
 )

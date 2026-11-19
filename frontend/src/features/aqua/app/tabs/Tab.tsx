@@ -14,7 +14,7 @@
  *   status strip c «dots» (per part five dots that fill slowly), or nothing.
  */
 
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { Check, GitBranch, SlidersHorizontal, X } from 'lucide-react'
 
 import { t } from '../../../../i18n/scope/aqua'
@@ -96,6 +96,7 @@ export interface TabProps {
   f: Facts
   index: number
   on: boolean
+  marked?: boolean
   dim: boolean
   alt: boolean
   /** The group's lane under the tab, or undefined. */
@@ -103,17 +104,24 @@ export interface TabProps {
   gapBefore: boolean
   canClose: boolean
   tabRef: (el: HTMLButtonElement | null) => void
-  onSelect: () => void
+  onSelect: (event?: MouseEvent) => void
   onClose: () => void
   onRename: (label: string) => void
   onMenu: (el: HTMLElement) => void
+  onDropTab?: (source: string, before: boolean) => void
 }
 
-export function StripTab({ s, title, f, index, on, dim, alt, under, gapBefore, canClose, tabRef, onSelect, onClose, onRename, onMenu }: TabProps) {
+const TAB_DRAG = 'application/x-sp-terminal-tab'
+
+export function StripTab({ s, title, f, index, on, marked, dim, alt, under, gapBefore, canClose, tabRef, onSelect, onClose, onRename, onMenu, onDropTab }: TabProps) {
   const settings = useStripSettings()
   const [editing, setEditing] = useState(false)
   const input = useRef<HTMLInputElement>(null)
-  useEffect(() => { if (editing) input.current?.select() }, [editing])
+  useLayoutEffect(() => {
+    if (!editing) return
+    input.current?.focus()
+    input.current?.select()
+  }, [editing])
   const showClose = alt && canClose
   const color = dim ? 'var(--aq-ink)' : on ? 'var(--aq-term-fg)' : 'var(--aq-ink2)'
   const word = SHOWN_WORD[shownOf(s)]
@@ -123,7 +131,7 @@ export function StripTab({ s, title, f, index, on, dim, alt, under, gapBefore, c
   const tip = [title, word, ...facts].join(' · ') + `${index < 9 ? ` · alt+${index + 1}` : ''}\n${t('Double click: rename. Right-click: the tab menu. Hold Alt: the facts')}`
   const style: CSSProperties = {
     paddingLeft: showClose ? 26 : 10,
-    background: dim ? 'var(--aq-hover)' : on ? 'var(--aq-term-bg)' : undefined,
+    background: dim ? 'var(--aq-hover)' : on ? 'var(--aq-term-bg)' : marked ? 'var(--aq-accent-soft)' : undefined,
     color,
     boxShadow: on ? 'inset 0 2px 0 var(--brand)' : under ? `inset 0 -2px 0 ${under}` : undefined,
     opacity: s.asleep || s.state === 'asleep' ? 0.6 : 1,
@@ -152,14 +160,24 @@ export function StripTab({ s, title, f, index, on, dim, alt, under, gapBefore, c
           onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') { e.stopPropagation(); finish(false) } }}
           onBlur={() => finish(true)} />
       ) : (
-        <button ref={tabRef} type="button" role="tab" aria-selected={on} data-nodrag aria-label={`${title} · ${word}`}
+        <button ref={tabRef} type="button" role="tab" aria-selected={on} data-nodrag draggable={!!onDropTab}
+          aria-description={marked ? t('Selected for grouping') : undefined} data-group-selected={marked || undefined} aria-label={`${title} · ${word}`}
           onClick={onSelect}
           onDoubleClick={(e: MouseEvent) => { e.stopPropagation(); setEditing(true) }}
+          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData(TAB_DRAG, s.id) }}
+          onDragOver={(e) => { if (e.dataTransfer.types.includes(TAB_DRAG)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
+          onDrop={(e) => {
+            const source = e.dataTransfer.getData(TAB_DRAG)
+            if (!source) return
+            e.preventDefault()
+            const box = e.currentTarget.getBoundingClientRect()
+            onDropTab?.(source, e.clientX < box.left + box.width / 2)
+          }}
           onContextMenu={(e) => { e.preventDefault(); onMenu(e.currentTarget) }}
           onKeyDown={(e) => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); onMenu(e.currentTarget) } else if (e.key === 'F2') { e.preventDefault(); setEditing(true) } }}
           title={tip}
-          className="h-[26px] pr-10 inline-flex items-center gap-6 text-12 rounded-t-[6px] max-w-[190px]"
-          style={style}>
+          className="h-[26px] pr-10 inline-flex items-center gap-6 text-12 rounded-t-[6px] max-w-[190px] cursor-grab active:cursor-grabbing"
+          style={{ ...style, outline: marked ? '1px solid var(--brand)' : undefined, outlineOffset: marked ? -2 : undefined }}>
           {!showClose && <Dot s={s} />}
           {alt ? (
             <span className="flex flex-col items-start min-w-0 pt-[3px]" data-alt="b">
@@ -177,7 +195,7 @@ export function StripTab({ s, title, f, index, on, dim, alt, under, gapBefore, c
         </button>
       )}
       {!editing && look === 'dots' && <DotStrip f={f} s={settings} />}
-      {!editing && look === 'rhythm' && <RhythmDots f={f} chatId={f.chatId || s.id} onSelect={onSelect} />}
+      {!editing && look === 'rhythm' && <RhythmDots f={f} chatId={f.chatId || s.id} onSelect={() => onSelect()} />}
       {showClose && !editing && (
         <button type="button" data-nodrag className="absolute top-[5px] left-[6px] w-[16px] h-[16px] inline-flex items-center justify-center rounded-[4px] hover:bg-[var(--aq-hover)]"
           style={{ color }} aria-label={`${t('Close the tab')} ${title}`} title={`${t('Close the tab')} ${title}`} onClick={onClose}>

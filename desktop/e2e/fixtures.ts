@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { _electron, expect, request as http, test as base, type APIRequestContext, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron, expect, request as http, test as base, type APIRequestContext, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 
 /**
  * What every spec of the window's suite stands on:
@@ -85,15 +85,45 @@ type Win = { app: ElectronApplication; page: Page; userData: string }
 async function withWindow(use: (w: Win) => Promise<void>) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-desktop-e2e-profile-'))
   const app = await _electron.launch({ executablePath: ELECTRON, args: launchArgs(userData), env: launchEnv(), timeout: 30_000 })
+  const context = app.context()
+  const pageErrors: string[] = []
+  const watchErrors = (page: Page) => { page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message)) }
+  for (const page of context.pages()) watchErrors(page)
+  context.on('page', watchErrors)
   try {
     await catchLinksOut(app)
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
     await use({ app, page, userData })
+    expect(pageErrors, 'uncaught errors in Electron renderers').toEqual([])
+    for (const window of context.pages()) {
+      await expectTerminalAncestorsUnscrolled(window)
+    }
   } finally {
     await app.close().catch(() => {})
     fs.rmSync(userData, { recursive: true, force: true })
   }
+}
+
+/** xterm can scroll inside its host. The layout outside that host must stay put. */
+export async function expectTerminalAncestorsUnscrolled(page: Page) {
+  const scrolled = await page.locator('.aqua-screen').evaluateAll((screens) => screens.flatMap((screen) => {
+    const result: string[] = []
+    for (let node = screen.parentElement; node; node = node.parentElement) {
+      if (node.scrollTop !== 0) result.push(`${node.tagName.toLowerCase()}.${node.className}: scrollTop=${node.scrollTop}`)
+    }
+    return result
+  }))
+  expect(scrolled, 'scrolled ancestors outside the terminal').toEqual([])
+}
+
+/** Use before a raw pointer action at a fixed coordinate. Locator clicks already check the target. */
+export async function expectClickTarget(target: Locator, point: { x: number; y: number }) {
+  const actual = await target.evaluate((element, { x, y }) => {
+    const hit = document.elementFromPoint(x, y)
+    return element.contains(hit) ? null : hit?.outerHTML.slice(0, 160) ?? 'outside the viewport'
+  }, point)
+  expect(actual, `pointer at (${point.x}, ${point.y}) hits ${target}`).toBeNull()
 }
 
 export const test = base.extend<{ shell: Shell; win: Win; bare: Win }, { server: Server }>({
@@ -179,6 +209,21 @@ export async function expectLine(page: Page, text: string | RegExp, timeout = 10
 
 export async function ready(page: Page) {
   await expect(page.locator('.aqua-screen .xterm-rows')).toContainText(PROMPT, { timeout: WINDOWS ? 40_000 : 20_000 })
+}
+
+/**
+ * Headless Ozone (SP_E2E_HEADLESS=1) has a display of 1×1 px, and Chromium
+ * opens the window at its minimum, 420×240: a terminal of 10 rows and about
+ * 50 columns. A spec that prints a conversation drawn for a wider terminal,
+ * or opens a tall menu, gives the window the size it opens at on a real
+ * display (main.js: 1000×640) and waits for the terminal to take it.
+ * Elsewhere it does nothing.
+ */
+export async function fullSize(app: ElectronApplication, page: Page) {
+  if (!HEADLESS) return
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(1000, 640) })
+  await expect.poll(() => page.evaluate(() => innerHeight), { message: 'the window at 1000×640' }).toBeGreaterThan(600)
+  await expect.poll(() => page.evaluate(() => document.querySelectorAll('.aqua-screen .xterm-rows > div').length), { message: 'the terminal at the new size' }).toBeGreaterThan(20)
 }
 
 export async function typeLine(page: Page, text: string) {

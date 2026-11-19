@@ -1,4 +1,13 @@
 {
+  "Comment on the note": "Комментировать заметку",
+  "Comment on: {label}": "Комментировать: {label}",
+  "{n} comment": "{n} комментарий",
+  "{n} comments": "{n} комментариев",
+  "Comment": "Комментарий",
+  "Comments from earlier versions": "Комментарии к пунктам из прежних версий",
+  "Write a comment…": "Напишите комментарий…",
+  "Could not save the comment.": "Не удалось сохранить комментарий.",
+  "Send comment": "Отправить комментарий",
   "{id}: not found": "{id}: не найдено",
   "to paste": "вставить",
   "copied {when}": "скопировано {when}",

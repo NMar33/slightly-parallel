@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { getJson, postJson } from '../../../lib/getJson'
-import type { Entity, Marks } from '../render/env'
+import type { Entity, Marks, NewNoteComment, NoteComment } from '../render/env'
 import { parseNote, type Note, type NoteKind } from '../render/model'
 
 /**
@@ -27,6 +27,8 @@ export interface WireNote {
   replaced_by: string
   words: number
   body: string
+  /** Included when this note is read on its own. */
+  comments?: NoteComment[]
   images: Array<{ id: string; caption: string; width: number; height: number; src: string }>
 }
 
@@ -35,6 +37,7 @@ export interface Feed {
   marks: Marks
   entities: Record<string, Omit<Entity, 'id'>>
   projects: string[]
+  comments?: NoteComment[]
 }
 
 export const KEY = ['notes'] as const
@@ -82,5 +85,17 @@ export function useNoteWrites() {
     mutationFn: (a: { id: string; archived: boolean }) => postJson(`/api/notes/${a.id}/archive`, { archived: a.archived }),
     onSettled: again,
   })
-  return { mark, archive }
+  const comment = useMutation({
+    mutationFn: (m: NewNoteComment) => postJson<{ comment: NoteComment }>(`/api/notes/${encodeURIComponent(m.noteId)}/comments`, {
+      item: m.item, section: m.section, text: m.text, request_id: m.requestId,
+    }),
+    onSuccess: ({ comment: saved }) => {
+      qc.setQueriesData<Feed>({ queryKey: [...KEY, 'feed'] }, (feed) => {
+        if (!feed?.notes.some((n) => n.id === saved.note_id) || feed.comments?.some((c) => c.id === saved.id)) return feed
+        return { ...feed, comments: [...(feed.comments ?? []), saved] }
+      })
+      return again()
+    },
+  })
+  return { mark, archive, comment }
 }

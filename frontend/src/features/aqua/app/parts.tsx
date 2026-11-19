@@ -168,5 +168,5 @@ export function RestoreCard({ rows, results, running, onRun, onClose }: {
 
 /** The groups a chat can move to, and the way back to its project. */
 export function moveTargets(s: AquaSession, groups: Group[] | null) {
-  return (groups ?? []).filter((g) => g.id !== s.group)
+  return (groups ?? []).filter((g) => g.id !== s.group && (g.project === undefined || g.project === s.project))
 }

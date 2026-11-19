@@ -636,6 +636,26 @@ def codex_usage(payload: dict, session_id: str, since: float | None = None) -> t
     return shared.codex_turn_usage(rollout, str(payload.get("turn_id") or ""), back=1)
 
 
+def codex_thread(payload: dict, session_id: str) -> str:
+    """The Codex thread an event belongs to. Codex (0.170) calls the hooks
+    for a subagent's turn with the parent's ``session_id`` and the
+    subagent's own session file as ``transcript_path``; that file's first
+    line names the subagent's thread (``payload.id``; its ``session_id`` is
+    the parent's). Such a turn is the subagent's: it goes to the subagent's
+    own chat, a helper of the parent, and never into the parent's chat as
+    the operator's message, nor makes the parent a helper (tk_2484f160).
+    ``session_id`` otherwise, and whenever the file cannot be read."""
+    given = str(payload.get("transcript_path") or "")
+    if not session_id or not given or not Path(given).name.startswith("rollout-"):
+        return session_id
+    meta = shared.codex_session_meta(given)
+    pl = meta.get("payload") if meta else None
+    own = str(pl.get("id") or "") if isinstance(pl, dict) else ""
+    if own and own.lower() != session_id.lower() and re.fullmatch(r"[0-9A-Za-z-]{8,80}", own):
+        return own
+    return session_id
+
+
 def helper_signal(tool: str, payload: dict, session_id: str, data_root: str) -> tuple[str, str, str]:
     """(helper kind, the parent's agent id, how it was found) of this chat;
     ("", "", "") for a chat the operator runs. Claude Code: the entrypoint
@@ -654,6 +674,10 @@ def helper_signal(tool: str, payload: dict, session_id: str, data_root: str) -> 
             kind = shared.claude_helper_kind(os.environ.get("CLAUDE_CODE_ENTRYPOINT")) or \
                 shared.claude_helper_kind(shared.claude_entrypoint(str(payload.get("transcript_path") or "")))
         if not kind:
+            return "", "", ""
+        if parent_thread and shared.session_key("codex", parent_thread) == shared.session_key("codex", session_id):
+            # A session file that names this chat as its parent is another
+            # thread's: never a reason to make the parent a helper.
             return "", "", ""
         if parent_thread:
             return kind, f"codex-{shared.session_key('codex', parent_thread)}", "session"
@@ -723,6 +747,12 @@ def main() -> int:
 
     event = str(payload.get("hook_event_name") or "")
     session_id = str(payload.get("session_id") or "")
+    # A Codex subagent's turn comes under its parent's session id: it is
+    # recorded as the subagent's own chat (codex_thread).
+    called_as = session_id
+    if args.tool == "codex":
+        session_id = codex_thread(payload, session_id)
+    other_thread = session_id != called_as
     agent = agent_name(session_id, args.tool)
     # Where a notice is seen: on UserPromptSubmit stdout joins the agent's
     # context; on Stop Claude Code ignores stdout and shows stderr.
@@ -759,7 +789,10 @@ def main() -> int:
             # Before the message is recorded: a helper's commands never act.
             kind, parent, by = helper_signal(args.tool, payload, session_id, args.data_root)
             cap.note_origin(args.tool, session_id, cwd, helper_kind=kind, helper_of=parent, helper_of_by=by)
-            write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
+            if not other_thread:
+                # A subagent shares its parent's process: its breadcrumb would
+                # make the parent's MCP calls its own.
+                write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
             if args.tool == "claude-code" and usage_only(prompt) and not cap.is_helper():
                 # #usage, #usage-on, #usage-off alone: answered here, shown to
                 # the user only, and the prompt never reaches the model

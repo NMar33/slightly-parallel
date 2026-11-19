@@ -86,6 +86,7 @@
   "Show the changes": "Показать изменения",
   "Skill": "Скилл",
   "Task made in todo: {id}": "Задача в todo: {id}",
+  "Task made in todo: {id} · {title}": "Задача в todo: {id} · {title}",
   "Task {id}": "Задача {id}",
   "Terminal menu…": "Меню терминала…",
   "The branch did not start: the terminal did not open": "Ветка не началась: терминал не открылся",
@@ -119,5 +120,21 @@
   "Command copied": "Команда скопирована",
   "Copied for Claude Code": "Скопировано для Claude Code",
   "Pasted into the terminal: Enter runs it": "Вставлено в терминал: выполнит Enter",
-  "A pasted line break would run the lines here": "Здесь вставленный перенос строки сразу выполнил бы строки"
+  "A pasted line break would run the lines here": "Здесь вставленный перенос строки сразу выполнил бы строки",
+  "You": "Вы",
+  "Collapse to one line": "Свернуть",
+  "Expand": "Развернуть",
+  "Collapse all replies": "Свернуть все ответы",
+  "Expand all": "Развернуть все",
+  "Shown as one line in the history, when you scroll up; the live screen at the bottom stays as the program drew it": "Свёрнутое видно одной строкой в истории, когда листаешь вверх; живой экран внизу остаётся таким, как его нарисовала программа",
+  "Collapsed to one line": "Свёрнуто в одну строку",
+  "Collapsed: it shows as one line in the history, once it is above the live screen": "Свёрнуто: одной строкой оно станет в истории, когда уйдёт выше живого экрана",
+  "Collapsing needs smooth scrolling (Settings › Terminal)": "Сворачивать можно только с плавной прокруткой (Настройки › Терминал)",
+  "Expanded": "Развёрнуто",
+  "All messages expanded": "Все сообщения развёрнуты",
+  "{n} reply collapsed": {
+    "one": "Свёрнут {n} ответ",
+    "few": "Свёрнуто {n} ответа",
+    "many": "Свёрнуто {n} ответов"
+  }
 }

@@ -35,7 +35,7 @@
  */
 const fs = require('node:fs')
 const path = require('node:path')
-const { app, BrowserWindow, ipcMain, net, powerMonitor, screen, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, screen, shell } = require('electron')
 const {
   MIN_W, MIN_H, sizeOf, sameSite, pageUrl, grown, num, parseArgs,
   restoreChoice, isWayland, windowRecord, savedText, readSaved, onScreen, startPlan,
@@ -45,6 +45,8 @@ const args = parseArgs(process.argv.slice(app.isPackaged ? 1 : 2), process.env)
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
 
 const dragging = new Map() // window id → { timer, dx, dy }
+// Only release width the window manager actually granted to a sidebar.
+const sidebarGrowth = new WeakMap()
 
 /* ------------------------------------------------ windows after a restart */
 
@@ -53,8 +55,10 @@ let mainWin = null
 let quitting = false
 /** window id → { win, url }: every window besides the main one, in opening order. */
 const kept = new Map()
-/** Saved windows not opened yet while the main window's page asks the operator. */
+/** Saved windows that have not opened or been dismissed yet. */
 let pending = []
+let askingToRestore = false
+let stateLoaded = false
 let decide
 /** How many saved windows wait for the operator's answer (0: none, or not asked). */
 const decided = new Promise((resolve) => { decide = resolve })
@@ -76,7 +80,7 @@ function recordOf(entry) {
 function saveNow() {
   clearTimeout(saveTimer)
   saveTimer = null
-  if (quitting) return
+  if (quitting || !stateLoaded) return
   const windows = [...kept.values()].map(recordOf).filter(Boolean).concat(pending)
   try {
     const file = stateFile()
@@ -113,11 +117,14 @@ function keep(win, url) {
   return win
 }
 
-function openSaved(list) {
+function openSaved() {
   const displays = screen.getAllDisplays()
-  for (const rec of list) {
+  while (pending.length) {
+    const rec = pending[0]
     const r = wayland() ? { url: rec.url, width: rec.width, height: rec.height } : onScreen(rec, displays)
-    keep(openWindow(r.url, r.width, r.height, true, typeof r.x === 'number' ? { x: r.x, y: r.y } : null), r.url)
+    const win = openWindow(r.url, r.width, r.height, true, typeof r.x === 'number' ? { x: r.x, y: r.y } : null)
+    pending.shift()
+    keep(win, r.url)
   }
 }
 
@@ -133,11 +140,14 @@ async function readChoice() {
 
 /** After the main window: the saved windows, as the setting says. */
 async function restoreAtStart() {
-  let saved = []
-  try { saved = readSaved(fs.readFileSync(stateFile(), 'utf-8'), args.url) } catch { /* no file: nothing saved */ }
+  // Keep the saved set in every write, including a quit while settings load.
+  try { pending = readSaved(fs.readFileSync(stateFile(), 'utf-8'), args.url) } catch { /* no file: nothing saved */ }
+  stateLoaded = true
+  const saved = pending
   const choice = saved.length ? await readChoice() : 'restore'
+  if (quitting) return
   const plan = startPlan(choice, saved)
-  pending = plan.ask
+  pending = plan.open.concat(plan.ask)
   if (plan.open.length) {
     // The main window first, then the others over it.
     await new Promise((resolve) => {
@@ -145,8 +155,10 @@ async function restoreAtStart() {
       const t = setTimeout(resolve, 3000)
       mainWin.once('ready-to-show', () => { clearTimeout(t); setTimeout(resolve, 50) })
     })
-    if (!quitting) openSaved(plan.open)
+    if (quitting) return
+    openSaved()
   }
+  askingToRestore = plan.ask.length > 0
   saveNow()
   // For the suite (desktop/e2e/restore.spec.ts): what the start decided.
   globalThis.__spRestore = { choice, saved: saved.length, opened: plan.open.length, asked: plan.ask.length }
@@ -197,6 +209,9 @@ function openWindow(url, width, height, show = true, at = null) {
       if (/^https?:\/\//.test(target)) shell.openExternal(target)
     }
   })
+  wc.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) sidebarGrowth.delete(win)
+  })
   win.on('closed', () => stopDrag(win))
   if (show) win.once('ready-to-show', () => win.show())
   win.loadURL(url)
@@ -227,9 +242,26 @@ ipcMain.on('sp-window', (event, msg) => {
     case 'minimize': win.minimize(); break
     case 'title': win.setTitle(String(msg.text || 'Slightly Parallel').slice(0, 120)); break
     case 'grow': {
+      if (win.isMaximized() || win.isFullScreen()) {
+        sidebarGrowth.delete(win)
+        break
+      }
       const b = win.getBounds()
-      const [x, width] = grown(b.x, b.width, num(msg.left, -2000, 2000), num(msg.right, -2000, 2000))
+      const prior = sidebarGrowth.get(win) ?? { left: 0, right: 0 }
+      const left = Math.max(-prior.left, num(msg.left, -2000, 2000))
+      const right = Math.max(-prior.right, num(msg.right, -2000, 2000))
+      if (!left && !right) break
+      const [x, width] = grown(b.x, b.width, left, right)
       win.setBounds({ x, y: b.y, width, height: b.height })
+      const observed = win.getBounds().width - b.width
+      const wanted = left + right
+      const fraction = wanted ? Math.max(0, Math.min(1, observed / wanted)) : 0
+      const appliedLeft = Math.round(left * fraction)
+      const appliedRight = Math.round(wanted * fraction) - appliedLeft
+      sidebarGrowth.set(win, {
+        left: prior.left + (left < 0 ? left : appliedLeft),
+        right: prior.right + (right < 0 ? right : appliedRight),
+      })
       break
     }
     case 'detach': {
@@ -239,10 +271,10 @@ ipcMain.on('sp-window', (event, msg) => {
     }
     case 'restore': {
       // The operator's answer to the main window's question.
-      if (win !== mainWin || !pending.length) break
-      const list = pending
-      pending = []
-      if (msg.open === true) openSaved(list)
+      if (win !== mainWin || !askingToRestore) break
+      askingToRestore = false
+      if (msg.open === true) openSaved()
+      else pending = []
       saveNow()
       break
     }
@@ -252,12 +284,32 @@ ipcMain.on('sp-window', (event, msg) => {
   }
 })
 
+ipcMain.handle('sp-save-draft', async (event, name, text) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win || win.isDestroyed() || event.senderFrame !== event.sender.mainFrame ||
+      !sameSite(args.url, event.senderFrame.url)) return false
+  if (typeof name !== 'string' || typeof text !== 'string') throw new Error('Invalid Markdown draft')
+  const defaultPath = name.replace(/[^\p{L}\p{N}._-]/gu, '-').replace(/^\.+/, '').slice(0, 100)
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath: defaultPath ? `${defaultPath}.md` : 'draft.md',
+    filters: [{ name: 'Markdown', extensions: ['md'] }],
+  })
+  if (canceled || !filePath) return false
+  const chosenMarkdown = /\.md$/i.test(filePath)
+  // If the platform did not append the extension, avoid overwriting a
+  // different file from the one the operator chose in the save dialog.
+  await fs.promises.writeFile(chosenMarkdown ? filePath : `${filePath}.md`, text, {
+    encoding: 'utf8', flag: chosenMarkdown ? 'w' : 'wx',
+  })
+  return true
+})
+
 // How many windows of last time wait for the operator's answer: only the
 // main window asks, once the start has decided (0 when there is nothing to ask).
 ipcMain.handle('sp-restore-offer', async (event) => {
   if (!sameSite(args.url, event.sender.getURL())) return 0
   const n = await decided
-  return mainWin && event.sender === mainWin.webContents ? Math.min(n, pending.length) : 0
+  return askingToRestore && mainWin && event.sender === mainWin.webContents ? Math.min(n, pending.length) : 0
 })
 
 // Read only: what the window's processes use, for the page's terminal log.
@@ -308,6 +360,7 @@ if (!start) {
   app.on('before-quit', closing)
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { closing(); app.quit() })
   app.whenReady().then(() => {
+    if (quitting) return
     powerMonitor.on('shutdown', closing)
     openMain(start, ...sizeOf(args.size))
     void restoreAtStart()

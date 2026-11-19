@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { APIRequestContext, Page } from '@playwright/test'
-import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectLine, lines, ready, sessions, typeLine } from './fixtures'
+import { test, expect, ROOT, PROJECT, URL_, WINDOWS, echoCalc, expectClickTarget, expectLine, expectTerminalAncestorsUnscrolled, fullSize, lines, printFile, ready, sessions, typeLine } from './fixtures'
 
 /**
  * The message menu on the real terminal (tk_a9306fb1, variant b «list»).
@@ -23,14 +23,15 @@ import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectLine, lines, ready, s
  */
 
 const REPO = path.resolve(__dirname, '..', '..')
-const PYTHON = path.join(REPO, 'backend', '.venv', 'bin', 'python')
+const PYTHON = path.join(REPO, 'backend', '.venv', WINDOWS ? 'Scripts/python.exe' : 'bin/python')
 const CAPTURE = path.join(REPO, 'scripts', 'hooks', 'capture-cli.py')
-const AGENT = 'cc-e2emenu1'
+/** A chat of its own per run: the same server keeps the last run's turns and pins (--repeat-each, a retry). */
+let AGENT = 'cc-e2emenu1'
 
 /** One turn recorded by the capture hook's CLI, as a chat started in terminal `sid`. */
 function record(sid: string, phase: 'open' | 'complete', text: string) {
   execFileSync(PYTHON, [CAPTURE, '--phase', phase, '--project', PROJECT, '--data-root', path.join(ROOT, 'data'), '--agent', AGENT,
-    '--text-stdin', ...(phase === 'open' ? ['--tool', 'claude-code', '--session', 'e2e-session-1', '--cwd', path.join(ROOT, 'work', 'shell')] : [])],
+    '--text-stdin', ...(phase === 'open' ? ['--tool', 'claude-code', '--session', `e2e-session-${AGENT}`, '--cwd', path.join(ROOT, 'work', 'shell')] : [])],
   { input: text, env: { ...process.env, SP_TERMINAL: sid, SP_PORT: new URL(URL_).port }, stdio: ['pipe', 'ignore', 'inherit'] })
 }
 
@@ -84,10 +85,16 @@ async function pointOf(page: Page, text: string): Promise<{ x: number; y: number
 }
 
 test.describe('message menu', () => {
-  test('a right click on a reply: the list, Pin, the pin in the sidebar; task and note ids; Copy only on a line that is no message', async ({ win, shell, server }) => {
-    test.skip(WINDOWS, 'the capture CLI and the printed conversation are written for a Unix shell')
-    const { page } = win
+  test.beforeEach(() => { AGENT = `cc-e2em${Math.random().toString(16).slice(2, 6)}` })
+  for (const size of ['usual', 'narrow'] as const) test(`a right click on a reply in a ${size} window: Pin, task and note ids; Copy only on a line that is no message`, async ({ win, shell, server }) => {
+    const { app, page } = win
     await ready(page)
+    if (size === 'narrow') {
+      await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(640, 500) })
+      await expect.poll(() => page.evaluate(() => innerWidth)).toBe(640)
+    } else {
+      await fullSize(app, page)
+    }
 
     // The chat: a task and a note the reply names, and the turn the hook records.
     const task = await madeTask(server.api)
@@ -116,7 +123,7 @@ test.describe('message menu', () => {
       'plain shell output, no chat here',
       '',
     ].join('\n'))
-    await typeLine(page, `cat '${file}'`)
+    await typeLine(page, printFile(file))
     await expectLine(page, 'plain shell output, no chat here')
 
     // 1. The reply: its list, then Pin.
@@ -125,11 +132,13 @@ test.describe('message menu', () => {
     // The window learns the terminal's chat on its next read of the terminals (every 2 s):
     // until then the right click is the screen's own menu.
     await expect.poll(async () => {
+      await expectClickTarget(page.locator('.aqua-screen'), p)
       await page.mouse.click(p.x, p.y, { button: 'right' })
       if (await menu.waitFor({ state: 'visible', timeout: 2000 }).then(() => true, () => false)) return true
       await page.keyboard.press('Escape')
       return false
     }, { timeout: 20_000, intervals: [500], message: 'the list for the reply' }).toBe(true)
+    await expectTerminalAncestorsUnscrolled(page)
     for (const name of ['Pin', 'Hand over later', 'Branch into a new window', 'Make a task', 'Copy', 'Terminal menu…']) await expect(menu.getByRole('menuitem', { name })).toBeVisible()
     await expect(menu.getByRole('menuitemradio', { name: 'Carry after compaction: word for word' })).toBeVisible()
     // tmux drew no pane menu of its own under ours.
@@ -149,6 +158,7 @@ test.describe('message menu', () => {
 
     // 2. The task id: its menu, then its card.
     const t = await pointOf(page, task)
+    await expectClickTarget(page.locator('.aqua-screen'), t)
     await page.mouse.click(t.x, t.y)
     const tmenu = page.getByRole('menu', { name: task })
     await expect(tmenu.getByText('Message menu in the terminal')).toBeVisible()
@@ -159,16 +169,23 @@ test.describe('message menu', () => {
     await page.keyboard.press('Escape')
     await expect(card).toHaveCount(0)
 
-    // 3. The note id: the note, read in place; Escape closes it.
+    // 3. The note id: read and comment in place; Escape closes it.
     const n = await pointOf(page, note)
+    await expectClickTarget(page.locator('.aqua-screen'), n)
     await page.mouse.click(n.x, n.y)
     const nd = page.getByRole('dialog', { name: `Note ${note}` })
     await expect(nd.getByRole('heading', { name: 'How a click finds its message' }).first()).toBeVisible()
+    await nd.getByRole('button', { name: 'Comment on: read it in place' }).click()
+    await nd.getByRole('textbox', { name: 'Comment' }).pressSequentially('Keep this linked to the current chat.')
+    await nd.getByRole('button', { name: 'Send comment' }).click()
+    await expect(nd.getByRole('paragraph').filter({ hasText: 'Keep this linked to the current chat.' })).toBeVisible()
+    await expect(nd.getByRole('checkbox', { name: 'read it in place' })).not.toBeChecked()
     await page.keyboard.press('Escape')
     await expect(nd).toHaveCount(0)
 
     // 4. A line that is no message: Copy only, and it says so.
     const o = await pointOf(page, 'plain shell output, no chat here')
+    await expectClickTarget(page.locator('.aqua-screen'), o)
     await page.mouse.click(o.x, o.y, { button: 'right' })
     const none = page.getByRole('menu', { name: 'Message not found in the chat record' })
     await expect(none).toBeVisible()
@@ -176,8 +193,9 @@ test.describe('message menu', () => {
     await page.keyboard.press('Escape')
     await expect(none).toHaveCount(0)
 
-    // The keyboard is the terminal's again.
-    await typeLine(page, 'echo menu-$((40+2))-done')
+    await expect(page.getByRole('textbox', { name: 'Terminal input' })).toBeFocused()
+    await page.keyboard.type(echoCalc('menu-', '40+2', '-done'))
+    await page.keyboard.press('Enter')
     await expectLine(page, 'menu-42-done')
   })
 })

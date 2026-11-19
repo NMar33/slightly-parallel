@@ -859,6 +859,8 @@
   "Bigger text (Ctrl +)": "Крупнее (Ctrl +)",
   "Bigger text": "Крупнее",
   "Close this pane; the terminal stays open as a tab": "Закрыть панель; терминал останется открытым во вкладке",
+  "Wake": "Разбудить",
+  "Open a shell in it": "Открыть оболочку",
   "Close this pane": "Закрыть панель",
   "Four panes at most": "Не больше четырёх панелей",
   "Split right: a new shell beside the pane in focus": "Разделить вправо: новая оболочка рядом с активной панелью",

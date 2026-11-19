@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { test, expect, PROJECT, ROOT, expectLine, openShell, ready, sessions, typeLine, WINDOWS } from './fixtures'
+import { _electron } from '@playwright/test'
+import { test, expect, ELECTRON, PROJECT, ROOT, echoCalc, expectLine, fullSize, launchArgs, launchEnv, openShell, ready, sessions, typeLine, WINDOWS } from './fixtures'
 
 /**
  * The tab strip of tk_a9306fb1 in the real window: the tab is titled by the
@@ -52,6 +53,84 @@ test.describe('tab strip', () => {
     await expect(tab.locator('[data-tab-title]')).toHaveText(shell.label)
   })
 
+  test('tab groups stay inside their project and restore collapsed around the active session', async ({ win, shell, server }) => {
+    const { page } = win
+    await ready(page)
+    const second = await openShell(server.api, 'e2e-group-second')
+    await page.reload()
+    const tabs = strip(page)
+    const first = tabs.getByRole('tab', { name: new RegExp(`^${shell.label} `) })
+    const next = tabs.getByRole('tab', { name: new RegExp(`^${second.label} `) })
+    await first.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: /New group from this tab/ }).click()
+    await page.getByRole('textbox', { name: 'Group name' }).fill('Release')
+    await page.getByRole('button', { name: 'Make the group' }).click()
+    const group = tabs.getByRole('group', { name: 'Release' })
+    await expect(group.getByRole('tab')).toHaveCount(1)
+    await next.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Add to tab group Release' }).click()
+    await expect(group.getByRole('tab')).toHaveCount(2)
+    await expect(page.getByRole('button', { name: /^\+\d/ })).toHaveCount(0)
+
+    await next.click()
+    const fold = group.getByRole('button', { name: 'Release', exact: true })
+    await fold.click()
+    await expect(fold).toHaveAttribute('aria-current', 'true')
+    await expect(tabs.getByRole('tab')).toHaveCount(0)
+    await page.reload()
+    await expect(fold).toHaveAttribute('aria-expanded', 'false')
+    await expect(fold).toHaveAttribute('aria-current', 'true')
+    await fold.click()
+    await expect(next).toHaveAttribute('aria-selected', 'true')
+
+    await group.getByRole('button', { name: 'Tab group settings: Release' }).click()
+    await page.getByRole('textbox', { name: 'Group name' }).fill('Launch')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    const renamed = tabs.getByRole('group', { name: 'Launch' })
+    await expect(renamed.getByRole('tab')).toHaveCount(2)
+    await renamed.getByRole('button', { name: 'Tab group settings: Launch' }).click()
+    await page.getByRole('menuitem', { name: 'Ungroup tabs' }).click()
+    await expect(renamed).toHaveCount(0)
+    await expect(tabs.getByRole('tab')).toHaveCount(2)
+    await expect(next).toHaveAttribute('aria-selected', 'true')
+  })
+
+  test('Shift groups a visible range without switching the current terminal or taking hidden tabs', async ({ win, shell, server }) => {
+    const { page } = win
+    const hidden = await openShell(server.api, 'e2e-hidden')
+    const middle = await openShell(server.api, 'e2e-middle')
+    const last = await openShell(server.api, 'e2e-last')
+    const makeHidden = await server.api.post('/api/terminal/groups', { data: {
+      name: 'Hidden', project: PROJECT, tabs: [hidden.id],
+    } })
+    expect(makeHidden.ok(), await makeHidden.text()).toBeTruthy()
+    await page.reload()
+    const tabs = strip(page)
+    const byId = (id: string) => tabs.locator(`[data-tab="${id}"] [role="tab"]`)
+    await tabs.getByRole('button', { name: 'Hidden', exact: true }).click()
+    await byId(shell.id).click()
+    await byId(last.id).click({ modifiers: ['Shift'] })
+    await expect(tabs.locator('[data-group-selected="true"]')).toHaveCount(3)
+    await expect(byId(shell.id)).toHaveAttribute('aria-selected', 'true')
+    await expect(byId(last.id)).toHaveAttribute('aria-selected', 'false')
+    await expect(byId(hidden.id)).toHaveCount(0)
+
+    await byId(last.id).press('Shift+F10')
+    const menu = page.getByRole('menu', { name: 'Selected tabs' })
+    await expect(menu.getByText('Selected tabs: 3', { exact: true })).toBeVisible()
+    await menu.getByRole('menuitem', { name: /Group selected tabs/ }).click()
+    await menu.getByRole('textbox', { name: 'Group name' }).fill('Visible range')
+    await menu.getByRole('button', { name: 'Make the group' }).click()
+    const grouped = tabs.getByRole('group', { name: 'Visible range' })
+    await expect(grouped.getByRole('tab')).toHaveCount(3)
+    await expect(grouped.getByRole('tab', { name: /^e2e-middle / })).toBeVisible()
+    await expect(byId(shell.id)).toHaveAttribute('aria-selected', 'true')
+    await expect(tabs.locator('[data-group-selected]')).toHaveCount(0)
+    await tabs.getByRole('button', { name: 'Hidden', exact: true }).click()
+    await expect(tabs.getByRole('group', { name: 'Hidden' }).locator(`[data-tab="${hidden.id}"]`)).toHaveCount(1)
+    await expect(byId(middle.id)).toBeVisible()
+  })
+
   test('Ctrl+click on "+" opens the list; a key picks; Esc closes; the strip draws dots', async ({ win, shell, server }) => {
     const { page } = win
     await ready(page)
@@ -78,6 +157,63 @@ test.describe('tab strip', () => {
     await expect(strip(page).getByRole('tab')).toHaveCount(2)
     await expect(strip(page).getByRole('tab', { name: new RegExp(`^${PROJECT} `) })).toHaveAttribute('aria-selected', 'true')
     await expect.poll(async () => (await sessions(server.api)).filter((s) => s.id !== shell.id).length).toBe(1)
+  })
+
+  test('Alt+N, Alt+/ and Ctrl+Shift+T open the controls and leave a working shell', async ({ win, shell, server }) => {
+    const { app, page } = win
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(640, 500) })
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(640)
+    await ready(page)
+    const input = page.getByRole('textbox', { name: 'Terminal input' })
+    await input.focus()
+    await page.keyboard.press('Alt+KeyN')
+    const menu = page.getByRole('menu', { name: 'Open a new terminal' })
+    await expect(menu.getByRole('menuitem', { name: /^Plain terminal/ })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+
+    await page.keyboard.press('Alt+Slash')
+    const keys = page.getByRole('dialog', { name: 'Keys' })
+    await expect(keys).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(keys).toHaveCount(0)
+    await expect(input).toBeFocused()
+
+    await page.keyboard.press('ControlOrMeta+Shift+KeyT')
+    const fresh = strip(page).getByRole('tab', { name: new RegExp(`^${PROJECT} `) })
+    await expect(fresh).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(async () => (await sessions(server.api)).filter((s) => s.id !== shell.id).length).toBe(1)
+    await ready(page)
+    await expect(input).toBeFocused()
+    await page.keyboard.type(echoCalc('new-shell-', '6*7'))
+    await page.keyboard.press('Enter')
+    await expectLine(page, 'new-shell-42')
+  })
+
+  test('Alt+W jumps to the waiting tab and the keyboard reaches that terminal', async ({ win, shell, server }) => {
+    const { page } = win
+    const waiting = await openShell(server.api, 'waiting-e2e')
+    await page.route('**/api/terminal/sessions', async (route) => {
+      if (route.request().method() !== 'GET') return route.continue()
+      const response = await route.fetch()
+      const data = await response.json()
+      await route.fulfill({ response, json: {
+        ...data,
+        sessions: data.sessions.map((session: { id: string; state: string }) => session.id === waiting.id ? { ...session, state: 'waiting' } : session),
+      } })
+    })
+    await page.reload()
+    const byId = (id: string) => strip(page).locator(`[data-tab="${id}"]`).getByRole('tab')
+    await byId(shell.id).click()
+    await expect(byId(shell.id)).toHaveAttribute('aria-selected', 'true')
+    await ready(page)
+    await page.keyboard.press('Alt+KeyW')
+    await expect(byId(waiting.id)).toHaveAttribute('aria-selected', 'true')
+    await ready(page)
+    await expect(page.getByRole('textbox', { name: 'Terminal input' })).toBeFocused()
+    await page.keyboard.type(echoCalc('waiting-shell-', '6*7'))
+    await page.keyboard.press('Enter')
+    await expectLine(page, 'waiting-shell-42')
   })
 
   test('six dots on each tab: the chat\'s last six hours; work fills them, a full context warms them (tk_d2e11125)', async ({ win, shell }) => {
@@ -169,6 +305,86 @@ test.describe('tab strip', () => {
     await go(PROJECT)
     await expect(tabs.getByRole('tab', { name: new RegExp(`^${second.label} `) })).toHaveAttribute('aria-selected', 'true')
     await expect(tabs.getByRole('tab', { name: new RegExp(`^${shell.label} `) })).toHaveAttribute('aria-selected', 'false')
+  })
+
+  test('the workspace picked in the sidebar stays active after quitting and reopening the window', async ({ win, shell, server }) => {
+    const { app, page, userData } = win
+    const other = 'restart-e2e'
+    const dir = path.join(server.dir, '..', other)
+    fs.mkdirSync(dir, { recursive: true })
+    const reg = await server.api.post('/api/setup/integrate', { data: {
+      project_code: other, project_dir: dir, write_agents: false, write_claude_bridge: false, write_claude_hooks: false,
+      write_opencode_plugin: false, write_codex_hooks: false, write_mcp: false,
+    } })
+    expect(reg.ok(), await reg.text()).toBeTruthy()
+    const r = await server.api.post('/api/terminal/sessions', { data: { kind: 'shell', project: other, label: 'e2e-restart-project', role: 'shell' } })
+    expect(r.ok(), await r.text()).toBeTruthy()
+
+    await page.reload()
+    const tabs = strip(page)
+    const current = tabs.getByRole('tab', { name: new RegExp(`^${shell.label} `) })
+    await page.getByRole('button', { name: 'Left sidebar', exact: true }).click()
+    const workspaces = page.getByRole('navigation', { name: 'Workspaces' })
+    await workspaces.getByRole('button', { name: new RegExp(`^${PROJECT} `) }).click()
+    // Save an explicit tab selection in the first project, then switch by
+    // project name alone. The older tab selection must not win at startup.
+    await current.click()
+    await workspaces.getByRole('button', { name: new RegExp(`^${other} `) }).click()
+    await expect(tabs.getByRole('tab', { name: /^e2e-restart-project / })).toHaveAttribute('aria-selected', 'true')
+
+    await app.close()
+    const reopened = await _electron.launch({ executablePath: ELECTRON, args: launchArgs(userData), env: launchEnv(), timeout: 30_000 })
+    try {
+      const restarted = await reopened.firstWindow()
+      await expect(strip(restarted).getByRole('tab', { name: /^e2e-restart-project / })).toHaveAttribute('aria-selected', 'true')
+    } finally {
+      await reopened.close()
+    }
+  })
+
+  test('the selected far-right tab is visible in an overflowing strip after reload', async ({ win, server, shell }) => {
+    const { app, page } = win
+    await fullSize(app, page)
+    for (let i = 1; i <= 7; i++) await openShell(server.api, `e2e wide terminal label for tab number ${i}`)
+    // Use a shell for the test process, with the same row identity as a Codex chat.
+    const r = await server.api.post('/api/terminal/sessions', { data: {
+      kind: 'shell', project: PROJECT, role: 'chat', agent: 'codex-e2e-rightmost', label: 'e2e Codex chat at the far right',
+    } })
+    expect(r.ok(), await r.text()).toBeTruthy()
+    const { session: last } = await r.json() as { session: { id: string } }
+    await page.reload()
+    const tabs = strip(page)
+    await expect(tabs.getByRole('tab')).toHaveCount(9)
+    await expect(tabs.getByRole('tab').last()).toHaveAttribute('aria-label', /^e2e Codex chat at the far right /)
+    await expect.poll(() => tabs.evaluate((el) => el.scrollWidth > el.clientWidth), { message: 'the strip overflows horizontally' }).toBe(true)
+    const first = tabs.getByRole('tab').first()
+    await first.click()
+    await expect(first).toHaveAttribute('aria-selected', 'true')
+    const chat = tabs.locator(`[data-tab="${last.id}"]`).getByRole('tab')
+    await expect.poll(() => chat.evaluate((button) => button.getBoundingClientRect().width <= button.closest('[role="tablist"]')!.clientWidth),
+      { message: 'the strip is wide enough to show one whole tab' }).toBe(true)
+    // Before these keys stayed local, boot could save its first view to the
+    // server and later overwrite the operator's most recent selection with it.
+    const stale = await server.api.post('/api/prefs', { data: { values: {
+      'sp-aqua-active': shell.id, 'sp-aqua-ws-tabs': JSON.stringify({ [`p:${PROJECT}`]: shell.id }),
+    } } })
+    expect(stale.ok(), await stale.text()).toBeTruthy()
+    try {
+      await chat.click()
+      await expect(chat).toHaveAttribute('aria-selected', 'true')
+
+      await page.reload()
+      await expect(chat).toHaveAttribute('aria-selected', 'true')
+      await expect.poll(() => chat.evaluate((button) => {
+        const tab = button.getBoundingClientRect()
+        const view = button.closest('[role="tablist"]')!.getBoundingClientRect()
+        const visible = Math.max(0, Math.min(tab.right, view.right) - Math.max(tab.left, view.left))
+        return Math.round(100 * visible / tab.width)
+      }), { message: 'the active tab fits horizontally inside the strip' }).toBeGreaterThanOrEqual(95)
+    } finally {
+      const cleared = await server.api.post('/api/prefs', { data: { values: { 'sp-aqua-active': null, 'sp-aqua-ws-tabs': null } } })
+      expect(cleared.ok(), await cleared.text()).toBeTruthy()
+    }
   })
 
   test('a plain "+" opens a shell in the project, no agent (tk_e7649e7c)', async ({ win, shell, server }) => {

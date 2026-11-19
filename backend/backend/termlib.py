@@ -51,6 +51,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -98,6 +99,18 @@ set -g pane-active-border-style "fg=#2A2E35"
 # and a line just copied in the terminal reached the shell twice, glued.
 # A program that reads the mouse still gets the click.
 bind -n MouseDown2Pane select-pane -t = \\; if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" "send -M"
+# Leave the selection on screen until the operator asks to copy it. A
+# program which reads the mouse still receives its own drag and clicks.
+unbind -T copy-mode MouseDragEnd1Pane
+unbind -T copy-mode-vi MouseDragEnd1Pane
+bind -T copy-mode C-c send-keys -X cancel \\; send-keys C-c
+bind -T copy-mode-vi C-c send-keys -X cancel \\; send-keys C-c
+bind -T copy-mode DoubleClick1Pane select-pane \\; send-keys -X select-word
+bind -T copy-mode-vi DoubleClick1Pane select-pane \\; send-keys -X select-word
+bind -T copy-mode TripleClick1Pane select-pane \\; send-keys -X select-line
+bind -T copy-mode-vi TripleClick1Pane select-pane \\; send-keys -X select-line
+bind -n DoubleClick1Pane select-pane -t = \\; if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -H ; send-keys -X select-word }
+bind -n TripleClick1Pane select-pane -t = \\; if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { copy-mode -H ; send-keys -X select-line }
 # The wheel over a full-screen program that does not read the mouse (less,
 # man, vim without mouse=a) moves it by arrow keys, as GNOME Terminal does.
 # tmux's default enters copy mode there, which has no history on that
@@ -108,7 +121,7 @@ bind -n WheelDownPane if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send -M 
 """
 
 _lock = threading.Lock()
-_link_cache: tuple[float, dict[str, dict[str, Any]]] = (0.0, {})
+_link_cache: tuple[Path | None, float, dict[str, dict[str, Any]]] = (None, 0.0, {})
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +300,52 @@ def scrollback_of(settings: dict[str, Any]) -> int:
         return 50_000
 
 
+#: Each colour scheme's text and ground, as the page's xterm draws them
+#: (frontend/src/features/terminal/schemes.ts holds the whole scheme; a test
+#: there checks these agree).
+SCHEME_COLOURS: dict[str, tuple[str, str]] = {
+    "sp-now": ("#E6E8EB", "#0E1013"),
+    "sp-graphite": ("#D3D9D6", "#171B1E"),
+    "sp-paper": ("#1F2522", "#F6F5F1"),
+    "catppuccin-mocha": ("#CDD6F4", "#1E1E2E"),
+    "catppuccin-latte": ("#4C4F69", "#EFF1F5"),
+    "tokyo-night": ("#C0CAF5", "#1A1B26"),
+    "gruvbox-dark": ("#EBDBB2", "#282828"),
+    "one-dark": ("#ABB2BF", "#282C34"),
+    "nord": ("#D8DEE9", "#2E3440"),
+    "solarized-light": ("#657B83", "#FDF6E3"),
+    "dracula": ("#F8F8F2", "#282A36"),
+    "rose-pine": ("#E0DEF4", "#191724"),
+}
+
+
+def window_style(settings: dict[str, Any]) -> str:
+    """tmux's window-style for the scheme in force: the page's text and ground.
+
+    tmux answers a program's question for the terminal's colours (OSC 10/11)
+    from an attached client only, and a terminal's program starts before the
+    page attaches (an agent's command is typed while the session is born, a
+    restored session has no window yet). Codex asks once, at its start, and
+    draws its input box in a shade of the ground it was told; told nothing,
+    it draws no box at all (tk_11bd239e). With the style set, tmux answers
+    at once, for every pane, whether a page is attached or not. The pane is
+    painted in the same colours the page's xterm draws, so nothing shows."""
+    fg, bg = SCHEME_COLOURS.get(str(settings.get("terminal.scheme") or ""), SCHEME_COLOURS["sp-now"])
+    return f"fg={fg},bg={bg}"
+
+
+def apply_scheme(data_root: Path, settings: dict[str, Any]) -> None:
+    """A new scheme for the terminals already open: tmux's panes (and its
+    answers) take its colours. Nothing when no tmux server runs: the next
+    terminal sets them as it opens."""
+    if not tmux_path():
+        return
+    try:
+        tmux(data_root, "set-option", "-g", "window-style", window_style(settings))
+    except TmuxError as exc:
+        log.info("the terminals' colours were not set: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Opening a path the terminal printed, in the operator's editor
 # ---------------------------------------------------------------------------
@@ -358,6 +417,23 @@ def _spawn(argv: list[str]) -> None:
 def to_bottom(data_root: Path, sid: str) -> None:
     """Leave the pane's copy mode — the view jumps back to the newest line."""
     tmux(data_root, "send-keys", "-X", "-t", PREFIX + sid, "cancel")
+
+
+def copy_selection(data_root: Path, sid: str) -> bool:
+    """Copy only a real selection and let tmux send it to the attached clipboard via OSC 52."""
+    out = tmux(data_root, "if-shell", "-F", "-t", PREFIX + sid, "#{selection_present}",
+               "send-keys -X copy-selection-and-cancel ; display-message -p copied")
+    if out.returncode != 0:
+        raise TmuxError((out.stderr or "").strip() or "tmux selection could not be copied")
+    return out.stdout.strip() == "copied"
+
+
+def cancel_selection(data_root: Path, sid: str) -> None:
+    """Leave copy mode if it currently holds a selection."""
+    out = tmux(data_root, "if-shell", "-F", "-t", PREFIX + sid, "#{selection_present}",
+               "send-keys -X cancel")
+    if out.returncode != 0:
+        raise TmuxError((out.stderr or "").strip() or "tmux selection could not be cancelled")
 
 
 def uses_tmux(settings: dict[str, Any]) -> bool:
@@ -541,6 +617,22 @@ def ansi_quote(text: str) -> str:
     return f"$'{body}'"
 
 
+@lru_cache(maxsize=8)
+def _codex_has_no_daemon(exe: str) -> bool:
+    try:
+        got = subprocess.run([exe, "--help"], capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return got.returncode == 0 and bool(re.search(r"^\s+--no-daemon\b", got.stdout, re.MULTILINE))
+
+
+def codex_in_terminal() -> str:
+    """Keep Codex hooks in the calling terminal's environment when the CLI supports it."""
+    exe = shutil.which("codex")
+    return "codex --no-daemon" if exe and _codex_has_no_daemon(exe) else "codex"
+
+
 def resume_command(tool: str, session_ref: str) -> str:
     # A ref starting with "-" would be read as an option of the tool.
     if not session_ref or not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$", session_ref):
@@ -548,7 +640,7 @@ def resume_command(tool: str, session_ref: str) -> str:
     if tool == "claude-code":
         return f"claude -r {session_ref}"
     if tool == "codex":
-        return f"codex resume {session_ref}"
+        return f"{codex_in_terminal()} resume {session_ref}"
     if tool == "opencode":
         return f"opencode --session {session_ref}"
     return ""
@@ -574,7 +666,7 @@ def fork_command(tool: str, session_ref: str, cwd: str, prompt: str, family: str
     if tool == "claude-code":
         run = f"claude -r {session_ref} --fork-session {q}"
     elif tool == "codex":
-        run = f"codex fork {session_ref} {q}"
+        run = f"{codex_in_terminal()} fork {session_ref} {q}"
     else:
         return ""
     if family == "powershell":
@@ -598,7 +690,7 @@ def start_command(tool: str, task: dict[str, Any], family: str | None = None) ->
     shell (``family``; bash on macOS and Linux)."""
     q = quote_for(family or command_family(), task_prompt(task))
     if tool == "codex":
-        return f"codex {q}"
+        return f"{codex_in_terminal()} {q}"
     if tool == "opencode":
         return f"opencode --prompt {q}"
     return f"claude {q}"
@@ -634,6 +726,8 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
                  command: str = "", label: str = "", agent_id: str = "", task_id: str = "",
                  sid: str = "", role: str = "", group: str = "") -> dict[str, Any]:
     """A new terminal: its row, and — with tmux — the session, running `command`."""
+    if command == "codex":
+        command = codex_in_terminal()
     sid = sid if sid and SAFE_ID.match(sid) else new_id()
     where = str(resolve_cwd(data_root, project, cwd))
     backend = "tmux" if uses_tmux(settings) else "plain"
@@ -656,7 +750,10 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
         shell = os.environ.get("SHELL") or "bash"
         # The history length is set just before the pane is made: tmux gives
         # a pane the limit in force when it is born, and keeps it.
+        # The scheme's colours too, before the shell is born: its programs
+        # learn the terminal's ground from tmux (window_style).
         tmux_starting(data_root, "set-option", "-g", "history-limit", str(scrollback_of(settings)), ";",
+                      "set-option", "-g", "window-style", window_style(settings), ";",
                       "new-session", "-d", "-s", PREFIX + sid, "-x", "200", "-y", "50", "-c", where,
                       "-e", f"SP_TERMINAL={sid}", "-e", "TERM=xterm-256color", shell, "-l")
         if command:
@@ -867,9 +964,11 @@ def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | Non
     # A plain terminal types `wake` when its new shell starts (routers/terminal.py
     # _pending): not typed yet. Before, it kept `typed` from its first life and a
     # woken chat came back as an empty shell.
+    now = time.time()
+    woken_at = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}"
     return put(data_root, {"id": sid, "created": created or out.get("created"),
                            "command": row.get("command") or "", "wake": cmd, "typed": False,
-                           "woken_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                           "woken_at": woken_at})
 
 
 def lost(items: list[dict[str, Any]], server_pid: str) -> list[dict[str, Any]]:
@@ -906,9 +1005,12 @@ def _edit_groups(data_root: Path, change) -> Any:
     return out[0] if out else None
 
 
-def group_put(data_root: Path, gid: str, name: str | None = None, color: int | None = None) -> dict[str, Any] | None:
-    """A custom workspace: a named, coloured set of terminals from any
-    projects. An empty `gid` makes one; None leaves a field as it is."""
+def group_put(data_root: Path, gid: str, name: str | None = None, color: int | None = None,
+              *, project: str | None = None) -> dict[str, Any] | None:
+    """Create or edit a terminal group. A project scope is set at creation.
+
+    Groups without a scope are custom workspaces spanning projects.
+    """
     def change(gs: list[dict[str, Any]]) -> dict[str, Any] | None:
         for g in gs:
             if g.get("id") == gid:
@@ -921,6 +1023,8 @@ def group_put(data_root: Path, gid: str, name: str | None = None, color: int | N
             return None
         g = {"id": "g" + secrets.token_hex(4), "name": name or f"Group {len(gs) + 1}",
              "color": color or (len(gs) % 8) + 1, "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        if project is not None:
+            g["project"] = project
         gs.append(g)
         return g
     return _edit_groups(data_root, change)
@@ -941,6 +1045,46 @@ def group_remove(data_root: Path, gid: str) -> bool:
     if gone and rows(data_root):
         _edit(data_root, clear)
     return gone
+
+
+def _selected_tabs(sessions: list[dict[str, Any]], tabs: set[str], project: str) -> list[dict[str, Any]]:
+    selected = [s for s in sessions if s.get("id") in tabs]
+    if len(selected) != len(tabs):
+        raise ValueError("a selected terminal is no longer open")
+    if any((s.get("project") or "") != project for s in selected):
+        raise ValueError("select tabs from a single project")
+    return selected
+
+
+def set_tab_groups(data_root: Path, tabs: set[str], project: str, group: str) -> None:
+    """Validate the entire selection before changing any of its memberships."""
+    def change(sessions: list[dict[str, Any]]) -> None:
+        for session in _selected_tabs(sessions, tabs, project):
+            session["group"] = group
+
+    _edit(data_root, change)
+
+
+def group_selected_tabs(data_root: Path, tabs: set[str], project: str, name: str | None,
+                        color: int | None) -> dict[str, Any]:
+    """Create a group only after checking its selection under the session registry lock."""
+    created: dict[str, Any] | None = None
+
+    def change(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+        nonlocal created
+        selected = _selected_tabs(sessions, tabs, project)
+        created = group_put(data_root, "", name, color, project=project)
+        assert created is not None
+        for session in selected:
+            session["group"] = created["id"]
+        return created
+
+    try:
+        return _edit(data_root, change)
+    except OSError:
+        if created is not None:
+            group_remove(data_root, created["id"])
+        raise
 
 
 #: What a terminal (xterm in the page) sends for itself, not for the operator:
@@ -1026,11 +1170,13 @@ def tmux_panes(data_root: Path) -> dict[str, dict[str, Any]]:
 def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
     """terminal id → the agent the capture hook saw started in it (newest wins)."""
     global _link_cache
-    now = time.time()
-    if now - _link_cache[0] < 3:
-        return _link_cache[1]
+    root = Path(data_root)
+    now = time.monotonic()
+    cached_root, cached_at, cached_links = _link_cache
+    if cached_root == root and now - cached_at < 3:
+        return cached_links
     out: dict[str, dict[str, Any]] = {}
-    for meta_path in Path(data_root).glob("projects/*/chats/*/meta.json"):
+    for meta_path in root.glob("projects/*/chats/*/meta.json"):
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -1044,7 +1190,7 @@ def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
         out[tid] = {"agent_id": meta.get("agent_id") or meta_path.parent.name, "project": meta.get("project") or "",
                     "last_active": meta.get("last_active") or "",
                     "last_stop": (meta.get("last_stop") or {}).get("at") or ""}
-    _link_cache = (now, out)
+    _link_cache = (root, now, out)
     return out
 
 

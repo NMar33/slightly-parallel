@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from . import hookshared, limits, marklib, termlib
+from .actors import is_agent
 from .csvio import append_row
 from .date_utils import now_iso
 from .db import ViewStore
@@ -79,12 +80,49 @@ def message_text(chats: _Chats, agent_id: str, turn: int, side: str) -> tuple[st
     return (reply, "", at) if side == hookshared.REPLY_SIDE else (user, reply, at)
 
 
-def fork_prompt(text: str, turn: int, side: str) -> str:
-    """The first prompt of a fork: the operator's message without its
-    ``#fork-later``, or the agent's reply with one line on what it is."""
+#: The words around a reply a branch starts from, in the operator's language.
+#: Neutral on purpose: the branch picks up from the reply and waits — it is
+#: not told to carry the reply out (a reply that says what it did would be
+#: done again, on the parent's records). ``#mute`` makes every tag in the
+#: message plain text, the quoted ones included (hookshared.command_text):
+#: the hook and the server read none of them as the operator's command.
+FORK_WORDS: dict[str, tuple[str, str]] = {
+    "en": ("We continue from this message (turn {turn}):", "I will say what comes next. #mute"),
+    "ru": ("Продолжаем с этого сообщения (ход {turn}):", "Что дальше — скажу. #mute"),
+}
+_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+#: Anything a command reader could take for a tag (they all read ``(?<![\w#])#word``).
+_TAG_RE = re.compile(r"(?<![\w#])#(?=[A-Za-z])")
+#: How many of the chat's last operator messages tell its language.
+_LANG_TURNS = 5
+
+
+def fork_lang(store: ViewStore, said: list[str]) -> str:
+    """The operator's language for a branch's first message: ru when their
+    last messages in the chat have Cyrillic in them, else the app's language
+    setting (en when none is saved). The app's setting alone is not enough:
+    an operator may keep the app in English and write Russian."""
+    if any(_CYRILLIC.search(t or "") for t in said[-_LANG_TURNS:]):
+        return "ru"
+    from .entrypointask import lang_of  # the app's setting, read in one place
+    got = lang_of(store, "")
+    return got if got in FORK_WORDS else "en"
+
+
+def fork_prompt(text: str, turn: int, side: str, lang: str = "en") -> str:
+    """The first prompt of a fork. From the agent's reply: the reply quoted
+    between a neutral line on where the chat goes on and a line that the
+    operator says what comes next, with ``#mute``. From the operator's own
+    message: the message without its ``#fork-later``; with ``#mute`` added
+    when a tag in it would run again (it ran in the parent already)."""
     if side == hookshared.REPLY_SIDE:
-        return f"Take up this part of your earlier reply (turn {turn}) and do it:\n\n{text.strip()}"
-    return _FORK_TAG_RE.sub("", text).strip()
+        head, tail = FORK_WORDS.get(lang) or FORK_WORDS["en"]
+        quote = "\n".join(f"> {line}" if line.strip() else ">" for line in text.strip().splitlines())
+        return f"{head.format(turn=turn)}\n\n{quote}\n\n{tail}"
+    said = _FORK_TAG_RE.sub("", text).strip()
+    if _TAG_RE.search(said):
+        said += "\n\n#mute"
+    return said
 
 
 def listing(store: ViewStore, which: str, *, project: str = "", agent_id: str = "", q: str = "",
@@ -126,9 +164,10 @@ def listing(store: ViewStore, which: str, *, project: str = "", agent_id: str = 
         if r["kind"] == "fork":
             a = chats.raw.get(agent) or {}
             item["tool"] = str(a.get("tool") or "")
+            lang = fork_lang(store, [u for _n, (_at, u, _r) in sorted(chats.turns(agent).items())])
             item["command"] = termlib.fork_command(
                 str(a.get("tool") or ""), str(a.get("session_ref") or ""), str(a.get("cwd") or ""),
-                fork_prompt(text, turn, side))
+                fork_prompt(text, turn, side, lang))
         if needle:
             name = (item["agent"] or {}).get("agent_name") or ""
             hay = " ".join((text, item.get("brief") or "", r.get("excerpt") or "", name, agent)).lower()
@@ -183,6 +222,14 @@ def write_brief(store: ViewStore, target: str, text: str, by: str) -> dict[str, 
     parsed = hookshared.parse_target(target)
     if parsed is None:
         raise ValueError("a message is <agent_id>#<turn>, or <agent_id>#<turn>/reply for the agent's reply")
+    if is_agent(by) and parsed[0] != by:
+        # A chat's brief is its own agent's: the hook asks a chat only for its
+        # own messages. A branch (claude --fork-session, codex fork) holds its
+        # parent's turns in its history and once rewrote the parent's brief.
+        raise PermissionError(
+            f"{target} is a message of another chat ({parsed[0]}); you are {by}. An agent writes briefs only "
+            f"for its own chat's messages ({by}#<turn>): a branch carries its parent's history, not its "
+            "records. The parent's brief is written in the parent chat, after the operator marks it there.")
     on = lambda: any(r.get("kind") == "carry-brief" and r.get("target") == target  # noqa: E731
                      for r in marklib.active(store))
     if not on():

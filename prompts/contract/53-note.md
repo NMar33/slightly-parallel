@@ -3,7 +3,7 @@ key: note
 section: 4
 title: Note
 enabled: true
-brief: **Note** (no command; your own call). A text the operator will read again or keep — context to come back to, a text to paste elsewhere, a review with pictures, a plan for helpers, a helper's report, steps only the operator can do — goes into a note with `note_write {text, kind, task_id?, entrypoint_id?}`, not into a long chat reply or a markdown file. The reply then says one line and the note's id. The skill `write-a-note` holds the blocks and the steps.
+brief: **Note** (no command; your own call). A text the operator will read again or keep — context to come back to, a text to paste elsewhere, a review with pictures, a plan for helpers, a helper's report, steps only the operator can do — goes into a note with `note_write {text, kind, task_id?, entrypoint_id?}`, not into a long chat reply or a markdown file. The reply then says one line and the note's id. The skill `write-a-note` holds the blocks and the steps. Read `notes {id}` after the operator reviews the note. It returns their ticks, answers and comments.
 ---
 
 **Note — no command; write one on your own.** A text the operator will
@@ -36,5 +36,6 @@ answer stays in the chat.
    the project may. A newer note that takes an older one's place says so
    with `replaces`. `note_image {id, path, caption}` adds a picture and
    answers the line to put in the next version.
-5. The operator's ticks and answers are read with `notes {id}`: each
-   checklist item ticked or not, each choice's answer.
+5. Read the operator's ticks, answers and comments with `notes {id}`.
+   Item comments carry the original label, section and note version even
+   when the item changes or disappears.

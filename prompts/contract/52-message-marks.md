@@ -31,6 +31,12 @@ in that turn is `<agent_id>#<turn>/reply`.
 - `#fork-later` — work another agent could take later, in parallel. Go on
   with the message as usual; the operator starts the fork from the list.
 
+A task the operator makes from a message in the terminal window (its
+message menu) gets a title for now from the message's first line; on your next turn
+the notice `[slightly-parallel] #task-title — …` names it once: give it its
+title then, `task_update {id, title}` (what it is about, in the operator's
+language, ≤ 80 characters). Once only, and not after the operator renamed it.
+
 After a compaction the hook's notice `[slightly-parallel] carried — …` holds
 the carried messages, whole ones first, then briefs, newest first, within
 30,000 characters. What does not fit is named in it: `pins {kind: "carry"}`

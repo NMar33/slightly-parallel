@@ -6,7 +6,7 @@ enabled: true
 command: #task <hint> | Write the task the user is pointing at, from the conversation, into the `agent` column, for later; `#task {lane} …` names the board lane (section 4)
 command: #now <text> | Title the task this chat starts on; the server keeps the operator's message as its text, in `doing`, in the lane for #now or the one in braces; then do the work; `#done` closes it (section 4)
 command: #now-todo <text> | Title the operator's message; the server files it, as written, in To do (also `-next`, `-backlog`, `-review`, `-parked`, `-done`, `-doing`); not started in this chat (section 4)
-brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `{lane}` after the tag names the board lane; the server sets it. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
+brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `task_update` changes the title, text and day only of a task you created; on the operator's or another agent's, add a comment. `{lane}` after the tag names the board lane; the server sets it. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
 ---
 
 **Agent task — `#task <hint>` / `#now <text>` → `write_entry {lens: "task"}`.**
@@ -33,6 +33,14 @@ and when the work happens:
   write it, say so in one line, and go on with what the chat was doing.
   `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and
   `#now-done` file it in those columns; `#now-doing` is `#now`.
+
+**A task made from a message — the notice `#task-title`.** The operator
+can make a task from one message of this chat (the terminal's message
+menu); the server titles it from the message's first line for now. On
+your next turn the notice names it once: give it a title with
+`task_update {id, title}` — what it is about, in the operator's
+language, ≤ 80 chars — and go on with the turn. Only the title, and only
+once; a second title, or one after the operator renamed it, is refused.
 
 **Commits.** Every commit you make for a task says so: end its message
 with a blank line, then `Task: tk_…` (one line per task it serves) and
@@ -89,8 +97,12 @@ you start.
 4. Reply with one line: `tk_… · <title> · <tag> · <column> · <lane>`.
    "Drop it" → `task_update {id, status: "done-archived"}` — the only
    status change you ever make, on a card you created. `task_update` takes
-   `title`, `description` and `today_on` as well; sprint, priority, due
-   date and the operator's switches are refused by name.
+   `title`, `description` and `today_on` as well, on a card you created
+   only (a `#now` card you wrote or the server wrote for your chat counts;
+   its text stays the operator's). On the operator's card or another
+   agent's they are refused: add a `comment` instead, open on any task.
+   Sprint, priority, due date and the operator's switches are refused by
+   name.
 
 ```json
 {"lens":"task","fields":{"title":"Architecture form without a scan",

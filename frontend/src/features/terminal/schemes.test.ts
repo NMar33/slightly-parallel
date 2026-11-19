@@ -8,6 +8,7 @@ import {
 
 const HEX = /^#[0-9A-F]{6}$/i
 const settingsPy = Object.values(import.meta.glob<string>('../../../../backend/backend/app_settings.py', { eager: true, query: '?raw', import: 'default' }))[0] ?? ''
+const termlibPy = Object.values(import.meta.glob<string>('../../../../backend/backend/termlib.py', { eager: true, query: '?raw', import: 'default' }))[0] ?? ''
 
 describe('the colour schemes', () => {
   it('are the twelve of the mockup, with the ids the server accepts', () => {
@@ -17,6 +18,13 @@ describe('the colour schemes', () => {
     const server = [...block![1]!.matchAll(/"([\w-]+)"/g)].map((m) => m[1])
     expect(server).toEqual(SCHEMES.map((s) => s.id))
     expect(/key="terminal\.scheme",[\s\S]*?default="sp-now"/.test(settingsPy)).toBe(true)
+  })
+
+  it('give the server each scheme\'s text and ground, the colours tmux tells programs (tk_11bd239e)', () => {
+    const block = /SCHEME_COLOURS[^=]*=\s*\{([\s\S]*?)\n\}/.exec(termlibPy)
+    expect(block, 'SCHEME_COLOURS in termlib.py').not.toBeNull()
+    const server = Object.fromEntries([...block![1]!.matchAll(/"([\w-]+)":\s*\("(#[0-9A-F]{6})",\s*"(#[0-9A-F]{6})"\)/gi)].map((m) => [m[1], [m[2]!.toUpperCase(), m[3]!.toUpperCase()]]))
+    expect(server).toEqual(Object.fromEntries(SCHEMES.map((s) => [s.id, [s.fg.toUpperCase(), s.bg.toUpperCase()]])))
   })
 
   it('every scheme has its 16 ANSI colours and valid hex everywhere', () => {

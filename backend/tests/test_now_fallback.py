@@ -148,6 +148,19 @@ def test_todo_files_it_in_its_column_and_a_late_write_is_pointed_at_it(env) -> N
     assert r.status_code >= 400 and card["id"] in r.text and "task_update" in r.text
 
 
+def test_the_chats_agent_titles_the_now_card_and_no_other_agent_does(env) -> None:
+    """The server's #now card is the chat's (agent_id): its agent retitles it,
+    as the refused late write tells it to; another agent is refused."""
+    c, root = env
+    _chat(root, [(_at(-5), "#now-todo look at the import later", "noted"), (_at(-1), "and?", "")])
+    (card,) = _cards(c)
+    r = c.post(f"/api/tasks/{card['id']}/update", json={"actor": AGENT, "title": "Import: look again"})
+    assert r.status_code == 200, r.text
+    other = c.post(f"/api/tasks/{card['id']}/update", json={"actor": "cc-other0001", "title": "mine"})
+    assert other.status_code == 422 and f"created by {AGENT}" in other.json()["detail"]
+    assert c.get(f"/api/tasks/{card['id']}").json()["metadata"]["title"] == "Import: look again"
+
+
 def test_a_lane_the_board_lacks_is_left_to_the_agent(env) -> None:
     c, root = env
     _chat(root, [(_at(-5), "#now {nowhere} build it", "which lane?")])

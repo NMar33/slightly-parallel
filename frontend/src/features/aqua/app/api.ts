@@ -87,11 +87,20 @@ export function useAquaActions() {
     rename: async (id: string, label: string) => { await postJson(`${sid(id)}/rename`, { label, actor: 'operator' }).catch(failed(t('The terminal was not renamed'))); refresh() },
     sleep: async (id: string) => { await postJson(`${sid(id)}/sleep`, { actor: 'operator' }).catch(failed(t('The chat did not go to sleep'))); refresh() },
     wake: async (id: string) => { await postJson(`${sid(id)}/wake`, { actor: 'operator' }).catch(failed(t('The chat did not wake'))); refresh() },
-    setGroup: async (id: string, group: string) => { await postJson(`${sid(id)}/group`, { group, actor: 'operator' }).catch(failed(t('The chat did not move'))); refresh() },
-    newGroup: async (name: string, color: number) => {
-      const d = await postJson<{ group: Group }>('/api/terminal/groups', { name, color, actor: 'operator' }).catch(failed(t('The group was not made')))
+    setGroup: async (id: string, group: string) => {
+      const result = await postJson(`${sid(id)}/group`, { group, actor: 'operator' }).catch(failed(t('The chat did not move')))
+      refresh()
+      return !!result
+    },
+    newGroup: async (name: string, color: number, project?: string, tabs?: string[]) => {
+      const d = await postJson<{ group: Group }>('/api/terminal/groups', { name, color, project, tabs, actor: 'operator' }).catch(failed(t('The group was not made')))
       refresh()
       return d?.group ?? null
+    },
+    moveTabs: async (tabs: string[], project: string, group: string) => {
+      const result = await postJson('/api/terminal/groups/move', { tabs, project, group, actor: 'operator' }).catch(failed(t('The tabs did not move')))
+      refresh()
+      return !!result
     },
     editGroup: async (gid: string, patch: { name?: string; color?: number }) => {
       await postJson(`/api/terminal/groups/${encodeURIComponent(gid)}`, { ...patch, actor: 'operator' }).catch(failed(t('The group was not changed')))

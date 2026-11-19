@@ -14,6 +14,7 @@ Writes:
   POST /api/notes/write                {agent_id, project, title?, kind, text, task_id?, entrypoint_id?, replaces?, id?, base?, images?}  MCP note_write
   POST /api/notes/{id}/images          {agent_id, data_base64, caption?}  MCP note_image
   POST /api/notes/{id}/marks           {item, kind: tick|answer|copy, value}  the operator
+  POST /api/notes/{id}/comments        {item?, section?, text, request_id?}  the operator
   POST /api/notes/{id}/archive         {archived: bool}  the operator
 """
 
@@ -40,7 +41,7 @@ def _refused(exc: N.NoteRefused) -> HTTPException:
 @router.get("/api/notes/feed")
 def notes_feed(request: Request, project: str = Query(""), task: str = Query(""), archived: bool = Query(False),
                store: ViewStore = Depends(get_store)) -> Response:
-    etag = etag_for(f"notes-feed:{project}:{task}:{int(archived)}", store)
+    etag = etag_for(f"notes-feed:{project}:{task}:{int(archived)}:{N.feed_stamp(store)}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
     return json_response(N.feed(store, project=project.strip(), task=task.strip(), archived=archived), etag)
@@ -99,6 +100,17 @@ def note_mark(note_id: str, body: Any = Body(...), store: ViewStore = Depends(ge
     operator_only(body, "a tick, an answer or a copy on a note", "read them back with the notes tool")
     try:
         return N.mark(store, note_id, body)
+    except N.NoteRefused as exc:
+        raise _refused(exc) from None
+    except LookupError:
+        raise not_found("note", note_id) from None
+
+
+@router.post("/api/notes/{note_id}/comments")
+def note_comment(note_id: str, body: Any = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    operator_only(body, "a comment on a note", "read it back with the notes tool")
+    try:
+        return N.comment(store, note_id, body)
     except N.NoteRefused as exc:
         raise _refused(exc) from None
     except LookupError:

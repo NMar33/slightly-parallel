@@ -42,7 +42,7 @@ beforeEach(() => {
     if (init?.method === 'POST') {
       const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>
       posts.push([path, body])
-      if (path === '/api/tasks') return answer({ metadata: { id: 'tk_0badc0de' } }, 201)
+      if (path === '/api/tasks') return answer({ metadata: { id: 'tk_0badc0de', title: 'Длинное имя хоста переносило команду' } }, 201)
       if (path === '/api/terminal/sessions') return answer({ session: { id: 't-branch', label: 'b', project: 'harbor' } })
       return answer({ ok: true })
     }
@@ -65,7 +65,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 interface Rig { slot: LayerSlot; said: string[]; own: Array<[number, number]>; selection: string; pasted: string[]; bracketed: boolean }
 
-function rig(agentId = 'cc-1', rows: string[] = ROWS): Rig {
+function rig(agentId = 'cc-1', rows: string[] = ROWS, extra: Partial<ScreenApi> = {}): Rig {
   const r: Rig = { slot: null as unknown as LayerSlot, said: [], own: [], selection: '', pasted: [], bracketed: false }
   // The screen: the row under the point is the point's y in rows (the test clicks at y = row).
   const api: ScreenApi = {
@@ -75,6 +75,7 @@ function rig(agentId = 'cc-1', rows: string[] = ROWS): Rig {
     ownMenu: (x, y) => { r.own.push([x, y]) },
     paste: (text) => { r.pasted.push(text) },
     bracketed: () => r.bracketed,
+    ...extra,
   }
   function Fake({ slot }: { slot: LayerSlot }) {
     r.slot = slot
@@ -146,9 +147,11 @@ describe('the message menu', () => {
     await rightClick(r, 5)
     await waitFor(() => expect(menu()).toHaveAccessibleName('Agent\'s reply · 7'))
     fireEvent.click(item('Make a task'))
-    await waitFor(() => expect(r.said).toContain('Task made in todo: tk_0badc0de'))
+    // The card carries the server's title for now (from the message); the chat's agent gives the real one.
+    await waitFor(() => expect(r.said).toContain('Task made in todo: tk_0badc0de · Длинное имя хоста переносило команду'))
     const [, body] = posts.find(([p]) => p === '/api/tasks')!
-    expect(body).toMatchObject({ project: 'harbor', agent_id: 'operator', actor: 'operator', status: 'todo', title: 'Тест считал строки в склеенном тексте, а длинное имя хоста переносило команду на вторую строку.' })
+    expect(body).toMatchObject({ project: 'harbor', agent_id: 'operator', actor: 'operator', status: 'todo', title: 'Тест считал строки в склеенном тексте, а длинное имя хоста переносило команду на вторую строку.',
+      title_from: 'message', title_source: 'cc-1#7/reply' })
     expect(String(body.description)).toContain('From the chat: cc-1#7/reply')
     await rightClick(r, 3)
     await waitFor(() => expect(item('Task tk_0badc0de')).toBeTruthy())
@@ -448,5 +451,51 @@ describe('the copy icon', () => {
     await waitFor(() => expect(clip).toEqual([ONE]))
     act(() => { f.term.element!.dispatchEvent(new MouseEvent('mousemove', { ...f.at(12), bubbles: true })) })
     expect(within(f.scr).queryByRole('button')).toBeNull()
+  })
+})
+
+describe('collapsing a message (tk_a2bb64a1)', () => {
+  it('Collapse on a reply hands the screen its id and says where it shows; Expand and Expand all on a collapsed one', async () => {
+    const calls: Array<[string[], boolean]> = []
+    const kept = new Set<string>()
+    let cleared = 0
+    const r = rig('cc-1', ROWS, {
+      fold: {
+        has: (id) => kept.has(id),
+        count: () => kept.size,
+        set: async (ids, on) => { calls.push([ids, on]); for (const id of ids) { if (on) kept.add(id); else kept.delete(id) } return 'later' },
+        clear: async () => { cleared += 1; kept.clear() },
+      },
+    })
+    await ready()
+    await rightClick(r, 3)
+    await waitFor(() => expect(menu()).toHaveAccessibleName('Agent\'s reply · 7'))
+    expect(item('Collapse to one line').getAttribute('title')).toMatch(/when you scroll up; the live screen at the bottom stays/)
+    expect(within(menu()).queryByRole('menuitem', { name: 'Expand all' })).toBeNull()
+    fireEvent.click(item('Collapse to one line'))
+    await waitFor(() => expect(calls.length).toBe(1))
+    expect(calls[0]![1]).toBe(true)
+    expect(calls[0]![0][0]).toMatch(/^r/)
+    await waitFor(() => expect(r.said).toContain('Collapsed: it shows as one line in the history, once it is above the live screen'))
+    // Collapsed now: the same reply offers Expand, and Expand all is there.
+    await rightClick(r, 2)
+    await waitFor(() => expect(item('Expand')).toBeTruthy())
+    fireEvent.click(item('Expand'))
+    await waitFor(() => expect(calls.at(-1)).toEqual([calls[0]![0], false]))
+    await waitFor(() => expect(r.said).toContain('Expanded'))
+    // The operator's message is another id; Collapse all replies takes every reply read.
+    await rightClick(r, 0)
+    await waitFor(() => expect(menu()).toHaveAccessibleName('Your message · 7'))
+    fireEvent.click(item('Collapse all replies'))
+    await waitFor(() => expect(calls.at(-1)).toEqual([[calls[0]![0][0]], true]))
+    await waitFor(() => expect(r.said).toContain('1 reply collapsed'))
+    await rightClick(r, 0)
+    await waitFor(() => expect(item('Expand all')).toBeTruthy())
+    fireEvent.click(item('Expand all'))
+    await waitFor(() => expect(cleared).toBe(1))
+    // A row that is no message: no Collapse.
+    await rightClick(r, 6)
+    await waitFor(() => expect(menu().getAttribute('data-found')).toBe('no'))
+    expect(within(menu()).queryByRole('menuitem', { name: 'Collapse to one line' })).toBeNull()
   })
 })

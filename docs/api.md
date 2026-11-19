@@ -221,6 +221,11 @@ The board, its blocks, and everything hung off a task.
 
 - `GET /api/tasks` · `GET /api/tasks/{id}` · `POST /api/tasks` —
   the lens trio. Create takes the text in `description`; turns come later.
+  The operator's create may add `title_from: "message"` and `title_source`
+  (`<agent_id>#<turn>`, `…/reply`): the server titles the task from that
+  message for now, and the title waits for that chat's agent, who sets it
+  once with `title` on update (the hook's `#task-title` notice asks); an
+  operator rename first ends the wait.
 - `POST /api/tasks/{task_id}/update` — body: `title`, `description`,
   `status`, `turn` (which round to rewrite), plus the mutable columns
   (`assignee`, `priority`, `lane`, `sprint_id`, `remember`, `today_on`,
@@ -232,7 +237,12 @@ The board, its blocks, and everything hung off a task.
   an agent's tags are `ag_*`. `comment`
   adds a note after the task's text, under `--- comment from agent:` (an
   agent's) — each call adds one; on a #now card an agent's `description` is
-  refused, since its text is the operator's message.
+  refused, since its text is the operator's message. An agent changes
+  `title`, `description` and `today_on` only on a task it created (the
+  task's `agent_id`); on the operator's or another agent's task they are
+  refused, naming the creator. `comment` is open to every agent on any
+  task. The one exception is the waiting title of a task made from a
+  message (above).
 - `POST /api/tasks/{task_id}/turn` — the next round of instruction. Body:
   `text`, `actor`, `created_date`, `created_time`. Answers: `task`, `turn`,
   `turns`, `description`, `ref`.
@@ -492,6 +502,18 @@ skill and the contract have one source. Built-in skills: `make-a-scan`,
 `make-an-artifact`, `finish-a-task`, `sp-help`.
 
 ---
+
+## Notes
+
+- `GET /api/notes/feed` and `GET /api/notes/{note_id}/full` include a
+  `comments` array for the notes returned. `GET /api/notes/{note_id}/agent`
+  includes the same comments for the MCP `notes` tool.
+- `POST /api/notes/{note_id}/comments` adds an operator comment. Send
+  `{text, item?, section?, request_id?}`. Text is limited to 2,000 characters.
+  Omit `item` for a note-level comment. Supply the section title when the same
+  item text appears in multiple sections. Keep the same `request_id` when
+  retrying a submission. The returned `comment` records the original label,
+  section and note version.
 
 ## Artifacts
 
@@ -1499,7 +1521,9 @@ Every route refuses a foreign `Origin` or a cross-site request.
   wrapped lines joined: `{mode: "screen"}` the visible screen,
   `{mode: "last"}` everything since the last Enter that crossed the
   socket, `{mode: "range", from, to}` the lines between two absolute
-  ids. At most 20 000 lines (`truncated` says when). tmux only.
+  ids. At most 20 000 lines (`truncated` says when). `{mode: "selection"}`
+  asks tmux to send its active selection as an explicit clipboard copy.
+  It returns `copied: false` when there is no selection. tmux only.
 - `POST /api/terminal/sessions/{sid}/open` — `{path, line?, col?}`: open a
   path the terminal printed in the operator's editor (Settings › Terminal ›
   Open printed paths in; `auto` takes the first installed). A relative path
@@ -1513,20 +1537,29 @@ Every route refuses a foreign `Origin` or a cross-site request.
   its row (`state: asleep`, `wake`: what it will run): a chat's agent is
   resumed on waking, a server (`role: server`) runs its command again, a
   plain shell comes back empty.
-- `POST /api/terminal/sessions/{sid}/wake` — bring it back under the same id. A terminal's `role` is `chat`, `server` or `shell` (sent on
-  opening, else worked out from its kind).
+- `POST /api/terminal/sessions/{sid}/wake` — bring it back under the same id.
+  With `{shell: true}`, open an ended terminal with an empty shell and keep its
+  original command for a later wake. A sleeping terminal refuses this mode with
+  409. `GET …/state` advertises support as `open_shell`.
+  A terminal's `role` is `chat`, `server` or `shell` (sent on opening, else
+  worked out from its kind).
 - `GET /api/terminal/restore` — `needed` and the `sessions` that ended
   without being closed or put to sleep because their tmux server is gone (a
   restart of the computer), each with the `wake` command it would run.
   `POST /api/terminal/restore` — `{ids?}`: bring them back; `results` holds
   `id`, `label`, `ok`, `error`, `command` per terminal.
-- `GET /api/terminal/groups` — custom workspaces: `id`, `name`, `color`
-  (1–8). `POST /api/terminal/groups` `{name, color?}` makes one,
+- `GET /api/terminal/groups` — custom workspaces and tab groups: `id`, `name`,
+  `color` (1–8), and `project` for groups inside a project.
+  `POST /api/terminal/groups` `{name, color?, project?, tabs?}` makes one.
+  With `project` and `tabs`, it adds the selected terminals on creation.
   `POST /api/terminal/groups/{gid}` `{name?, color?}` changes it,
   `POST /api/terminal/groups/{gid}/remove` removes it (its terminals return
   to their projects). `POST /api/terminal/sessions/{sid}/group` `{group}`
   moves a terminal into a group, `""` back to its project; `group` is also
   accepted on opening.
+- `POST /api/terminal/groups/move` — `{project, group, tabs}` assigns a
+  selection to a tab group in its project. An empty `group` clears their
+  memberships. The whole selection must belong to the project.
 - `POST /api/terminal/typing` — `{sid, keys}`: the operator typed that many
   keys into a terminal since the last report (the window sends it; the text
   is never sent). `GET /api/terminal/typing?day=YYYY-MM-DD` — `minutes` per

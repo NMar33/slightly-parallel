@@ -2084,6 +2084,33 @@ def briefs_owed(data_root: Any, agent_id: str) -> list[str]:
             if r.get("kind") == "carry-brief" and str(r["target"]) not in have]
 
 
+# A task made from a message (the terminal's message menu) ---------------
+#: The ledger of the titles that wait for a chat's agent (titlelib.py writes
+#: it, the hook reads it): one row per change, the newest per task counts.
+TITLES_CSV = "task_titles.csv"
+TITLE_COLUMNS: tuple[str, ...] = ("id", "task_id", "project", "agent_id", "turn", "side", "provisional",
+                                  "state", "at", "by")
+#: The title waits for the source chat's agent; it was given by that agent;
+#: the operator renamed the task first.
+TITLE_WAITING, TITLE_BY_AGENT, TITLE_BY_OPERATOR = "waiting", "agent", "operator"
+
+
+def title_states(data_root: Any) -> dict[str, dict[str, str]]:
+    """The newest ledger row of each task made from a message, by task id."""
+    out: dict[str, dict[str, str]] = {}
+    for r in _csv_rows(Path(data_root) / TITLES_CSV):
+        tid = str(r.get("task_id") or "")
+        if tid:
+            out[tid] = r                 # appended in time order: the last one counts
+    return out
+
+
+def title_waits(data_root: Any, agent_id: str) -> list[dict[str, str]]:
+    """The tasks made from this chat's messages whose title still waits for its agent."""
+    return [r for r in title_states(data_root).values()
+            if r.get("state") == TITLE_WAITING and (r.get("agent_id") or "") == agent_id]
+
+
 def _clip_text(text: str, most: int) -> str:
     return text if len(text) <= most else text[:most].rstrip() + f"\n[… {len(text) - most} more characters]"
 

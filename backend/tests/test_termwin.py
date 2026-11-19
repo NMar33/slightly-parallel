@@ -136,7 +136,8 @@ def test_branch_command(client: TestClient) -> None:
     d = r.json()
     assert d["command"] == "cd /work/alpha && claude -r ref-cc-one --fork-session"
     assert d["project"] == "alpha" and d["name"] == "hbr-2611-18"
-    assert client.get("/api/terminal/branch/cx-old").json()["command"] == "cd /work/alpha && codex fork ref-cx-old"
+    assert client.get("/api/terminal/branch/cx-old").json()["command"] == (
+        f"cd /work/alpha && {termlib.codex_in_terminal()} fork ref-cx-old")
     assert client.get("/api/terminal/branch/oc-x").status_code == 422
     assert client.get("/api/terminal/branch/cc-noref").status_code == 422
     assert client.get("/api/terminal/branch/nobody").status_code == 404
@@ -145,7 +146,7 @@ def test_branch_command(client: TestClient) -> None:
 def test_branch_command_quotes_and_refuses_odd_refs() -> None:
     assert termwin.branch_command("claude-code", "r1", "/a b", family="bash") == "cd '/a b' && claude -r r1 --fork-session"
     assert termwin.branch_command("claude-code", "r1; rm", "/a", family="bash") == ""
-    assert termwin.branch_command("codex", "r1", "", family="bash") == "codex fork r1"
+    assert termwin.branch_command("codex", "r1", "", family="bash") == f"{termlib.codex_in_terminal()} fork r1"
 
 
 def test_agents_installed(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

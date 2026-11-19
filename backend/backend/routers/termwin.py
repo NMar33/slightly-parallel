@@ -181,7 +181,7 @@ def branch_command(tool: str, session_ref: str, cwd: str, family: str | None = N
     if tool == "claude-code":
         run = f"claude -r {session_ref} --fork-session"
     elif tool == "codex":
-        run = f"codex fork {session_ref}"
+        run = f"{termlib.codex_in_terminal()} fork {session_ref}"
     else:
         return ""
     if not cwd:

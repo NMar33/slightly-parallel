@@ -18,12 +18,12 @@ export type Role = 'chat' | 'server' | 'shell'
 export interface AquaSession extends Omit<TermSession, 'state'> {
   state: TermState | 'asleep'
   role?: Role
-  /** A workspace of the operator's own (a group id), or "" — its project. */
+  /** A custom workspace or tab group id. */
   group?: string
   asleep?: boolean
 }
 
-export interface Group { id: string; name: string; color: number }
+export interface Group { id: string; name: string; color: number; project?: string }
 
 export interface Workspace {
   /** `p:<project>` or `g:<group id>`: a project and a group never share an id. */
@@ -63,9 +63,9 @@ export function laneOf(code: string): number {
 export const projectWs = (code: string) => `p:${code}`
 export const groupWs = (gid: string) => `g:${gid}`
 
-/** The workspace a terminal lives in: its group when the group is known, else its project. */
+/** Only custom workspace groups can place a terminal outside its project. */
 export function wsIdOf(s: AquaSession, groups: Group[] | null): string {
-  if (s.group && groups?.some((g) => g.id === s.group)) return groupWs(s.group)
+  if (s.group && groups?.some((g) => g.id === s.group && g.project === undefined)) return groupWs(s.group)
   return projectWs(s.project || '')
 }
 
@@ -78,11 +78,12 @@ const byCreated = (a: AquaSession, b: AquaSession) => (a.created || '').localeCo
 export function deriveWorkspaces(sessions: AquaSession[], projects: string[], groups: Group[] | null): Workspace[] {
   const out = new Map<string, Workspace>()
   const codes = new Set(projects)
-  for (const s of sessions) if (!s.group || !groups?.some((g) => g.id === s.group)) codes.add(s.project || '')
+  for (const s of sessions) if (wsIdOf(s, groups) === projectWs(s.project || '')) codes.add(s.project || '')
   for (const code of [...codes].sort((a, b) => a.localeCompare(b))) {
     out.set(projectWs(code), { id: projectWs(code), kind: 'project', key: code, name: code || '—', color: laneOf(code), sessions: [] })
   }
   for (const g of groups ?? []) {
+    if (g.project !== undefined) continue
     out.set(groupWs(g.id), { id: groupWs(g.id), kind: 'group', key: g.id, name: g.name, color: Math.min(8, Math.max(1, g.color || 1)), sessions: [] })
   }
   for (const s of [...sessions].sort(byCreated)) out.get(wsIdOf(s, groups))?.sessions.push(s)
@@ -113,6 +114,45 @@ export function tabsOf(w: Workspace | undefined, hidden: (sid: string) => boolea
   if (!w) return []
   const shown = w.sessions.filter((s) => !hidden(s.id))
   return [...shown.filter((s) => roleOf(s) !== 'server'), ...shown.filter((s) => roleOf(s) === 'server')]
+}
+
+/** Place each group at its first member's position, keeping its members together. */
+export function tabSections(tabs: AquaSession[], groups: Group[]) {
+  const sections: { group?: Group; tabs: AquaSession[] }[] = []
+  const byGroup = new Map(groups.map((group) => [group.id, { group, tabs: [] as AquaSession[] }]))
+  for (const tab of tabs) {
+    const section = byGroup.get(tab.group ?? '')
+    if (section) {
+      if (section.tabs.length === 0) sections.push(section)
+      section.tabs.push(tab)
+    } else {
+      sections.push({ tabs: [tab] })
+    }
+  }
+  return [...sections, ...[...byGroup.values()].filter((section) => section.tabs.length === 0)]
+}
+
+export function orderedTabs(tabs: AquaSession[], order: string[] = []) {
+  const positions = new Map(order.map((id, index) => [id, index]))
+  return [...tabs].sort((a, b) => (positions.get(a.id) ?? order.length) - (positions.get(b.id) ?? order.length))
+}
+
+export function moveTab(sections: ReturnType<typeof tabSections>, source: string, target: string, before: boolean) {
+  const ids = sections.map(({ tabs }) => tabs.map((tab) => tab.id))
+  const from = ids.findIndex((section) => section.includes(source))
+  const to = ids.findIndex((section) => section.includes(target))
+  if (source === target || from < 0 || to < 0) return null
+  if (from === to) {
+    const group = ids[from]!
+    group.splice(group.indexOf(source), 1)
+    group.splice(group.indexOf(target) + (before ? 0 : 1), 0, source)
+  } else {
+    // Across groups, move the section as a unit. Membership changes through the tab menu.
+    const destination = ids[to]!
+    const [section] = ids.splice(from, 1)
+    ids.splice(ids.indexOf(destination) + (before ? 0 : 1), 0, section!)
+  }
+  return ids.flat()
 }
 
 export interface Folded { ws: Workspace; count: number; waiting: number }
@@ -205,6 +245,15 @@ export function widths(at: Seats) {
     lw: (at.left === 'left' ? LW : 0) + (at.right === 'left' ? RW : 0),
     rw: (at.left === 'right' ? LW : 0) + (at.right === 'right' ? RW : 0),
   }
+}
+
+/** Share the available space on narrow native windows, leaving room to type. */
+export function fitSidebarWidths(windowWidth: number, lw: number, rw: number) {
+  const available = windowWidth - Math.min(320, Math.ceil(windowWidth / 2))
+  const total = lw + rw
+  if (total <= available) return { lw, rw }
+  const fittedLeft = Math.round(available * lw / total)
+  return { lw: fittedLeft, rw: available - fittedLeft }
 }
 
 /**

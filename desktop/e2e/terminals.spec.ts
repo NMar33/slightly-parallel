@@ -66,6 +66,21 @@ test.describe('sleep and restore', () => {
     await expectLine(page, 'awake-6')
   })
 
+  test('an ended tmux tab opens a shell only after the operator asks', async ({ win, shell, server }) => {
+    const { page } = win
+    test.skip(shell.backend !== 'tmux', 'tmux is required')
+    await ready(page)
+    // Leave one shell running so exiting this one does not stop the tmux server.
+    const keep = await server.api.post('/api/terminal/sessions', { data: { kind: 'shell', project: PROJECT } })
+    expect(keep.ok()).toBe(true)
+    await typeLine(page, 'exit')
+    await expect.poll(async () => (await sessions(server.api)).find((s) => s.id === shell.id)?.state).toBe('ended')
+    await page.getByRole('button', { name: 'Open a shell in it' }).click()
+    await ready(page)
+    await typeLine(page, echoCalc('shell-', '6*7'))
+    await expectLine(page, 'shell-42')
+  })
+
   test('after the tmux server is gone, the window offers Restore all and brings the terminal back', async ({ win, shell, server }) => {
     const { page } = win
     await ready(page)
@@ -79,8 +94,6 @@ test.describe('sleep and restore', () => {
     const need = await (await server.api.get('/api/terminal/restore')).json()
     expect(need.needed).toBe(1)
 
-    // The window reads what to restore when it opens.
-    await page.reload()
     // The card is a status with the terminal's name in it (its heading changes once restored).
     const card = page.getByRole('status').filter({ hasText: shell.label })
     await expect(card).toContainText('1 terminal ended without being put to sleep')

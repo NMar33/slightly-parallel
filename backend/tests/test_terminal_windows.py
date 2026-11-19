@@ -71,7 +71,7 @@ def test_on_windows_the_commands_are_built_for_the_terminals_shell(monkeypatch) 
     assert termlib.start_command("claude", {"id": "tk_1", "title": "x"}).startswith("claude 'Work on")
     monkeypatch.setattr(termlib, "windows_shell", lambda *a, **k: ["cmd.exe", "/K", "chcp 65001>nul"])
     assert termlib.command_family() == "cmd"
-    assert termlib.start_command("codex", {"id": "tk_1", "title": "x"}).startswith('codex "Work on')
+    assert termlib.start_command("codex", {"id": "tk_1", "title": "x"}).startswith(f'{termlib.codex_in_terminal()} "Work on')
     # Typed as built: there is no bash on Windows to hand it to.
     assert termlib.typed_form("claude 'a b'", r"C:\pwsh\pwsh.exe") == "claude 'a b'"
     monkeypatch.setattr(termlib, "WINDOWS", False)
@@ -127,7 +127,7 @@ def test_a_fork_on_windows_changes_folder_the_way_its_shell_does() -> None:
     ps = termlib.fork_command("claude-code", "abc-1", r"C:\work\o'neil", "go on", "powershell")
     assert ps == r"Set-Location -LiteralPath 'C:\work\o''neil'; if ($?) { claude -r abc-1 --fork-session 'go on' }"
     cmd = termlib.fork_command("codex", "abc-1", r"C:\work", "go on", "cmd")
-    assert cmd == 'cd /d "C:\\work" && codex fork abc-1 "go on"'
+    assert cmd == f'cd /d "C:\\work" && {termlib.codex_in_terminal()} fork abc-1 "go on"'
     assert len(termlib.fork_command("claude-code", "abc-1", r"C:\w", "y" * 200_000, "powershell")) < 8191
     # bash: as before.
     assert termlib.fork_command("claude-code", "abc-1", "/w", "go", "bash") == "cd /w && claude -r abc-1 --fork-session $'go'"
@@ -420,6 +420,12 @@ def test_the_windows_path_through_the_routes(plain, monkeypatch) -> None:
         assert got["state"] == "asleep" and got["wake"] == "npm run dev"
         # The shell and its tree are gone.
         fake.proc.wait(timeout=10)
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with c.websocket_connect(f"/ws/terminal/{s['id']}?token={tok}") as ws:
+            ws.receive_bytes()
+    assert refused.value.code == 4000 and refused.value.reason == "asleep"
+    assert FakePTY.made[-1] is fake
     assert c.get("/api/terminal/restore").json()["needed"] == 0
     woke = c.post(f"/api/terminal/sessions/{s['id']}/wake", json={}).json()["session"]
     # Its shell is back at once, not when a view comes (before: `ended` until then).
@@ -430,7 +436,6 @@ def test_the_windows_path_through_the_routes(plain, monkeypatch) -> None:
         assert b"PS C:" in _until(ws, b"PS C:")
         assert b"npm run dev\r" in _until(ws, b"npm run dev\r")
         ws.send_text(json.dumps({"type": "input", "data": "exit\r"}))
-        from starlette.websockets import WebSocketDisconnect
         with pytest.raises(WebSocketDisconnect) as e:
             while True:
                 ws.receive_bytes()

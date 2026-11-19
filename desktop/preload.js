@@ -34,4 +34,8 @@ function restoreOffer() {
   return ipcRenderer.invoke('sp-restore-offer')
 }
 
-contextBridge.exposeInMainWorld('spWindow', { postMessage, metrics, restoreOffer })
+function saveDraft(name, text) {
+  return ipcRenderer.invoke('sp-save-draft', name, text)
+}
+
+contextBridge.exposeInMainWorld('spWindow', { postMessage, metrics, restoreOffer, saveDraft })

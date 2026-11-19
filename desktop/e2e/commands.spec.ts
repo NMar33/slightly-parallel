@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { ElectronApplication, Page } from '@playwright/test'
-import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectLine, lines, ready, sessions, typeLine } from './fixtures'
+import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectLine, fullSize, lines, ready, sessions, typeLine } from './fixtures'
 
 /**
  * Commands in an agent's reply, copied from the terminal (tk_29b870f1).
@@ -67,6 +67,9 @@ async function pointOf(page: Page, text: string, last = false): Promise<{ x: num
 
 const clipboard = (app: ElectronApplication) => app.evaluate(({ clipboard }) => clipboard.readText())
 
+/** A row with the prompt written as `$ `: macOS's sh (bash) prints `host:dir user$ `, Linux's `$ `. */
+const prompted = (l: string) => l.trim().replace(/^[^$]*\$ /, '$ ')
+
 const CMD = 'echo cmd-$((40+2))-ran'
 const REPLY = [
   'Поставь так:',
@@ -90,6 +93,8 @@ test.describe('commands in a reply', () => {
     test.skip(WINDOWS, 'the capture CLI and the printed conversation are written for a Unix shell')
     const { app, page } = win
     await ready(page)
+    // The reply is drawn for a terminal taller than headless's 420×240 window.
+    await fullSize(app, page)
 
     record(shell.id, 'open', 'как поднять лимит')
     record(shell.id, 'complete', REPLY)
@@ -193,11 +198,11 @@ test.describe('commands in a reply', () => {
     await page.mouse.click(p.x, p.y, { button: 'right' })
     await menu.getByRole('menuitem', { name: 'Paste into the terminal' }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Pasted into the terminal: Enter runs it' })).toBeVisible()
-    await expect.poll(async () => (await lines(page)).filter((l) => l.trim()).at(-1)?.trim(), { message: 'the prompt holds the command' }).toMatch(/^\$ echo cmd-\$\(\(40\+2\)\)-ran$/)
+    await expect.poll(async () => prompted((await lines(page)).filter((l) => l.trim()).at(-1) ?? ''), { message: 'the prompt holds the command' }).toMatch(/^\$ echo cmd-\$\(\(40\+2\)\)-ran$/)
     // Given time to run, it has not: no output.
     await page.waitForTimeout(1200)
     expect((await lines(page)).filter((l) => l.trim() === 'cmd-42-ran')).toHaveLength(0)
-    expect((await lines(page)).filter((l) => l.includes(CMD)).map((l) => l.trim())).toEqual([`! ${CMD}`, `$ ${CMD}`])
+    expect((await lines(page)).filter((l) => l.includes(CMD)).map(prompted)).toEqual([`! ${CMD}`, `$ ${CMD}`])
     await page.keyboard.press('Enter')
     await expectLine(page, 'cmd-42-ran')
     expect((await lines(page)).filter((l) => l.trim() === 'cmd-42-ran')).toHaveLength(1)

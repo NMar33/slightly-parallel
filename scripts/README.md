@@ -50,6 +50,17 @@ reference names, both ways. Prints the line that goes at the bottom of
 backend/.venv/bin/python scripts/check_api_doc.py
 ```
 
+## `verify.py fast` — the fast terminal test profile
+
+Run `python3 scripts/verify.py fast` with frontend, Desktop and backend
+dependencies already installed. It records the current commit before joining
+the machine queue. Once admitted, it creates a detached worktree, bundles
+the frontend with Vite, and runs Vitest, the non-heavy backend tests and a
+short Electron profile. The full build in terminal CI also runs TypeScript.
+The Electron server uses an isolated port and test data. Each phase
+has a timeout. The command prints the temporary directory for logs, Electron
+artifacts and `result.json`.
+
 ## `bench_rebuild.py` — DuckDB rebuild timings
 
 Measures how long rebuilding the tables takes for a data root. Its published

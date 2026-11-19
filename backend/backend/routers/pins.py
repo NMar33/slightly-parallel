@@ -8,7 +8,8 @@ also takes ``level``: ``carry`` or ``brief``); ``POST …/remove`` takes the
 mark off (``{target}``). ``POST /api/forks/state`` sets a fork's state
 (``{target, state}``: "", started, dropped). ``POST /api/carries/brief``
 writes the brief of a #carry-brief message (``{target, text, agent_id}``) —
-an agent's write, through the MCP tool ``carry_brief``.
+an agent's write, through the MCP tool ``carry_brief``, for a message of its
+own chat only (403 for another chat's, a branch's parent included).
 
 Marking is the operator's; an agent marks by being told the tag in a chat.
 """
@@ -116,6 +117,8 @@ def carry_brief(body: dict = Body(...), store: ViewStore = Depends(get_store)) -
     by = identity_of(body) or "operator"
     try:
         row = pinlib.write_brief(store, str(body.get("target") or ""), str(body.get("text") or ""), by)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:

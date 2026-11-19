@@ -134,8 +134,8 @@ def test_the_capture_hook_ties_an_agent_to_its_terminal(env) -> None:
     d.mkdir(parents=True)
     (d / "meta.json").write_text(json.dumps({"agent_id": "cc-aaaa1111", "project": "alpha", "terminal": "tq1",
                                              "last_active": "2026-09-27T10:00:00"}), encoding="utf-8")
-    termlib._link_cache = (0.0, {})
     assert termlib.agent_links(root)["tq1"]["agent_id"] == "cc-aaaa1111"
+    assert termlib.agent_links(root / "other") == {}
 
 
 def test_the_page_opens_a_resume_through_the_agents_gate(tmp_path: Path, monkeypatch) -> None:
@@ -214,6 +214,28 @@ def test_a_middle_click_is_not_a_second_paste_from_tmux(tmp_path: Path) -> None:
         assert "MouseDown2Pane" in keys
         assert "paste" not in keys
         assert "send -M" in keys or "send-keys -M" in keys
+    finally:
+        termlib.tmux(root, "kill-server")
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_tmux_mouse_bindings_select_without_copying(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    root.mkdir()
+    try:
+        termlib.tmux(root, "new-session", "-d", "-s", "mk-probe", "printf 'selected text\\n'; sleep 30")
+        for table in ("copy-mode", "copy-mode-vi"):
+            keys = termlib.tmux(root, "list-keys", "-T", table).stdout
+            assert "MouseDragEnd1Pane" not in keys
+            assert all("copy-pipe" not in line for line in keys.splitlines()
+                       if "DoubleClick1Pane" in line or "TripleClick1Pane" in line)
+        assert not termlib.copy_selection(root, "probe")
+        termlib.tmux(root, "copy-mode", "-t", "mk-probe")
+        for key in ("history-top", "start-of-line", "begin-selection", "end-of-line"):
+            termlib.tmux(root, "send-keys", "-X", "-t", "mk-probe", key)
+        assert termlib.copy_selection(root, "probe")
+        assert termlib.tmux(root, "show-buffer").stdout.strip() == "selected text"
+        assert not termlib.copy_selection(root, "probe")
     finally:
         termlib.tmux(root, "kill-server")
 
@@ -562,6 +584,15 @@ def test_a_server_sleeps_and_wakes_running_its_command_again(env) -> None:
     got = c.post(f"/api/terminal/sessions/{s['id']}/sleep", json={}).json()["session"]
     assert got["state"] == "asleep" and got["wake"] == "echo up-$((6*7))"
     assert not termlib.alive_tmux(root, s["id"])
+    from starlette.websockets import WebSocketDisconnect
+    tok = c.get("/api/terminal/state").json()["token"]
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with c.websocket_connect(f"/ws/terminal/{s['id']}?token={tok}") as ws:
+            ws.receive_bytes()
+    assert refused.value.code == 4000 and refused.value.reason == "asleep"
+    assert not termlib.alive_tmux(root, s["id"])
+    assert _row(c, s["id"])["command"] == s["command"]
+    assert _row(c, s["id"])["created"] == s["created"]
     listed = c.get("/api/terminal/sessions").json()
     assert listed["counts"]["asleep"] == 1 and listed["counts"]["ended"] == 0
     # Asleep is not lost: Restore does not offer it.
@@ -571,6 +602,10 @@ def test_a_server_sleeps_and_wakes_running_its_command_again(env) -> None:
     assert "up-42" in _wait_screen(root, s["id"], "up-42")
     # Waking one that is awake changes nothing.
     assert c.post(f"/api/terminal/sessions/{s['id']}/wake", json={}).json()["session"]["state"] != "asleep"
+    termlib.tmux(root, "kill-session", "-t", termlib.PREFIX + s["id"])
+    bare = c.post(f"/api/terminal/sessions/{s['id']}/wake", json={"shell": True}).json()["session"]
+    assert bare["id"] == s["id"] and bare["command"] == s["command"] and bare["wake"] == ""
+    assert "up-42" not in _screen(root, s["id"])
 
 
 @needs_tmux
@@ -598,24 +633,39 @@ def test_what_a_terminal_runs_when_it_comes_back() -> None:
 
 
 @needs_tmux
-def test_after_a_restart_restore_brings_back_what_was_not_asleep(env) -> None:
+def test_after_a_restart_restore_brings_back_what_was_not_asleep(env, monkeypatch) -> None:
     c, root, _ = env
     _on(c)
     web = _open(c, role="server", command="echo back-$((5*5))", label="web")
     sh = _open(c, label="scratch")
+    from backend.db import ViewStore
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {sh["id"]: {"agent_id": "cc-aaaa1111"}})
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": "cc-aaaa1111", "tool": "claude-code", "session_ref": "captured"},
+    ])
+    monkeypatch.setattr(termlib, "resume_command", lambda tool, ref:
+                        "echo linked-$((2*3))" if (tool, ref) == ("claude-code", "captured") else "")
     napping = _open(c, role="server", command="echo nap", label="docs")
     c.post(f"/api/terminal/sessions/{napping['id']}/sleep", json={})
     assert c.get("/api/terminal/restore").json()["needed"] == 0
     # The computer restarts: the tmux server and every session in it are gone.
     termlib.tmux(root, "kill-server")
     time.sleep(0.3)
+    from starlette.websockets import WebSocketDisconnect
+    tok = c.get("/api/terminal/state").json()["token"]
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with c.websocket_connect(f"/ws/terminal/{web['id']}?token={tok}") as ws:
+            ws.receive_bytes()
+    assert refused.value.code == 4000
+    assert _row(c, web["id"])["created"] == web["created"]
+    assert _row(c, web["id"])["command"] == web["command"]
     state = c.get("/api/terminal/restore").json()
     assert {x["id"] for x in state["sessions"]} == {web["id"], sh["id"]}
     assert next(x for x in state["sessions"] if x["id"] == web["id"])["wake"] == "echo back-$((5*5))"
     done = c.post("/api/terminal/restore", json={}).json()
     assert done["restored"] == 2 and all(r["ok"] for r in done["results"])
     assert "back-25" in _wait_screen(root, web["id"], "back-25")
-    assert termlib.alive_tmux(root, sh["id"])
+    assert "linked-6" in _wait_screen(root, sh["id"], "linked-6")
     assert _row(c, napping["id"])["state"] == "asleep"
     assert c.get("/api/terminal/restore").json()["needed"] == 0
 
@@ -668,6 +718,65 @@ def test_groups_hold_terminals_of_any_project(env) -> None:
     assert _row(c, s["id"])["group"] == "" and _row(c, born["id"])["group"] == ""
     assert c.get("/api/terminal/groups").json() == {"groups": []}
     assert c.post(f"/api/terminal/groups/{g['id']}/remove", json={}).status_code == 404
+
+
+def test_tab_groups_keep_their_project_on_create_move_and_rename(env) -> None:
+    c, *_ = env
+    _on(c)
+    g = c.post("/api/terminal/groups", json={"name": "Release", "project": "alpha"}).json()["group"]
+    gid = g["id"]
+    assert g["project"] == "alpha"
+    assigned = _open(c, project="alpha", group=gid)
+    other = _open(c, project="")
+    assert c.post("/api/terminal/sessions", json={"kind": "shell", "project": "", "group": gid}).status_code == 422
+    assert c.post(f"/api/terminal/sessions/{other['id']}/group", json={"group": gid}).status_code == 422
+    assert not _row(c, other["id"]).get("group")
+    rename = c.post(f"/api/terminal/groups/{gid}", json={"name": "Launch", "project": ""}).json()["group"]
+    assert rename["project"] == "alpha" and rename["name"] == "Launch"
+    assert c.get("/api/terminal/groups").json()["groups"] == [rename]
+    assert c.post(f"/api/terminal/groups/{gid}/remove", json={}).is_success
+    assert _row(c, assigned["id"])["group"] == ""
+
+
+def test_tab_group_batch_assignments_validate_every_tab_before_moving(env) -> None:
+    c, root, _ = env
+    _on(c)
+    a, b = _open(c)["id"], _open(c)["id"]
+    other = _open(c, project="")["id"]
+    create = "/api/terminal/groups"
+    move = f"{create}/move"
+    invalid = {"project": "alpha", "tabs": [a, other]}
+    assert c.post(create, json={"name": "Mixed", **invalid}).status_code == 422
+    assert c.get(create).json()["groups"] == []
+    assert not (termlib.registry_path(root).parent / termlib.GROUPS).exists()
+    assert not _row(c, a).get("group")
+    group = c.post(create, json={"name": "Pair", "project": "alpha", "tabs": [a, b]}).json()["group"]["id"]
+    assert _row(c, a)["group"] == _row(c, b)["group"] == group
+    assert c.post(move, json={"group": "", **invalid}).status_code == 422
+    assert c.post(move, json={"group": "", "project": "alpha", "tabs": [a, "missing"]}).status_code == 422
+    assert _row(c, a)["group"] == _row(c, b)["group"] == group
+    assert c.post(move, json={"group": "", "project": "alpha", "tabs": [a, b]}).is_success
+    assert _row(c, a)["group"] == _row(c, b)["group"] == ""
+
+
+def test_codex_uses_its_own_app_server_if_the_cli_supports_it(env, monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    c, *_ = env
+    _on(c)
+    monkeypatch.setattr(termlib.shutil, "which", lambda exe: "/test/codex" if exe == "codex" else None)
+    with monkeypatch.context() as m:
+        m.setattr(termlib.subprocess, "run", lambda args, **kw: CompletedProcess(args, 0, "      --no-daemon\n", ""))
+        assert termlib.codex_in_terminal() == "codex --no-daemon"
+        assert termlib.resume_command("codex", "session1") == "codex --no-daemon resume session1"
+
+    monkeypatch.setattr(termlib, "uses_tmux", lambda settings: False)
+    assert _open(c, command="codex")["command"] == "codex --no-daemon"
+    with monkeypatch.context() as m:
+        m.setattr(termlib.subprocess, "run", lambda args, **kw: CompletedProcess(args, 0, "codex help\n", ""))
+        termlib._codex_has_no_daemon.cache_clear()
+        assert termlib.codex_in_terminal() == "codex"
+    termlib._codex_has_no_daemon.cache_clear()
 
 
 @needs_tmux
@@ -979,3 +1088,68 @@ def test_only_keys_and_pastes_on_the_socket_beat_the_timer(env, monkeypatch) -> 
         wait(5)
     assert beats == [("alpha", "terminal")] * 5
     c.post(f"/api/terminal/sessions/{sid}/close", json={})
+
+
+# ---------------------------------------------------------------------------
+# The terminal's colours, told to programs before any page is attached
+# ---------------------------------------------------------------------------
+
+# What Codex does at its start (tk_11bd239e): the device attributes, then the
+# text and ground colours (OSC 10/11), answers read raw within a moment. It
+# draws its input box in a shade of the ground; told nothing, no box. The
+# script prints the answers it got as plain text.
+ASK_GROUND = r"""
+import os, select, sys, termios, time, tty
+fd = os.open('/dev/tty', os.O_RDWR)
+old = termios.tcgetattr(fd)
+tty.setraw(fd)
+os.write(fd, b'\x1b[c\x1b]10;?\x1b\\\x1b]11;?\x1b\\')
+got, end = b'', time.time() + 1.0
+while time.time() < end:
+    r, _, _ = select.select([fd], [], [], 0.05)
+    if r:
+        got += os.read(fd, 1000)
+termios.tcsetattr(fd, termios.TCSADRAIN, old)
+import re
+told = dict(re.findall(rb'\x1b\](1[01]);(rgb:[0-9a-f/]+)', got))
+print('told-' + sys.argv[1], 'text=' + told.get(b'10', b'none').decode(), 'ground=' + told.get(b'11', b'none').decode())
+"""
+
+
+def test_scheme_colours_are_known_for_every_scheme_the_server_accepts() -> None:
+    from backend import app_settings
+    spec = next(s for s in app_settings.SPECS if s.key == "terminal.scheme")
+    assert sorted(termlib.SCHEME_COLOURS) == sorted(spec.options)
+    assert termlib.window_style({"terminal.scheme": "sp-paper"}) == "fg=#1F2522,bg=#F6F5F1"
+    # No scheme, or one the server no longer knows: the terminal's own colours.
+    assert termlib.window_style({}) == termlib.window_style({"terminal.scheme": "gone"}) == "fg=#E6E8EB,bg=#0E1013"
+
+
+@needs_tmux
+def test_a_program_started_before_any_page_attaches_is_told_the_schemes_colours(env) -> None:
+    c, root, work = env
+    _on(c)
+    (work / "ask.py").write_text(ASK_GROUND, encoding="utf-8")
+    import sys
+    ask = f"{shlex.quote(sys.executable)} ask.py"
+    # No socket is ever opened: tmux has no client to ask, as when an agent's
+    # terminal opens and its command starts before the window attaches.
+    s = _open(c, command=f"{ask} first", label="agent")
+    got = _wait_screen(root, s["id"], "told-first")
+    assert "told-first text=rgb:e6e6/e8e8/ebeb ground=rgb:0e0e/1010/1313" in got, got
+    # A new scheme reaches the terminal already open: a program started now hears it.
+    assert c.post("/api/settings", json={"values": {"terminal.scheme": "sp-paper"}}).status_code == 200
+    termlib.type_into(root, _row(c, s["id"]) | {"backend": "tmux"}, f"{ask} again", enter=True)
+    got = _wait_screen(root, s["id"], "told-again")
+    assert "told-again text=rgb:1f1f/2525/2222 ground=rgb:f6f6/f5f5/f1f1" in got, got
+    # And a terminal opened after the change is born with it.
+    t = _open(c, command=f"{ask} new", label="next")
+    assert "told-new text=rgb:1f1f/2525/2222 ground=rgb:f6f6/f5f5/f1f1" in _wait_screen(root, t["id"], "told-new")
+
+
+def test_a_new_scheme_with_no_tmux_running_changes_nothing(env) -> None:
+    c, root, _ = env
+    # No terminal was opened: no tmux server, and none is started for this.
+    assert c.post("/api/settings", json={"values": {"terminal.scheme": "nord"}}).status_code == 200
+    if TMUX:
+        assert termlib.tmux(root, "list-sessions").returncode != 0

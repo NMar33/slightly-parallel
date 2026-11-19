@@ -14,7 +14,7 @@ from datetime import date
 
 from fastapi import HTTPException
 
-from . import app_settings, limits
+from . import app_settings, hookshared, limits, titlelib
 from .actors import HOUSE_ACTORS as _HOUSE_ACTORS
 from .actors import identity_of, refuse_agent
 from .answers import create_answer, not_found
@@ -221,6 +221,32 @@ def _write_task_doc(store: ViewStore, md_ref: str, frontmatter: str, turns: list
 AGENT_TAGS = ("ag_debt", "ag_bug", "ag_followup", "ag_idea", "ag_decision")
 AGENT_TAGS_MAX = 3
 AGENT_TITLE_MAX = limits.MAX_AGENT_TASK_TITLE
+
+#: What an agent changes only on a card it created: the words on the card and
+#: the day it is planned for. On anyone else's card they are that writer's.
+OWN_CARD_FIELDS = ("title", "description", "today_on")
+
+
+def own_card_refusal(row: dict, actor: str, task_id: str, fields: list[str]) -> tuple[str, str] | None:
+    """Why this agent may not change ``fields`` (of OWN_CARD_FIELDS) on the
+    task ``row`` — (reason, what to do instead) for ``refuse_agent`` — or None
+    when it may: the card's creator (its ``agent_id``) is this agent. The
+    operator's card (no agent creator) and another agent's are refused. The
+    one exception, a task made from a message whose title waits for this
+    chat (titlelib), is the caller's: it leaves ``title`` out of ``fields``.
+    Every task write path an agent has comes through /api/tasks/{id}/update
+    (MCP task_update and update_entry), which asks here."""
+    held = [f for f in OWN_CARD_FIELDS if f in fields]
+    creator = str(row.get("agent_id") or "").strip()
+    if not held or not actor or creator == actor:
+        return None
+    whose = (f"{task_id} was created by {creator}: its title and text are that agent's"
+             if creator and creator not in _HOUSE_ACTORS else
+             f"{task_id} was created by the operator: its title and text are the operator's")
+    return (f"{', '.join(held)}: an agent changes these only on a task it created; {whose}",
+            f"add your words after the text with task_update {{id: \"{task_id}\", comment}}.")
+
+
 def agent_tags(raw: object) -> list[str]:
     """An agent's tags, as names: comma-separated text (the published shape,
     ``"ag_bug,ag_debt"``) or a list of names (``["ag_bug"]``, what agents send
@@ -248,14 +274,16 @@ _AGENT_CREATE_FIELDS = frozenset({
 })
 
 
-def _operator_command(store: ViewStore, agent: str) -> tuple[str, str, str, str]:
+def _operator_command(store: ViewStore, agent: str, *, in_helper: bool = False) -> tuple[str, str, str, str]:
     """(command, lane, column, message) of the operator's latest message in
     the agent's chat: ``#now-todo {ui} …`` → ("now", "ui", "todo", the whole
-    message); no chat, or no command → ("", "", "", "")."""
+    message); no chat, or no command → ("", "", "", ""). A helper chat has
+    none, unless ``in_helper``: the command its latest message holds, which
+    does not act (_refuse_in_helper)."""
     from .sessions import _operator_text, chat_path, helper_ids, parse_turns, task_command
     from .hookshared import command_text
     path = chat_path(store, agent)
-    if path is None or agent in helper_ids(store):
+    if path is None or (not in_helper and agent in helper_ids(store)):
         # A helper's prompt was written by another agent: no operator's command.
         return "", "", "", ""
     try:
@@ -316,6 +344,28 @@ def _now_card_written(store: ViewStore, agent: str) -> bool:
     return any(n == turn for _a, n, _t in nowlib.card_turns(store, {agent}, skip_server=True))
 
 
+def _refuse_in_helper(store: ViewStore, agent: str) -> None:
+    """A task command in the latest message of a chat marked a helper: it
+    does not act there, and the card is refused instead of filed quietly in
+    `agent` without the message (tk_2484f160: an operator's chat marked a
+    helper by mistake lost its #now and #now-todo, and nobody was told)."""
+    from .sessions import helper_ids
+    if agent not in helper_ids(store):
+        return
+    command, _lane, column, _message = _operator_command(store, agent, in_helper=True)
+    if not command:
+        return
+    row = next((a for a in store.agents() if str(a.get("agent_id") or "") == agent), {})
+    kind = str(row.get("helper_kind") or "").strip()
+    tag = "#task" if command == "task" else ("#now" if column == "doing" else f"#now-{column}")
+    refuse_agent(
+        f"this chat ({agent}) is marked a helper chat{f' ({kind})' if kind else ''}; operator "
+        f"commands do not apply here, so the {tag} in its latest message made no task",
+        "tell the operator, in one line, that this chat is marked a helper and the command did "
+        "nothing; do not write the task another way",
+    )
+
+
 def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     """Apply the /task contract to an agent's create; return the fields dropped.
 
@@ -328,8 +378,10 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     agent = identity_of(body)
     if agent in _HOUSE_ACTORS:
         return []
+    _refuse_in_helper(store, agent)
     command, named, column, message = _operator_command(store, agent)
-    if command == "now" and _now_card_written(store, agent):
+    now_written = command == "now" and _now_card_written(store, agent)
+    if now_written:
         # The #now card is on the board (the agent's or the server's): what
         # the agent writes after it, while that message is still the latest,
         # are ordinary #task cards (the findings of the work), in `agent`.
@@ -365,7 +417,11 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
                 "an agent creates tasks only in the `agent` column",
                 f"send status \"agent\" (or none), not {status!r}; the operator "
                 "classifies the card from there"
-                + ("" if command else " (#now in the operator's message starts a task in `doing`)"),
+                # The reason the message gave none: its #now has its card
+                # already, or it has no #now at all.
+                + (" (the #now in the operator's latest message already has its card; "
+                   "a task written after it is an agent card)" if now_written
+                   else "" if command else " (#now in the operator's message starts a task in `doing`)"),
             )
     body["status"] = status
     # The lane comes from the operator's message, never from the agent.
@@ -405,6 +461,28 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     return sorted(set(ignored) | dropped)
 
 
+def _title_from_message(store: ViewStore, body: dict) -> str:
+    """With ``title_from: "message"`` and the message in ``title_source``
+    (``<agent>#<turn>`` or ``…/reply``): the server's provisional title put
+    in ``body``, and the source returned (the flag's chat). '' when not asked."""
+    if str(body.get(titlelib.TITLE_FROM_FIELD) or "") != titlelib.TITLE_FROM_MESSAGE:
+        return ""
+    source = str(body.get(titlelib.TITLE_SOURCE_FIELD) or "").strip()
+    parsed = hookshared.parse_target(source)
+    if parsed is None:
+        raise HTTPException(status_code=422, detail=(
+            "title_source names the message: <agent_id>#<turn>, or <agent_id>#<turn>/reply for the agent's reply"))
+    from .pinlib import _Chats, message_text  # reads the chats; imported here, it imports much
+    agent, turn, side = parsed
+    text = message_text(_Chats(store), agent, turn, side)[0]
+    title = (titlelib.provisional_title(text)
+             or titlelib.provisional_title(str(body.get("description") or ""))
+             or str(body.get("title") or "").strip())
+    if title:
+        body["title"] = title
+    return hookshared.mark_target(agent, turn, side)
+
+
 def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPTION_MAX,
                 chosen: bool = False) -> dict:
     """One task, as POST /api/tasks makes it — the operator's board, an
@@ -423,6 +501,15 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
             status_code=422,
             detail="a task holds title and description — send its text as description",
         )
+    # A task the operator made from one message of a chat (the terminal's
+    # message menu): the server titles it, and the title waits for that
+    # chat's agent (titlelib). Only the operator's create asks for it; an
+    # agent's gate names the fields back as ignored.
+    title_wait = ""
+    if identity_of(body) in _HOUSE_ACTORS:
+        title_wait = _title_from_message(store, body)
+        body.pop(titlelib.TITLE_FROM_FIELD, None)
+        body.pop(titlelib.TITLE_SOURCE_FIELD, None)
     said = (_operator_command(store, identity_of(body))
             if identity_of(body) not in _HOUSE_ACTORS and not chosen else ("", "", "", ""))
     started_now, column = said[0] == "now", said[2]
@@ -443,6 +530,9 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
         turns = [Turn(1, "", "", description)]
         _write_task_doc(store, md_ref, fm, turns)
         store.rebuild()
+    if title_wait and task_id and not out.get("existing"):
+        titlelib.open_wait(store.data_root, task_id, str(meta.get("project") or ""), title_wait,
+                           str(meta.get("title") or ""))
     if started_now and not out.get("existing"):
         # The card's history says where it came from: the operator's #now
         # in the chat, and the agent that wrote it down.

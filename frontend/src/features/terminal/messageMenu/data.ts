@@ -9,7 +9,10 @@
  * - a branch: the message marked to fork, the command the server gives for
  *   it (GET /api/forks: `claude -r <session> --fork-session <message>`), run
  *   in a new terminal opened in a window of its own, the fork set started;
- * - a task: POST /api/tasks as the operator (todo), the message its text;
+ * - a task: POST /api/tasks as the operator (todo), the message its text,
+ *   `title_from: "message"` with the message as `title_source`: the server
+ *   titles it from the message for now, and the chat's agent gives the title
+ *   on its next turn (backend titlelib.py);
  * - a task's card and column: GET /api/tasks/{id}, POST …/update {status};
  * - a note: the Notes page's feed (or /api/notes/{id}/full).
  *
@@ -158,22 +161,24 @@ export function useMessageActions(agentId: string, project: string) {
     },
 
     /** A task in todo with the message as its text; the same message again names the task already made. */
-    makeTask: async (ref: MsgRef, text: string, source: string): Promise<{ id: string; existing: boolean }> => {
+    makeTask: async (ref: MsgRef, text: string, source: string): Promise<{ id: string; existing: boolean; title: string }> => {
       const target = msgTarget(ref.agent_id, ref.turn, ref.side)
       const was = kept.tasked[target]
-      if (was) return { id: was, existing: true }
+      if (was) return { id: was, existing: true, title: '' }
       const { dateStr, timeStr } = nowStamp()
       const title = firstLine(text).replace(/\s+/g, ' ').slice(0, 120) || target
       const description = `${text.trim()}\n\n${source}`
-      const d = await postJson<{ metadata?: { id?: string } }>('/api/tasks', {
+      const d = await postJson<{ metadata?: { id?: string; title?: string } }>('/api/tasks', {
         project, projects: project, agent_id: OPERATOR_ACTOR, actor: OPERATOR_ACTOR, created_date: dateStr, created_time: timeStr,
         title, description, status: 'todo', priority: 'med', assignee: '', lane: 'unassigned',
+        // The server's title for now, from the message; the chat's agent gives the real one.
+        title_from: 'message', title_source: target,
       })
       const id = d.metadata?.id ?? ''
       if (!id) throw new Error('the task was not created')
       keep({ ...kept, tasked: { ...kept.tasked, [target]: id } })
       void qc.invalidateQueries({ queryKey: ['tasks'] })
-      return { id, existing: false }
+      return { id, existing: false, title: d.metadata?.title ?? '' }
     },
 
     /** The operator's own column change, the board's route. */

@@ -38,9 +38,15 @@ export async function saveSettings(
   values: Record<string, number | boolean | string>,
 ): Promise<void> {
   await postJson('/api/settings', { values })
+  try {
+    const channel = new BroadcastChannel(SETTINGS_CHANNEL)
+    channel.postMessage(null)
+    channel.close()
+  } catch { /* windows can still reload settings on focus */ }
 }
 
 export const SETTINGS_QUERY_KEY = ['settings'] as const
+export const SETTINGS_CHANNEL = 'sp-settings'
 
 /** All settings as a flat key→value map (undefined while loading). */
 export function useSettingsValues(): Record<string, number | boolean | string> | undefined {

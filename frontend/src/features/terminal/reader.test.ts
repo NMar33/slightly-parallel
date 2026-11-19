@@ -7,7 +7,7 @@ const key = (k: string, mods: Partial<KeyboardEvent> = {}) => ({ key: k, ctrlKey
 
 describe('readerKeeps', () => {
   it('copy, select all, find and lone modifiers stay with the reader', () => {
-    expect(readerKeeps(key('c', { ctrlKey: true }), false)).toBe('keep')
+    expect(readerKeeps(key('c', { ctrlKey: true }), false, true)).toBe('keep')
     expect(readerKeeps(key('C', { ctrlKey: true, shiftKey: true }), false)).toBe('keep')
     expect(readerKeeps(key('F', { ctrlKey: true, shiftKey: true }), false)).toBe('keep')
     expect(readerKeeps(key('c', { metaKey: true }), true)).toBe('keep')
@@ -19,6 +19,7 @@ describe('readerKeeps', () => {
     expect(readerKeeps(key('Escape'), false)).toBe('close')
     expect(readerKeeps(key('a'), false)).toBe('live')
     expect(readerKeeps(key('Enter'), false)).toBe('live')
+    expect(readerKeeps(key('c', { ctrlKey: true }), false)).toBe('live')
     // On macOS Ctrl+C is the shell's ^C, not a copy.
     expect(readerKeeps(key('c', { ctrlKey: true }), true)).toBe('live')
   })

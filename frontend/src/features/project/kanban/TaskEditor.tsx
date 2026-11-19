@@ -47,7 +47,7 @@ import { t, tn } from '../../../i18n/scope/project'
  */
 
 export function TaskAddModal({
-  projectCode, boardProjects, initialStatus, initialAssignee, initialSprint, initialDue, initialTitle, initialCores, existingTask, onClose, onSaved, onOpenOther, onLinksChanged, onRelease,
+  projectCode, boardProjects, initialStatus, initialAssignee, initialSprint, initialDue, initialTitle, initialDescription, initialCores, existingTask, onClose, onSaved, onOpenOther, onLinksChanged, onRelease,
 }: {
   projectCode: string
   /** A core's page asked for a task: it belongs to that core. */
@@ -56,6 +56,8 @@ export function TaskAddModal({
   initialDue?: string
   /** A quick-add line asked for a task: its words become the title. */
   initialTitle?: string
+  /** Start a new task with the supplied text, independently of the board's task draft. */
+  initialDescription?: string
   /** A sprint filter was active on the board: new tasks join that block. */
   initialSprint?: string
   /** Links section: open another task (the host swaps the editor). */
@@ -138,7 +140,7 @@ export function TaskAddModal({
   const [assignee, setAssignee] = useState(existingTask?.assignee ?? initialAssignee ?? '')
   const [dueDate, setDueDate] = useState(existingTask?.due_date ?? initialDue ?? '')
   const [tags, setTags] = useState(existingTask?.tags ?? '')
-  const [body, setBody] = useState('')
+  const [body, setBody] = useState(isEdit ? '' : (initialDescription ?? ''))
   const [bodyLoaded, setBodyLoaded] = useState(!isEdit)
   // The text as it was read: sent back only when it changed, so a save of
   // the title alone does not re-upload the text or log an edit of it.
@@ -152,18 +154,19 @@ export function TaskAddModal({
   // New task: title and description autosave locally until saved, so a
   // closed popup or a reload does not lose a long description.
   const taskDraftKey = `sp-task-draft:${projectCode}`
+  const useBoardDraft = !isEdit && initialDescription === undefined
   const [draftRestored, setDraftRestored] = useState(false)
   useEffect(() => {
-    if (isEdit) return
+    if (!useBoardDraft) return
     const d = readDraft<{ title: string; body: string }>(taskDraftKey)
     if (d && (d.title || d.body)) { setTitle(d.title || ''); setBody(d.body || ''); setDraftRestored(true) }
     // Restored once, when the window opens; the draft written after is this window's own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
-    if (isEdit) return
+    if (!useBoardDraft) return
     if (title.trim() || body.trim()) writeDraft(taskDraftKey, { title, body })
-  }, [title, body, isEdit, taskDraftKey])
+  }, [title, body, useBoardDraft, taskDraftKey])
   const [err, setErr] = useState<string | null>(null)
   const [readErr, setReadErr] = useState<string | null>(null)
 
@@ -367,7 +370,7 @@ export function TaskAddModal({
         }
       }
       const id = String(made?.id ?? '')
-      if (!isEdit) clearDraft(taskDraftKey)
+      if (useBoardDraft) clearDraft(taskDraftKey)
       if (chain && !isEdit) {
         // Keep the window open for the next one: everything that describes
         // *where* the work sits stays, only the words are cleared.
@@ -420,7 +423,7 @@ export function TaskAddModal({
         {/* Title */}
         <TitleField titleRef={titleRef} title={title} setTitle={setTitle}
           onSave={(chain) => void save(chain)}
-          showDraft={!isEdit && !!(draftRestored || title.trim() || body.trim())}
+          showDraft={useBoardDraft && !!(draftRestored || title.trim() || body.trim())}
           draftRestored={draftRestored}
           onDiscardDraft={() => { clearDraft(taskDraftKey); setTitle(''); setBody(''); setDraftRestored(false) }} />
 

@@ -14,20 +14,19 @@ import { useEffect } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { SETTINGS_QUERY_KEY, saveSettings, useSettingsValues } from '../../lib/settings'
+import { SETTINGS_CHANNEL, SETTINGS_QUERY_KEY, saveSettings, useSettingsValues } from '../../lib/settings'
 import { t } from '../../i18n/scope/aqua'
 import { DEFAULT_SCHEME, isSchemeId, schemeOf, termTokens, type Scheme, type SchemeScope } from './schemes'
 
 export const SCHEME_KEY = 'terminal.scheme'
 export const SCOPE_KEY = 'terminal.scheme_scope'
-const CHANNEL = 'sp-terminal-scheme'
 
 type Payload = { groups: Array<{ name: string; settings: Array<{ key: string; value: unknown }> }> }
 
 /** The scheme and where it applies; sp-now and the terminal only until settings load. */
 export function useTermScheme(): { scheme: Scheme; scope: SchemeScope } {
   const values = useSettingsValues()
-  useSchemeSync()
+  useSettingsSync()
   const id = values?.[SCHEME_KEY]
   return {
     scheme: schemeOf(isSchemeId(id) ? id : DEFAULT_SCHEME),
@@ -39,13 +38,13 @@ let listeners = 0
 let channel: BroadcastChannel | null = null
 
 /** One channel and one focus listener per page, however many screens read the scheme. */
-function useSchemeSync() {
+function useSettingsSync() {
   const qc = useQueryClient()
   useEffect(() => {
     const again = () => void qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY })
     listeners += 1
     if (listeners === 1 && typeof BroadcastChannel !== 'undefined') {
-      try { channel = new BroadcastChannel(CHANNEL) } catch { channel = null }
+      try { channel = new BroadcastChannel(SETTINGS_CHANNEL) } catch { channel = null }
     }
     channel?.addEventListener('message', again)
     window.addEventListener('focus', again)
@@ -79,11 +78,6 @@ export async function saveScheme(qc: QueryClient, values: { scheme?: string; sco
     toast.error(t('The colour scheme was not saved: {error}', { error: e instanceof Error ? e.message : String(e) }))
     return false
   }
-  try {
-    const out = new BroadcastChannel(CHANNEL)
-    out.postMessage(v)
-    out.close()
-  } catch { /* an old browser: the other windows read it when they come to the front */ }
   void qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY })
   return true
 }

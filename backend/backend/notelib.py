@@ -3,7 +3,7 @@ back to, a text to paste somewhere, a review with pictures, a plan for
 helpers, a report, the manual steps only the operator can do (tk_3e544086).
 
 A note is a row of the ``note`` lens (``notes.csv``, its header extended)
-plus three ledgers at the data root:
+plus ledgers at the data root:
 
 - ``note_versions.csv`` — every write is a version; its text at
   ``note_details/<nt>/v001.md``; the row's ``md_ref`` document carries the
@@ -14,6 +14,8 @@ plus three ledgers at the data root:
   per act, the latest per (note, item, kind) wins. A mark names its item by
   the item's text hash (``nt_…:k:<fnv1a>``), so a new version that leaves
   an item as it was keeps its tick.
+- ``note_comments.csv`` — operator comments on a note, check or choice,
+  with the original label, section and version so later edits preserve context.
 
 The markup inside the markdown (the frontend draws it, notes/render):
 
@@ -26,7 +28,7 @@ The markup inside the markdown (the frontend draws it, notes/render):
   tk_ ep_ dc_ pu_ nt_ ids live chips
 
 Who writes what: an agent writes notes, versions and pictures through the
-MCP tools only; the operator ticks, answers, copies and archives on the
+MCP tools only; the operator ticks, answers, copies, comments and archives on the
 Notes page. Any chat of the note's project may write its next version;
 each version keeps the chat that wrote it.
 """
@@ -42,19 +44,20 @@ from typing import Any
 
 from . import limits
 from .actors import identity_of, is_agent
-from .csvio import append_row, read_rows, rewrite_rows
+from .csvio import append_row, as_int, read_rows, rewrite_rows
 from .date_utils import now_iso, today_yymm_dd
 from .db import ViewStore
 from .docs_md import build_detail, read_detail, resolve_under
-from .entities import ENTITIES, NOTE_IMAGE_COLUMNS, NOTE_KINDS, NOTE_MARK_COLUMNS, NOTE_VERSION_COLUMNS
+from .entities import ENTITIES, NOTE_COMMENT_COLUMNS, NOTE_IMAGE_COLUMNS, NOTE_KINDS, NOTE_MARK_COLUMNS, NOTE_VERSION_COLUMNS
 from .file_safety import acquire_flock, atomic_write
 
 VERSIONS_FILE = "note_versions.csv"
 IMAGES_FILE = "note_images.csv"
 MARKS_FILE = "note_marks.csv"
+COMMENTS_FILE = "note_comments.csv"
 IMAGES_DIR = "note_images"
-# One writer of a note's next version at a time: the number is read and the
-# version written under it. Not the ledger's own lock: append_row takes that.
+# Note revisions and comments share a lock to keep each comment with the
+# version it addresses. append_row separately takes the ledger's own lock.
 WRITE_LOCK = "note_write.lock"
 
 TITLE_MAX = 160
@@ -63,6 +66,7 @@ CAPTION_MAX = 200
 IMAGES_MAX = 60
 IMAGES_PER_WRITE = 20
 MARK_KINDS = ("tick", "answer", "copy")
+COMMENT_MAX = 2000
 ID_RE = re.compile(r"\b(?:tk|ep|dc|pu|nt)_[0-9a-f]{8}\b")
 NOTE_ID_RE = re.compile(r"^nt_[0-9a-z_]{3,40}$")
 IMAGE_ID_RE = re.compile(r"^ni_[0-9a-f]{10}$")
@@ -327,6 +331,87 @@ def mark(store: ViewStore, note_id: str, body: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Operator comments
+# ---------------------------------------------------------------------------
+
+
+def _comment_view(row: dict[str, Any]) -> dict[str, Any]:
+    return {**row, "item": row.get("item") or None, "version": as_int(row.get("version"), 1)}
+
+
+def comments_of(store: ViewStore, note_ids: set[str]) -> list[dict[str, Any]]:
+    if not note_ids:
+        return []
+    return [_comment_view(row) for row in _rows(store, COMMENTS_FILE) if row.get("note_id") in note_ids]
+
+
+def feed_stamp(store: ViewStore) -> str:
+    """Invalidate the feed after comments or revisions without waiting for the watcher."""
+    stamps = []
+    for name in (COMMENTS_FILE, VERSIONS_FILE):
+        try:
+            stamp = (store.data_root / name).stat()
+        except FileNotFoundError:
+            stamps.append("0")
+        else:
+            stamps.append(f"{stamp.st_mtime_ns}:{stamp.st_size}")
+    return ":".join(stamps)
+
+
+def comment(store: ViewStore, note_id: str, body: Any) -> dict[str, Any]:
+    """Add operator feedback to a note or a check/choice in its current version."""
+    if not isinstance(body, dict):
+        raise NoteRefused("send the body as a JSON object")
+    text = _text(body, "text", COMMENT_MAX, required=True)
+    if not text:
+        raise NoteRefused("a comment needs text")
+    try:
+        units = len(text.encode("utf-16-le")) // 2
+    except UnicodeEncodeError:
+        raise NoteRefused("a comment must contain valid Unicode text") from None
+    if units > COMMENT_MAX:
+        raise NoteRefused(f"text is at most {COMMENT_MAX:,} characters")
+    item = _text(body, "item", 80)
+    requested_section = _text(body, "section", TEXT_MAX) if body.get("section") is not None else None
+    if not item and requested_section is not None:
+        raise NoteRefused("section requires a checklist item or choice")
+    request = _text(body, "request_id", 80)
+    if request and re.fullmatch(r"[A-Za-z0-9_-]+", request) is None:
+        raise NoteRefused("request_id uses letters, digits, underscores or hyphens")
+    cid = _mint("nc_", 24, note_id, request) if request else "nc_" + secrets.token_hex(12)
+
+    # Note revisions and comment retries share one lock so a target and its
+    # recorded version agree, and a retried request appends at most one row.
+    with acquire_flock(store.data_root / WRITE_LOCK, mode="a"):
+        row = _need(store, note_id)
+        if request:
+            existing = next((r for r in _rows(store, COMMENTS_FILE) if r.get("id") == cid), None)
+            if existing is not None:
+                if (existing.get("item") != item or existing.get("text") != text
+                        or (requested_section is not None and existing.get("section") != requested_section)):
+                    raise NoteRefused("request_id already belongs to a different comment")
+                return {"comment": _comment_view(existing)}
+        if str(row.get("archived_at") or "").strip():
+            raise NoteRefused(f"{note_id} is archived")
+        section = label = ""
+        if item:
+            matches = [it for it in parse(note_id, text_of(store, row))["items"]
+                       if it.get("id") == item and it["type"] in ("check", "choice")
+                       and (requested_section is None or it["section"] == requested_section)]
+            if not matches:
+                raise NoteRefused(f"{item} is not a checklist item or choice of {note_id} as it reads now")
+            if len(matches) > 1:
+                raise NoteRefused("this point appears more than once; comment on the whole note instead")
+            found = matches[0]
+            section = found["section"]
+            label = found["text"] if found["type"] == "check" else found["question"]
+        rec = {"id": cid, "note_id": note_id, "item": item, "text": text, "at": now_iso(),
+               "version": len(versions_of(store, note_id)) or 1, "section": section, "label": label}
+        append_row(store.data_root / COMMENTS_FILE, NOTE_COMMENT_COLUMNS, rec)
+    return {"comment": _comment_view(rec)}
+
+
+# ---------------------------------------------------------------------------
 # Links: tasks, entry points, decisions, publish cards
 # ---------------------------------------------------------------------------
 
@@ -448,6 +533,7 @@ def feed(store: ViewStore, *, project: str = "", task: str = "", archived: bool 
     keep = {n["id"] for n in notes}
     return {"notes": notes,
             "marks": {k: {i: v for i, v in m.items() if i.split(":", 1)[0] in keep} for k, m in marks.items()},
+            "comments": comments_of(store, keep),
             "entities": entities_of(store, named),
             "projects": sorted({n["project"] for n in notes})}
 
@@ -461,12 +547,13 @@ def one(store: ViewStore, note_id: str, n: int | None = None) -> dict[str, Any]:
     out["history"] = [{"n": int(v.get("n") or 0), "at": v.get("at") or "", "agent_id": v.get("agent_id") or "",
                        "title": v.get("title") or "", "words": int(v.get("words") or 0)} for v in versions_of(store, note_id)]
     out["marks"] = marks
+    out["comments"] = comments_of(store, {note_id})
     return out
 
 
 def for_agent(store: ViewStore, note_id: str) -> dict[str, Any]:
     """One note as an agent reads it back: the text and what the operator did —
-    each checklist item ticked or not, each choice's answer."""
+    each checklist item ticked or not, each choice's answer and comments."""
     full = one(store, note_id)
     items = parse(note_id, full["body"])["items"]
     m = full["marks"]
@@ -481,7 +568,7 @@ def for_agent(store: ViewStore, note_id: str) -> dict[str, Any]:
         elif it["type"] == "copy":
             did.append({"copy": it["title"], "copied_at": m["copied"].get(it["id"], "")})
     keep = ("id", "project", "kind", "title", "task", "entrypoint", "versions", "updated", "chat", "open",
-            "replaced_by", "replaces", "archived_at", "body")
+            "replaced_by", "replaces", "archived_at", "body", "comments")
     return {**{k: full[k] for k in keep}, "images": [{"id": i["id"], "caption": i["caption"]} for i in full["images"]],
             "operator": did}
 

@@ -163,3 +163,90 @@ describe('a click matched to a recorded message', () => {
     expect(blockText(SCREEN, row('  переносится на вторую'))).toBe('почини падение теста входа на macOS: имя хоста длинное и строка\nпереносится на вторую')
   })
 })
+
+/*
+ * Rows shaped like Codex's screen (tk_86712550; read from real Codex chats
+ * resumed in a sandbox tmux, read only, 2026-11-18; the words here are made
+ * up): the operator's message after "› " with its next lines indented, the
+ * agent's text and tool calls after "• ", tool output after "└", "Worked
+ * for …" indented, a notice after "⚠", and the input box: "› " with no
+ * rules around it, the footer under it.
+ */
+const CODEX = [
+  '› посмотри, почему падает сборка на маке: тест ждёт одну строку, а',
+  '  приходит две',
+  '',
+  '',
+  '• Ran npm test -- terminals',
+  '  └ 1 failed, 40 passed',
+  '    + 12 lines (^t to expand)',
+  '',
+  '• Тест считал строки в склеенном тексте, а длинное имя хоста переносило',
+  '  команду на вторую строку. Теперь он ждёт строку целиком.',
+  '',
+  '  Worked for 42s • 9:24 PM',
+  '',
+  '',
+  '› ок, делай',
+  '',
+  '',
+  '• Сделал: тест ждёт строку целиком, на маке зелёный.',
+  '',
+  '  Worked for 1m 3s • 9:31 PM',
+  '',
+  '⚠ Heads up, you have less than 50% of your 5h limit left.',
+  '',
+  '› Ask Codex to do anything',
+  '',
+  '  GPT-6.1 medium · ~/work',
+  '  ← for agents · ? for shortcuts',
+]
+
+const CODEX_TURNS: CapturedTurn[] = [
+  { n: 3, sid: 'c1', user: 'посмотри, почему падает сборка на маке: тест ждёт одну строку, а приходит две',
+    agent: 'Тест считал строки в склеенном тексте, а длинное имя хоста переносило команду на вторую строку. Теперь он ждёт **строку целиком**.' },
+  { n: 4, sid: 'c1', user: 'ок, делай', agent: 'Сделал: тест ждёт строку целиком, на маке зелёный.' },
+]
+const codexRec = new Record(CODEX_TURNS)
+const crow = (text: string) => { const i = CODEX.indexOf(text); expect(i, text).toBeGreaterThanOrEqual(0); return i }
+
+describe('a click in a Codex chat (tk_86712550)', () => {
+  it('knows Codex\'s marks; Claude Code\'s "› Message from" stays a status line', () => {
+    expect(rowKind('› ок, делай')).toBe('user')
+    expect(rowKind('• Ran npm test')).toBe('agent')
+    expect(rowKind('› Message from cc-1234: готово')).toBe('status')
+  })
+
+  it('the operator\'s message, a short one, its wrapped row', () => {
+    expect(messageAt(CODEX, 0, codexRec)).toEqual({ n: 3, side: '', sid: 'c1', how: 'text' })
+    expect(messageAt(CODEX, crow('  приходит две'), codexRec)?.n).toBe(3)
+    expect(messageAt(CODEX, crow('› ок, делай'), codexRec)).toEqual({ n: 4, side: '', sid: 'c1', how: 'text' })
+  })
+
+  it('the reply by its text, a tool call, its output and "Worked for" by the message above', () => {
+    expect(messageAt(CODEX, crow('  команду на вторую строку. Теперь он ждёт строку целиком.'), codexRec)).toEqual({ n: 3, side: 'reply', sid: 'c1', how: 'text' })
+    expect(messageAt(CODEX, crow('• Ran npm test -- terminals'), codexRec)).toEqual({ n: 3, side: 'reply', sid: 'c1', how: 'turn' })
+    expect(messageAt(CODEX, crow('  └ 1 failed, 40 passed'), codexRec)?.n).toBe(3)
+    expect(messageAt(CODEX, crow('  Worked for 42s • 9:24 PM'), codexRec)).toMatchObject({ n: 3, side: 'reply' })
+    expect(messageAt(CODEX, crow('  Worked for 1m 3s • 9:31 PM'), codexRec)).toMatchObject({ n: 4, side: 'reply' })
+  })
+
+  it('the input box and the notice are no message', () => {
+    expect(messageAt(CODEX, crow('› Ask Codex to do anything'), codexRec)).toBeNull()
+    expect(messageAt(CODEX, crow('  GPT-6.1 medium · ~/work'), codexRec)).toBeNull()
+    expect(messageAt(CODEX, crow('⚠ Heads up, you have less than 50% of your 5h limit left.'), codexRec)).toBeNull()
+  })
+
+  it('scrolled up, the turn\'s prompt pinned on the top row: the row is the message, the output glued under it is its reply', () => {
+    // Codex keeps the prompt of the turn on view on the top row; the rows
+    // under it are the middle of that turn's output, indented.
+    const pinned = ['› ок, делай', '  Сделал: тест ждёт строку целиком, на маке зелёный.', '', '  Worked for 1m 3s • 9:31 PM', '', '› Ask Codex to do anything']
+    expect(messageAt(pinned, 0, codexRec)).toEqual({ n: 4, side: '', sid: 'c1', how: 'text' })
+    expect(messageAt(pinned, 1, codexRec)).toEqual({ n: 4, side: 'reply', sid: 'c1', how: 'turn' })
+    expect(messageAt(pinned, 3, codexRec)?.side).toBe('reply')
+    // Even when the output under it quotes another message's words.
+    const quoting = ['› ок, делай', '', '  посмотри, почему падает сборка на маке: тест ждёт одну строку, а приходит две']
+    expect(messageAt(quoting, 0, codexRec)?.n).toBe(4)
+    expect(messageAt(quoting, 2, codexRec)).toEqual({ n: 4, side: 'reply', sid: 'c1', how: 'turn' })
+  })
+})

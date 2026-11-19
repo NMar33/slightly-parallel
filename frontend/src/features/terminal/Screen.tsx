@@ -5,9 +5,9 @@
  *   window) — a ResizeObserver, not the window's resize;
  * - comes back on its own: a dropped socket reconnects (the terminal lives
  *   on in tmux), and says so in one grey line;
- * - copying just works: a tmux mouse-drag lands on the clipboard (tmux
- *   announces the copy, OSC 52, and the screen listens), Shift+drag makes
- *   a native selection, Ctrl+C with text selected copies, Ctrl+Shift+C/V
+ * - the mouse selects, Ctrl+Shift+C or the menu copies. tmux announces
+ *   an explicit copy via OSC 52. Shift+drag makes a native selection,
+ *   Ctrl+C with native text selected copies, Ctrl+Shift+C/V
  *   are the classic pair, and the right-click menu needs no keys at all;
  * - a lot of text: "Select lines" opens a slim gutter — click a line, click
  *   another, everything between lands on the clipboard, joined out of its
@@ -31,21 +31,30 @@ import { absOf, relOf, rowOf, type PanePos } from './rangeMath'
 import { findPaths, type PrintedPath } from './printedPaths'
 import { setWork } from '../../lib/timer'
 import { t as tr, tn } from '../../i18n/scope/system'
-import { xtermTheme } from './schemes'
+import { readable, xtermTheme, type XtermTheme } from './schemes'
+import './cursor.css'
 import { useTermScheme } from './useScheme'
 import { letter } from '../../lib/typing'
 import { IS_MAC, pasteKey, pasteKeyName } from './pasteKeys'
 import { attachSmoothLayer, disposeTerminal, type SmoothLayer } from './scrollLayer'
-import { buildReader, fetchRows, FIRST_ROWS, readerKeeps, type HistoryRows, type Reader } from './reader'
+import { keepSelectionLocal } from './explicitClipboard'
+import { buildReader, fetchRows, FIRST_ROWS, placeAt, plainRows, readerKeeps, topOf, type FoldOpts, type HistoryRows, type Reader } from './reader'
+import { joinedRows, tmuxRows } from './fold'
+import { foldIds, hasFolds, onFolds, setFolds, clearFolds } from './foldStore'
 import { RowAccumulator, Scroller, sgrWheel, wheelPx } from './smoothScroll'
 import { startTermLog, termLog, type Attached } from './telemetry'
 import { InputMarker } from './operatorInput'
+import { enableTextSelection, hasTextSelectionAnchor, transferTextSelection } from './textSelection'
 
 /** tmux: the history is taken ahead once the terminal has rested this long (no output) under the pointer, at most once per AHEAD_EVERY_MS. */
 const AHEAD_REST_MS = 700
 const AHEAD_EVERY_MS = 5000
 /** tmux: what the pane shows (history or a full-screen program) is asked this long after the operator typed. */
 const KIND_AFTER_TYPING_MS = 1000
+/** Once the pane answers with output, ask sooner so its next gesture goes to the right owner. */
+const KIND_AFTER_OUTPUT_MS = 50
+/** Refresh the known pane kind during output without spawning tmux for every frame. */
+const KIND_REFRESH_MS = 300
 const INVALID_TOKEN = 4401
 const OFF = 4409
 const ENDED = 4000
@@ -63,6 +72,8 @@ export interface ScreenApi {
   rowsAt: (clientX: number, clientY: number) => Promise<ScreenRows | null>
   /** The text selected in the terminal, or ''. */
   selection: () => string
+  /** Copy text selected in tmux itself, which xterm cannot read. */
+  copyTmuxSelection?: () => Promise<boolean>
   /** The screen's own right-click menu (copy, paste, find …) at a point. */
   ownMenu: (clientX: number, clientY: number) => void
   /** Open a printed path in the editor, as Ctrl+click does (the link menu's «Open»). */
@@ -73,6 +84,23 @@ export interface ScreenApi {
   paste?: (text: string) => void
   /** The shell asked for bracketed paste (a plain terminal; never under tmux): a pasted line break waits for Enter instead of running. */
   bracketed?: () => boolean
+  /** Messages collapsed to one line in the history (fold.ts, tk_a2bb64a1). */
+  fold?: FoldApi
+}
+
+/**
+ * Collapsing messages (fold.ts): only the history the page draws (scrolled
+ * up) shows them as one line; the live screen at the bottom is the program's.
+ */
+export interface FoldApi {
+  /** The message with this id is collapsed in this terminal. */
+  has: (id: string) => boolean
+  /** How many are collapsed. */
+  count: () => number
+  /** Collapse or expand; then: shown (the history on view changed), later (the message is on the live screen: it collapses once it is history), off (no page-drawn history: smooth scrolling is off). */
+  set: (ids: string[], on: boolean) => Promise<'shown' | 'later' | 'off'>
+  /** Expand all. */
+  clear: () => Promise<void>
 }
 
 /** Every row the screen can read — a tmux pane's history from tmux — wrapped rows joined; `at` is the row under the point. */
@@ -110,6 +138,15 @@ function bufferRows(t: Terminal, row: number): ScreenRows {
 }
 
 interface Dot { abs: number; rel: number }
+
+function setSteadyCursorColors(term: Terminal, theme: XtermTheme) {
+  const element = term.element
+  if (!element) return
+  element.classList.add('sp-steady-cursor')
+  // A colored input row also needs enough contrast in a light scheme.
+  element.style.setProperty('--sp-cursor-fill', readable(theme.cursor, [theme.background]))
+  element.style.setProperty('--sp-cursor-text', theme.cursorAccent)
+}
 
 export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor = '', visible = true, project = '', taskId = '', backend = 'tmux', smooth = true, onEnded, onFocus, autoFocus = true, onZoom, bind, onInput, onTitle, hooks }: {
   sid: string
@@ -158,6 +195,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     if (!t) return
     const theme = xtermTheme(scheme, getComputedStyle(document.documentElement).getPropertyValue('--brand').trim())
     t.options.theme = theme
+    setSteadyCursorColors(t, theme)
     const r = readerRef.current
     if (r) { r.term.options.theme = theme; r.el.style.background = theme.background }
   }, [scheme])
@@ -187,6 +225,12 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const editorRef = useRef(editor)
   editorRef.current = editor
   const openPathRef = useRef<(p: PrintedPath) => void>(() => {})
+  /** Make the reader again with the collapsed messages as they are now (fold.ts); a plain terminal scrolled up gets one. */
+  const refoldRef = useRef<() => Promise<void>>(async () => {})
+  /** Who this screen is to the fold store: its own changes it has made already. */
+  const foldOrigin = useRef({}).current
+  /** The gutter is open: its rows are counted whole, so nothing is collapsed meanwhile. */
+  const foldsOffRef = useRef(false)
   visibleRef.current = visible
   autoFocusRef.current = autoFocus
   useEffect(() => { onEndedRef.current = onEnded; onFocusRef.current = onFocus; onZoomRef.current = onZoom })
@@ -213,9 +257,9 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const readPos = useCallback(async (): Promise<PanePos> => {
     const r = readerRef.current
     if (r) {
-      // The reader's rows are the pane's: its history above, then the screen.
-      const rb = r.term.buffer.active
-      return { history: r.history, scroll: rb.baseY - rb.viewportY, rows: r.term.rows }
+      // The reader's rows are the pane's: its history above, then the screen (collapsed messages counted whole).
+      const top = topOf(r).src
+      return { history: r.history, scroll: Math.max(0, r.src.length - r.term.rows - top), rows: r.term.rows }
     }
     if (backend === 'tmux') {
       const p = await getJson<PanePos & { cursor: number }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
@@ -306,7 +350,9 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     const row = Math.floor(((cy - rect.top) / rect.height) * t.rows)
     if (row < 0 || row >= t.rows) return null
     const b = t.buffer.active
-    if (r || backend !== 'tmux' || b.type === 'normal') return bufferRows(t, b.viewportY + row)
+    // The reader: its source rows, collapsed messages whole (a label row is its message's first row).
+    if (r) return joinedRows(r.src, r.map.toSrc(b.viewportY + row))
+    if (backend !== 'tmux' || b.type === 'normal') return bufferRows(t, b.viewportY + row)
     // tmux draws its screen on xterm's alternate screen: the rows above it are tmux's.
     const got = await fetchRows(sid, FIRST_ROWS)
     const rows = got.text.replace(ANSI, '').split('\n')
@@ -314,13 +360,28 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     const scroll = (got as unknown as { in_mode?: boolean }).in_mode
       ? (await getJson<PanePos>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`).catch(() => null))?.scroll ?? 0 : 0
     const at = got.above + row - scroll
-    return at >= 0 && at < rows.length ? { rows, at } : null
+    // Soft-wrapped rows joined, as the reader reads them (fold.tmuxRows): a message is named the same in both.
+    return at >= 0 && at < rows.length ? joinedRows(tmuxRows(rows, got.cols || t.cols), at) : null
   }, [backend, sid])
   const selection = useCallback(() => {
     const r = readerRef.current?.term
     if (r?.hasSelection()) return r.getSelection()
     return termRef.current?.hasSelection() ? termRef.current.getSelection() : ''
   }, [])
+  const copyTmuxSelection = useCallback(async () => {
+    if (backend !== 'tmux' || readerRef.current) return false
+    const got = await postJson<{ copied: boolean }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/capture`, { mode: 'selection' })
+    return got.copied
+  }, [backend, sid])
+  const copySelected = useCallback(async () => {
+    const term = readerRef.current?.term ?? termRef.current
+    if (term?.hasSelection()) {
+      void copyText(term.getSelection())
+      term.clearSelection()
+    } else {
+      await copyTmuxSelection().catch((e: Error) => toast.error(tr('The terminal could not be copied: {error}', { error: e.message })))
+    }
+  }, [copyTmuxSelection])
   const ownMenu = useCallback((cx: number, cy: number) => {
     const r = box.current?.parentElement?.getBoundingClientRect()
     if (r) setMenu({ x: cx - r.left, y: cy - r.top })
@@ -328,6 +389,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
 
   useEffect(() => {
     bind?.({ find: toggleFind, range: toggleRange, copyScreen: () => void copyWhole('screen'), copyLast: () => void copyWhole('last'), rowsAt, selection, ownMenu,
+      copyTmuxSelection,
       openPath: (p) => openPathRef.current(p), editor: () => editorRef.current,
       paste: (text) => {
         const t = termRef.current
@@ -339,9 +401,29 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       },
       // tmux asks the window for bracketed paste whatever its pane's shell asked, and hands a paste
       // to a shell that did not ask unbracketed: its line breaks run. Only a plain terminal's mode is the shell's.
-      bracketed: () => backend !== 'tmux' && !!termRef.current?.modes.bracketedPasteMode })
+      bracketed: () => backend !== 'tmux' && !!termRef.current?.modes.bracketedPasteMode,
+      fold: {
+        has: (id) => foldIds(sid).has(id),
+        count: () => foldIds(sid).size,
+        set: async (ids, on) => {
+          setFolds(sid, ids, on, foldOrigin)
+          // Without smooth scrolling the history is tmux's own (or xterm's rows): nothing of the page's to collapse in.
+          if (!smoothRef.current) return 'off'
+          await refoldRef.current()
+          if (!on) return 'shown'
+          return readerRef.current?.folds.some((f) => ids.includes(f.id)) ? 'shown' : 'later'
+        },
+        clear: async () => { clearFolds(sid, foldOrigin); await refoldRef.current() },
+      } })
     return () => bind?.(null)
-  }, [bind, toggleFind, toggleRange, copyWhole, rowsAt, selection, ownMenu, backend])
+  }, [bind, toggleFind, toggleRange, copyWhole, rowsAt, selection, copyTmuxSelection, ownMenu, backend, sid, foldOrigin])
+
+  // The gutter numbers whole rows: a collapsed message opens while it is there, and closes again after.
+  useEffect(() => {
+    if (foldsOffRef.current === range) return
+    foldsOffRef.current = range
+    if (readerRef.current && (range ? readerRef.current.folds.length > 0 : hasFolds(sid))) void refoldRef.current()
+  }, [range, sid])
 
   // While the gutter is open the pane keeps moving (a scroll, new output):
   // follow it, so the numbers and the dot stay on their lines.
@@ -400,11 +482,13 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     const id = window.setInterval(() => {
       const r = readerRef.current
       if (!r) return
+      // A plain terminal's reader: the live buffer below it says what came since.
+      if (backend !== 'tmux') { const b = termRef.current?.buffer.normal; if (b) setBehind({ up: true, fresh: Math.max(0, b.baseY - r.history) }); return }
       void getJson<PanePos>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
         .then((p) => { if (!dead) setBehind({ up: true, fresh: Math.max(0, p.history - r.history) }) }, () => undefined)
     }, 1000)
     return () => { dead = true; window.clearInterval(id); setBehind({ up: false, fresh: 0 }) }
-  }, [reading, sid])
+  }, [reading, sid, backend])
 
   const toBottom = useCallback(async () => {
     if (readerRef.current) {
@@ -495,6 +579,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     let tries = 0
     let authFails = 0
     let onWheel: ((e: WheelEvent) => void) | null = null
+    let offFolds: (() => void) | null = null
     /** The terminal log's view of this screen (telemetry.ts): kinds, sizes, times. */
     let logged: Attached | null = null
 
@@ -506,8 +591,9 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       if (disposed) return
       // The cursor wears the accent the operator chose (accent themes), not a fixed green.
       const accent = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()
+      const theme = xtermTheme(schemeRef.current, accent)
       const t = new XTerminal({
-        theme: xtermTheme(schemeRef.current, accent),
+        theme,
         fontFamily: '"Geist Mono","JetBrains Mono","SF Mono",Menlo,monospace',
         fontSize, lineHeight: 1.15, cursorBlink: true, allowProposedApi: true,
         scrollback, macOptionIsMeta: true, rightClickSelectsWord: false,
@@ -522,6 +608,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       t.loadAddon(search)
       searchRef.current = search
       t.open(el)
+      keepSelectionLocal(t)
+      setSteadyCursorColors(t, theme)
       hooksRef.current?.terminal?.(t, 'live')
       // Pixel-smooth scrolling of the history xterm keeps (scrollLayer.ts):
       // the page takes the wheel before xterm when the terminal shows its own
@@ -536,17 +624,37 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         offset: () => (readerRef.current?.layer ?? layer).where().pos,
       })
       const stop = (e: Event) => { e.preventDefault(); e.stopPropagation() }
+      // Desktop backends may turn a vertical Shift+wheel notch into deltaX.
+      // This is only used after checking that Shift is extending a selection.
+      const wheelMotion = (e: WheelEvent) => e.deltaY || !e.shiftKey ? e : { deltaY: e.deltaX, deltaMode: e.deltaMode }
+      const rowSteps = new RowAccumulator()
+      const scrollRows = (term: Terminal, e: WheelEvent) => {
+        const height = rowH()
+        if (height <= 0) return
+        const { px } = wheelPx(wheelMotion(e), height, term.rows)
+        const steps = rowSteps.add(px, height)
+        if (steps) term.scrollLines(steps)
+      }
       onWheel = (e: WheelEvent) => {
-        if (!smoothRef.current || e.deltaY === 0 || e.shiftKey || e.ctrlKey) return
         const r = readerRef.current
+        const extending = e.shiftKey && hasTextSelectionAnchor(r?.term ?? t)
+        const smooth = smoothRef.current
+        const motion = wheelMotion(e)
+        if (!motion.deltaY || e.ctrlKey || (e.shiftKey && !extending) || (!smooth && !extending && !r)) return
         if (r) {
           // Down at the newest line: the reader has shown it all, the live terminal comes back.
-          if (e.deltaY > 0 && r.layer.atBottom()) { stop(e); closeReader(); return }
-          if (r.layer.wheel(e)) stop(e)
+          if (motion.deltaY > 0 && r.layer.atBottom() && !r.term.hasSelection() && !e.shiftKey) { stop(e); closeReader(); return }
+          if (!smooth) { stop(e); scrollRows(r.term, e); return }
+          if (r.layer.wheel(motion)) stop(e)
           return
         }
         if (opening) { stop(e); lead.push(e); pendingEvents.push(e); return }
-        if (layer.wheel(e)) { stop(e); return }
+        // A plain terminal with collapsed messages shows its history in a reader too (fold.ts):
+        // the rows the page writes can leave a message out, xterm's own cannot.
+        if (smooth && backend !== 'tmux' && layer.owns() && !foldsOffRef.current && hasFolds(sid)
+          && (motion.deltaY < 0 || t.buffer.active.viewportY < t.buffer.active.baseY)) { stop(e); void openPlain(e); return }
+        if (smooth && layer.wheel(motion)) { stop(e); return }
+        if (!smooth && e.shiftKey && layer.owns()) { stop(e); scrollRows(t, e); return }
         // tmux draws on xterm's alternate screen and asks for the mouse: the
         // page routes the wheel by what the pane shows (tmuxWheel).
         if (backend === 'tmux' && t.buffer.active.type === 'alternate' && t.modes.mouseTrackingMode !== 'none') { stop(e); tmuxWheel(e) }
@@ -561,7 +669,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       let queued: WheelEvent[] = []
       const acc = new RowAccumulator()
       const route = (e: WheelEvent, f: Flags) => {
-        const { px } = wheelPx(e, rowH(), t.rows)
+        const { px } = wheelPx(wheelMotion(e), rowH(), t.rows)
         if (!f.alt && !f.mouse && !f.in_mode) {
           // The history: up opens the reader; down at the bottom is nothing.
           if (px < 0) openReader(px)
@@ -570,6 +678,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         // A full-screen program, one that reads the mouse, or tmux's own copy
         // mode (five lines a report): one wheel report per row the wheel moved,
         // where xterm sent one per event (a notch of six rows was one line).
+        if (e.shiftKey) return
         const n = acc.add(px, rowH() * (f.in_mode ? 5 : 1))
         if (!n || ws?.readyState !== WebSocket.OPEN) return
         const sc = (el.querySelector('.xterm-screen') as HTMLElement).getBoundingClientRect()
@@ -585,7 +694,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         if (flags && same && now - flags.at < 2000) { route(e, flags); return }
         // Up, the pane unknown: ask for the history straight away; its answer
         // says what the pane shows too (one round trip, not two).
-        if (e.deltaY < 0 && !asking) { openReader(wheelPx(e, rowH(), t.rows).px, e); return }
+        if (wheelMotion(e).deltaY < 0 && !asking) { openReader(wheelPx(wheelMotion(e), rowH(), t.rows).px, e); return }
         queued.push(e)
         if (asking) return
         asking = true
@@ -604,6 +713,12 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       let opening = false
       let pendingEvents: WheelEvent[] = []
       const make = { Terminal: XTerminal, Search }
+      /** The collapsed messages a reader is made with (none while the gutter is open); the live screen at the bottom never. */
+      const foldOpts = (): FoldOpts | undefined => {
+        if (foldsOffRef.current) return undefined
+        const ids = foldIds(sid)
+        return ids.size ? { has: (id) => ids.has(id), tail: t.rows } : undefined
+      }
 
       // While the reader loads (a round trip and an xterm: 4–5 frames), the
       // live screen moves with the finger at once, so the first frame of a
@@ -615,7 +730,9 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       // Not known (before the first answer, after the operator typed — a
       // command may start one), the input waits and glides in, as before.
       let paneKind: 'history' | 'program' | null = null
+      let paneKindVersion = 0
       const learn = (f: { alt?: boolean; mouse?: boolean; in_mode?: boolean }) => { paneKind = f.alt || f.mouse || f.in_mode ? 'program' : 'history' }
+      enableTextSelection(t, () => backend === 'tmux' && paneKind === 'history', backend === 'tmux')
       const lead = (() => {
         const sc = () => el.querySelector('.xterm-screen') as HTMLElement | null
         // Pixels up from the newest line; not capped: what the screen cannot show, the reader does.
@@ -643,7 +760,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
           start: (show: boolean) => { shown = show; s.set(0, Number.MAX_SAFE_INTEGER) },
           /** A wheel event (or a finger's pixels) while the reader loads: up is positive here. */
           push: (e: WheelEvent | number) => {
-            const { px, notch } = typeof e === 'number' ? { px: e, notch: false } : wheelPx(e, rowH(), t.rows)
+            const { px, notch } = typeof e === 'number' ? { px: e, notch: false } : wheelPx(wheelMotion(e), rowH(), t.rows)
             s.push(-px, notch)
             if (!shown) return
             if (notch) { if (!raf) raf = requestAnimationFrame(tick) } else paint()
@@ -677,6 +794,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       let aheadLast = -AHEAD_EVERY_MS
       let over = false
       let kindTimer: ReturnType<typeof setTimeout> | null = null
+      let kindPending = false
+      let kindAskedAt = -Infinity
       const dropAhead = () => {
         if (aheadTimer) { clearTimeout(aheadTimer); aheadTimer = null }
         if (kindTimer) { clearTimeout(kindTimer); kindTimer = null }
@@ -692,11 +811,13 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         aheadBusy = true
         aheadLast = performance.now()
         const at = received
+        const version = paneKindVersion
         void fetchRows(sid, FIRST_ROWS)
           .then((got) => {
+            if (disposed || received !== at || paneKindVersion !== version) return
             const f = got as unknown as { alt?: boolean; mouse?: boolean; in_mode?: boolean }
             learn(f)
-            if (disposed || received !== at || f.alt || f.mouse || f.in_mode) return
+            if (f.alt || f.mouse || f.in_mode) return
             ahead = { got, at }
           })
           .catch(() => undefined)
@@ -709,27 +830,53 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         if (ahead && ahead.at !== received) ahead = null
         if (aheadTimer) clearTimeout(aheadTimer)
         aheadTimer = over ? setTimeout(prepareAhead, AHEAD_REST_MS) : null
+        // Keep the last route while an agent streams. A command can still
+        // open a pager later, so recheck even if the previous route was known.
+        if (visibleRef.current && !kindPending && kindTimer === null) scheduleKind()
       }
-      // What the pane shows, asked (display-message, cheap) once the pointer is
-      // over the terminal and a moment after the operator typed there.
+      const scheduleKind = () => {
+        const delay = Math.max(KIND_AFTER_OUTPUT_MS, KIND_REFRESH_MS - (performance.now() - kindAskedAt))
+        kindTimer = setTimeout(askKind, delay)
+      }
+      // Ordinary output does not invalidate a reply. Input may have started
+      // a different program while this request was in flight.
       const askKind = () => {
         kindTimer = null
-        if (disposed || !over || !visibleRef.current || document.hidden || paneKind) return
+        if (disposed || !visibleRef.current || document.hidden || kindPending) return
+        if (performance.now() - kindAskedAt < KIND_REFRESH_MS) { scheduleKind(); return }
+        kindPending = true
+        kindAskedAt = performance.now()
+        const version = paneKindVersion
+        const at = received
         getJson<{ alt?: boolean; mouse?: boolean; in_mode?: boolean }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
-          .then((f) => { if (!disposed) learn(f) }).catch(() => undefined)
+          .then((f) => { if (!disposed && paneKindVersion === version) learn(f) })
+          .catch(() => undefined)
+          .finally(() => {
+            kindPending = false
+            if (!disposed && visibleRef.current && !document.hidden && kindTimer === null
+              && (received !== at || paneKindVersion !== version)) scheduleKind()
+          })
       }
       const typedHere = () => {
         if (backend !== 'tmux') return
+        paneKindVersion += 1
         paneKind = null
         if (kindTimer) clearTimeout(kindTimer)
         kindTimer = over ? setTimeout(askKind, KIND_AFTER_TYPING_MS) : null
       }
       if (backend === 'tmux') {
-        el.addEventListener('pointerenter', () => {
+        const enter = () => {
           over = true
           if (!ahead && !aheadTimer) aheadTimer = setTimeout(prepareAhead, AHEAD_REST_MS)
-          if (!paneKind && !kindTimer) kindTimer = setTimeout(askKind, 200)
-        })
+          if (!paneKind && !kindTimer) askKind()
+        }
+        el.addEventListener('pointerenter', enter)
+        // A terminal made under a pointer at rest (the window opened under it,
+        // a tab switched by key) gets no pointerenter: Chromium counts the
+        // pointer as already inside. It is over the terminal all the same.
+        el.addEventListener('pointermove', () => { if (!over) enter() })
+        if (el.matches(':hover')) enter()
+        else askKind()
         el.addEventListener('pointerleave', () => {
           over = false
           if (aheadTimer) { clearTimeout(aheadTimer); aheadTimer = null }
@@ -737,10 +884,31 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         })
       }
       const wire = (r: Reader) => {
+        enableTextSelection(r.term, () => false)
         hooksRef.current?.terminal?.(r.term, 'reader')
+        // A collapsed message's row: a click opens it; the pointer says it can.
+        const foldAtPoint = (ev: MouseEvent) => {
+          const scr = r.el.querySelector('.xterm-screen') as HTMLElement | null
+          if (!scr || !r.term.rows || !r.folds.length) return null
+          const rect = scr.getBoundingClientRect()
+          const row = Math.floor(((ev.clientY - rect.top) / rect.height) * r.term.rows)
+          return row >= 0 && row < r.term.rows ? r.map.foldAt(r.term.buffer.active.viewportY + row) : null
+        }
+        r.el.addEventListener('click', (ev) => {
+          if (ev.button !== 0 || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey || r.term.hasSelection()) return
+          const f = foldAtPoint(ev)
+          if (!f) return
+          setFolds(sid, [f.id], false, foldOrigin)
+          void refold()
+        })
+        r.el.addEventListener('mousemove', (ev) => {
+          if (!r.folds.length) return
+          const scr = r.el.querySelector('.xterm-screen') as HTMLElement | null
+          if (scr) scr.style.cursor = foldAtPoint(ev) ? 'pointer' : ''
+        })
         r.term.attachCustomKeyEventHandler((e) => {
           if (e.type !== 'keydown') return true
-          const what = readerKeeps(e, IS_MAC)
+          const what = readerKeeps(e, IS_MAC, r.term.hasSelection())
           if (what === 'keep') {
             const mod = IS_MAC ? e.metaKey : e.ctrlKey
             const k = letter(e)
@@ -771,10 +939,22 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
           if (text) t.paste(text)
         }, true)
       }
-      const show = (r: Reader) => {
+      const readerRow = (r: Reader, source: number) => {
+        const row = r.map.toView(source)
+        return r.map.toSrc(row) === source ? row : undefined
+      }
+      const carryReaderSelection = (r: Reader, next: Reader, offset = 0) => {
+        transferTextSelection(r.term, next.term, (row) => readerRow(next, r.map.toSrc(row) + offset))
+        if (document.activeElement === r.term.textarea) next.term.focus()
+      }
+      const show = (r: Reader, offset: number) => {
         r.el.style.visibility = 'visible'
         readerRef.current = r
         setReading(true)
+        if (transferTextSelection(t, r.term, (row) => readerRow(r, row + offset))) {
+          t.clearSelection()
+          if (document.activeElement === t.textarea) r.term.focus()
+        }
       }
       const closeReader = () => {
         const r = readerRef.current
@@ -791,28 +971,36 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       const takeOver = (r: Reader) => {
         wire(r)
         const led = lead.end()
-        const { max } = r.layer.where()
-        if (led.pos > 0) r.layer.setPos(max - led.pos)
-        if (Math.abs(led.target - led.pos) > 0.01) r.layer.by(-(led.target - led.pos), true)
-        show(r)
+        const { max, rowH } = r.layer.where()
+        if (!smoothRef.current && rowH > 0) r.layer.setPos(max - Math.round(led.target / rowH) * rowH)
+        else {
+          if (led.pos > 0) r.layer.setPos(max - led.pos)
+          if (Math.abs(led.target - led.pos) > 0.01) r.layer.by(-(led.target - led.pos), true)
+        }
+        // tmux capture ends with the live pane. Its xterm is on a separate
+        // buffer without the preceding history, so align those last rows.
+        show(r, r.src.length - t.rows - t.buffer.active.viewportY)
       }
       /** A longer history follows, swapped in at the same line. */
-      const longer = async (r: Reader, got: HistoryRows) => {
+      const longer = async (got: HistoryRows) => {
         if (got.complete) return
         const full = await fetchRows(sid, 50_000).catch(() => null)
-        if (!full || readerRef.current !== r || disposed) return
-        const r2 = await buildReader(make, el, t, full)
-        if (readerRef.current !== r || disposed) { r2.dispose(); return }
+        // The reader may have been made again meanwhile (a message collapsed): the same rows still.
+        const holds = () => readerRef.current?.got === got ? readerRef.current : null
+        if (!full || !holds() || disposed) return
+        const r2 = await buildReader(make, el, t, full, foldOpts())
+        const r = holds()
+        if (!r || disposed) { r2.dispose(); return }
         // The same absolute line at the top: rows above r's first are (history - above).
-        const h = rowH()
         const w = r.layer.where()
-        const abs = w.pos + (r.history - r.above) * h
+        const at = topOf(r)
         wire(r2)
-        r2.layer.setPos(abs - (full.history - full.above) * h)
+        placeAt(r2, at.src + (r.history - r.above) - (full.history - full.above), at.frac)
         // A glide under way goes on in the new reader.
         if (Math.abs(w.target - w.pos) > 0.01) r2.layer.by(w.target - w.pos, true)
         r2.el.style.visibility = 'visible'
         readerRef.current = r2
+        carryReaderSelection(r, r2, (r.history - r.above) - (full.history - full.above))
         r.dispose()
       }
       const openReader = (px: number, first?: WheelEvent, rows = FIRST_ROWS) => {
@@ -837,15 +1025,64 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
               for (const ev of pendingEvents) route(ev, flags)
               return
             }
-            const r = await buildReader(make, el, t, got)
+            const r = await buildReader(make, el, t, got, foldOpts())
             if (disposed) { r.dispose(); return }
             takeOver(r)
-            await longer(r, got)
+            await longer(got)
           })
           .catch(() => undefined)
           .finally(() => { opening = false; pendingEvents = []; lead.end() })
       }
       openReaderRef.current = openReader
+
+      /** A plain terminal's history in a reader (it has collapsed messages): at the text the live view shows, a gesture under way going on. */
+      const openPlain = async (first?: WheelEvent) => {
+        if (readerRef.current || opening || disposed) return
+        opening = true
+        pendingEvents = []
+        lead.start(false)
+        if (first) lead.push(first)
+        const live = layer.where()
+        const top = live.rowH > 0 ? Math.floor(live.pos / live.rowH + 1e-6) : t.buffer.active.viewportY
+        const frac = Math.max(0, live.pos - top * live.rowH)
+        try {
+          const r = await buildReader(make, el, t, plainRows(t), foldOpts())
+          if (disposed) { r.dispose(); return }
+          wire(r)
+          const led = lead.end()
+          placeAt(r, top, frac)
+          if (Math.abs(led.target) > 0.01) r.layer.by(-led.target, true)
+          // The live terminal waits at its newest line: the reader closes onto it.
+          layer.bottom()
+          show(r, 0)
+        } catch { /* the live terminal stays */ } finally { opening = false; pendingEvents = []; lead.end() }
+      }
+
+      /** The collapsed messages changed: the reader made again at the same text (a plain terminal scrolled up gets one). */
+      const refold = async () => {
+        if (disposed || !smoothRef.current) return
+        const r = readerRef.current
+        if (!r) {
+          const b = t.buffer.active
+          if (backend !== 'tmux' && !foldsOffRef.current && hasFolds(sid) && layer.owns() && b.viewportY < b.baseY) await openPlain()
+          return
+        }
+        const at = topOf(r)
+        const w = r.layer.where()
+        const r2 = await buildReader(make, el, t, r.got, foldOpts())
+        if (readerRef.current !== r || disposed) { r2.dispose(); return }
+        wire(r2)
+        placeAt(r2, at.src, at.frac)
+        if (Math.abs(w.target - w.pos) > 0.01) r2.layer.by(w.target - w.pos, true)
+        r2.el.style.visibility = 'visible'
+        readerRef.current = r2
+        carryReaderSelection(r, r2)
+        r.dispose()
+        // The marks on the messages follow at once (MessageMenu's BlockMarks).
+        window.dispatchEvent(new CustomEvent('sp-reader-swap'))
+      }
+      refoldRef.current = refold
+      offFolds = onFolds((s, origin) => { if (s === sid && origin !== foldOrigin) void refold() })
       // The live terminal resized: the reader's rows no longer match it.
       t.onResize(() => { closeReader(); dropAhead() })
       el.addEventListener('wheel', onWheel, { capture: true, passive: false })
@@ -866,6 +1103,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       })
       if (backend === 'plain') {
         const look = () => {
+          // A reader in front (collapsed messages): it counts what came since.
+          if (readerRef.current) return
           const b = t.buffer.active
           const up = b.viewportY < b.baseY
           if (up && mark.current < 0) mark.current = b.baseY
@@ -876,8 +1115,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         t.onScroll(look)
         t.onWriteParsed(look)
       }
-      // tmux announces every copy-mode copy (set-clipboard on, OSC 52):
-      // a plain mouse-drag in the terminal lands on the system clipboard.
+      // tmux announces copies (set-clipboard on, OSC 52), including one
+      // requested explicitly by the page while a pane selection is active.
       t.parser.registerOscHandler(52, (data) => {
         const semi = data.indexOf(';')
         const b64 = semi >= 0 ? data.slice(semi + 1) : data
@@ -928,8 +1167,8 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
           return false
         }
         // The classic pair, and find.
-        if (e.ctrlKey && e.shiftKey && letter(e) === 'c') {
-          if (t.hasSelection()) { void copyText(t.getSelection()); t.clearSelection() }
+        if (letter(e) === 'c' && ((e.ctrlKey && e.shiftKey) || (IS_MAC && e.metaKey && !e.altKey))) {
+          void copySelected()
           return false
         }
         // A paste key pastes once: the browser's own paste (its paste event
@@ -1009,6 +1248,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       if (retry) clearTimeout(retry)
       ro?.disconnect()
       if (onWheel) el.removeEventListener('wheel', onWheel, { capture: true })
+      offFolds?.()
       logged?.dispose()
       layerRef.current?.dispose()
       layerRef.current = null
@@ -1165,11 +1405,16 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       {visible && menu && (
         <>
           <button type="button" aria-label={tr('Close the menu')} className="fixed inset-0 z-10 cursor-default" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null) }} />
-          <div role="menu" className="absolute z-20 w-[220px] py-4 rounded-input border border-white/15 shadow-lg flex flex-col"
-            style={{ background: 'var(--term-bar)', left: Math.min(menu.x, (box.current?.clientWidth ?? 300) - 230), top: Math.min(menu.y, (box.current?.clientHeight ?? 200) - 224) }}>
-            <button type="button" role="menuitem" className={menuItem} disabled={!termRef.current?.hasSelection()}
-              onClick={() => { const t = termRef.current; if (t?.hasSelection()) { void copyText(t.getSelection()); t.clearSelection() } setMenu(null) }}>
-              {tr('Copy')} <span className="ml-auto text-10 text-[var(--term-muted)]">Ctrl+C</span>
+          <div role="menu" className="absolute z-20 w-[220px] overflow-y-auto py-4 rounded-input border border-white/15 shadow-lg"
+            style={{
+              background: 'var(--term-bar)',
+              left: Math.max(0, Math.min(menu.x, (box.current?.clientWidth ?? 300) - 230)),
+              top: Math.max(0, Math.min(menu.y, (box.current?.clientHeight ?? 200) - 224)),
+              maxHeight: box.current?.clientHeight ?? 200,
+            }}>
+            <button type="button" role="menuitem" className={menuItem} disabled={!selection() && backend !== 'tmux'}
+              onClick={() => { void copySelected(); setMenu(null) }}>
+              {tr('Copy')} <span className="ml-auto text-10 text-[var(--term-muted)]">{IS_MAC ? '⌘C' : 'Ctrl+Shift+C'}</span>
             </button>
             <button type="button" role="menuitem" className={menuItem} onClick={() => { void paste(); setMenu(null) }}>
               {tr('Paste')} <span className="ml-auto text-10 text-[var(--term-muted)]">{pasteKeyName(IS_MAC)}</span>

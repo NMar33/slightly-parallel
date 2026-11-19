@@ -22,12 +22,38 @@ export interface Marks {
 
 export const NO_MARKS: Marks = { ticks: {}, answers: {}, copied: {} }
 
+export interface NoteComment {
+  id: string
+  note_id: string
+  item: string | null
+  text: string
+  at: string
+  version: number
+  section: string
+  label: string
+}
+
+export interface NewNoteComment {
+  noteId: string
+  item: string | null
+  section?: string
+  text: string
+  requestId: string
+}
+
 export interface NoteEnv {
   entity: (id: string) => Entity | undefined
   marks: Marks
   tick: (item: string, on: boolean) => void
   answer: (item: string, option: number | null) => void
   copied: (item: string) => void
+  comments?: {
+    forNote: (noteId: string) => NoteComment[]
+    canPost: (noteId: string) => boolean
+    post: (comment: NewNoteComment) => Promise<unknown>
+  }
+  /** In an earlier version, show only comments made by that point. */
+  commentVersion?: number
   /** A picture by its src (`ni_…` on the page; `shot:…` in the mock). */
   Picture: ComponentType<{ src: string; alt: string; small?: boolean }>
   /** The address of a picture to open large, or null where it has none (the mock). */

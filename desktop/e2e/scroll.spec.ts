@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import type { ElectronApplication, Page } from '@playwright/test'
-import { test, expect, ROOT, WINDOWS, printFile, ready, typeLine, lines, expectLine, echoCalc } from './fixtures'
+import { test, expect, ROOT, WINDOWS, printFile, ready, typeLine, lines, expectLine, echoCalc, expectClickTarget } from './fixtures'
+import { tmuxSockets } from './sockets'
 import { fmt, notches, offsetNow, runPlan, runTrusted, slowFinger, stats, touchpad, type Stats, type Wheel } from './scrollProbe'
 
 /**
@@ -164,6 +166,30 @@ test('history, smooth scrolling off: xterm\'s whole rows, as before', async ({ w
   expect(s.maxJump, fmt(s)).toBeGreaterThanOrEqual(s.rowH - 0.5)
 })
 
+test('an ordinary click keeps the wheel on the same route in whole-row mode', async ({ win, shell }) => {
+  const { page } = win
+  await ready(page)
+  await inMode(page, 'rows')
+  await fill(page)
+  const screen = page.locator('.aqua-screen .xterm-screen')
+  const box = (await screen.boundingBox())!
+  const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await expectClickTarget(screen, point)
+  await page.mouse.click(point.x, point.y)
+  const start = await offsetNow(page)
+  expect(start).not.toBeNull()
+  await page.mouse.wheel(0, -100)
+  if (shell.backend === 'tmux') {
+    const [socket] = tmuxSockets(process.env.SP_DESKTOP_E2E_TMUX!)
+    await expect.poll(() => execFileSync('tmux', [
+      '-S', socket, 'display-message', '-p', '-t', `mk-${shell.id}`, '#{pane_in_mode}',
+    ], { encoding: 'utf8' }).trim(), { message: 'tmux still owns the wheel after clicking its terminal' }).toBe('1')
+    // The first notch opens tmux's copy mode. The next one scrolls it.
+    await page.mouse.wheel(0, -100)
+  }
+  await expect.poll(async () => (await offsetNow(page)) ?? start!).toBeLessThan(start!)
+})
+
 /* ---------------------------------------------- full-screen programs */
 
 test('a full-screen program without the mouse (less, man) moves row for row under the wheel', async ({ win, shell }) => {
@@ -291,6 +317,11 @@ test('tmux: the first frame after the first wheel event already moves, the termi
   test.skip(shell.backend !== 'tmux', 'the reader is for tmux terminals')
   test.skip(MODE === 'rows', 'the smooth view only')
   const { page } = win
+  // Every capture of the run. The pointer starts off the terminal: on a display with a real
+  // pointer (X11 under Xvfb) it may rest where the terminal opens, and the rest begins then.
+  const captures: string[] = []
+  page.on('request', (r) => { if (r.url().includes('/capture')) captures.push(r.postData() ?? '') })
+  await page.mouse.move(2, 2)
   await ready(page)
   await fill(page)
   const h0 = await runPlan(page, [], 2).then((m) => m.rowH)
@@ -309,12 +340,13 @@ test('tmux: the first frame after the first wheel event already moves, the termi
   }
   // At rest, the pointer over the terminal: the history is taken ahead, no round trip when the gesture starts.
   const box = (await page.locator('.aqua-screen').boundingBox())!
-  const captures: string[] = []
-  page.on('request', (r) => { if (r.url().includes('/capture')) captures.push(r.postData() ?? '') })
+  // (One taken while the window opened under the pointer counts against the next by AHEAD_EVERY_MS, 5 s.)
+  const before = captures.length
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await expect.poll(() => captures.length, { timeout: 7_000, message: 'the history taken ahead under the pointer' }).toBeGreaterThan(before)
   await page.waitForTimeout(1500)
   // Taken once for this rest, the first 2000 rows; nothing more while it rests.
-  expect(captures.map((c) => JSON.parse(c).rows)).toEqual([2000])
+  expect(captures.slice(before).map((c) => JSON.parse(c).rows)).toEqual([2000])
   await first('rested')
   // Output every 100 ms (an agent at work): nothing taken ahead, the screen is led while the reader loads.
   // (Typed: what the pane shows is asked again a second later, the pointer still over it.)
@@ -322,6 +354,59 @@ test('tmux: the first frame after the first wheel event already moves, the termi
   await page.waitForTimeout(1600)
   await first('busy')
   await typeLine(page, 'kill $!')
+})
+
+test('the first wheel frame moves while terminal output is streaming', async ({ win, shell, server }) => {
+  const { page } = win
+  await page.mouse.move(2, 2)
+  await ready(page)
+  await fill(page)
+
+  const stream = fs.mkdtempSync(path.join(server.dir, 'stream-'))
+  const start = path.join(stream, 'start')
+  const stop = path.join(stream, 'stop')
+  const script = path.join(stream, 'stream.cjs')
+  fs.writeFileSync(script, `
+    const fs = require('node:fs')
+    let count = 0
+    process.stdout.write('stream ready\\r\\n')
+    const timer = setInterval(() => {
+      if (fs.existsSync(${JSON.stringify(stop)})) clearInterval(timer)
+      else if (fs.existsSync(${JSON.stringify(start)})) process.stdout.write('\\rstreaming ' + ++count)
+    }, 15)
+  `)
+
+  const paneReady = shell.backend === 'tmux'
+    ? page.waitForResponse((r) => r.url().endsWith(`/sessions/${shell.id}/pos`) && r.ok())
+    : undefined
+  const quote = (s: string) => `'${s.replace(/'/g, WINDOWS ? "''" : "'\\''")}'`
+  await typeLine(page, `${WINDOWS ? '& ' : ''}${quote(NODE)} ${quote(script)}`)
+  await expectLine(page, 'stream ready')
+  await paneReady
+
+  // Hold history until after the measurement. The first visible movement
+  // has to come from the live screen, even with a slow history response.
+  let releaseHistory!: () => void
+  const historyReady = new Promise<void>((resolve) => { releaseHistory = resolve })
+  if (shell.backend === 'tmux') {
+    await page.route(`**/sessions/${shell.id}/capture`, async (route) => {
+      await historyReady
+      await route.continue()
+    })
+  }
+  try {
+    fs.writeFileSync(start, '')
+    await expectLine(page, /streaming [1-9]\d*/)
+    const measured = await runPlan(page, slowFinger(1), 2)
+    const { off: before } = measured.samples[0]!
+    const { off: after } = measured.samples[1]!
+    expect(before, 'a numbered row was visible before the wheel event').not.toBeNull()
+    expect(after, 'a numbered row was visible on the next frame').not.toBeNull()
+    expect(before! - after!, 'visible text moves on the first frame while output continues').toBeGreaterThan(0.5)
+  } finally {
+    fs.writeFileSync(stop, '')
+    releaseHistory()
+  }
 })
 
 test('tmux: a reader closed in the frame it scrolled in throws nothing (tk_988aeb37)', async ({ win, shell }) => {
@@ -336,6 +421,8 @@ test('tmux: a reader closed in the frame it scrolled in throws nothing (tk_988ae
   for (let i = 0; i < 8; i++) {
     await runPlan(page, touchpad(6), 4)
     await expect(reader).toHaveCount(1)
+    // «↓ newest» comes a render after the reader: at once when the history was taken ahead (the pointer at rest over the terminal).
+    await expect(page.locator('.aqua-screen button[title="Back to the newest line"]')).toHaveCount(1)
     // A wheel step on the reader, and in the same task «↓ newest» closes it: xterm's frame for that step comes after.
     await page.evaluate(() => {
       const r = [...document.querySelectorAll<HTMLElement>('.sp-reader')].pop()!

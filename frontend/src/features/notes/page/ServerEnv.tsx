@@ -11,9 +11,9 @@ import { Archive, ArchiveRestore } from 'lucide-react'
 import { Button } from '../../../components/primitives/Button'
 import { fail } from '../../../lib/getJson'
 import { t } from '../../../i18n/scope/notes'
-import { NoteEnvProvider, type Marks, type NoteEnv } from '../render/env'
+import { NoteEnvProvider, type Marks, type NoteComment, type NoteEnv } from '../render/env'
 import type { Note } from '../render/model'
-import { toNote, useNoteVersionText, useNoteWrites, type Feed } from './data'
+import { toNote, useNoteVersionText, useNoteWrites, type Feed, type WireNote } from './data'
 
 const IMAGE = /^ni_[0-9a-f]{10}$/
 
@@ -45,8 +45,8 @@ function HeadTools({ note }: { note: Note }) {
   )
 }
 
-export function ServerNoteEnv({ feed, children }: { feed: Feed | undefined; children: ReactNode }) {
-  const { mark } = useNoteWrites()
+export function ServerNoteEnv({ feed, extraNote, children }: { feed: Feed | undefined; extraNote?: WireNote; children: ReactNode }) {
+  const { mark, comment } = useNoteWrites()
   // A mark shows at once; the server's answer replaces it when the notes are read again.
   const [mine, setMine] = useState<Marks>({ ticks: {}, answers: {}, copied: {} })
   const server = feed?.marks
@@ -55,9 +55,24 @@ export function ServerNoteEnv({ feed, children }: { feed: Feed | undefined; chil
     for (const [k, v] of Object.entries(answers)) if (v < 0) delete answers[k]
     return { ticks: { ...(server?.ticks ?? {}), ...mine.ticks }, answers, copied: { ...(server?.copied ?? {}), ...mine.copied } }
   }, [server, mine])
+  const postComment = comment.mutateAsync
+  const comments = useMemo<NoteEnv['comments']>(() => {
+    const byNote = new Map<string, NoteComment[]>()
+    for (const c of feed?.comments ?? []) {
+      const thread = byNote.get(c.note_id)
+      if (thread) thread.push(c)
+      else byNote.set(c.note_id, [c])
+    }
+    if (extraNote) byNote.set(extraNote.id, extraNote.comments ?? [])
+    const writable = new Set(
+      [...(feed?.comments ? feed.notes : []), ...(extraNote?.comments ? [extraNote] : [])].filter((n) => !n.archived_at).map((n) => n.id),
+    )
+    return { forNote: (id) => byNote.get(id) ?? [], canPost: (id) => writable.has(id), post: postComment }
+  }, [extraNote, feed?.comments, feed?.notes, postComment])
   const env = useMemo<NoteEnv>(() => ({
     entity: (id) => { const e = feed?.entities[id]; return e ? { id, ...e } : undefined },
     marks,
+    comments,
     tick: (item, on) => {
       setMine((m) => ({ ...m, ticks: { ...m.ticks, [item]: on } }))
       mark.mutate({ item, kind: 'tick', value: on }, { onError: fail })
@@ -76,6 +91,6 @@ export function ServerNoteEnv({ feed, children }: { feed: Feed | undefined; chil
     noteHref: (id) => `/notes?note=${id}`,
     useVersion,
     HeadTools,
-  }), [feed?.entities, marks, mark])
+  }), [feed?.entities, marks, mark, comments])
   return <NoteEnvProvider value={env}>{children}</NoteEnvProvider>
 }

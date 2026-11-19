@@ -35,6 +35,7 @@ const EXCLUDE_PREFIXES = [
   'sp-note-draft:',
   'sp-note-edit:',
   'sp-task-draft:',
+  'sp-aqua-draft:',
   'sp-doc-block-draft:',
   'sp-release-draft:',
   // The terminal window's health day (features/aqua/app/health): a running
@@ -42,6 +43,17 @@ const EXCLUDE_PREFIXES = [
   // first copy came back over the live one on every reload, and a new window
   // started from another window's day (tk_a9306fb1).
   'sp-term-health-day',
+  // Collapsed messages per terminal (features/terminal/foldStore.ts): a view
+  // of one window's terminals. Synced, the server's first copy came back over
+  // the live one on reload and the collapses made since were lost.
+  'sp-term-folds',
+  // Terminal selection belongs to this window's browser profile. A server
+  // copy would overwrite later choices and leak them into other profiles.
+  'sp-aqua-active',
+  'sp-aqua-workspace',
+  'sp-aqua-ws-tabs',
+  // Sidebar/window placement belongs to this desktop profile.
+  'sp-aqua-sidebar-mode',
 ]
 
 export function isSyncable(key: string): boolean {

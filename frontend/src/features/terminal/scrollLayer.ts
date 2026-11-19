@@ -21,11 +21,11 @@
  */
 
 import type { IBufferCell, IBufferLine, Terminal } from 'xterm'
-import { Scroller, wheelPx } from './smoothScroll'
+import { Scroller, wheelPx, type WheelLike } from './smoothScroll'
 
 export interface SmoothLayer {
   /** A wheel event the layer may take: true when it did (the caller stops it). */
-  wheel: (e: WheelEvent) => boolean
+  wheel: (e: WheelLike) => boolean
   /** Whether the layer would take a wheel now (normal buffer, no mouse reporting). */
   owns: () => boolean
   /** Snap the position to where xterm stands. */
@@ -172,8 +172,8 @@ export function attachSmoothLayer(t: Terminal, opts: { onMove?: (fromBottom: num
 
   const owns = () => t.buffer.active.type === 'normal' && t.modes.mouseTrackingMode === 'none'
 
-  const wheel = (e: WheelEvent): boolean => {
-    if (disposed || !owns() || e.deltaY === 0 || e.shiftKey || e.ctrlKey) return false
+  const wheel = (e: WheelLike): boolean => {
+    if (disposed || !owns() || e.deltaY === 0) return false
     const h = rowH()
     if (h <= 0) return false
     // xterm may have moved since (output, a search): start from where it stands.
