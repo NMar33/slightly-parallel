@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { _electron } from '@playwright/test'
-import { test, expect, ELECTRON, PROJECT, ROOT, echoCalc, expectLine, fullSize, launchArgs, launchEnv, openShell, ready, sessions, typeLine, WINDOWS } from './fixtures'
+import { test, expect, ELECTRON, PROJECT, ROOT, echoCalc, expectLine, fullSize, launchArgs, launchEnv, openShell, ready, sessionTab, sessions, typeLine, WINDOWS } from './fixtures'
 
 /**
  * The tab strip of tk_a9306fb1 in the real window: the tab is titled by the
@@ -43,14 +43,16 @@ test.describe('tab strip', () => {
   test('held Alt shows the facts on each tab; releasing it brings the titles back', async ({ win, shell }) => {
     const { page } = win
     await ready(page)
-    const tab = strip(page).getByRole('tab').first()
-    await expect(tab.locator('[data-tab-title]')).toHaveText(shell.label)
+    const tab = sessionTab(strip(page), shell.id)
+    const title = tab.locator('[data-tab-title]')
+    await expect(title).not.toBeEmpty()
+    const originalTitle = await title.innerText()
     await page.keyboard.down('Alt')
     await expect(page.locator('[data-alt="b"]')).toHaveCount(1)
-    await expect(page.getByRole('button', { name: `Close the tab ${shell.label}` })).toBeVisible()
+    await expect(page.getByRole('button', { name: `Close the tab ${originalTitle}` })).toBeVisible()
     await page.keyboard.up('Alt')
     await expect(page.locator('[data-alt="b"]')).toHaveCount(0)
-    await expect(tab.locator('[data-tab-title]')).toHaveText(shell.label)
+    await expect(title).toHaveText(originalTitle)
   })
 
   test('tab groups stay inside their project and restore collapsed around the active session', async ({ win, shell, server }) => {
@@ -59,8 +61,8 @@ test.describe('tab strip', () => {
     const second = await openShell(server.api, 'e2e-group-second')
     await page.reload()
     const tabs = strip(page)
-    const first = tabs.getByRole('tab', { name: new RegExp(`^${shell.label} `) })
-    const next = tabs.getByRole('tab', { name: new RegExp(`^${second.label} `) })
+    const first = sessionTab(tabs, shell.id)
+    const next = sessionTab(tabs, second.id)
     await first.click({ button: 'right' })
     await page.getByRole('menuitem', { name: /New group from this tab/ }).click()
     await page.getByRole('textbox', { name: 'Group name' }).fill('Release')
@@ -290,6 +292,7 @@ test.describe('tab strip', () => {
     const r = await server.api.post('/api/terminal/sessions', { data: { kind: 'shell', project: other, label: 'e2e-beta', role: 'shell' } })
     expect(r.ok(), await r.text()).toBeTruthy()
     await page.reload()
+    const { session: beta } = await r.json() as { session: { id: string } }
     // into PROJECT through the folded workspaces if the window opened on the other one
     const tabs = strip(page)
     await expect(tabs.getByRole('tab').first()).toBeVisible()
@@ -297,14 +300,16 @@ test.describe('tab strip', () => {
       await page.getByRole('button', { name: /^\+\d/ }).click()
       await page.getByRole('menuitem', { name: new RegExp(code) }).click()
     }
-    if (!(await tabs.getByRole('tab', { name: new RegExp(`^${shell.label} `) }).count())) await go(PROJECT)
-    await tabs.getByRole('tab', { name: new RegExp(`^${second.label} `) }).click()
-    await expect(tabs.getByRole('tab', { name: new RegExp(`^${second.label} `) })).toHaveAttribute('aria-selected', 'true')
+    const first = sessionTab(tabs, shell.id)
+    const next = sessionTab(tabs, second.id)
+    if (!(await first.count())) await go(PROJECT)
+    await next.click()
+    await expect(next).toHaveAttribute('aria-selected', 'true')
     await go(other)
-    await expect(tabs.getByRole('tab', { name: /^e2e-beta / })).toHaveAttribute('aria-selected', 'true')
+    await expect(sessionTab(tabs, beta.id)).toHaveAttribute('aria-selected', 'true')
     await go(PROJECT)
-    await expect(tabs.getByRole('tab', { name: new RegExp(`^${second.label} `) })).toHaveAttribute('aria-selected', 'true')
-    await expect(tabs.getByRole('tab', { name: new RegExp(`^${shell.label} `) })).toHaveAttribute('aria-selected', 'false')
+    await expect(next).toHaveAttribute('aria-selected', 'true')
+    await expect(first).toHaveAttribute('aria-selected', 'false')
   })
 
   test('the workspace picked in the sidebar stays active after quitting and reopening the window', async ({ win, shell, server }) => {
@@ -322,7 +327,8 @@ test.describe('tab strip', () => {
 
     await page.reload()
     const tabs = strip(page)
-    const current = tabs.getByRole('tab', { name: new RegExp(`^${shell.label} `) })
+    const { session: target } = await r.json() as { session: { id: string } }
+    const current = sessionTab(tabs, shell.id)
     await page.getByRole('button', { name: 'Left sidebar', exact: true }).click()
     const workspaces = page.getByRole('navigation', { name: 'Workspaces' })
     await workspaces.getByRole('button', { name: new RegExp(`^${PROJECT} `) }).click()
@@ -330,13 +336,13 @@ test.describe('tab strip', () => {
     // project name alone. The older tab selection must not win at startup.
     await current.click()
     await workspaces.getByRole('button', { name: new RegExp(`^${other} `) }).click()
-    await expect(tabs.getByRole('tab', { name: /^e2e-restart-project / })).toHaveAttribute('aria-selected', 'true')
+    await expect(sessionTab(tabs, target.id)).toHaveAttribute('aria-selected', 'true')
 
     await app.close()
     const reopened = await _electron.launch({ executablePath: ELECTRON, args: launchArgs(userData), env: launchEnv(), timeout: 30_000 })
     try {
       const restarted = await reopened.firstWindow()
-      await expect(strip(restarted).getByRole('tab', { name: /^e2e-restart-project / })).toHaveAttribute('aria-selected', 'true')
+      await expect(sessionTab(strip(restarted), target.id)).toHaveAttribute('aria-selected', 'true')
     } finally {
       await reopened.close()
     }

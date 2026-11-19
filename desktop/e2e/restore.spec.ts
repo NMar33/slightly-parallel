@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron, type APIRequestContext, type ElectronApplication, type Page } from '@playwright/test'
-import { test, expect, ELECTRON, HEADLESS, HIDDEN, PROJECT, catchLinksOut, launchArgs, launchEnv, ready } from './fixtures'
+import { test, expect, ELECTRON, HEADLESS, HIDDEN, PROJECT, catchLinksOut, launchArgs, launchEnv, ready, sessionTab } from './fixtures'
 
 /**
  * Windows after a restart (tk_f5b4a9d3): the windows besides the main one,
@@ -92,7 +92,7 @@ test.describe('windows after a restart', () => {
     const wsUrl = `${origin}/term?ws=${PROJECT}`
 
     // The chat from its tab's menu, the workspace by the page's own op.
-    await page.getByRole('tab', { name: new RegExp(`^${shell.label}`) }).click({ button: 'right' })
+    await sessionTab(page, shell.id).click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Detach into its own window' }).click()
     await pageAt(app, chatUrl)
     await page.evaluate((url) => (window as unknown as { spWindow: { postMessage: (m: unknown) => void } }).spWindow.postMessage({ op: 'detach', url }), wsUrl)

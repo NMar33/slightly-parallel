@@ -170,3 +170,57 @@ def test_the_prompt_hooks_of_claude_code_and_codex(root: Path, tool: str, sessio
     assert user.startswith("<sp-message")
 
 
+
+
+def test_a_marker_typed_into_another_chats_terminal_is_a_stray_and_goes_back(root: Path) -> None:
+    """19 Nov: two messages for codex-ca00f219 were typed into the pane
+    codex-12e64f61 held; its hook kept them as the operator's text, tags
+    live, and the real addressee then read them in its inbox too. Now the
+    wrong chat records a stray (tags muted), the ledger notes it, and the
+    message reaches its own chat once."""
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="for the worker #task #decision x")
+    assert msgledger.claim_terminal(root, row["id"]) is not None
+    other = capture.TurnCapture(root, "alpha", CODEX)
+    sig = other.open_turn(msgledger.terminal_text(row), deliver=True)
+    assert sig["message_in"] is None
+    assert sig["message_stray"] == {"id": row["id"], "from": COORD, "to": WORKER}
+    assert sig["commands"] == [] and sig["kept"] == []
+    notice = capture.format_signals(sig)
+    assert f"for the chat {WORKER}" in notice and "not for you" in notice
+    other.complete_turn("noted")
+    user = _turns(root, CODEX)[-1].user_summary
+    assert user.startswith(f'<sp-message from="{COORD}" id="{row["id"]}" for="{WORKER}" stray="1">')
+    from backend.sessions import _operator_text
+    assert _operator_text(_turns(root, CODEX)[-1]) == ""
+    left = msgledger.find(root, row["id"])
+    assert left is not None and left["delivered_via"] == "" and left["landed_at"] == ""
+    assert left["strayed"].startswith(f"{CODEX} ") and left["strayed"].endswith("turn 1")
+    # The terminal is not tried for it again; its own chat's hook takes it, once.
+    assert msgledger.waiting(root) == []
+    from backend import msgdeliver
+    assert "another chat held" in msgdeliver.try_terminal(root, row["id"])[1]
+    cap = capture.TurnCapture(root, "alpha", WORKER)
+    assert [m["id"] for m in cap.open_turn("next", deliver=True)["messages"]] == [row["id"]]
+    assert msgledger.inbox(root, WORKER)["unread"] == []
+
+
+def test_a_message_in_flight_in_the_terminal_is_not_handed_over_by_the_inbox(root: Path) -> None:
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="typed")
+    assert msgledger.claim_terminal(root, row["id"]) is not None
+    got = msgledger.inbox(root, WORKER)
+    assert got["unread"] == [] and [m["id"] for m in got["in_flight"]] == [row["id"]]
+    assert "text" not in got["in_flight"][0]
+    # Typed into another chat's pane: back to its own chat, through the inbox once.
+    msgledger.take_stray(root, CODEX, msgledger.terminal_text(row), 3)
+    got = msgledger.inbox(root, WORKER)
+    assert [m["id"] for m in got["unread"]] == [row["id"]] and got["in_flight"] == []
+    assert msgledger.inbox(root, WORKER)["unread"] == []
+    assert msgledger.claim_for_hook(root, WORKER) == []
+
+
+def test_a_pasted_marker_of_a_message_never_typed_stays_the_operators_text(root: Path) -> None:
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="for the worker")
+    msgledger.claim_for_hook(root, WORKER)  # handed over by the hook, then pasted elsewhere
+    sig = capture.TurnCapture(root, "alpha", CODEX).open_turn(msgledger.terminal_text(row) + " #task", deliver=True)
+    assert sig["message_stray"] is None and "task" in sig["commands"]
+    assert msgledger.find(root, row["id"])["strayed"] == ""  # type: ignore[index]

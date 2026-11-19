@@ -714,8 +714,8 @@ function AquaWindow({ status }: { status: Status }) {
           const waiting = collapsed && tabs.find((tab) => shownOf(tab) === 'waiting')
           return (
             <div key={group.id} role="group" aria-label={group.name} className="flex shrink-0 items-end gap-1 mx-2">
-              <div className="flex items-center mb-[2px] rounded-[5px]" style={{ background: 'var(--aq-hover)', boxShadow: `inset 0 -2px 0 ${color}` }}>
-                <button type="button" data-nodrag className="aq-btn !h-[22px] gap-4"
+              <div className="flex h-[22px] items-center mb-[2px] overflow-hidden rounded-[5px]" style={{ background: 'var(--aq-hover)', borderBottom: `2px solid ${color}` }}>
+                <button type="button" data-nodrag className="aq-btn !h-[20px] !rounded-none focus-visible:!outline-offset-[-2px] gap-4"
                   ref={(el) => { if (el) groupRefs.current.set(group.id, el); else groupRefs.current.delete(group.id) }}
                   aria-label={group.name} aria-expanded={!collapsed} aria-current={collapsed && activeGroup === group.id ? 'true' : undefined}
                   data-on={collapsed && activeGroup === group.id} onClick={() => collapseGroup(group.id, !collapsed)}>
@@ -724,7 +724,7 @@ function AquaWindow({ status }: { status: Status }) {
                   {collapsed && <span className="text-10 tabular-nums opacity-75">{tabs.length}</span>}
                   {waiting && <span className="aq-dot waiting" aria-label={t('your turn')} />}
                 </button>
-                <button type="button" data-nodrag className="aq-btn icon !h-[22px]" aria-haspopup="menu"
+                <button type="button" data-nodrag className="aq-btn icon !h-[20px] !rounded-none focus-visible:!outline-offset-[-2px]" aria-haspopup="menu"
                   aria-label={t('Tab group settings: {name}', { name: group.name })}
                   onClick={(e) => setMenu({ kind: 'tabGroup', id: group.id, x: menuLeft(e.currentTarget) })}><Menu size={10} /></button>
               </div>

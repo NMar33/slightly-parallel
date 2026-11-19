@@ -11,6 +11,14 @@ marker, and presses Enter — only when all of this holds:
   termlib.agent_links), and that tmux session is still there;
 - the program in front is not a shell (the agent has not quit), and the
   pane is not in copy mode;
+- the chat is the one running in that pane now (``occupant_why``): the
+  terminal a chat's meta names is only where it was last seen starting, and
+  a terminal is reused — a newer chat started there, or a tool that serves
+  every session from one shared process (Codex's app-server daemon) handed
+  its own terminal to chats that run elsewhere. The hook's breadcrumb (the
+  processes above it at the chat's last prompt) must hold the pane's shell,
+  the program under it must be the same process still, and no newer chat
+  may have prompted from that program since;
 - the tool is one whose input line can be read: Claude Code (``❯`` on a
   row under a rule, a rule straight under it) or Codex (``›`` on the last
   such row, nothing typed under it);
@@ -35,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from . import msgledger, termlib
+from .hookshared import process_started
 
 log = logging.getLogger("sp.messages")
 
@@ -160,24 +169,77 @@ def chat_meta(data_root: Path, agent_id: str) -> dict[str, Any] | None:
 
 
 def terminal_of(data_root: Path, agent_id: str) -> str:
-    """The terminal the chat runs in now (its id), '' when none."""
-    sid = ""
-    newest = ""
-    for tid, link in termlib.agent_links(data_root).items():
-        if str(link.get("agent_id") or "") == agent_id and str(link.get("last_active") or "") >= newest:
-            sid, newest = tid, str(link.get("last_active") or "")
-    return sid
+    """The terminal the chat's hook last said it started in (its id), ''
+    when none. Only a claim: several chats can name one terminal (a reused
+    one, a shared Codex daemon), and the page's link (termlib.agent_links)
+    gives it to the one active last, wherever that one runs. Who is in the
+    pane now is checked against the processes (occupant_why)."""
+    meta = chat_meta(data_root, agent_id) or {}
+    return str(meta.get("terminal") or "")
 
 
 def _pane(data_root: Path, sid: str) -> dict[str, str] | None:
     got = termlib.tmux_read(data_root, "display-message", "-p", "-t", termlib.PREFIX + sid,
-                            "#{pane_current_command}\t#{pane_in_mode}\t#{pane_dead}")
+                            "#{pane_current_command}\t#{pane_in_mode}\t#{pane_dead}\t#{pane_pid}")
     if got.returncode != 0:
         return None
     parts = (got.stdout or "").rstrip("\n").split("\t")
-    if len(parts) < 3:
+    if len(parts) < 4:
         return None
-    return {"fg": parts[0], "in_mode": parts[1], "dead": parts[2]}
+    return {"fg": parts[0], "in_mode": parts[1], "dead": parts[2], "pid": parts[3]}
+
+
+#: A process that started more than this after the breadcrumb was written
+#: is not the one the breadcrumb names (process numbers come back).
+_SAME_PROCESS_S = 2.0
+
+
+def _crumbs(data_root: Path) -> list[dict[str, Any]]:
+    """Every chat's own breadcrumb (``.sessions/<folder>/<session>.json``,
+    written by the capture hook on each prompt): its agent, when, and the
+    processes above the hook then, nearest first."""
+    out: list[dict[str, Any]] = []
+    for p in (Path(data_root) / ".sessions").glob("*/*.json"):
+        try:
+            c = json.loads(p.read_text(encoding="utf-8"))
+            pids = [int(x) for x in c.get("pids") or []]
+            at = float(c.get("at") or 0)
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+        if isinstance(c, dict) and pids and at:
+            out.append({**c, "pids": pids, "at": at})
+    return out
+
+
+def occupant_why(data_root: Path, agent_id: str, pane_pid: int) -> str:
+    """'' when the chat is the one running in the pane whose shell is
+    ``pane_pid``; else why that cannot be said (nothing is typed then)."""
+    crumbs = _crumbs(data_root)
+    own = [c for c in crumbs if str(c.get("agent_id") or "") == agent_id]
+    if not own:
+        return "no breadcrumb says which processes the chat runs under"
+    mine = max(own, key=lambda c: c["at"])
+    pids, at = mine["pids"], mine["at"]
+    if pane_pid not in pids:
+        return "the chat does not run in this terminal (its hook's processes do not include the pane's shell)"
+    i = pids.index(pane_pid)
+    # The program under the pane's shell the chat ran in at its last prompt
+    # (claude, codex): still that process, or the chat has left the pane.
+    program = pids[i - 1] if i else pane_pid
+    for pid in {pane_pid, program}:
+        started = process_started(pid)
+        if started is None or started > at + _SAME_PROCESS_S:
+            return "the program the chat ran in has quit; the terminal may hold another chat now"
+    # One program, two chats: a /clear or a resume inside it. The newer one
+    # prompted from that same process, at the same depth (a helper the chat
+    # started sits deeper and is no rival).
+    depth = i - 1 if i else i
+    for c in crumbs:
+        if c is mine or str(c.get("agent_id") or "") == agent_id or c["at"] <= at:
+            continue
+        if len(c["pids"]) > depth and c["pids"][depth] == program:
+            return f"a newer chat ({c.get('agent_id') or '?'}) has prompted in that program since"
+    return ""
 
 
 def check(data_root: Path, agent_id: str) -> tuple[str, str]:
@@ -206,7 +268,12 @@ def check(data_root: Path, agent_id: str) -> tuple[str, str]:
     screen = termlib.tmux_read(data_root, "capture-pane", "-p", "-e", "-t", termlib.PREFIX + sid).stdout or ""
     if not input_empty(screen, tool):
         return sid, "the input line is not empty (or cannot be read)"
-    return sid, ""
+    try:
+        pane_pid = int(pane["pid"])
+    except ValueError:
+        return sid, "the pane's process cannot be read"
+    why = occupant_why(data_root, agent_id, pane_pid)
+    return sid, why
 
 
 def _type(data_root: Path, sid: str, text: str) -> bool:
@@ -229,6 +296,8 @@ def try_terminal(data_root: Path, msg_id: str) -> tuple[bool, str]:
         return False, "no such message"
     if row["delivered_via"]:
         return False, f"already delivered ({row['delivered_via']})"
+    if row["strayed"]:
+        return False, "typed once into a terminal another chat held: its own chat's next prompt or inbox takes it"
     try:
         sid, why = check(data_root, row["to_agent"])
     except termlib.TmuxError as exc:

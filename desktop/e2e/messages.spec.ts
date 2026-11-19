@@ -11,7 +11,8 @@ import { expect, expectLine, KEEP_PLAIN, lines, PROJECT, ready, ROOT, test, type
  * The agent is a stand-in that draws Claude Code's input box and logs every
  * line it reads (backend/tests/fixtures/fake_agent_prompt.py), run in the
  * sandbox shell the window shows. The chat is tied to that terminal the way
- * the capture hook ties one: its meta names the terminal.
+ * the capture hook ties one: its meta names the terminal, and its breadcrumb
+ * (written by the stand-in, as a hook under it would) holds the pane's shell.
  */
 
 const FAKE = path.resolve(__dirname, '..', '..', 'backend', 'tests', 'fixtures', 'fake_agent_prompt.py')
@@ -23,6 +24,12 @@ function tieChat(agent: string, terminal: string) {
     agent_id: agent, project: PROJECT, tool: 'claude-code', terminal,
     last_active: new Date().toISOString().slice(0, 19),
   }))
+}
+
+/** The command that starts the stand-in for `agent`, writing its breadcrumb. */
+function fake(agent: string, log: string, typed = '') {
+  const crumb = path.join(ROOT, 'data', '.sessions', 'e2e000000000', `${agent}.json`)
+  return `SP_FAKE_CRUMB='${crumb}' SP_FAKE_AGENT=${agent} python3 '${FAKE}' '${log}' claude-code${typed ? ` '${typed}'` : ''}`
 }
 
 const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '')
@@ -47,7 +54,7 @@ test.describe('messages between agents', () => {
     await ready(page)
     const agent = `cc-e2em${Date.now().toString(16).slice(-4)}`
     const log = path.join(server.dir, `${agent}.log`)
-    await typeLine(page, `python3 '${FAKE}' '${log}' claude-code`)
+    await typeLine(page, fake(agent, log))
     await expectLine(page, 'fake agent ready')
     tieChat(agent, shell.id)
 
@@ -68,7 +75,7 @@ test.describe('messages between agents', () => {
     await ready(page)
     const agent = `cc-e2eh${Date.now().toString(16).slice(-4)}`
     const log = path.join(server.dir, `${agent}.log`)
-    await typeLine(page, `python3 '${FAKE}' '${log}' claude-code 'half typed'`)
+    await typeLine(page, fake(agent, log, 'half typed'))
     await expectLine(page, 'fake agent ready')
     await expect.poll(async () => (await lines(page)).some((l) => l.includes('half typed'))).toBe(true)
     tieChat(agent, shell.id)

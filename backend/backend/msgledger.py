@@ -14,7 +14,14 @@ reached the chat — ``delivered_via``:
 - ``inbox``    — read by the agent itself (the MCP tool ``messages``).
 
 Each message is taken once, under the ledger's lock, by whichever of the
-three comes first (``claim_*``): one never reaches a chat twice.
+three comes first (``claim_*``): one never reaches a chat twice. A message
+typed into a terminal is the terminal's until its prompt lands: the inbox
+names it (``in_flight``) without handing its text over again.
+
+A marker that lands in another chat — the message was typed into a pane
+where that chat runs now — is no delivery: the ledger notes where it
+strayed (``strayed``), the message waits for its own chat's hook or inbox,
+and no terminal is tried for it again (``take_stray``).
 
 The capture hook loads this file by path (scripts/hooks/capture.py), the way
 it loads hookshared.py: standard library only, no relative import that is
@@ -46,6 +53,7 @@ LEDGER = "messages.csv"
 COLUMNS: tuple[str, ...] = (
     "id", "project", "from_agent", "to_agent", "text", "sent_at", "reply_to",
     "delivered_at", "delivered_via", "landed_at", "landed_turn", "read_at",
+    "strayed",
 )
 #: The sender of a message written on Slightly Parallel's own page.
 OPERATOR = "operator"
@@ -76,6 +84,14 @@ def marker(from_agent: str, msg_id: str) -> str:
 def terminal_text(row: dict[str, Any]) -> str:
     """What is typed into the chat's terminal: the marker, then the text."""
     return f"{marker(str(row['from_agent']), str(row['id']))} {row.get('text') or ''}"
+
+
+def wrap_stray(row: dict[str, Any], prompt: str) -> str:
+    """The prompt of a message for another chat that was typed into this
+    chat's terminal by mistake, as chat.md keeps it: no operator's text, so
+    no tag in it acts."""
+    return (f'{WRAP_OPEN} from="{row["from_agent"]}" id="{row["id"]}" for="{row["to_agent"]}" stray="1">\n'
+            f"{prompt.strip()}\n</sp-message>")
 
 
 def wrap(row: dict[str, Any], prompt: str) -> str:
@@ -242,12 +258,40 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
         return dict(row)
 
 
+def take_stray(data_root: Any, agent_id: str, prompt: str, turn: int | None = None) -> dict[str, str] | None:
+    """The message a prompt opens with when the server typed it into this
+    chat's terminal but it is for another chat: the id is in the ledger,
+    from the sender the marker names, addressed elsewhere, taken by the
+    terminal and not landed. Its terminal claim is undone and the stray
+    noted: it waits for its own chat's hook or inbox. None for anything
+    else — a forged marker, or one for a message the server never typed (a
+    paste of it), is ordinary text, as in take_marker."""
+    m = MARKER_RE.match(prompt or "")
+    if m is None or not ledger_path(data_root).exists():
+        return None
+    sender, msg_id = m.group(1), m.group(2)
+    with editing(data_root) as rows:
+        row = next((r for r in rows if r["id"] == msg_id), None)
+        if (row is None or row["to_agent"] == agent_id or row["from_agent"] != sender
+                or row["landed_at"] or row["delivered_via"] != "terminal"):
+            return None
+        _deliver(row, "", "")
+        note = f"{agent_id} {now_local()}" + (f" turn {turn}" if turn is not None else "")
+        row["strayed"] = f"{row['strayed']}; {note}" if row["strayed"] else note
+        return dict(row)
+
+
 def inbox(data_root: Any, agent_id: str, recent: int = 10) -> dict[str, list[dict[str, str]]]:
     """This chat's messages: the unread ones (marked read now, and taken by
-    the inbox when no other way had), then the newest ``recent`` read ones."""
+    the inbox when no other way had), then the newest ``recent`` read ones.
+    A message typed into the chat's terminal that has not landed yet is the
+    terminal's: named in ``in_flight`` (no text, not marked read), so it
+    never reaches the chat twice — or, typed into a pane another chat holds,
+    reaches this one only once that chat's hook gives it back."""
     if not ledger_path(data_root).exists():
-        return {"unread": [], "recent": []}
+        return {"unread": [], "recent": [], "in_flight": []}
     unread: list[dict[str, str]] = []
+    flying: list[dict[str, str]] = []
     with editing(data_root) as rows:
         at = now_local()
         mine = [r for r in rows if r["to_agent"] == agent_id]
@@ -255,20 +299,24 @@ def inbox(data_root: Any, agent_id: str, recent: int = 10) -> dict[str, list[dic
         for row in mine:
             if row["read_at"]:
                 continue
+            if row["delivered_via"] == "terminal" and not row["landed_at"]:
+                flying.append({k: row[k] for k in ("id", "from_agent", "sent_at", "delivered_at")})
+                continue
             if not row["delivered_via"]:
                 _deliver(row, "inbox", at)
             row["read_at"] = at
             unread.append(dict(row))
     seen.sort(key=lambda r: r["sent_at"], reverse=True)
-    return {"unread": unread, "recent": seen[:max(0, recent)]}
+    return {"unread": unread, "recent": seen[:max(0, recent)], "in_flight": flying}
 
 
 def waiting(data_root: Any, now: datetime | None = None) -> list[dict[str, str]]:
-    """Messages no way has taken that the terminal may still try."""
+    """Messages no way has taken that the terminal may still try: not one
+    that strayed into another chat's terminal once."""
     now = now or _shared.now_dt()
     out = []
     for r in read_rows(data_root):
-        if r["delivered_via"]:
+        if r["delivered_via"] or r["strayed"]:
             continue
         try:
             age = (now - datetime.fromisoformat(r["sent_at"])).total_seconds()

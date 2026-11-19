@@ -183,6 +183,8 @@ export async function openShell(api: APIRequestContext, label: string): Promise<
 }
 
 export type Row = { id: string; label: string; state: string; asleep?: boolean; backend?: string }
+export const sessionTab = (scope: Page | Locator, id: string) => scope.locator(`[data-tab="${id}"]`).getByRole('tab')
+
 export async function sessions(api: APIRequestContext): Promise<Row[]> {
   const r = await api.get('/api/terminal/sessions')
   expect(r.ok(), await r.text()).toBeTruthy()

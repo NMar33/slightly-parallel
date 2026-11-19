@@ -80,7 +80,7 @@ def test_a_message_is_kept_and_the_inbox_marks_it_read(root: Path) -> None:
     rows = msgledger.read_rows(root)
     assert all(r["delivered_via"] == "inbox" and r["read_at"] for r in rows)
     # Another chat's inbox holds none of them.
-    assert msgledger.inbox(root, COORD) == {"unread": [], "recent": []}
+    assert msgledger.inbox(root, COORD) == {"unread": [], "recent": [], "in_flight": []}
 
 
 def test_text_with_commas_quotes_and_lines_survives_the_ledger(root: Path) -> None:
@@ -245,20 +245,36 @@ def term(tmp_path: Path, monkeypatch):
     termlib.tmux(root, "kill-server")
 
 
-def _fake_agent(c: TestClient, root: Path, work: Path, agent: str, typed: str = "") -> tuple[str, Path]:
+def _crumb(root: Path, agent: str) -> Path:
+    return root / ".sessions" / "f0f0f0f0f0f0" / f"{agent}.json"
+
+
+def _fake_cmd(root: Path, work: Path, agent: str, typed: str = "") -> tuple[str, Path]:
+    """The command that starts the fake agent for ``agent``, writing the
+    breadcrumb its capture hook would (the processes above it)."""
     log = work / f"{agent}.log"
-    cmd = " ".join(shlex.quote(x) for x in (sys.executable, str(FAKE), str(log), "claude-code", typed))
+    env = f"SP_FAKE_CRUMB={shlex.quote(str(_crumb(root, agent)))} SP_FAKE_AGENT={agent} "
+    return env + " ".join(shlex.quote(x) for x in (sys.executable, str(FAKE), str(log), "claude-code", typed)), log
+
+
+def _ready(root: Path, sid: str, agent: str = "") -> None:
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if "fake agent ready" in termlib.capture(root, sid)["text"] and (not agent or _crumb(root, agent).exists()):
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"the fake agent did not start: {termlib.capture(root, sid)['text']!r}")
+
+
+def _fake_agent(c: TestClient, root: Path, work: Path, agent: str, typed: str = "") -> tuple[str, Path]:
+    cmd, log = _fake_cmd(root, work, agent, typed)
     got = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "command": cmd, "label": agent})
     assert got.status_code == 201, got.text
     sid = got.json()["session"]["id"]
     _chat(root, agent, terminal=sid)
     termlib._link_cache = (None, 0.0, {})  # the hook just wrote the link
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if "fake agent ready" in termlib.capture(root, sid)["text"]:
-            return sid, log
-        time.sleep(0.1)
-    raise AssertionError(f"the fake agent did not start: {termlib.capture(root, sid)['text']!r}")
+    _ready(root, sid)
+    return sid, log
 
 
 def _logged(log: Path, want: int, wait: float = 5.0) -> list[str]:
@@ -318,3 +334,91 @@ def test_a_shell_in_front_gets_nothing(term) -> None:
     time.sleep(0.5)
     r = _send(c, COORD, WORKER, "echo pwned")
     assert not r.json()["typed"] and "shell" in r.json()["waiting"]
+
+
+OLD = "cc-01d0c4a1"
+
+
+@needs_tmux
+def test_a_chat_whose_hook_runs_elsewhere_gets_nothing_typed_in_the_terminal_its_meta_names(term) -> None:
+    """19 Nov: Codex's shared app-server daemon, started in one terminal, ran
+    the hooks of every Codex chat, so each chat's meta named that terminal.
+    A message for the chat seen last was typed into the pane where another
+    chat ran. The chat's breadcrumb (its hook's processes) does not hold the
+    pane's shell: nothing is typed, and the hook hands the message over."""
+    c, root, work = term
+    sid, log = _fake_agent(c, root, work, WORKER)
+    # The other chat: its hook ran under a process outside the pane (this
+    # test's own chain stands for the daemon), its meta names the same
+    # terminal and was active last, as codex-ca00f219's was.
+    import os
+    from backend.hookshared import ancestors
+    _crumb(root, OLD).write_text(json.dumps({"agent_id": OLD, "session_id": OLD, "at": time.time(),
+                                             "pids": [os.getpid(), *ancestors()]}), encoding="utf-8")
+    _chat(root, OLD, terminal=sid, last_active="2099-01-01T00:00:00")
+    termlib._link_cache = (None, 0.0, {})
+    r = _send(c, COORD, OLD, "for the old chat")
+    assert r.status_code == 201 and not r.json()["typed"] and r.json()["delivered_via"] == "", r.text
+    assert "does not run in this terminal" in r.json()["waiting"]
+    assert msgdeliver.retry_waiting(root) == 0
+    time.sleep(0.5)
+    assert not log.exists()
+    got = msgledger.claim_for_hook(root, OLD)
+    assert [m["text"] for m in got] == ["for the old chat"] and got[0]["delivered_via"] == "hook"
+    # The chat that does run there still gets its own.
+    r = _send(c, COORD, WORKER, "for the one in the pane")
+    assert r.json()["typed"], r.text
+    assert _logged(log, 1)[0].endswith("for the one in the pane")
+
+
+@needs_tmux
+def test_a_terminal_reused_by_a_newer_chat_gets_nothing_for_the_old_one(term) -> None:
+    c, root, work = term
+    got = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "label": "reused"})
+    sid = got.json()["session"]["id"]
+    target = termlib.PREFIX + sid
+    termlib.wait_for_prompt(root, sid)
+    old_cmd, old_log = _fake_cmd(root, work, OLD)
+    termlib.tmux(root, "send-keys", "-t", target, "-l", old_cmd)
+    termlib.tmux(root, "send-keys", "-t", target, "Enter")
+    _ready(root, sid)
+    # The old chat quits (end of input) and a new one starts in the same shell.
+    termlib.tmux(root, "send-keys", "-t", target, "C-d")
+    new_cmd, new_log = _fake_cmd(root, work, WORKER)
+    deadline = time.time() + 5
+    while time.time() < deadline and msgdeliver._pane(root, sid)["fg"] not in termlib.SHELLS:  # type: ignore[index]
+        time.sleep(0.1)
+    termlib.tmux(root, "send-keys", "-t", target, "-l", new_cmd)
+    termlib.tmux(root, "send-keys", "-t", target, "Enter")
+    _ready(root, sid, WORKER)
+    # Both metas name the terminal; the old one even looks the newest.
+    _chat(root, WORKER, terminal=sid)
+    _chat(root, OLD, terminal=sid, last_active="2099-01-01T00:00:00")
+    termlib._link_cache = (None, 0.0, {})
+    r = _send(c, COORD, OLD, "for the old chat")
+    assert not r.json()["typed"] and r.json()["delivered_via"] == "", r.text
+    assert "has quit" in r.json()["waiting"]
+    assert msgdeliver.retry_waiting(root) == 0
+    time.sleep(0.5)
+    assert not new_log.exists() and not old_log.exists()
+    r = _send(c, COORD, WORKER, "for the new chat")
+    assert r.json()["typed"], r.text
+    assert _logged(new_log, 1) == [f"[SP · from {COORD} · {r.json()['message']['id']}] for the new chat"]
+    assert [m["text"] for m in msgledger.claim_for_hook(root, OLD)] == ["for the old chat"]
+
+
+def test_two_chats_in_one_program_the_newer_one_holds_the_pane(root: Path) -> None:
+    """A /clear or a resume inside one running program: the chat that
+    prompted from it last is the one there."""
+    import os
+    from backend.hookshared import ancestors
+    chain = ancestors()
+    pane = chain[0]  # this test's parent stands for the pane's shell
+    me = os.getpid()
+    for agent, at in ((OLD, time.time() - 5), (WORKER, time.time())):
+        _crumb(root, agent).parent.mkdir(parents=True, exist_ok=True)
+        _crumb(root, agent).write_text(json.dumps({"agent_id": agent, "at": at, "pids": [99999999, me, *chain]}),
+                                       encoding="utf-8")
+    assert msgdeliver.occupant_why(root, WORKER, pane) == ""
+    assert "newer chat" in msgdeliver.occupant_why(root, OLD, pane)
+    assert "no breadcrumb" in msgdeliver.occupant_why(root, COORD, pane)

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { test, expect, HEADLESS, HIDDEN, ELECTRON, echoCalc, launchArgs, launchEnv, linksOut, ready, typeLine, expectLine, TERMINAL } from './fixtures'
+import { test, expect, HEADLESS, HIDDEN, ELECTRON, echoCalc, launchArgs, launchEnv, linksOut, ready, sessionTab, typeLine, expectLine, TERMINAL } from './fixtures'
 
 /**
  * The window itself: what it opens, what the page may ask of it, where it
@@ -50,7 +50,13 @@ test.describe('window', () => {
     await typeLine(page, 'echo sp-e2e-ok')
     await expectLine(page, 'sp-e2e-ok')
     // The page names the window after the terminal in front (op: title).
-    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())).toContain(shell.label)
+    const title = sessionTab(page, shell.id).locator('[data-tab-title]')
+    await expect(title).not.toBeEmpty()
+    await expect.poll(async () => {
+      const visibleTitle = await title.innerText()
+      const windowTitle = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle())
+      return windowTitle.startsWith(visibleTitle)
+    }).toBe(true)
   })
 
   test('a link to another site does not navigate the window; it goes to the browser', async ({ bare }) => {
@@ -88,7 +94,7 @@ test.describe('window', () => {
   test('detach: a chat detached into its own window opens a second window on the same server', async ({ win, shell }) => {
     const { app, page } = win
     await ready(page)
-    const tab = page.getByRole('tab', { name: new RegExp(`^${shell.label}`) })
+    const tab = sessionTab(page, shell.id)
     await tab.click({ button: 'right' })
     const opened = app.waitForEvent('window')
     await page.getByRole('menuitem', { name: 'Detach into its own window' }).click()

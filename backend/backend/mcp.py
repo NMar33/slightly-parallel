@@ -1074,8 +1074,9 @@ class Translator:
              "description": (
                  "This chat's messages from other agents (and the operator's page): `unread` first — reading "
                  "marks them read — then `recent`, the newest read ones. Each has id, from_agent, text, sent_at, "
-                 "reply_to, delivered_via (terminal, hook, inbox). Answer one with message {to: from_agent, "
-                 "text, reply_to: id}."),
+                 "reply_to, delivered_via (terminal, hook, inbox). `in_flight`: messages typed into your terminal "
+                 "that have not come in as a prompt yet — named only; they arrive there. Answer one with "
+                 "message {to: from_agent, text, reply_to: id}."),
              "inputSchema": {"type": "object", "properties": {
                  "recent": {"type": "integer", "description": "how many read messages to show after the unread (default 10)"}}}},
         ]

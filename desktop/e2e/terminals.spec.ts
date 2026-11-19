@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { tmuxSockets } from './sockets'
-import { test, expect, ROOT, PROJECT, echoCalc, expectLine, lines, printFile, ready, sessions, typeLine } from './fixtures'
+import { test, expect, ROOT, PROJECT, echoCalc, expectLine, lines, printFile, ready, sessionTab, sessions, typeLine, WINDOWS } from './fixtures'
 
 /**
  * The terminals in the window: tabs, sleep and wake, restore after the
@@ -25,11 +25,20 @@ test.describe('tabs', () => {
     const strip = page.getByRole('tablist', { name: 'Chats' })
     await expect(strip.getByRole('tab')).toHaveCount(1)
 
+    // Programs and shells can replace the visible title while the session stays the same.
+    await typeLine(page, WINDOWS
+      ? "$Host.UI.RawUI.WindowTitle = 'source-shell-title'"
+      : "printf '\\033]2;source-shell-title\\007'")
+    await expect(strip.getByRole('tab').locator('[data-tab-title]')).toHaveText('source-shell-title', { timeout: 15_000 })
+
     // a plain click on "+": the shell, no list (tk_e7649e7c)
     await page.getByRole('button', { name: 'New terminal', exact: true }).click()
     await expect(strip.getByRole('tab')).toHaveCount(2)
-    const first = strip.getByRole('tab', { name: new RegExp(`^${shell.label} `) })
-    const second = strip.getByRole('tab', { name: new RegExp(`^${PROJECT} `) })
+    const secondId = async () => (await sessions(server.api)).filter((row) => row.id !== shell.id).map((row) => row.id)
+    await expect.poll(secondId).toHaveLength(1)
+    const [newId] = await secondId()
+    const first = sessionTab(strip, shell.id)
+    const second = sessionTab(strip, newId)
     await expect(second).toHaveAttribute('aria-selected', 'true')
     await expect(first).toHaveAttribute('aria-selected', 'false')
     await ready(page)
@@ -63,7 +72,7 @@ test.describe('sleep and restore', () => {
   test('sleep from the tab menu stops the terminal and keeps its tab; Wake brings a live shell back', async ({ win, shell, server }) => {
     const { page } = win
     await ready(page)
-    const tab = page.getByRole('tab', { name: new RegExp(`^${shell.label} `) })
+    const tab = sessionTab(page, shell.id)
     await tab.click({ button: 'right' })
     await page.getByRole('menuitem', { name: /^Sleep/ }).click()
     await expect(page.getByText(`${shell.label} is asleep: the agent is stopped, the chat is kept.`)).toBeVisible()

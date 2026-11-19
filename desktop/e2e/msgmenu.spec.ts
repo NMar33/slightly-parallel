@@ -97,6 +97,18 @@ test.describe('message menu', () => {
     record(shell.id, 'open', 'Check the inspector readability')
     record(shell.id, 'complete', reply)
     await expect.poll(async () => (await sessions(server.api)).find((s) => s.id === shell.id && (s as { agent_id?: string }).agent_id === AGENT)).toBeTruthy()
+    // The terminal binding can be visible before the chat index serves the reply.
+    await expect.poll(async () => {
+      const listed = await server.api.get(`/api/sessions?agent_id=${AGENT}`)
+      expect(listed.ok()).toBe(true)
+      const { sessions: chats } = await listed.json() as { sessions: { id: string }[] }
+      if (!chats.length) return false
+      const ids = chats.map((chat) => chat.id).join(',')
+      const response = await server.api.get(`/api/sessions/turns?ids=${encodeURIComponent(ids)}`)
+      expect(response.ok()).toBe(true)
+      const { turns } = await response.json() as { turns: Record<string, { agent: string }[]> }
+      return Object.values(turns).flat().some((turn) => turn.agent.endsWith(ending))
+    }, { timeout: 15_000, message: 'the complete reply is available in the chat index' }).toBe(true)
     await page.reload()
     await fullSize(app, page)
     await ready(page)
