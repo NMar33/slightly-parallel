@@ -177,6 +177,18 @@ test.describe('drag', () => {
       screen.getCursorScreenPoint = () => ({ ...g.__cursor })
     })
     const pos = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getPosition())
+    if (process.platform === 'darwin') {
+      // Start below the menu bar, where both endpoints are legal for AppKit.
+      const start = await app.evaluate(({ BrowserWindow, screen }) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        const { workArea } = screen.getDisplayMatching(window.getBounds())
+        const x = workArea.x + 24
+        const y = workArea.y + 24
+        window.setPosition(x, y)
+        return [x, y]
+      })
+      await expect.poll(pos).toEqual(start)
+    }
     const [x0, y0] = await pos()
     await page.evaluate(() => (window as unknown as { spWindow: { postMessage: (m: unknown) => void } }).spWindow.postMessage({ op: 'drag' }))
     await app.evaluate(() => { (globalThis as unknown as { __cursor: { x: number; y: number } }).__cursor = { x: 340, y: 325 } })

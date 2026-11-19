@@ -932,7 +932,7 @@ function AquaWindow({ status }: { status: Status }) {
       style={native ? { left: 0, top: 0, width: lw + termW + rw, height: frameH } : { left: termX - lw, top: MARGIN, height: frameH }}>
       {/* A fixed border inside the title row would inherit its native drag region. */}
       {health && native && healthEdge && <span aria-hidden data-health-edge className="fixed inset-0 pointer-events-none z-[1]" style={{ boxShadow: `inset 0 0 0 1px ${healthEdge}` }} />}
-      <div className={`flex flex-col overflow-hidden ${native ? 'h-full' : 'rounded-[8px] h-full'}`} style={native ? undefined : {
+      <div className={`flex flex-col h-full ${native ? 'overflow-clip' : 'overflow-hidden rounded-[8px]'}`} style={native ? undefined : {
         boxShadow: 'var(--shadow-lg)', border: `1px solid ${health && healthEdge ? healthEdge : 'var(--border-strong)'}`, borderTop: kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined,
       }}>
         {/* the title row: folds to a 12px strip */}

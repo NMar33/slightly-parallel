@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { APIRequestContext, Page } from '@playwright/test'
-import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectLine, ready, sessions, typeLine } from './fixtures'
+import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectLine, fullSize, ready, sessions, typeLine } from './fixtures'
 
 /**
  * Records named in the terminal open their card in place (tk_b3edbd84).
@@ -192,6 +192,10 @@ test.describe('record cards', () => {
     test.skip(WINDOWS, 'the printed lines are written for a Unix shell')
     const { app, page } = win
     await ready(page)
+    await fullSize(app, page)
+    // A CI hostname can be long enough to wrap the prompt before the command.
+    await typeLine(page, "PS1='$ '")
+    await expectLine(page, '$')
     const url = 'https://example.com/docs/a?b=1'
     await typeLine(page, `printf '%s\\n' 'open ${url}. now' 'task tk_b3edbd84 here' 'links printed'`)
     await expectLine(page, 'links printed')

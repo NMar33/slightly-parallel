@@ -116,3 +116,20 @@ test('inward sidebar controls can be clicked again at the same points in wide, n
   }
   await chooseMode(page, 'outward')
 })
+
+test('focusing an overflowing control does not scroll the window header sideways', async ({ win }) => {
+  const { app, page } = win
+  await ready(page)
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(420, 400) })
+  await expect.poll(() => page.evaluate(() => innerWidth)).toBe(420)
+  await chooseMode(page, 'inward')
+  const [left, right] = sidebarControls(page)
+  await left!.click()
+  await expect(left!).toHaveAttribute('aria-pressed', 'true')
+  const initial = await center(right!)
+  // Force the overflow that a narrow native window can encounter during layout.
+  await left!.evaluate((element) => { element.style.left = 'calc(100% + 24px)' })
+  await left!.focus()
+  await expect(left!).toBeFocused()
+  expect(await center(right!)).toEqual(initial)
+})
