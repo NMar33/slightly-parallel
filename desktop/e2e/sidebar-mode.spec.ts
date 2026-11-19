@@ -104,7 +104,12 @@ test('inward sidebar controls can be clicked again at the same points in wide, n
         await expectClickTarget(buttons[index]!, initial[index]!)
         await page.mouse.click(initial[index]!.x, initial[index]!.y)
         await expect(buttons[index]!).toHaveAttribute('aria-pressed', String(on))
-        expect(await centers()).toEqual(initial)
+        const after = await centers()
+        for (const [control, point] of initial.entries()) {
+          // macOS and Windows Chromium can round off fractions of a CSS pixel.
+          expect(Math.abs(after[control]!.x - point.x)).toBeLessThanOrEqual(0.125)
+          expect(Math.abs(after[control]!.y - point.y)).toBeLessThanOrEqual(0.125)
+        }
         const frame = await mainBounds(app)
         expect({ x: frame.x, y: frame.y, width: frame.width }).toEqual({ x: bounds.x, y: bounds.y, width: bounds.width })
         // Mutter can round the requested height by one DIP after setSize.

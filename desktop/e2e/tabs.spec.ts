@@ -102,17 +102,24 @@ test.describe('tab strip', () => {
     const hidden = await openShell(server.api, 'e2e-hidden')
     const middle = await openShell(server.api, 'e2e-middle')
     const last = await openShell(server.api, 'e2e-last')
+    const hiddenName = `Hidden ${shell.id}`
+    const rangeName = `Visible range ${shell.id}`
     const makeHidden = await server.api.post('/api/terminal/groups', { data: {
-      name: 'Hidden', project: PROJECT, tabs: [hidden.id],
+      name: hiddenName, project: PROJECT, tabs: [hidden.id],
     } })
     expect(makeHidden.ok(), await makeHidden.text()).toBeTruthy()
     await page.reload()
     const tabs = strip(page)
     const byId = (id: string) => tabs.locator(`[data-tab="${id}"] [role="tab"]`)
-    await tabs.getByRole('button', { name: 'Hidden', exact: true }).click()
+    const hiddenGroup = tabs.getByRole('group', { name: hiddenName, exact: true })
+    const foldHidden = hiddenGroup.getByRole('button', { name: hiddenName, exact: true })
+    await foldHidden.click()
     await byId(shell.id).click()
     await byId(last.id).click({ modifiers: ['Shift'] })
     await expect(tabs.locator('[data-group-selected="true"]')).toHaveCount(3)
+    for (const id of [shell.id, middle.id, last.id]) {
+      await expect(byId(id)).toHaveAttribute('data-group-selected', 'true')
+    }
     await expect(byId(shell.id)).toHaveAttribute('aria-selected', 'true')
     await expect(byId(last.id)).toHaveAttribute('aria-selected', 'false')
     await expect(byId(hidden.id)).toHaveCount(0)
@@ -121,16 +128,17 @@ test.describe('tab strip', () => {
     const menu = page.getByRole('menu', { name: 'Selected tabs' })
     await expect(menu.getByText('Selected tabs: 3', { exact: true })).toBeVisible()
     await menu.getByRole('menuitem', { name: /Group selected tabs/ }).click()
-    await menu.getByRole('textbox', { name: 'Group name' }).fill('Visible range')
+    await menu.getByRole('textbox', { name: 'Group name' }).fill(rangeName)
     await menu.getByRole('button', { name: 'Make the group' }).click()
-    const grouped = tabs.getByRole('group', { name: 'Visible range' })
+    const grouped = tabs.getByRole('group', { name: rangeName, exact: true })
     await expect(grouped.getByRole('tab')).toHaveCount(3)
-    await expect(grouped.getByRole('tab', { name: /^e2e-middle / })).toBeVisible()
+    for (const id of [shell.id, middle.id, last.id]) {
+      await expect(grouped.locator(`[data-tab="${id}"] [role="tab"]`)).toBeVisible()
+    }
     await expect(byId(shell.id)).toHaveAttribute('aria-selected', 'true')
     await expect(tabs.locator('[data-group-selected]')).toHaveCount(0)
-    await tabs.getByRole('button', { name: 'Hidden', exact: true }).click()
-    await expect(tabs.getByRole('group', { name: 'Hidden' }).locator(`[data-tab="${hidden.id}"]`)).toHaveCount(1)
-    await expect(byId(middle.id)).toBeVisible()
+    await foldHidden.click()
+    await expect(hiddenGroup.locator(`[data-tab="${hidden.id}"] [role="tab"]`)).toBeVisible()
   })
 
   test('Ctrl+click on "+" opens the list; a key picks; Esc closes; the strip draws dots', async ({ win, shell, server }) => {

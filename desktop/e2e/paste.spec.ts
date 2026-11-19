@@ -264,9 +264,33 @@ test('typing after a mouse drag reaches the shell without copying', async ({ win
   await expect(page.getByText('Copied', { exact: true })).toHaveCount(0)
 })
 
-test('Shift-click extends a selection across scrollback without an automatic copy', async ({ win, server }) => {
+test('Shift-click extends a selection across scrollback without an automatic copy', async ({ win, server }, info) => {
   const { app, page } = win
   await ready(page)
+  await page.evaluate(() => {
+    document.addEventListener('mousedown', (mouse) => {
+      if (mouse.button !== 0 || !mouse.shiftKey) return
+      const target = mouse.target instanceof Element ? mouse.target : null
+      document.body.dataset.shiftClickTarget = JSON.stringify({
+        x: mouse.clientX, y: mouse.clientY,
+        terminal: !!target?.closest('.xterm'),
+        reader: !!target?.closest('.sp-reader'),
+      })
+    }, { capture: true })
+    document.addEventListener('keydown', (key) => {
+      if (key.code !== 'KeyC' || (!key.metaKey && !(key.ctrlKey && key.shiftKey))) return
+      const active = document.activeElement
+      document.body.dataset.copyKeyTarget = JSON.stringify({
+        windowFocused: document.hasFocus(),
+        active: active?.getAttribute('aria-label') ?? active?.tagName,
+        activeInReader: !!active?.closest('.sp-reader'),
+        surfaces: Array.from(document.querySelectorAll('.aqua-screen .xterm'), (terminal) => ({
+          reader: !!terminal.closest('.sp-reader'),
+          selectionRects: terminal.querySelectorAll('.xterm-selection > div').length,
+        })),
+      })
+    }, { capture: true })
+  })
   const label = (n: number) => `Select row ${String(n).padStart(3, '0')}`
   const file = path.join(server.dir, 'shift-selection.txt')
   fs.writeFileSync(file, Array.from({ length: 170 }, (_, i) => label(i + 1)).join('\n') + '\n')
@@ -319,7 +343,19 @@ test('Shift-click extends a selection across scrollback without an automatic cop
 
   await page.keyboard.press(MAC ? 'Meta+KeyC' : 'Control+Shift+KeyC')
   const selected = Array.from({ length: 164 - last.n }, (_, i) => label(last.n + i)).join('\n')
-  await expect.poll(async () => (await clipboard()).replace(/\r\n/g, '\n')).toBe(selected + '\n')
+  try {
+    await expect.poll(async () => (await clipboard()).replace(/\r\n/g, '\n')).toBe(selected + '\n')
+  } catch (error) {
+    const targets = await page.evaluate(() => ({
+      shiftClick: JSON.parse(document.body.dataset.shiftClickTarget ?? 'null'),
+      copyKey: JSON.parse(document.body.dataset.copyKeyTarget ?? 'null'),
+    }))
+    await info.attach('copy key target and selection', {
+      body: JSON.stringify({ first, last, ...targets }, null, 2),
+      contentType: 'application/json',
+    })
+    throw error
+  }
   if (x11) expect(primaryOwner(x11)).toBe(primary)
 })
 

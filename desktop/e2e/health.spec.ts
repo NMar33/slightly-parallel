@@ -45,6 +45,23 @@ test.describe('health and time', () => {
     for (const e of open) if (e.project === PROJECT && e.source !== 'auto') await server.api.post(`/api/time/${e.id}/stop`)
   })
 
+  test('a pointer can reach the timer actions from the compact title row', async ({ win }) => {
+    const { app, page } = win
+    await page.evaluate(() => localStorage.setItem('sp-aqua-window-layout', JSON.stringify({ titleScale: 2 })))
+    await seedYellow(page)
+    await fullSize(app, page)
+    const label = page.locator('[data-health-label="yellow"]')
+    await label.hover()
+    const hover = page.locator('[data-health-hover]')
+    await expect(hover.getByRole('button', { name: 'Later' })).toBeVisible()
+    const from = (await label.boundingBox())!
+    const card = (await hover.boundingBox())!
+    await page.mouse.move(from.x + from.width / 2, card.y + 4, { steps: 16 })
+    await expect(hover.getByRole('button', { name: 'Later' })).toBeVisible()
+    await hover.getByRole('button', { name: 'Later' }).click()
+    await expect(hover.getByRole('button', { name: 'Later' })).toHaveCount(0)
+  })
+
   for (const { zone, minutes } of [{ zone: 'yellow', minutes: 95 }, { zone: 'red', minutes: 185 }]) {
     test(`the ${zone} window border does not turn the content into a drag region`, async ({ win }) => {
       const { app, page } = win

@@ -154,7 +154,7 @@ export function HealthTitle({ folded }: { folded: boolean }) {
             setHover(null)
             terminal.dispatchEvent(new WheelEvent('wheel', e.nativeEvent))
           }}
-          style={{ top: folded ? 12 : 22, right: -hover, width: HOVER_W, background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)', color: 'var(--aq-ink)' }}>
+          style={{ top: '100%', right: -hover, width: HOVER_W, background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)', color: 'var(--aq-ink)' }}>
           <span className="flex items-center gap-6">
             <span className="w-[8px] h-[8px] rounded-full shrink-0" style={{ background: away !== null ? 'var(--brand)' : ZONE_INK[zone] }} />
             <span className="font-semibold">{away !== null ? `${t('On a break')}: ${durOf(breakMin)}` : `${zoneWord(zone)} · ${t('{t} without a break', { t: durOf(h.d.run) })}`}</span>
