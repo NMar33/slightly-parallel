@@ -293,7 +293,9 @@ test('Shift-click extends a selection across scrollback without an automatic cop
   })
   const label = (n: number) => `Select row ${String(n).padStart(3, '0')}`
   const file = path.join(server.dir, 'shift-selection.txt')
-  fs.writeFileSync(file, Array.from({ length: 170 }, (_, i) => label(i + 1)).join('\n') + '\n')
+  // Start in the blank gutter of row 164. Native tmux can include the
+  // last cell of a backwards selection, while xterm stops at its boundary.
+  fs.writeFileSync(file, Array.from({ length: 170 }, (_, i) => (i === 163 ? '        ' : '') + label(i + 1)).join('\n') + '\n')
   await typeLine(page, printFile(file))
   await expectLine(page, label(170))
 
@@ -344,7 +346,7 @@ test('Shift-click extends a selection across scrollback without an automatic cop
   await page.keyboard.press(MAC ? 'Meta+KeyC' : 'Control+Shift+KeyC')
   const selected = Array.from({ length: 164 - last.n }, (_, i) => label(last.n + i)).join('\n')
   try {
-    await expect.poll(async () => (await clipboard()).replace(/\r\n/g, '\n')).toBe(selected + '\n')
+    await expect.poll(async () => (await clipboard()).replace(/\r\n/g, '\n').replace(/ +$/, '')).toBe(selected + '\n')
   } catch (error) {
     const targets = await page.evaluate(() => ({
       shiftClick: JSON.parse(document.body.dataset.shiftClickTarget ?? 'null'),

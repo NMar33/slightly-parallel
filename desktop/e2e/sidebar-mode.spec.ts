@@ -144,7 +144,7 @@ test('focusing an overflowing control does not scroll the window header sideways
   expect(await center(right!)).toEqual(initial)
 })
 
-test('window settings replace the left sidebar and resize the two rows independently', async ({ win }) => {
+test('window settings replace the left sidebar and resize the two rows independently', async ({ win, server }) => {
   const { app, page } = win
   await ready(page)
   await fullSize(app, page)
@@ -167,6 +167,10 @@ test('window settings replace the left sidebar and resize the two rows independe
   await expect(left).toBeVisible()
   await expect.poll(() => mainBounds(app)).toEqual(bounds)
 
+  const stale = await server.api.post('/api/prefs', { data: {
+    values: { 'sp-aqua-window-layout': JSON.stringify({ titleScale: 1, tabsScale: 1 }) },
+  } })
+  expect(stale.ok(), await stale.text()).toBe(true)
   await page.reload()
   await ready(page)
   await expect(page.locator('[data-window-title]')).toHaveCSS('height', '17px')

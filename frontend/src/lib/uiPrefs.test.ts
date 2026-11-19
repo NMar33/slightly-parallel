@@ -61,6 +61,22 @@ describe('hydratePrefs — live terminal state stays in the browser', () => {
     expect(localStorage.getItem('sp-aqua-tab-order')).toBe(order)
     expect(posts).toEqual([{ values: { 'sp-aqua-active': null, 'sp-aqua-ws-tabs': null, 'sp-aqua-tab-order': null } }])
   })
+
+  it('keeps the terminal window layout local when a different profile shared its own', async () => {
+    const key = 'sp-aqua-window-layout'
+    const local = JSON.stringify({ titleScale: 2, tabsScale: 1.5 })
+    const server = JSON.stringify({ titleScale: 1.5, tabsScale: 1 })
+    localStorage.setItem(key, local)
+    const posts: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response('{}') }
+      return new Response(JSON.stringify({ prefs: { [key]: server } }), { headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await hydratePrefs()
+    expect(localStorage.getItem(key)).toBe(local)
+    expect(posts).toEqual([{ values: { [key]: null } }])
+  })
 })
 
 describe('useKeyedPref', () => {
