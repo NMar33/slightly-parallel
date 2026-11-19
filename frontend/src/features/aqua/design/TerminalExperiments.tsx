@@ -1,9 +1,8 @@
-import { ArrowLeft, AudioLines, Gauge, LayoutGrid, Minus, PanelLeft, Settings, Square, X } from 'lucide-react'
+import { ArrowLeft, AudioLines, Cpu, Gauge, LayoutGrid, MemoryStick, Minus, PanelLeft, Settings, Square, Thermometer, Wifi, X } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import { t } from '../../../i18n/scope/aqua'
-import { ResourceBars } from '../app/ResourceMeter'
 import './terminalExperiments.css'
 
 const studies = ['load', 'copy', 'task'] as const
@@ -31,6 +30,23 @@ function Pick({ selected, onClick, children }: { selected: boolean; onClick: () 
 
 function Sample({ title, children }: { title: string; children: ReactNode }) {
   return <article className="te-sample"><h2>{title}</h2>{children}</article>
+}
+
+function ResourceBars({ levels }: { levels: readonly (number | null)[] }) {
+  return (
+    <span aria-hidden="true" className="inline-grid grid-flow-col grid-rows-2 gap-x-[4px] gap-y-[2px]">
+      {[Thermometer, Cpu, MemoryStick, Wifi].map((Icon, i) => {
+        const level = levels[i]
+        const fill = level == null ? 'var(--text-secondary)' : level >= 90 ? 'var(--status-red)' : level >= 75 ? 'var(--status-amber)' : 'var(--status-green)'
+        return <span key={i} className={`flex items-center gap-[2px] ${level == null ? 'opacity-40' : ''}`}>
+          <Icon size={9} strokeWidth={2} />
+          <span className="flex h-[8px] w-[2px] items-end overflow-hidden rounded-sm bg-border-strong">
+            <span className="w-full" style={{ backgroundColor: fill, height: `${level ?? 0}%` }} />
+          </span>
+        </span>
+      })}
+    </span>
+  )
 }
 
 function LoadIndicator({ variant, state }: { variant: Variant; state: Load }) {

@@ -5,8 +5,8 @@
  *   window) — a ResizeObserver, not the window's resize;
  * - comes back on its own: a dropped socket reconnects (the terminal lives
  *   on in tmux), and says so in one grey line;
- * - the mouse selects, Ctrl+Shift+C or the menu copies. tmux announces
- *   an explicit copy via OSC 52. Shift+drag makes a native selection,
+ * - the mouse selects, Ctrl+Shift+C or the menu copies. Program clipboard
+ *   requests follow the operator's OSC 52 setting. Shift+drag selects locally,
  *   Ctrl+C with native text selected copies, Ctrl+Shift+C/V
  *   are the classic pair, and the right-click menu needs no keys at all;
  * - a lot of text: "Select lines" opens a slim gutter — click a line, click
@@ -45,6 +45,7 @@ import { RowAccumulator, Scroller, sgrWheel, wheelPx } from './smoothScroll'
 import { startTermLog, termLog, type Attached } from './telemetry'
 import { InputMarker } from './operatorInput'
 import { enableTextSelection, hasTextSelectionAnchor, transferTextSelection } from './textSelection'
+import { useProgramClipboard } from './programClipboard'
 
 /** tmux: the history is taken ahead once the terminal has rested this long (no output) under the pointer, at most once per AHEAD_EVERY_MS. */
 const AHEAD_REST_MS = 700
@@ -148,11 +149,12 @@ function setSteadyCursorColors(term: Terminal, theme: XtermTheme) {
   element.style.setProperty('--sp-cursor-text', theme.cursorAccent)
 }
 
-export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor = '', visible = true, project = '', taskId = '', backend = 'tmux', smooth = true, onEnded, onFocus, autoFocus = true, onZoom, bind, onInput, onTitle, hooks }: {
+export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor = '', visible = true, program = '', project = '', taskId = '', backend = 'tmux', smooth = true, onEnded, onFocus, autoFocus = true, onZoom, bind, onInput, onTitle, hooks }: {
   sid: string
   token: string
   fontSize?: number
   visible?: boolean
+  program?: string
   project?: string
   /** tmux terminals ask the server about their history; plain ones own it here. */
   backend?: 'tmux' | 'plain'
@@ -368,11 +370,14 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     if (r?.hasSelection()) return r.getSelection()
     return termRef.current?.hasSelection() ? termRef.current.getSelection() : ''
   }, [])
+  const { receive: receiveProgramCopy, copySelection: copyExplicitSelection } = useProgramClipboard(sid, visible, program)
   const copyTmuxSelection = useCallback(async () => {
     if (backend !== 'tmux' || readerRef.current) return false
-    const got = await postJson<{ copied: boolean }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/capture`, { mode: 'selection' })
-    return got.copied
-  }, [backend, sid])
+    return copyExplicitSelection(async () => {
+      const got = await postJson<{ text: string | null }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/capture`, { mode: 'selection' })
+      return got.text ?? null
+    })
+  }, [backend, sid, copyExplicitSelection])
   const copySelected = useCallback(async () => {
     const term = readerRef.current?.term ?? termRef.current
     if (term?.hasSelection()) {
@@ -662,6 +667,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
 
       /* ---- tmux: the wheel by what the pane shows ---- */
       const rowH = () => { const sc = el.querySelector('.xterm-screen') as HTMLElement | null; return sc && t.rows ? sc.clientHeight / t.rows : 16 }
+      type PaneFlags = { alt?: boolean; mouse?: boolean; in_mode?: boolean; selecting?: boolean }
       type Flags = { at: number; alt: boolean; mouse: boolean; in_mode: boolean }
       let flags: Flags | null = null
       let asking = false
@@ -698,7 +704,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         queued.push(e)
         if (asking) return
         asking = true
-        getJson<PanePos & { alt: boolean; mouse: boolean; in_mode: boolean }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
+        getJson<PanePos & PaneFlags>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
           .then((p) => {
             learn(p)
             flags = { at: performance.now(), alt: !!p.alt, mouse: !!p.mouse, in_mode: !!p.in_mode }
@@ -731,8 +737,12 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       // command may start one), the input waits and glides in, as before.
       let paneKind: 'history' | 'program' | null = null
       let paneKindVersion = 0
-      const learn = (f: { alt?: boolean; mouse?: boolean; in_mode?: boolean }) => { paneKind = f.alt || f.mouse || f.in_mode ? 'program' : 'history' }
-      enableTextSelection(t, () => backend === 'tmux' && paneKind === 'history', backend === 'tmux')
+      let tmuxSelecting = false
+      const learn = (f: PaneFlags) => {
+        tmuxSelecting = !!f.selecting
+        paneKind = f.alt || f.mouse || f.in_mode ? 'program' : 'history'
+      }
+      enableTextSelection(t, () => backend === 'tmux' && paneKind === 'history', backend === 'tmux', () => tmuxSelecting)
       const lead = (() => {
         const sc = () => el.querySelector('.xterm-screen') as HTMLElement | null
         // Pixels up from the newest line; not capped: what the screen cannot show, the reader does.
@@ -815,7 +825,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         void fetchRows(sid, FIRST_ROWS)
           .then((got) => {
             if (disposed || received !== at || paneKindVersion !== version) return
-            const f = got as unknown as { alt?: boolean; mouse?: boolean; in_mode?: boolean }
+            const f = got as unknown as PaneFlags
             learn(f)
             if (f.alt || f.mouse || f.in_mode) return
             ahead = { got, at }
@@ -848,7 +858,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         kindAskedAt = performance.now()
         const version = paneKindVersion
         const at = received
-        getJson<{ alt?: boolean; mouse?: boolean; in_mode?: boolean }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
+        getJson<PaneFlags>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
           .then((f) => { if (!disposed && paneKindVersion === version) learn(f) })
           .catch(() => undefined)
           .finally(() => {
@@ -861,6 +871,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         if (backend !== 'tmux') return
         paneKindVersion += 1
         paneKind = null
+        tmuxSelecting = false
         if (kindTimer) clearTimeout(kindTimer)
         kindTimer = over ? setTimeout(askKind, KIND_AFTER_TYPING_MS) : null
       }
@@ -1015,7 +1026,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         void (kept ? Promise.resolve(kept) : fetchRows(sid, rows))
           .then(async (got) => {
             if (disposed) return
-            const f = got as unknown as { alt?: boolean; mouse?: boolean; in_mode?: boolean }
+            const f = got as unknown as PaneFlags
             learn(f)
             if (f.alt || f.mouse || f.in_mode) {
               // Not the history: a full-screen program or one that reads the mouse gets the wheel.
@@ -1115,18 +1126,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         t.onScroll(look)
         t.onWriteParsed(look)
       }
-      // tmux announces copies (set-clipboard on, OSC 52), including one
-      // requested explicitly by the page while a pane selection is active.
-      t.parser.registerOscHandler(52, (data) => {
-        const semi = data.indexOf(';')
-        const b64 = semi >= 0 ? data.slice(semi + 1) : data
-        if (!b64 || b64 === '?') return true
-        try {
-          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
-          void copyText(new TextDecoder().decode(bytes))
-        } catch { /* not base64: not a copy */ }
-        return true
-      })
+      t.parser.registerOscHandler(52, receiveProgramCopy)
       const doFit = () => {
         if (!el.offsetWidth || !el.offsetHeight) return
         try { fit.fit() } catch { /* not laid out yet */ }

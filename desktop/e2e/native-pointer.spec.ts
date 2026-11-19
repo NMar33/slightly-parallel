@@ -98,11 +98,13 @@ test('the yellow timer keeps compositor clicks and short bidirectional scroll ge
   await at(today.getByRole('button', { name: 'Close' }), 'click')
   await expect(today).toHaveCount(0)
 
-  await at(page.getByRole('button', { name: 'Sidebar settings' }), 'click')
-  const menu = page.getByRole('menu', { name: 'Sidebar settings' })
-  await expect(menu).toBeVisible()
-  await at(menu.getByRole('menuitemradio', { name: 'Open sidebars inward' }), 'click')
+  await at(page.getByRole('button', { name: 'Window settings' }), 'click')
+  const settings = page.getByRole('complementary', { name: 'Window settings' })
+  await expect(settings).toBeVisible()
+  await at(settings.getByRole('radio', { name: 'Open sidebars inward' }), 'click')
   await expect(page.locator('[data-aqua-frame]')).toHaveAttribute('data-sidebar-mode', 'inward')
+  await at(settings.getByRole('button', { name: 'Close window settings' }), 'click')
+  await expect(settings).toHaveCount(0)
 
   const controls = ['Left sidebar', 'Right sidebar'].map((name) => page.getByRole('button', { name, exact: true }))
   const centers = () => Promise.all(controls.map(screenPoint))

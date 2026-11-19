@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from 'react'
-import { Check, GitBranch, SlidersHorizontal, X } from 'lucide-react'
+import { Check, GitBranch, X } from 'lucide-react'
 
 import { t } from '../../../../i18n/scope/aqua'
 import { Dot, RoleIcon, SHOWN_WORD } from '../parts'
@@ -155,7 +155,7 @@ export function StripTab({ s, title, f, index, on, marked, dim, alt, under, gapB
     <div className={`relative shrink-0 ${gapBefore ? 'ml-8' : ''}`} data-tab={s.id}>
       {editing ? (
         <input ref={input} data-nodrag defaultValue={title} aria-label={t('Name')} maxLength={80}
-          className="h-[26px] w-[170px] px-8 rounded-t-[6px] text-12 outline-none"
+          className="h-[var(--aq-tab-height,26px)] w-[170px] px-8 rounded-t-[6px] text-12 outline-none"
           style={{ background: 'var(--aq-term-bg)', color: 'var(--aq-term-fg)', border: '1px solid var(--brand)' }}
           onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') { e.stopPropagation(); finish(false) } }}
           onBlur={() => finish(true)} />
@@ -176,7 +176,7 @@ export function StripTab({ s, title, f, index, on, marked, dim, alt, under, gapB
           onContextMenu={(e) => { e.preventDefault(); onMenu(e.currentTarget) }}
           onKeyDown={(e) => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); onMenu(e.currentTarget) } else if (e.key === 'F2') { e.preventDefault(); setEditing(true) } }}
           title={tip}
-          className="h-[26px] pr-10 inline-flex items-center gap-6 text-12 rounded-t-[6px] max-w-[190px] cursor-grab active:cursor-grabbing"
+          className="h-[var(--aq-tab-height,26px)] pr-10 inline-flex items-center gap-6 text-12 rounded-t-[6px] max-w-[190px] cursor-grab active:cursor-grabbing"
           style={{ ...style, outline: marked ? '1px solid var(--brand)' : undefined, outlineOffset: marked ? -2 : undefined }}>
           {!showClose && <Dot s={s} />}
           {alt ? (
@@ -197,7 +197,7 @@ export function StripTab({ s, title, f, index, on, marked, dim, alt, under, gapB
       {!editing && look === 'dots' && <DotStrip f={f} s={settings} />}
       {!editing && look === 'rhythm' && <RhythmDots f={f} chatId={f.chatId || s.id} onSelect={() => onSelect()} />}
       {showClose && !editing && (
-        <button type="button" data-nodrag className="absolute top-[5px] left-[6px] w-[16px] h-[16px] inline-flex items-center justify-center rounded-[4px] hover:bg-[var(--aq-hover)]"
+        <button type="button" data-nodrag className="absolute top-1/2 -translate-y-1/2 left-[6px] w-[16px] h-[14px] inline-flex items-center justify-center rounded-[4px] hover:bg-[var(--aq-hover)]"
           style={{ color }} aria-label={`${t('Close the tab')} ${title}`} title={`${t('Close the tab')} ${title}`} onClick={onClose}>
           <X size={11} />
         </button>
@@ -211,8 +211,8 @@ export function StripTab({ s, title, f, index, on, marked, dim, alt, under, gapB
 function Radios<T extends string | number>({ label, value, options, onPick, word }: { label: string; value: T; options: readonly T[]; onPick: (v: T) => void; word?: (v: T) => string }) {
   return (
     <div className="flex items-center gap-8">
-      <span className="w-[86px] shrink-0 aq-ink3 text-11">{label}</span>
-      <div className="flex gap-2" role="radiogroup" aria-label={label}>
+      <span className="min-w-[66px] shrink-0 aq-ink3 text-11">{label}</span>
+      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={label}>
         {options.map((o) => (
           <button key={String(o)} type="button" role="radio" aria-checked={o === value} className="aq-btn line !h-[22px] text-11" data-on={o === value} onClick={() => onPick(o)}>{word ? word(o) : String(o)}</button>
         ))}
@@ -221,7 +221,7 @@ function Radios<T extends string | number>({ label, value, options, onPick, word
   )
 }
 
-/** The tab state, and with the dotted strip its settings. In the popover and in Settings › Terminal. */
+/** The tab state, and with the dotted strip its settings. In the window panel and in Settings › Terminal. */
 export function StripSettingsRows() {
   const s = useStripSettings()
   const look = useTabStateKind()
@@ -244,7 +244,7 @@ function StripRows({ s, slotName }: { s: StripSettings; slotName: string[] }) {
           <Radios label={t('Parts')} value={s.parts} options={[1, 2, 3] as const} onPick={(parts) => setStrip({ parts })} />
           {shownSlots(s).map((i, n) => (
             <label key={i} className="flex items-center gap-8">
-              <span className="w-[86px] shrink-0 aq-ink3 text-11">{slotName[n]}</span>
+              <span className="min-w-[66px] shrink-0 aq-ink3 text-11">{slotName[n]}</span>
               <select className="flex-1 min-w-0 h-[24px] rounded-[4px] text-12 px-4" style={{ background: 'var(--bg-surface)', color: 'var(--aq-ink, var(--text-primary))', border: '1px solid var(--border-default)' }}
                 value={s.kinds[i]} aria-label={slotName[n]}
                 onChange={(e) => { const kinds = [...s.kinds] as StripSettings['kinds']; kinds[i] = e.target.value as PartKind; setStrip({ kinds }) }}>
@@ -258,38 +258,5 @@ function StripRows({ s, slotName }: { s: StripSettings; slotName: string[] }) {
       <p className="m-0 text-11 aq-ink3 leading-[1.4]">{t('Closed tasks fill green. Waiting goes from green to red over 30 minutes. Context turns amber past 70% and red past 85%.')} {t('Context is known for Claude Code chats, from its status line.')}</p>
       <button type="button" className="aq-btn self-start text-11" onClick={() => setStrip(STRIP_DEFAULT)}>{t('Default settings')}</button>
     </>
-  )
-}
-
-/** The small button in the tab strip and its popover. */
-export function StripSettingsButton() {
-  const [open, setOpen] = useState(false)
-  const box = useRef<HTMLSpanElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false) } }
-    const down = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
-    window.addEventListener('keydown', key, true)
-    window.addEventListener('pointerdown', down)
-    return () => { window.removeEventListener('keydown', key, true); window.removeEventListener('pointerdown', down) }
-  }, [open])
-  const [at, setAt] = useState({ x: 0, y: 0 })
-  return (
-    <span ref={box} className="self-center relative shrink-0 inline-flex">
-      <button type="button" data-nodrag className="aq-btn icon" aria-expanded={open} aria-label={t('Status strip on the tabs')} title={t('Status strip on the tabs')}
-        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt({ x: Math.max(8, Math.min(r.left, window.innerWidth - 308)), y: r.bottom + 4 }); setOpen(!open) }}>
-        <SlidersHorizontal size={12} />
-      </button>
-      {open && (
-        <div className="fixed z-[220] w-[300px] rounded-[8px] p-10 flex flex-col gap-8 text-12 aq-fade" role="dialog" aria-label={t('Status strip on the tabs')}
-          style={{ left: at.x, top: at.y, background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)', color: 'var(--aq-ink)' }}>
-          <div className="flex items-center">
-            <span className="font-semibold">{t('Status strip on the tabs')}</span>
-            <button type="button" className="aq-btn icon ml-auto" aria-label={t('Close')} onClick={() => setOpen(false)}><X size={12} /></button>
-          </div>
-          <StripSettingsRows />
-        </div>
-      )}
-    </span>
   )
 }

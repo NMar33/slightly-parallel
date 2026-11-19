@@ -19,6 +19,7 @@ The project on film, in a minute or in six: [Slightly Parallel in a minute](http
 - [Three principles](#three-principles)
 - [Limits](#limits)
 - [In detail](#in-detail): [Chats](#chats) · [The board](#the-board) · [Standups](#standups) · [The commands](#the-commands) · [Skills](#skills) · [Artifacts](#artifacts) · [Entry points](#entry-points)
+- [In development](#in-development)
 - [FAQ / Problems](#faq--problems)
 - [What it needs and where the data is](#what-it-needs-and-where-the-data-is)
 - [More](#more)
@@ -45,7 +46,7 @@ Then connect a project. On the **Setup** page:
 
 1. **Data folder** — where Slightly Parallel keeps its records. The default is fine.
 2. **Integrate a project** — a short code and the folder where its code is. Setup shows the files it is about to write and writes them: a section in the project's `AGENTS.md` (and a line in `CLAUDE.md`), the capture hooks, the MCP server entry.
-3. **Start an agent in that folder** — Claude Code, Codex, OpenCode or Cursor, as you always do. The first answer begins with `[slightly-parallel] project … · your agent_id is …`. From then on the chat is recorded.
+3. **Start an agent in that folder** — Claude Code, Codex, OpenCode or Cursor. Open **Chats** to see the recorded conversation.
 
 ![The Setup page, step by step](docs/media/readme/setup.gif)
 
@@ -61,7 +62,7 @@ Good to know:
 - **The chats are recorded even when the server is not running.** The hooks write them; the server reads them when it is up.
 - **To start the server again:** `./run.sh --prod` (Windows: `sp run --prod`). To keep it running in the background: [docs/running.md](docs/running.md).
 - **Where everything is:** the data folder, one folder per project under `projects/<code>/`, the chats in it as `chat.md`, the tasks and the rest as CSV plus one Markdown file per entry. Plain files; copy the folder and you have a backup.
-- **The commands** you type in a chat: `#task`, `#now`, `#scan`, `#decision`, `#vision`, `#rule`, `#problem`, `#skill`, `#prompt`, `#important`, `#entrypoint`, `#artifact`, `#undo`, `#sp`, `#help`. Each is explained [below](#the-commands).
+- **Chat commands** — type `#help` in a chat for the full list, or see [The commands](#the-commands) below.
 
 Working on Slightly Parallel's own code needs Node 20+: [docs/development.md](docs/development.md).
 
@@ -107,7 +108,7 @@ The recording is done by hooks (Claude Code, Codex, Cursor) and a plugin (OpenCo
 
 ### The board
 
-A Kanban board per project, with columns for the whole cycle: Backlog, Next, From agents, To do, Doing, Review, Done. Agents add cards only to From agents; you move them. There is a lanes view, where cards group by theme, and a three-column view for the day.
+A Kanban board per project, with columns including Backlog, Next, From agents, To do, Doing, Review, Done. Tasks suggested by an agent go into From agents. With `#now`, your message becomes a card in Doing. There is a lanes view, where cards group by theme, and a three-column view for the day.
 
 ![The board in five columns, three columns, and the lanes](docs/media/readme/board-views.gif)
 
@@ -131,7 +132,7 @@ This is the project's diary, written without you.
 
 ### The commands
 
-A command is one word anywhere in a message to an agent. The agent does the writing; you read the pages.
+Type a command anywhere in your message. When quoting commands, add **`#mute`** to keep them from running. With three hashes, as in `###now-todo`, only that command runs in that message.
 
 ![The commands](docs/media/readme/commands.svg)
 
@@ -149,6 +150,12 @@ A command is one word anywhere in a message to an agent. The agent does the writ
 
 **`#important`** — marks the message, its agent and the task it names; `#important-message`, `-agent`, `-task` mark one of them. The Important page collects them.
 
+**`#pin`** — saves a message on the Pins page. **`#fork-later`** saves it there with the command to start a separate chat from it.
+
+**`#carry`** — gives the agent your message and its reply again when the chat history is shortened. **`#carry-brief`** keeps a summary instead.
+
+**`#publish`** — saves a card about what shipped. Give it the text to keep, or a topic for the agent to write about. The agent adds links to the work.
+
 **`#prompt`** — keeps the message as a prompt to send again, with versions A and B, a rating, and the chats it was sent in.
 
 **`#task`** and **`#now`** — two commands for tasks. Both are typed in the chat, anywhere in the message; the difference is when the work is done.
@@ -161,15 +168,23 @@ A command is one word anywhere in a message to an agent. The agent does the writ
 
 ![#now in the chat, then the card in Doing, planned for today](docs/media/readme/now.gif)
 
-`#now-todo` files the message in To do instead, and the chat goes on with what it was doing. `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and `#now-done` file it in those columns.
+`#now-todo` files the message in To do instead, and the chat goes on with what it was doing. `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and `#now-done` file it in those columns. `#now-doing` starts it in Doing, like `#now`.
 
 The lane goes in braces right after the tag: `#now {ui} fix the login timeout`, `#task {Kanban Board} cards do not sort`. The server reads the lane from the message, not the agent, so there is nothing to guess. A lane that is not on the board is refused with the list of those that are; the agent asks in one line. New lanes are made on the board. Without braces `#task` lands in `unassigned`, `#now` in Now (the name is a setting).
 
-**`#entrypoint`** — the way into a topic you come back to. Say the topic, and the agent writes its record (what it is, where its files and links are, how to run it, where the work stopped, what is next) and adds the ways in it used: the pages, sites and files you open, each with its start command, folder and port. Type it with the topic's name in any chat of the project and that chat's agent writes a new version of the record, adding what it used and where the work stopped; each version shows the chat that wrote it. Coming back to a project after three weeks starts here.
+**`#entrypoint`** — records where to find a topic’s files and how to open its pages and programs, along with where work stopped and what comes next. Give the exact topic name to update its record from any chat in the project, or describe the topic and choose from the matches.
 
 **If a tag made an entry by mistake** (a pasted text that mentions `#vision`, a `#rule` typed by accident): **type `#undo` and say what was the mistake. The agent lists the entries by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is archived without `#undo-yes`, and nothing is deleted.**
 
 **`#sp`** — is it working. The agent checks this chat and folder: messages recorded, MCP, hooks, skills, data, backups, the server's memory. It says what works and what is a concern, and what it could not check. `#sp the messages are not recorded` looks into that too. It changes nothing without your yes; `python sp.py check` does the same from a terminal, also when the server is down.
+
+**`#evidence`** — attaches the proof you asked for to the task. **`#standup`** writes yesterday’s standup.
+
+**`#architecture`** — updates the project’s architecture record. Use **`#page`** for the written overview or **`#map`** for the parts of the program and their connections.
+
+**`#core-new`** — tracks part of the project, such as the terminal. **`#core-note`** adds a note, **`#core`** links the message and current task, and **`#core-off`** hides it after you confirm.
+
+**`#usage`** — shows token use and plan limits. **`#usage-on`** and **`#usage-off`** switch the count after each reply on or off. **`#usage-warnings-on`** and **`#usage-warnings-off`** control warnings in Claude Code. **`#usage-price`** updates the prices used to calculate API costs.
 
 **`#help`** — the list of commands, in the chat.
 
@@ -201,6 +216,19 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 
 ![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
 
+## In development
+
+- Run `./sp.sh window` (Windows: `sp window`) to open the desktop terminal. The first launch needs Node 20+ and npm.
+- Tabs are grouped by project and show each chat’s title and recent activity. Alt+W takes you to a chat waiting for your answer.
+- Move a chat into its own window. Open windows and tabs can be restored after a restart.
+- Right-click a message to pin or copy it, make a task from it, or start a separate chat. Collapse long replies to one line or scroll back while output is still arriving.
+- Click a task ID or commit hash in the terminal to inspect it. Copy a shell command with the button beside it.
+- Choose from 12 terminal colour schemes in **Settings › Terminal**. The project timer in the window lets you pause for a break.
+- **Monitor › Terminal** shows scroll stalls, errors and lost connections. Download a report with timings and counts. Typed and pasted text stays out of the log.
+- A coordinator can send a question to another agent’s chat and get the reply in its own chat.
+- When you turn a message into a task, its chat’s agent titles the card. Agents can edit their own cards and comment on other cards.
+- Open a task’s notes from its card to review screenshots, tick off steps or leave a comment.
+
 ## FAQ / Problems
 
 - **I integrated the project, but the chat is not recorded.**
@@ -217,7 +245,7 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 
 - One person, one computer. The server listens on `127.0.0.1` and has no login; the network is off unless you turn it on ([docs/configuration.md](docs/configuration.md)).
 - The data is plain files in the folder you chose: one CSV per kind of entry, one Markdown file per entry, the chats as `chat.md`. No database server. Back it up by copying the folder, or let the Backups page do it.
-- Agents write only through the MCP server (`write_entry`); the server refuses an agent's write that comes any other way. The contract they follow is [`SLIGHTLY-PARALLEL.md`](SLIGHTLY-PARALLEL.md).
+- Agents write only through the MCP server. The contract they follow is [`SLIGHTLY-PARALLEL.md`](SLIGHTLY-PARALLEL.md).
 - The pages: Overview, Project, Chats, Scans, Standups, Decisions, Kanban, Sprints, Calendar, Timer, Visions, Rules, Problems, Skills, Prompts, Artifacts, Entry points, Important, Architecture, Files, Search, Agents, Timelapse, Monitor, Backups, Settings. English and Russian.
 
 ## More

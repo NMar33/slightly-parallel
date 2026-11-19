@@ -196,6 +196,7 @@ def verify(sha: str, report_dir: Path, profile: str, jobs: int, queued_at: float
     started_at = time.monotonic()
     workers = FAST_PYTEST_WORKERS if profile == "fast" else min(6, FAST_PYTEST_WORKERS)
     report: dict = {
+        "run_id": report_dir.name, "family": "test",
         "sha": sha, "profile": profile, "status": "running", "load_start": load(),
         "queue_seconds": round(started_at - queued_at, 2),
         "pytest_workers": workers, "steps": {},
@@ -309,7 +310,7 @@ def main() -> int:
     sha = git("rev-parse", "--verify", "--end-of-options", f"{args.ref}^{{commit}}")
     directory = Path(tempfile.mkdtemp(prefix=f"sp-verify-{sha[:8]}-"))
     queued_at = time.monotonic()
-    write_report(directory, {"sha": sha, "profile": args.profile, "status": "queued"})
+    write_report(directory, {"run_id": directory.name, "family": "test", "sha": sha, "profile": args.profile, "status": "queued"})
     print(f"{sha} · waiting for the machine test queue · {directory}", flush=True)
     with machine_queue():
         return verify(sha, directory, args.profile, args.jobs, queued_at)

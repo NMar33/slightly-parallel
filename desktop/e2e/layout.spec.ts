@@ -119,8 +119,10 @@ test.describe('workspaces', () => {
   test('Ctrl+Shift+↑ steps out, Ctrl+Shift+↓ and Esc step back in', async ({ win }) => {
     const { page } = win
     await ready(page)
-    await page.getByRole('button', { name: 'Keys', exact: true }).click()
-    await expect(page.getByRole('dialog', { name: 'Keys' }).getByText('back one level in the overview')).toBeVisible()
+    await page.getByRole('button', { name: 'Window settings' }).click()
+    const settings = page.getByRole('complementary', { name: 'Window settings' })
+    await settings.getByText('Keys', { exact: true }).click()
+    await expect(settings.getByText('back one level in the overview')).toBeVisible()
     await page.keyboard.press('Escape')
     await page.getByRole('textbox', { name: 'Terminal input' }).focus()
     const out = 'ControlOrMeta+Shift+ArrowUp'

@@ -29,12 +29,13 @@ function serviceOf(term: Terminal): Service | undefined {
     typeof service.shouldForceSelection === 'function' ? service : undefined
 }
 
-export function enableTextSelection(term: Terminal, ownOrdinarySelection: () => boolean, tmux = false): void {
+export function enableTextSelection(term: Terminal, ownOrdinarySelection: () => boolean, tmux = false, tmuxSelecting?: () => boolean): void {
   const service = serviceOf(term)
   if (!service) return
   const mouseDown = service.handleMouseDown.bind(service)
   const forceSelection = service.shouldForceSelection.bind(service)
-  const selectsHere = (event: MouseEvent) => event.button === 0 &&
+  const extendsTmux = (event: MouseEvent) => event.button === 0 && event.shiftKey && tmuxSelecting?.() && !service._model.selectionStart
+  const selectsHere = (event: MouseEvent) => event.button === 0 && !extendsTmux(event) &&
     (event.shiftKey || (!event.ctrlKey && !event.metaKey && ownOrdinarySelection()))
   let selectedHere = false
   if (tmux && typeof service._handleMouseUp === 'function') {
@@ -48,7 +49,7 @@ export function enableTextSelection(term: Terminal, ownOrdinarySelection: () => 
       event.stopImmediatePropagation()
     }, true)
   }
-  service.shouldForceSelection = (event) => selectsHere(event) || forceSelection(event)
+  service.shouldForceSelection = (event) => !extendsTmux(event) && (selectsHere(event) || forceSelection(event))
   service.handleMouseDown = (event) => {
     const enabled = service._enabled
     const local = selectsHere(event)

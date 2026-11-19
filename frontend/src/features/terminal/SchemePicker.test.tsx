@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SETTINGS_QUERY_KEY } from '../../lib/settings'
-import { SchemeButton, useWindowScheme } from '../aqua/app/scheme'
+import { useWindowScheme } from '../aqua/app/scheme'
 import { SchemePicker } from './SchemePicker'
 import { useApplyTermScheme } from './useScheme'
 
@@ -80,7 +80,7 @@ describe('the scheme picker', () => {
 function Root() {
   useApplyTermScheme()
   const s = useWindowScheme()
-  return <div data-testid="root" data-scheme={s.id} style={s.style}><SchemeButton /></div>
+  return <div data-testid="root" data-scheme={s.id} style={s.style} />
 }
 
 describe('the page and the terminal window in the scheme', () => {
@@ -108,14 +108,5 @@ describe('the page and the terminal window in the scheme', () => {
     await waitFor(() => expect(root().dataset.scheme).toBe('sp-now'))
     expect(html.getPropertyValue('--term-ground')).toBe('')
     expect(root().style.getPropertyValue('--r2-strip')).toBe('')
-  })
-
-  it('the window\'s quick switch opens the same grid; Esc closes it', async () => {
-    wrap(<Root />)
-    fireEvent.click(screen.getByRole('button', { name: 'Colour scheme' }))
-    const dialog = screen.getByRole('dialog', { name: 'Colour scheme' })
-    await waitFor(() => expect(within(dialog).getAllByRole('radio', { name: /AAA|AA/ }).length).toBeGreaterThan(0))
-    fireEvent.keyDown(window, { key: 'Escape' })
-    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

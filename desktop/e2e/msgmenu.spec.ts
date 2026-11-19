@@ -86,7 +86,7 @@ async function pointOf(page: Page, text: string): Promise<{ x: number; y: number
 
 test.describe('message menu', () => {
   test.beforeEach(() => { AGENT = `cc-e2em${Math.random().toString(16).slice(2, 6)}` })
-  test('the inspector can read the end of a long reply in Messages and Pins', async ({ win, shell, server }) => {
+  test('the inspector previews long replies in Messages and Pins and lets them expand', async ({ win, shell, server }) => {
     const { app, page } = win
     const ending = 'End of the full inspector reply.'
     const reply = [
@@ -116,19 +116,31 @@ test.describe('message menu', () => {
     const side = page.getByRole('complementary', { name: 'Right sidebar' })
     const fullText = side.getByText(ending, { exact: false }).first()
     const fits = () => fullText.evaluate((el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1)
+    const verifyPreview = async () => {
+      const expand = side.getByRole('button', { name: 'Expand message' }).first()
+      await expect(expand).toHaveAttribute('aria-expanded', 'false')
+      await expect.poll(fits).toBe(false)
+      await expand.click()
+      await expect.poll(fits).toBe(true)
+      const collapse = side.getByRole('button', { name: 'Collapse message' }).first()
+      await expect(collapse).toHaveAttribute('aria-expanded', 'true')
+      await collapse.click()
+      await expect.poll(fits).toBe(false)
+    }
     await expect(fullText).toBeVisible()
-    await expect.poll(fits).toBe(true)
+    await verifyPreview()
     await side.getByRole('button', { name: 'Pin this reply, to come back to it' }).click()
     await side.getByRole('tab', { name: 'Pins' }).click()
     await expect(fullText).toBeVisible()
-    await expect.poll(fits).toBe(true)
+    await verifyPreview()
   })
   for (const size of ['usual', 'narrow'] as const) test(`a right click on a reply in a ${size} window: Pin, task and note ids; Copy only on a line that is no message`, async ({ win, shell, server }) => {
     const { app, page } = win
     await ready(page)
     if (size === 'narrow') {
-      await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(640, 500) })
+      await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(640, 270) })
       await expect.poll(() => page.evaluate(() => innerWidth)).toBe(640)
+      await expect.poll(() => page.evaluate(() => innerHeight)).toBe(270)
     } else {
       await fullSize(app, page)
     }
@@ -176,6 +188,19 @@ test.describe('message menu', () => {
       return false
     }, { timeout: 20_000, intervals: [500], message: 'the list for the reply' }).toBe(true)
     await expectTerminalAncestorsUnscrolled(page)
+    if (size === 'narrow') {
+      await expect.poll(() => menu.evaluate((element) => {
+        const { top, bottom, left, right } = element.getBoundingClientRect()
+        return top >= 0 && left >= 0 && bottom <= innerHeight && right <= innerWidth
+      })).toBe(true)
+      const box = (await menu.boundingBox())!
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.wheel(0, 600)
+      await expect.poll(() => menu.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+      await expect(menu.getByRole('menuitem', { name: 'Terminal menu…' })).toBeInViewport()
+      await page.mouse.wheel(0, -600)
+      await expect.poll(() => menu.evaluate((element) => element.scrollTop)).toBe(0)
+    }
     for (const name of ['Pin', 'Hand over later', 'Branch into a new window', 'Make a task', 'Copy', 'Terminal menu…']) await expect(menu.getByRole('menuitem', { name })).toBeVisible()
     await expect(menu.getByRole('menuitemradio', { name: 'Carry after compaction: word for word' })).toBeVisible()
     // tmux drew no pane menu of its own under ours.
@@ -183,6 +208,10 @@ test.describe('message menu', () => {
     await menu.getByRole('menuitem', { name: 'Pin' }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Message pinned' })).toBeVisible()
     await expect.poll(async () => ((await (await server.api.get(`/api/pins?agent_id=${AGENT}`)).json()).items ?? []).map((m: { target: string }) => m.target)).toEqual([`${AGENT}#1/reply`])
+    if (size === 'narrow') {
+      await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(640, 500) })
+      await expect.poll(() => page.evaluate(() => innerHeight)).toBe(500)
+    }
     // The mark on the reply's first row, and the pin in the right sidebar.
     await expect(page.locator('.mm-marks', { hasText: 'pinned' })).toHaveAttribute('data-target', `${AGENT}#1/reply`, { timeout: 10_000 })
     await page.keyboard.press('Alt+BracketRight')

@@ -11,9 +11,14 @@ import { writeClipboard } from '../../../lib/useCopy'
 import { post } from '../../aqua/app/bridge'
 import { t } from '../../../i18n/scope/msgmenu'
 
-/** A menu of a known height at the point, kept inside the window. */
-export function place(x: number, y: number, W: number, H: number, w: number, h: number) {
-  return { left: Math.min(Math.max(8, x), Math.max(8, w - W - 8)), top: y + H > h - 8 ? Math.max(8, y - H) : y, width: W }
+/** Place the menu near the pointer and scroll its actions when space runs out. */
+export function place(x: number, y: number, W: number, H: number, w: number, h: number): CSSProperties {
+  const width = Math.max(0, Math.min(W, w - 16))
+  const height = Math.max(0, Math.min(H, h - 16))
+  const left = Math.max(8, Math.min(x, w - width - 8))
+  const proposed = y + height > h - 8 ? y - height : y
+  const top = Math.max(8, Math.min(proposed, h - height - 8))
+  return { left, top, width, maxHeight: Math.max(0, h - top - 8), overflowY: 'auto', overscrollBehaviorY: 'contain' }
 }
 
 /**

@@ -2,9 +2,11 @@ import type { Page } from '@playwright/test'
 import { test, expect, expectClickTarget, fullSize, HIDDEN, LW, mainBounds, ptySize, ready, RW, termWidth } from './fixtures'
 
 async function chooseMode(page: Page, mode: 'outward' | 'inward') {
-  await page.getByRole('button', { name: 'Sidebar settings' }).click()
-  await page.getByRole('menuitemradio', { name: `Open sidebars ${mode}` }).click()
+  await page.getByRole('button', { name: 'Window settings' }).click()
+  await page.getByRole('radio', { name: `Open sidebars ${mode}` }).click()
   await expect(page.locator('[data-aqua-frame]')).toHaveAttribute('data-sidebar-mode', mode)
+  await page.getByRole('button', { name: 'Close window settings' }).click()
+  await expect(page.getByRole('complementary', { name: 'Window settings' })).toHaveCount(0)
 }
 
 const sidebarControls = (page: Page) => (['left', 'right'] as const).map((side) => page.locator(`[data-toggle="${side}"]`))
@@ -94,7 +96,7 @@ test('inward sidebar controls can be clicked again at the same points in wide, n
       await expect(page.locator('[data-aqua-frame][data-folded]')).toHaveCount(folded ? 1 : 0)
       const buttons = sidebarControls(page)
       for (const button of buttons) await button.click({ trial: true })
-      const controls = folded ? buttons : [...buttons, page.getByRole('button', { name: 'Sidebar settings' })]
+      const controls = folded ? buttons : [...buttons, page.getByRole('button', { name: 'Window settings' })]
       const centers = () => Promise.all(controls.map(center))
       const initial = await centers()
       const bounds = await mainBounds(app)
@@ -135,4 +137,39 @@ test('focusing an overflowing control does not scroll the window header sideways
   await left!.focus()
   await expect(left!).toBeFocused()
   expect(await center(right!)).toEqual(initial)
+})
+
+test('window settings replace the left sidebar and resize the two rows independently', async ({ win }) => {
+  const { app, page } = win
+  await ready(page)
+  await fullSize(app, page)
+  await chooseMode(page, 'inward')
+  await page.getByRole('button', { name: 'Left sidebar', exact: true }).click()
+  const left = page.getByRole('navigation', { name: 'Workspaces' })
+  await expect(left).toBeVisible()
+  const bounds = await mainBounds(app)
+
+  await page.getByRole('button', { name: 'Window settings' }).click()
+  const settings = page.getByRole('complementary', { name: 'Window settings' })
+  await expect(settings).toBeVisible()
+  await expect(left).toBeHidden()
+  await settings.getByLabel('Title row height').selectOption('2')
+  await expect(page.locator('[data-window-title]')).toHaveCSS('height', '17px')
+  await expect(page.locator('[data-window-tabs]')).toHaveCSS('height', '32px')
+  await settings.getByLabel('Tab row height').selectOption('1.5')
+  await expect(page.locator('[data-window-tabs]')).toHaveCSS('height', '21px')
+  await settings.getByRole('button', { name: 'Close window settings' }).click()
+  await expect(left).toBeVisible()
+  await expect.poll(() => mainBounds(app)).toEqual(bounds)
+
+  await page.reload()
+  await ready(page)
+  await expect(page.locator('[data-window-title]')).toHaveCSS('height', '17px')
+  await expect(page.locator('[data-window-tabs]')).toHaveCSS('height', '21px')
+  await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(420, 400) })
+  await expect.poll(() => page.evaluate(() => innerWidth)).toBe(420)
+  for (const name of ['Left sidebar', 'Window settings', 'Fold the title row (alt+T)', 'Minimise', 'Toggle fullscreen', 'Close the window', 'Right sidebar']) {
+    const button = page.getByRole('button', { name, exact: true })
+    await expectClickTarget(button, await center(button))
+  }
 })

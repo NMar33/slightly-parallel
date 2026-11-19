@@ -69,8 +69,8 @@ test.describe('health and time', () => {
       await page.mouse.up()
       await expect(today).toHaveCount(0)
 
-      await page.getByRole('button', { name: 'Sidebar settings' }).click()
-      const inward = page.getByRole('menuitemradio', { name: 'Open sidebars inward' })
+      await page.getByRole('button', { name: 'Window settings' }).click()
+      const inward = page.getByRole('radio', { name: 'Open sidebars inward' })
       const option = (await inward.boundingBox())!
       await page.mouse.move(option.x + option.width / 2, option.y + option.height / 2, { steps: 9 })
       await page.mouse.down()

@@ -26,7 +26,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
-from .. import app_settings, codexlimits, usageinsights, usagelib
+from .. import app_settings, codexlimits, toolwaits, usageinsights, usagelib
 from ..actors import identity_of, refuse_agent
 from ..db import ViewStore
 from .deps import etag_for, get_store, json_response, known_project, maybe_304, not_found
@@ -60,6 +60,11 @@ def usage_summary(request: Request, project: str = Query("all"),
     code = _scope(store, project)
     at = usagelib.now()
     sig = usagelib.signature(store.data_root) + usagelib.clock_marks(store.data_root, at)
+    if toolwaits.enabled():
+        try:
+            sig += f":waits:{(store.data_root / '.usage/tool-waits.json').stat().st_mtime_ns}"
+        except OSError:
+            sig += ":waits:pending"
     etag = etag_for(f"usage:{code or 'all'}:{range}:{_minute(at)}:{sig}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
@@ -67,6 +72,8 @@ def usage_summary(request: Request, project: str = Query("all"),
         got = _answers.get(etag)
     if got is None:
         got = usagelib.summary(store, code, range, now=at)
+        if toolwaits.enabled():
+            got = {**got, "tool_waits": toolwaits.summary(store.data_root, code, {"today": 1, "7d": 7, "30d": 30}[range], at)}
         with _lock:
             if len(_answers) >= _KEEP:
                 _answers.clear()

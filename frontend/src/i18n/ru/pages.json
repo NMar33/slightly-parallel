@@ -396,7 +396,6 @@
   "Color resource bars by load": "Цвет шкал ресурсов зависит от нагрузки",
   "On: bars turn green, yellow or red. Off: bars stay gray.": "Вкл. — шкалы зелёные, жёлтые или красные. Выкл. — шкалы всегда серые.",
   "Yellow resource threshold": "Жёлтый порог нагрузки",
-  "Temperature uses °C, CPU and memory use percent, and network uses a percentage of its recent peak rate with a 1 MiB/s minimum scale.": "Температура измеряется в °C, загрузка процессора и памяти — в процентах, сеть — в процентах от недавнего пика, при этом полный диапазон составляет не менее 1 МиБ/с.",
   "Red resource threshold": "Красный порог нагрузки",
   "The level at which a bar turns red. Keep it above the yellow threshold.": "При этом уровне шкала становится красной. Он должен быть выше жёлтого порога.",
   "Test restore passed: {tasks} tasks, {decisions} decisions, no errors": "Пробное восстановление прошло: задач {tasks}, решений {decisions}, ошибок нет",
@@ -1076,5 +1075,11 @@
   "Writes to terminals: {n}, slowest {max} ms · sends to the window: {sends}, {slow} slow": "Запись в терминалы: {n}, самая долгая {max} мс · отправки в окно: {sends}, медленных {slow}",
   "Writing to the terminal stalled": "Запись в терминал зависла",
   "Keys pressed, nothing sent": "Клавиши нажаты, ввод не ушёл",
-  "{n} ms after the window got focus": "через {n} мс после возврата в окно"
+  "{n} ms after the window got focus": "через {n} мс после возврата в окно",
+  "On: the resource indicator turns green, yellow or red. Off: it stays gray.": "Включено — индикатор зелёный, жёлтый или красный в зависимости от нагрузки. Выключено — всегда серый.",
+  "Show the healthy resource level.": "Показывать нормальный уровень нагрузки.",
+  "Let the resource indicator show warnings at its yellow threshold.": "Показывать жёлтое предупреждение при достижении порога.",
+  "Let the resource indicator show high load at its red threshold.": "Показывать красный уровень при достижении порога высокой нагрузки.",
+  "Threshold on a percent scale for CPU and memory, 40–95 °C for temperature, and 0–100 MiB/s for network traffic.": "Шкала порога: проценты для процессора и памяти, 40–95 °C для температуры, 0–100 МиБ/с для сетевого трафика.",
+  "Terminal programs may request a clipboard write. Block, ask first, or allow. Your own copy shortcuts still work.": "Программы терминала могут запрашивать запись в буфер обмена. Можно запретить запись, спрашивать перед ней или разрешить её. Клавиши явного копирования продолжают работать."
 }

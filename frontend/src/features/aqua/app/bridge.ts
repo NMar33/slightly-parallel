@@ -16,6 +16,7 @@ export type BridgeOp =
   | { op: 'drag' }
   | { op: 'close' }
   | { op: 'minimize' }
+  | { op: 'fullscreen' }
   | { op: 'grow'; left: number; right: number }
   | { op: 'detach'; url: string }
   | { op: 'title'; text: string }

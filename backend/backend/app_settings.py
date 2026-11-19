@@ -438,18 +438,38 @@ SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         key="terminal.resource_color", label="Color resource bars by load",
-        description="On: bars turn green, yellow or red. Off: bars stay gray.",
+        description="On: the resource indicator turns green, yellow or red. Off: it stays gray.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_green_enabled", label="Green resource level",
+        description="Show the healthy resource level.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_yellow_enabled", label="Yellow resource level",
+        description="Let the resource indicator show warnings at its yellow threshold.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_red_enabled", label="Red resource level",
+        description="Let the resource indicator show high load at its red threshold.",
         type="bool", default=True, group="Terminal",
     ),
     SettingSpec(
         key=RESOURCE_YELLOW, label="Yellow resource threshold",
-        description="Temperature uses °C, CPU and memory use percent, and network uses a percentage of its recent peak rate with a 1 MiB/s minimum scale.",
+        description="Threshold on a percent scale for CPU and memory, 40–95 °C for temperature, and 0–100 MiB/s for network traffic.",
         type="int", default=75, group="Terminal", minimum=0, maximum=99,
     ),
     SettingSpec(
         key=RESOURCE_RED, label="Red resource threshold",
         description="The level at which a bar turns red. Keep it above the yellow threshold.",
         type="int", default=90, group="Terminal", minimum=1, maximum=100,
+    ),
+    SettingSpec(
+        key="terminal.program_clipboard", label="Programs may write to the clipboard (OSC 52)",
+        description="Terminal programs may request a clipboard write. Block, ask first, or allow. Your own copy shortcuts still work.",
+        type="choice", default="block", group="Terminal", options=("block", "ask", "allow"),
     ),
     SettingSpec(
         key="terminal.log", label="Terminal log",

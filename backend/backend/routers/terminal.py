@@ -680,7 +680,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         mode = str(body.get("mode") or "screen")
         if mode == "selection":
             try:
-                return {"mode": mode, "copied": termlib.copy_selection(root, sid)}
+                text = termlib.copy_selection(root, sid)
+                return {"mode": mode, "copied": text is not None, "text": text}
             except termlib.TmuxError as exc:
                 raise _tmux_503(exc, "the selection could not be copied.") from None
         if mode == "range":

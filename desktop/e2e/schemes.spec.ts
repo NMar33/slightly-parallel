@@ -82,15 +82,16 @@ test.describe('colour schemes', () => {
     expect(latteStrip).toBe(await page.evaluate(() => getComputedStyle(document.querySelector('.aq')!).getPropertyValue('--r2-strip').trim())
       .then((hex) => rgb(hex)))
 
-    // Dracula, from the window's own quick switch, one click.
-    await page.getByRole('button', { name: /^(Colour scheme|Цветовая схема)$/ }).click()
-    const dialog = page.getByRole('dialog', { name: /^(Colour scheme|Цветовая схема)$/ })
+    // Dracula, from the window's settings panel.
+    await page.getByRole('button', { name: /^(Window settings|Настройки окна)$/ }).click()
+    const settings = page.getByRole('complementary', { name: /^(Window settings|Настройки окна)$/ })
+    await settings.getByText(/^(Colour scheme|Цветовая схема)$/).click()
     await shot(page, 'picker-in-window')
-    await dialog.locator('[data-scheme="dracula"]').click()
+    await settings.locator('[data-scheme="dracula"]').click()
     await expect.poll(async () => (await colours(page, 'schemered')).ground).toBe(rgb('#282A36'))
     expect((await colours(page, 'schemered')).word).toBe(rgb('#FF5555'))
     await page.keyboard.press('Escape')
-    await expect(dialog).toHaveCount(0)
+    await expect(settings).toHaveCount(0)
     await shot(page, 'dracula-window')
     expect(await strip(page)).not.toBe(latteStrip)
 

@@ -240,6 +240,7 @@ ipcMain.on('sp-window', (event, msg) => {
     case 'drag-end': stopDrag(win); break
     case 'close': win.close(); break
     case 'minimize': win.minimize(); break
+    case 'fullscreen': win.setFullScreen(!win.isFullScreen()); break
     case 'title': win.setTitle(String(msg.text || 'Slightly Parallel').slice(0, 120)); break
     case 'grow': {
       if (win.isMaximized() || win.isFullScreen()) {

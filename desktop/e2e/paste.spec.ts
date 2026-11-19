@@ -102,6 +102,65 @@ async function ranOnce(page: Page, out: string, n: number) {
 
 const input = (page: Page) => page.getByRole('textbox', { name: 'Terminal input' })
 
+test('a program clipboard request follows the terminal policy', async ({ win, server }) => {
+  const { app, page } = win
+  const clipboard = () => app.evaluate(({ clipboard: system }) => system.readText())
+  const requested = 'text from a terminal program'
+  const encoded = Buffer.from(requested).toString('base64')
+  const writes = () => page.evaluate(() => (window as Window & { oscWrites?: string[] }).oscWrites)
+  const emit = async () => {
+    await typeLine(page, WINDOWS
+      ? `[Console]::Write([char]27 + ']52;c;${encoded}' + [char]7); Write-Output osc-52-end`
+      : `printf '\\033]52;c;%s\\007%s\\n' '${encoded}' osc-52-end`)
+    await expectLine(page, 'osc-52-end')
+  }
+  const configure = async (policy: string) => {
+    await page.getByRole('button', { name: 'Window settings' }).click()
+    const settings = page.getByRole('complementary', { name: 'Window settings' })
+    await settings.getByText('Clipboard', { exact: true }).click()
+    const saved = page.waitForResponse((response) => response.url().endsWith('/api/settings') && response.request().method() === 'POST')
+    const select = settings.getByLabel('Programs may write to the clipboard (OSC 52)')
+    await select.selectOption(policy)
+    const result = await saved
+    expect(result.ok(), await result.text()).toBe(true)
+    await expect(select).toHaveValue(policy)
+    await settings.getByRole('button', { name: 'Close window settings' }).click()
+  }
+  try {
+    await ready(page)
+    await toClipboard(app, 'operator clipboard')
+    await page.evaluate(() => {
+      const original = navigator.clipboard.writeText.bind(navigator.clipboard)
+      const state = window as Window & { oscWrites?: string[] }
+      state.oscWrites = []
+      Object.defineProperty(navigator.clipboard, 'writeText', {
+        value: (text: string) => { state.oscWrites!.push(text); return original(text) },
+      })
+    })
+    await emit()
+    expect(await writes()).toEqual([])
+    expect(await clipboard()).toBe('operator clipboard')
+
+    await configure('ask')
+    await emit()
+    await expect(page.getByText(/wants to copy text/)).toBeVisible()
+    expect(await writes()).toEqual([])
+    expect(await clipboard()).toBe('operator clipboard')
+    await page.getByRole('button', { name: 'Copy', exact: true }).click()
+    await expect.poll(clipboard).toBe(requested)
+    expect(await writes()).toEqual([requested])
+
+    await configure('allow')
+    await toClipboard(app, 'operator clipboard')
+    await emit()
+    await expect.poll(clipboard).toBe(requested)
+    expect(await writes()).toEqual([requested, requested])
+    await expect(page.getByText(/copied text/)).toBeVisible()
+  } finally {
+    await server.api.post('/api/settings', { data: { values: { 'terminal.program_clipboard': 'block' } } })
+  }
+})
+
 test('a mouse selection writes to the clipboard only on explicit copy', async ({ win }) => {
   test.skip(WINDOWS, 'Unix shell and clipboard shortcut')
   const { app, page } = win

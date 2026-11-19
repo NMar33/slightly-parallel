@@ -28,9 +28,9 @@
  * window of one workspace.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ChevronUp, Keyboard, LayoutGrid, Menu, Minus, PanelLeft, PanelRight, Plus, RotateCcw, Settings, SquareTerminal, Sun, X, Zap } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, LayoutGrid, Maximize, Menu, Minus, PanelLeft, PanelRight, Plus, RotateCcw, Settings, SquareTerminal, Sun, X } from 'lucide-react'
 import { smoothOn } from '../../terminal/smoothScroll'
 
 import '../design/aqua.css'
@@ -54,10 +54,11 @@ import { ResourceMeter } from './ResourceMeter'
 import { TypingBatcher } from './typing'
 import { useWorkBeats } from '../../time/beats'
 import { TimerChip } from './timer'
-import { SchemeButton, useWindowScheme } from './scheme'
+import { useWindowScheme } from './scheme'
+import { useWindowPreferences, WindowSettings } from './WindowSettings'
 import { HealthLayer, HealthTint, HealthTitle, useHealthEdge, useHealthRuntime } from './health'
 import { factsOf, markNamed, noteOscTitle, tabTitle, useNamed, useOscTitles, useTabInfo } from './tabs/facts'
-import { StripSettingsButton, StripTab, useAltHeld } from './tabs/Tab'
+import { StripTab, useAltHeld } from './tabs/Tab'
 import { refreshStripFromServer } from './tabs/strip'
 import { PlusButton, agentOf, type AgentCmd, type PlusProps } from './tabs/Plus'
 import { getJson } from '../../../lib/getJson'
@@ -173,7 +174,6 @@ type Menu =
   | { kind: 'others' }
   | { kind: 'group'; ws: string }
   | { kind: 'tabGroup'; id: string; x: number }
-  | { kind: 'sidebarSettings' }
   | { kind: 'keys' }
 
 function AquaWindow({ status }: { status: Status }) {
@@ -192,6 +192,7 @@ function AquaWindow({ status }: { status: Status }) {
   const vp = useViewport()
   // The colour scheme (Settings › Terminal › Colour scheme) on the window's tokens.
   const scheme = useWindowScheme()
+  const layout = useWindowPreferences()
   // The tab strip (tk_a9306fb1): titles the programs set, the chats' facts, Alt held.
   const tabInfo = useTabInfo()
   const oscTitles = useOscTitles()
@@ -351,6 +352,8 @@ function AquaWindow({ status }: { status: Status }) {
 
   /* -------------------------------------------------------------- geometry */
   const [open, setOpen] = useState({ left: false, right: false })
+  const [settingsFromLeft, setSettingsFromLeft] = useState<boolean | null>(null)
+  const settingsOpen = settingsFromLeft !== null
   const [seats, setSeats] = useState<Seats>({ left: null, right: null })
   const [slide, setSlide] = useState(0)
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => store.get(SIDEBAR_MODE_KEY) === 'inward' ? 'inward' : 'outward')
@@ -372,8 +375,8 @@ function AquaWindow({ status }: { status: Status }) {
   const headerWidth = fixedSidebarControls ? nativeFrameW : termW
   const termX = native ? lw : Math.round((vp.w - termW) / 2) + slide
   const frameH = native ? vp.h : vp.h - 2 * MARGIN
-  const bar = folded ? BAR_FOLDED : BAR
-  const strip = kind === 'chat' ? 0 : STRIP
+  const bar = folded ? BAR_FOLDED : Math.round(BAR / layout.prefs.titleScale)
+  const strip = kind === 'chat' ? 0 : Math.round(STRIP / layout.prefs.tabsScale)
   const bodyH = Math.max(120, frameH - bar - strip - (native ? 0 : 2))
 
   function growWindow(left: number, right: number) {
@@ -403,14 +406,14 @@ function AquaWindow({ status }: { status: Status }) {
     return () => window.removeEventListener('storage', onMode)
   }, [])
 
-  function toggle(side: Side, on = !sides[side]) {
+  function toggle(side: Side, on = !sides[side], focus = true) {
     if (kind === 'chat') return
     const other: Side = side === 'left' ? 'right' : 'left'
     const width = side === 'left' ? LW : RW
     if (native) {
       setOpen((o) => ({ ...o, [side]: on }))
       if (sidebarMode === 'outward') growWindow(side === 'left' ? (on ? width : -width) : 0, side === 'right' ? (on ? width : -width) : 0)
-      refocus()
+      if (focus) refocus()
       return
     }
     if (!on) {
@@ -430,7 +433,18 @@ function AquaWindow({ status }: { status: Status }) {
     if (p.slide) { setSlide((v) => v + p.slide); flash(t('No room on either side: the window moved in')) }
     setSeats((s) => ({ ...s, [side]: p.pick }))
     setOpen((o) => ({ ...o, [side]: true }))
-    refocus()
+    if (focus) refocus()
+  }
+
+  function toggleSettings() {
+    if (settingsOpen) {
+      setSettingsFromLeft(null)
+      if (!settingsFromLeft) toggle('left', false)
+      refocus()
+    } else {
+      setSettingsFromLeft(sides.left)
+      if (!sides.left) toggle('left', true, false)
+    }
   }
 
   /* ------------------------------------------------------------- the title */
@@ -534,7 +548,7 @@ function AquaWindow({ status }: { status: Status }) {
   const keys: Record<string, (e: KeyboardEvent) => boolean | void> = {
     'mod+shift+ArrowUp': () => out(),
     'mod+shift+ArrowDown': () => into(),
-    'alt+BracketLeft': () => toggle('left'),
+    'alt+BracketLeft': () => settingsOpen ? toggleSettings() : toggle('left'),
     'alt+BracketRight': () => toggle('right'),
     'alt+KeyT': () => { setFolded((f) => !f); refocus() },
     'alt+KeyW': () => { const n = nextWaiting(kind === 'ws' ? workspaces.filter((w) => w.id === fixedWs) : workspaces, active?.id ?? '', hidden); if (n) go(n); else flash(t('No chat is waiting on you')) },
@@ -549,6 +563,7 @@ function AquaWindow({ status }: { status: Status }) {
         refocus()
         return
       }
+      if (settingsOpen) { toggleSettings(); return }
       const focused = document.activeElement
       if (markedTabs.length && focused?.matches('[role="tab"]') && tabListRef.current?.contains(focused)) {
         setTabSelection(undefined)
@@ -688,7 +703,7 @@ function AquaWindow({ status }: { status: Status }) {
     )
   }
   const stripEl = kind === 'chat' ? null : (
-    <div className={`shrink-0 flex items-end gap-2 px-6 min-w-0 relative ${native && folded ? 'aq-app-drag' : ''}`} style={{ height: STRIP, background: 'var(--r2-strip)', borderBottom: '1px solid var(--aq-line)', paddingLeft: folded ? 24 : undefined, paddingRight: folded ? 24 : undefined }}>
+    <div data-window-tabs data-compact={layout.prefs.tabsScale > 1 || undefined} className={`shrink-0 flex items-end gap-2 px-6 min-w-0 relative ${native && folded ? 'aq-app-drag' : ''}`} style={{ height: strip, background: 'var(--r2-strip)', borderBottom: '1px solid var(--aq-line)', paddingLeft: folded ? 24 : undefined, paddingRight: folded ? 24 : undefined, '--aq-tab-height': `${Math.max(14, strip - 6)}px` } as CSSProperties}>
       <div ref={tabListRef} className="flex items-end gap-1 min-w-0 overflow-x-auto overflow-y-hidden r2-tabs" role="tablist" aria-label={t('Chats')}
         onKeyDown={(e) => {
           if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
@@ -760,8 +775,6 @@ function AquaWindow({ status }: { status: Status }) {
         </span>
       )}
       <PlusButton {...plusProps} open={plusOpen} setOpen={setPlusOpen} />
-      <StripSettingsButton />
-      <TimerChip project={active?.project ?? ''} />
     </div>
   )
 
@@ -796,7 +809,7 @@ function AquaWindow({ status }: { status: Status }) {
         <MessageLayer agentId={tabInfo?.[x.id]?.agent_id || x.agent_id || ''} project={x.project} say={flash} refocus={beside ? focusRight : refocus} goTo={kind === 'chat' ? undefined : go}>
           {(layer) => (
             <Screen key={x.woken_at} sid={x.id} token={status.token} fontSize={status.font_size} scrollback={status.scrollback} smooth={smoothOn(status.smooth_scroll)} editor={status.editor}
-              project={x.project} taskId={x.task_id} backend={x.backend} visible={showing} autoFocus={(beside || on && !right) && level === 'chat'}
+              project={x.project} taskId={x.task_id} backend={x.backend} visible={showing} program={x.program ?? ''} autoFocus={(beside || on && !right) && level === 'chat'}
               onInput={() => typing.tick(x.id)}
               onEnded={() => { void restoreQ.refetch() }}
               onTitle={(title) => noteOscTitle(x.id, title)}
@@ -883,15 +896,18 @@ function AquaWindow({ status }: { status: Status }) {
   /* ---------------------------------------------------------- the frame */
   const leftSeated = (['right', 'left'] as const).filter((k) => sides[k] && at[k] === 'left')
   const rightSeated = (['right', 'left'] as const).filter((k) => sides[k] && at[k] === 'right')
+  const settings = settingsOpen && <WindowSettings {...layout} instant={instant} setInstant={setInstant}
+    native={native && kind !== 'chat'} mode={sidebarMode} setMode={(mode) => { changeSidebarMode(mode); store.set(SIDEBAR_MODE_KEY, mode) }}
+    onClose={toggleSettings} keys={<KeyHints compact />} />
   const panel = (k: Side) => (
-    <aside key={k} className={`shrink-0 min-w-0 overflow-hidden ${instant ? '' : k === 'left' ? 'r2-side-l' : 'r2-side-r'}`} aria-label={k === 'left' ? t('Left sidebar') : t('Right sidebar')}
+    <aside key={k} className={`shrink-0 min-w-0 overflow-hidden ${instant ? '' : k === 'left' ? 'r2-side-l' : 'r2-side-r'}`} aria-label={k === 'left' ? t(settingsOpen ? 'Window settings' : 'Left sidebar') : t('Right sidebar')}
       style={{ width: native ? (k === 'left' ? lw : rw) : (k === 'left' ? LW : RW), height: strip + bodyH,
         paddingTop: fixedSidebarControls && folded ? strip : undefined,
         background: 'var(--aq-panel)', borderLeft: '1px solid var(--aq-line)', borderRight: '1px solid var(--aq-line)' }}>
       {k === 'left'
-        ? <LeftSidebar workspaces={workspaces} ws={ws} active={active?.id ?? ''} canSleep={canSleep} onChat={go} onWs={(id) => goWs(id)}
+        ? <><div hidden={settingsOpen} className="h-full"><LeftSidebar workspaces={workspaces} ws={ws} active={active?.id ?? ''} canSleep={canSleep} onChat={go} onWs={(id) => goWs(id)}
             onSleep={(s, a) => void sleepOne(s, a)} onSleepWs={(w, a) => void sleepWs(w, a)} onNew={(r) => void newTerminal(r)} plus={<PlusButton {...plusProps} look="side" />}
-            onGroupMenu={(w) => setMenu({ kind: 'group', ws: w.id })} />
+            onGroupMenu={(w) => setMenu({ kind: 'group', ws: w.id })} /></div>{settings}</>
         : <RightSidebar s={active} project={active?.project ?? (kind !== 'chat' && wsObj?.kind === 'project' ? wsObj.key : '')} agent={activeAgentId}
             tab={rtab} setTab={setRtab} workspaces={workspaces} onChat={go} onResume={(a) => void resume(a)} onFork={(m) => void fork(m)} />}
     </aside>
@@ -904,17 +920,18 @@ function AquaWindow({ status }: { status: Status }) {
       ? (away ? t('Left sidebar (alt+[) — opened on the right: no room on the left') : t('Left sidebar (alt+[)'))
       : (away ? t('Right sidebar (alt+]) — opened on the left: no room on the right') : t('Right sidebar (alt+])'))
     const edge = side === 'left' ? 'left' : 'right'
+    const activate = () => side === 'left' && settingsOpen ? toggleSettings() : toggle(side)
     // Folded: a small rectangle at the end of the tab strip, half as wide.
     if (folded) return (
       <button type="button" data-nodrag data-toggle={side} data-in="strip" aria-pressed={on} aria-label={label} title={hint}
         className={`absolute rounded-[2px] hover:opacity-100 ${fixedSidebarControls ? 'z-[2]' : ''}`}
-        style={{ [edge]: INSET, top: Math.round((STRIP - 14) / 2), width: 12, height: 14, opacity: on ? 1 : 0.6,
-          background: on ? 'var(--brand)' : 'transparent', border: `1.5px solid ${on ? 'var(--brand)' : 'var(--text-tertiary)'}` }} onClick={() => toggle(side)} />
+        style={{ [edge]: INSET, top: Math.round((strip - 14) / 2), width: 12, height: 14, opacity: on ? 1 : 0.6,
+          background: on ? 'var(--brand)' : 'transparent', border: `1.5px solid ${on ? 'var(--brand)' : 'var(--text-tertiary)'}` }} onClick={activate} />
     )
     return (
       <button type="button" data-nodrag data-toggle={side} aria-pressed={on} aria-label={label} title={hint}
         className="absolute inline-flex items-center justify-center rounded-[6px] hover:bg-[var(--aq-hover)]"
-        style={{ [edge]: (side === 'left' ? headerLeft : headerRight) + INSET, top: 5, width: 24, height: 24 }} onClick={() => toggle(side)}>
+        style={{ [edge]: (side === 'left' ? headerLeft : headerRight) + INSET, top: Math.max(0, (bar - 24) / 2), width: 24, height: Math.min(24, bar) }} onClick={activate}>
         {side === 'left' ? <PanelLeft size={14} style={{ color: on ? 'var(--brand)' : undefined }} /> : <PanelRight size={14} style={{ color: on ? 'var(--brand)' : undefined }} />}
         {away && <span className={`absolute text-11 font-semibold ${side === 'left' ? '-right-10' : '-left-10'}`} style={{ color: 'var(--brand)' }} aria-hidden>{side === 'left' ? '▸' : '◂'}</span>}
       </button>
@@ -936,35 +953,42 @@ function AquaWindow({ status }: { status: Status }) {
         boxShadow: 'var(--shadow-lg)', border: `1px solid ${health && healthEdge ? healthEdge : 'var(--border-strong)'}`, borderTop: kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined,
       }}>
         {/* the title row: folds to a 12px strip */}
-        <div className={`relative shrink-0 select-none ${native ? 'aq-app-drag' : ''}`} style={{ height: bar, background: 'var(--r2-bar)', color: 'var(--r2-bar-ink)', transition: instant ? undefined : 'height 120ms var(--aq-ease)', borderTop: native && kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined }}
+        <div data-window-title data-compact={layout.prefs.titleScale > 1 || undefined} className={`relative shrink-0 select-none ${native ? 'aq-app-drag' : ''}`} style={{ height: bar, background: 'var(--r2-bar)', color: 'var(--r2-bar-ink)', transition: instant ? undefined : 'height 120ms var(--aq-ease)', borderTop: native && kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined }}
           onPointerDown={onBarDown} onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest('button') && Date.now() - unfoldedAt.current > 600) { setFolded(!folded); refocus() } }}>
           {health && <HealthTint />}
           {kind !== 'chat' && !folded && toggleBtn('left')}
-          {!folded && <span className="absolute top-[5px]" style={{ left: headerLeft + (kind === 'chat' ? 8 : 36) }}><ResourceMeter /></span>}
-          <span className="absolute truncate text-center pointer-events-none" style={{ left: headerLeft + (folded ? 40 : 110), width: Math.max(40, headerWidth - (folded ? 80 : 220)), top: 0, lineHeight: `${bar}px`, fontSize: folded ? 9 : 13, fontWeight: folded ? 500 : 600, color: folded ? 'var(--text-tertiary)' : 'var(--r2-bar-ink)' }}>
-            {title}
-          </span>
           {!folded && (
-            <span className="absolute flex items-center gap-2" style={{ right: headerRight + (kind === 'chat' ? 8 : 36), top: 5, maxWidth: native ? headerWidth - 64 : undefined, overflowX: native && headerWidth < 340 ? 'auto' : undefined }}>
-              {health && <HealthTitle folded={false} />}
-              {kind === 'chat' && <TimerChip project={active?.project ?? ''} />}
-              {kind !== 'chat' && (
-                <button type="button" data-nodrag className="aq-btn" aria-pressed={level !== 'chat'} onClick={cycle}
-                  title={t('Workspaces: the chat, its workspace, every workspace (Ctrl+Shift+↑)')} aria-label={t('Workspaces')}>
-                  <LayoutGrid size={13} />{wsObj && <span className="text-11 max-w-[120px] truncate">{wsObj.name}</span>}
-                  {waitingHere > 0 && <span className="text-11 font-semibold" style={{ color: 'var(--aq-wait)' }}>● {waitingHere}</span>}
-                </button>
-              )}
-              <button type="button" data-nodrag className="aq-btn icon" aria-label={t('Keys')} title={t('Keys (alt+/)')} onClick={() => setMenu({ kind: 'keys' })}><Keyboard size={13} /></button>
-              <SchemeButton onClose={refocus} />
-              {native && kind !== 'chat' && <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Sidebar settings')} title={t('Sidebar settings')}
-                aria-haspopup="menu" aria-expanded={menu?.kind === 'sidebarSettings'} onClick={() => setMenu({ kind: 'sidebarSettings' })}><Settings size={13} /></button>}
-              <button type="button" data-nodrag className="aq-btn icon" aria-pressed={instant} aria-label={instant ? t('Motion: instant') : t('Motion: fluid')} title={instant ? t('Motion: instant') : t('Motion: fluid')} onClick={() => { setInstant(!instant); refocus() }}><Zap size={13} /></button>
-              <button type="button" data-nodrag className="aq-btn icon" aria-label={t('Fold the title row (alt+T)')} title={t('Fold the title row (alt+T)')} onClick={() => { setFolded(true); refocus() }}><ChevronUp size={14} /></button>
-              {native && <button type="button" data-nodrag className="aq-btn icon" aria-label={t('Minimise')} title={t('Minimise')} onClick={() => post({ op: 'minimize' })}><Minus size={13} /></button>}
-              {native && <button type="button" data-nodrag className="aq-btn icon" aria-label={t('Close the window')} title={t('Close the window')} onClick={() => post({ op: 'close' })}><X size={13} /></button>}
-            </span>
+            <div className="absolute inset-y-0 grid items-center gap-4" style={{
+              left: headerLeft + (kind === 'chat' ? 8 : 36), right: headerRight + (kind === 'chat' ? 8 : 36),
+              gridTemplateColumns: 'minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr)',
+            }}>
+              <span className="flex min-w-0 items-center gap-2">
+                <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Window settings')} title={t('Window settings')}
+                  aria-expanded={settingsOpen} onClick={toggleSettings}><Settings size={13} /></button>
+                <ResourceMeter />
+              </span>
+              <span className="truncate text-center text-13 pointer-events-none" data-window-name>{title}</span>
+              <span className="flex min-w-0 items-center justify-end gap-2" data-window-actions data-narrow={headerWidth < 480 || undefined}>
+                <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Fold the title row (alt+T)')} title={t('Fold the title row (alt+T)')} onClick={() => { setFolded(true); refocus() }}><ChevronUp size={14} /></button>
+                {health && <HealthTitle folded={false} />}
+                <TimerChip project={active?.project ?? ''} prefs={layout.prefs} />
+                {kind !== 'chat' && (
+                  <button type="button" data-nodrag className="aq-btn shrink-0" aria-pressed={level !== 'chat'} onClick={cycle}
+                    title={t('Workspaces: the chat, its workspace, every workspace (Ctrl+Shift+↑)')} aria-label={t('Workspaces')}>
+                    <LayoutGrid size={13} />{wsObj && headerWidth >= 640 && <span className="text-11 max-w-[120px] truncate">{wsObj.name}</span>}
+                    {waitingHere > 0 && headerWidth >= 640 && <span className="text-11 font-semibold" style={{ color: 'var(--aq-wait)' }}>● {waitingHere}</span>}
+                  </button>
+                )}
+                {native && <>
+                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Minimise')} title={t('Minimise')} onClick={() => post({ op: 'minimize' })}><Minus size={13} /></button>
+                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Toggle fullscreen')} title={t('Toggle fullscreen')} onClick={() => post({ op: 'fullscreen' })}><Maximize size={13} /></button>
+                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Close the window')} title={t('Close the window')} onClick={() => post({ op: 'close' })}><X size={13} /></button>
+                </>}
+              </span>
+            </div>
           )}
+          {folded && <span className="absolute truncate text-center pointer-events-none text-9 aq-ink3"
+            style={{ left: headerLeft + 40, width: Math.max(40, headerWidth - 80), lineHeight: `${bar}px` }}>{title}</span>}
           {folded && (
             /* the whole thin row unfolds on a click */
             <button type="button" data-nodrag className="absolute inset-0 w-full cursor-pointer hover:bg-[var(--aq-hover)]" aria-label={t('Unfold the title row (alt+T)')} title={t('Unfold the title row (alt+T)')}
@@ -982,30 +1006,15 @@ function AquaWindow({ status }: { status: Status }) {
             {health && <HealthLayer top={strip} project={workProject} />}
           </div>
           {rightSeated.map(panel)}
+          {kind === 'chat' && settingsOpen && <aside aria-label={t('Window settings')} className="absolute inset-y-0 left-0 z-20 w-[236px] max-w-full bg-base">{settings}</aside>}
           {fixedSidebarControls && foldedToggles}
         </div>
       </div>
 
       {menu && menu.kind !== 'keys' && <button type="button" aria-label={t('Close the menu')} tabIndex={-1} className="fixed inset-0 z-[35] cursor-default" onClick={() => { setMenu(null); refocus() }} />}
-      {menu?.kind === 'sidebarSettings' && (
-        <Float label={t('Sidebar settings')} className="w-[260px]" style={{ right: Math.min(headerRight + 36, Math.max(0, nativeFrameW - 264)), top: bar + 2 }}>
-          {(['outward', 'inward'] as const).map((mode) => (
-            <button key={mode} type="button" role="menuitemradio" aria-checked={sidebarMode === mode} autoFocus={sidebarMode === mode}
-              className="aq-row px-8 py-6 text-left text-12" onClick={() => {
-                changeSidebarMode(mode)
-                store.set(SIDEBAR_MODE_KEY, mode)
-                setMenu(null)
-                refocus()
-              }}>
-              <span aria-hidden className="inline-block w-16">{sidebarMode === mode ? '✓' : ''}</span>
-              {mode === 'outward' ? t('Open sidebars outward') : t('Open sidebars inward')}
-            </button>
-          ))}
-        </Float>
-      )}
       {tabMenuS && menu?.kind === 'tab' && (
         <Float label={tabMenuS.label} className="w-[280px] overflow-y-auto [&>*]:shrink-0"
-          style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + STRIP + 2, maxHeight: vp.h - bar - STRIP - 6 }}>
+          style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + strip + 2, maxHeight: vp.h - bar - strip - 6 }}>
           <span className="aq-label px-6 py-4 truncate">{titleOf(tabMenuS)}</span>
           {menu.form === 'rename' ? (
             <form className="p-4" onSubmit={(e) => { e.preventDefault(); const v = String(new FormData(e.currentTarget).get('label') ?? '').trim(); if (v) { markNamed(tabMenuS.id); void act.rename(tabMenuS.id, v) } setMenu(null); refocus() }}>
@@ -1064,7 +1073,7 @@ function AquaWindow({ status }: { status: Status }) {
       )}
       {bulk && menu?.kind === 'tabSelection' && (
         <Float label={t('Selected tabs')} className="w-[280px]"
-          style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + STRIP + 2 }}>
+          style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + strip + 2 }}>
           <span className="aq-label px-6 py-4">{t('Selected tabs: {count}', { count: bulk.count })}</span>
           {bulk.tabs.length !== bulk.count ? <span className="px-6 py-4 text-12">{t('The selection changed. Select the tabs again.')}</span>
             : menu.naming ? <GroupForm submit={t('Make the group')} onSubmit={async (name, color) => {
@@ -1095,7 +1104,7 @@ function AquaWindow({ status }: { status: Status }) {
       )}
       {tabGroupMenu && menu?.kind === 'tabGroup' && (
         <Float key={tabGroupMenu.id} label={tabGroupMenu.name} className="w-[280px]"
-          style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + STRIP + 2 }}>
+          style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + strip + 2 }}>
           <GroupForm initial={tabGroupMenu} submit={t('Save')} onSubmit={(name, color) => {
             setMenu(null)
             refocus()
@@ -1109,7 +1118,7 @@ function AquaWindow({ status }: { status: Status }) {
         </Float>
       )}
       {groupMenuWs && (
-        <GroupMenu ws={groupMenuWs} style={{ left: lw + 40, top: bar + STRIP + 6 }} canSleep={canSleep}
+        <GroupMenu ws={groupMenuWs} style={{ left: lw + 40, top: bar + strip + 6 }} canSleep={canSleep}
           asleep={groupMenuWs.sessions.length > 0 && groupMenuWs.sessions.filter((s) => roleOf(s) !== 'server').every(isAsleep)}
           onEdit={(name, color) => void act.editGroup(groupMenuWs.key, { name, color })}
           onRemove={() => { void act.removeGroup(groupMenuWs.key); if (ws === groupMenuWs.id) select('', picked) }}
@@ -1133,7 +1142,7 @@ function AquaWindow({ status }: { status: Status }) {
   )
 }
 
-function Keys({ onClose }: { onClose: () => void }) {
+function KeyHints({ compact = false }: { compact?: boolean }) {
   const rows: Array<[string, string]> = [
     ['Ctrl Shift ↑', t('zoom out: the workspace, then every workspace')], ['Ctrl Shift ↓', t('zoom back in')], ['Esc', t('back one level in the overview')],
     ['alt [', t('left sidebar')], ['alt ]', t('right sidebar')], ['alt T', t('fold or unfold the title row')], ['alt W', t('next chat waiting on you')],
@@ -1142,20 +1151,27 @@ function Keys({ onClose }: { onClose: () => void }) {
     [t('double click a tab'), t('rename it')],
     [t('right-click a tab'), t('its menu: rename, sleep, group, detach, close')], ['Shift F10', t('the focused tab\'s menu')],
     ['Shift+click / Shift+← →', t('Select a range of tabs to group')],
+    ['Shift+drag', t('Select terminal text over a program that captures the mouse')],
   ]
+  return (
+    <dl className={`m-0 grid gap-x-24 gap-y-6 ${compact ? 'grid-cols-1' : 'grid-cols-2'}`}>
+      {rows.map(([k, what]) => (
+        <div key={k} className={`gap-6 text-12 ${compact ? 'grid' : 'flex items-center'}`}>
+          <dt className="w-[110px] shrink-0 flex gap-2 flex-wrap">{k.split(' ').map((x) => <kbd key={x} className="aq-kbd">{x}</kbd>)}</dt>
+          <dd className="m-0 aq-ink2">{what}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function Keys({ onClose }: { onClose: () => void }) {
   return (
     <div className="absolute inset-0 z-[50] flex items-center justify-center" role="dialog" aria-label={t('Keys')}>
       <button type="button" aria-label={t('Close')} className="absolute inset-0 cursor-default" style={{ background: 'oklch(0 0 0 / 0.28)' }} onClick={onClose} />
       <div className="relative rounded-[12px] p-20 aq-fade w-[620px] max-w-[92%]" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="flex items-center mb-12"><b className="text-14">{t('Keys')}</b><button type="button" autoFocus className="aq-btn icon ml-auto" aria-label={t('Close')} onClick={onClose}><X size={14} /></button></div>
-        <dl className="m-0 grid grid-cols-2 gap-x-24 gap-y-6">
-          {rows.map(([k, what]) => (
-            <div key={k} className="flex items-center gap-10 text-12">
-              <dt className="w-[110px] shrink-0 flex gap-2 flex-wrap">{k.split(' ').map((x) => <kbd key={x} className="aq-kbd">{x}</kbd>)}</dt>
-              <dd className="m-0 aq-ink2">{what}</dd>
-            </div>
-          ))}
-        </dl>
+        <KeyHints />
       </div>
     </div>
   )

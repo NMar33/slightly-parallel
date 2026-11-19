@@ -163,6 +163,18 @@ def test_summary_counts_attributed_minutes(client: TestClient) -> None:
     assert summary["total_min"] == 60
 
 
+def test_summary_can_include_todays_agent_minutes_by_project(client: TestClient) -> None:
+    today = tt.today_yymm_dd()
+    client.app.state.store.query(
+        "INSERT INTO sessions (id, created_date, project, agent_min) VALUES "
+        "('one', ?, 'alpha', 24), ('two', ?, 'beta', 15), ('old', '2601-01', 'alpha', 60)",
+        (today, today),
+    )
+    assert "today_agent_min" not in client.get("/api/time/summary").json()
+    assert client.get("/api/time/summary?agent_work=true").json()["today_agent_min"] == 39
+    assert client.get("/api/time/summary?agent_work=true&project=alpha").json()["today_agent_min"] == 24
+
+
 def test_manual_edit_through_the_generic_update(client: TestClient) -> None:
     e = client.post("/api/time/start", json={"project": "alpha"}).json()
     client.post(f"/api/time/{e['id']}/stop")

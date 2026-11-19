@@ -88,6 +88,15 @@ function serve(summary: UsageSummary | null, seen: string[] = []) {
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
 
 describe('UsagePage', () => {
+  it('shows measured wait separately from clock conflicts and uncollected jobs', async () => {
+    serve({...EMPTY, tool_waits: {ready: true, updated: '2026-11-18T12:00:00', seconds: 60, families: {tests: 60}, clock: 2, jobs: 4,
+      collected: 1, blocked: 1, immediate: 0, median: 40, p90: 40, daily: {}, agents: {}}})
+    render(wrap(<UsagePage />))
+    expect(await screen.findByRole('heading', {name: 'Agent tool waits'})).toBeTruthy()
+    expect(screen.getByText(/No result collected yet: 3/)).toBeTruthy()
+    expect(screen.getByText(/Calls with conflicting clocks: 2/)).toBeTruthy()
+  })
+
   it('shows a skeleton while the summary loads', () => {
     serve(null)
     render(wrap(<UsagePage />))

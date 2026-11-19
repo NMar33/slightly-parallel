@@ -812,12 +812,23 @@ def create_app(
                 threading.Thread(target=ensure_statuslines, args=(app.state.settings.data_root,), daemon=True).start()
                 # Codex's plan limits, read on a schedule through codex
                 # app-server (no chat, no tokens): the Usage page's Codex row.
+                from . import toolwaits
+                if toolwaits.enabled():
+                    try:
+                        collector = toolwaits.Collector(app.state.settings.data_root)
+                        collector.start()
+                        app.state.wait_collector = collector
+                    except (OSError, RuntimeError) as exc:
+                        log.warning("tool wait collection unavailable: %s", exc)
                 from .codexlimits import Poller
                 app.state.codex_poller = Poller(app.state.settings.data_root)
                 app.state.codex_poller.start()
         try:
             yield
         finally:
+            collector = getattr(app.state, "wait_collector", None)
+            if collector is not None:
+                collector.stop()
             for w in app.state.watchers:
                 w.stop()
             mon = getattr(app.state, "monitor", None)

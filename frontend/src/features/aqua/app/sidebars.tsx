@@ -10,7 +10,7 @@
  * tasks and a Markdown draft for its project, and workspace statistics.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Activity, Bot, ChevronDown, ChevronRight, FilePenLine, GitFork, Link2, ListTodo, Menu, MessageSquare, Moon, Pin, Play, Server, Sun, X } from 'lucide-react'
 
@@ -191,6 +191,33 @@ function useChatSessions(agentId: string) {
 const SHOW_TURNS = 40
 const firstLine = (s: string) => s.split('\n').find((l) => l.trim())?.trim() ?? ''
 
+function MessageText({ text, color, bold = false }: { text: string; color: string; bold?: boolean }) {
+  const id = useId()
+  const content = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflow, setOverflow] = useState(false)
+  useLayoutEffect(() => {
+    const element = content.current
+    if (!element || expanded) return
+    const measure = () => setOverflow(element.scrollHeight > element.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [expanded, text])
+  return (
+    <>
+      <p id={id} ref={content} className={`m-0 ${bold ? 'text-13' : 'text-12'} leading-normal whitespace-pre-wrap [overflow-wrap:anywhere] ${expanded ? '' : 'line-clamp-3'}`}
+        style={{ color }}>{text.trim()}</p>
+      {(overflow || expanded) && (
+        <button type="button" className="aq-btn self-start !h-[20px] !px-4 text-11" aria-controls={id} aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}>{expanded ? t('Collapse message') : t('Expand message')}</button>
+      )}
+    </>
+  )
+}
+
 function Messages({ agentId, project }: { agentId: string; project: string }) {
   const q = useChatSessions(agentId)
   const sessions = useMemo(() => [...(q.data?.sessions ?? [])].reverse().slice(-3), [q.data])
@@ -218,7 +245,7 @@ function Messages({ agentId, project }: { agentId: string; project: string }) {
             <span className="aq-label">{who === 'user' ? t('you') : t('agent')} · {n}</span>
             <span className="ml-auto"><MsgMarkButtons msg={{ agent_id: agentId, turn: n, side, project, session_id: sid, excerpt: firstLine(text).slice(0, 160) }} /></span>
           </div>
-          <p className="m-0 text-12 leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: who === 'user' ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{text.trim()}</p>
+          <MessageText text={text} color={who === 'user' ? 'var(--text-primary)' : 'var(--text-secondary)'} />
         </div>
       </div>
     )
@@ -246,10 +273,10 @@ function Pins({ agentId }: { agentId: string }) {
   const row = (m: MsgMark) => (
     <li key={`${m.kind}:${m.target}`} className="group flex items-start gap-6 px-8 py-6 rounded-[6px] hover:bg-[var(--bg-hover)]">
       <span className="pt-4"><MarkGlyph m={m} /></span>
-      <span className="min-w-0 flex-1 flex flex-col gap-2">
+      <div className="min-w-0 flex-1 flex flex-col gap-2">
         <span className="aq-label">{m.kind === 'pin' ? t('pinned') : m.kind === 'carry' ? t('carried whole') : t('carried as a brief')} · {m.turn}{m.side ? '↩' : ''}</span>
-        <span className="text-12 leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: 'var(--text-primary)' }}>{(m.text || m.excerpt).trim()}</span>
-      </span>
+        <MessageText text={m.text || m.excerpt} color="var(--text-primary)" />
+      </div>
       <button type="button" data-nodrag className="aq-btn icon shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={t('Remove the mark')}
         onClick={() => act.remove(m.kind === 'pin' ? 'pin' : 'carry', m.target)}><X size={11} /></button>
     </li>
@@ -259,7 +286,7 @@ function Pins({ agentId }: { agentId: string }) {
       {master && (
         <div className="m-8 p-10 shrink-0 rounded-[8px] flex flex-col gap-4" style={{ background: 'var(--brand-glow)' }}>
           <span className="aq-label flex items-center gap-6" style={{ color: 'var(--brand)' }}><Pin size={11} />{t('master message')} · {master.turn}</span>
-          <span className="text-13 leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: 'var(--text-primary)' }}>{(master.text || master.excerpt).trim()}</span>
+          <MessageText text={master.text || master.excerpt} color="var(--text-primary)" bold />
         </div>
       )}
       <ul className="m-0 p-4 list-none flex flex-col">{mine.map(row)}</ul>

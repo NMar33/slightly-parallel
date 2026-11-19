@@ -41,7 +41,7 @@ interface World {
   groups?: Group[] | null
   restore?: { needed: number; sessions: Array<{ id: string; label: string }> } | null
   /** The time routes: absent (404) unless given. */
-  time?: { running: unknown[]; project: Record<string, number>; total: number; working?: string[] }
+  time?: { running: unknown[]; project: Record<string, number>; total: number; totalAgent?: number; working?: string[] }
   /** GET /api/terminal/tabs: absent (404) unless given. */
   tabs?: Record<string, { title: string; agent_id: string; chat: Record<string, unknown> | null }>
   agentProfile?: Record<string, unknown>
@@ -100,6 +100,7 @@ beforeEach(() => {
     if (path.startsWith('/api/sessions')) return answer({ sessions: [] })
     if (world.time && path === '/api/time/running') return answer({ running: world.time.running })
     if (world.time && path === '/api/time/summary') return answer({ today_min: world.time.total })
+    if (world.time && path === '/api/time/summary?agent_work=true') return answer({ today_min: world.time.total, today_agent_min: world.time.totalAgent })
     if (world.time && path.startsWith('/api/time/summary?project=')) return answer({ today_min: world.time.project[new URL(path, 'http://x').searchParams.get('project')!] ?? 0 })
     if (world.time && path === '/api/time/auto') return answer({ working: (world.time.working ?? []).map((p) => ({ project: p, entry_id: 'tm_a', task_id: '', top: 100 })), away: [], modes: {}, default_mode: 'remind' })
     return answer({ detail: 'Not Found' }, 404)
@@ -285,6 +286,48 @@ describe('SP Aqua at /term', () => {
     expect(at('right')).toBe(start.r)
   })
 
+  it('opens window settings in place of the left sidebar and restores it on close', async () => {
+    const sent: unknown[] = []
+    ;(window as unknown as { spWindow: unknown }).spWindow = { postMessage: (m: unknown) => sent.push(m) }
+    world = { sessions: [row({ label: 'calendar-overlap' })] }
+    page()
+    await screen.findByRole('tablist', { name: 'Chats' })
+    fireEvent.click(screen.getByRole('button', { name: 'Left sidebar' }))
+    expect(screen.getByRole('navigation', { name: 'Workspaces' })).toBeTruthy()
+    sent.length = 0
+    fireEvent.click(screen.getByRole('button', { name: 'Window settings' }))
+    expect(screen.queryByRole('navigation', { name: 'Workspaces' })).toBeNull()
+    const settings = screen.getByRole('complementary', { name: 'Window settings' })
+    expect(within(settings).getByRole('checkbox', { name: 'Instant motion' })).toBeTruthy()
+    expect(within(settings).getByText('Keys')).toBeTruthy()
+    fireEvent.click(within(settings).getByText('Colour scheme'))
+    expect(within(settings).getByRole('radiogroup', { name: 'Colour scheme' })).toBeTruthy()
+    key('Escape')
+    expect(screen.queryByRole('complementary', { name: 'Window settings' })).toBeNull()
+    expect(screen.getByRole('navigation', { name: 'Workspaces' })).toBeTruthy()
+    expect(sent.filter((m) => (m as { op: string }).op === 'grow')).toEqual([])
+  })
+
+  it('sets the title and tab row heights independently', async () => {
+    world = { sessions: [row({ label: 'calendar-overlap' })] }
+    const view = page()
+    const tabs = await screen.findByRole('tablist', { name: 'Chats' })
+    const titleRow = frame().querySelector<HTMLElement>('[data-window-title]')!
+    const tabRow = tabs.closest<HTMLElement>('[data-window-tabs]')!
+    fireEvent.click(screen.getByRole('button', { name: 'Window settings' }))
+    const settings = screen.getByRole('complementary', { name: 'Window settings' })
+    fireEvent.change(within(settings).getByLabelText('Title row height'), { target: { value: '2' } })
+    expect(titleRow.style.height).toBe('17px')
+    expect(tabRow.style.height).toBe('32px')
+    fireEvent.change(within(settings).getByLabelText('Tab row height'), { target: { value: '1.5' } })
+    expect(tabRow.style.height).toBe('21px')
+    view.unmount()
+    page()
+    await screen.findByRole('tablist', { name: 'Chats' })
+    expect(frame().querySelector<HTMLElement>('[data-window-title]')?.style.height).toBe('17px')
+    expect(frame().querySelector<HTMLElement>('[data-window-tabs]')?.style.height).toBe('21px')
+  })
+
   it('in the app window a sidebar grows the window through the bridge, and close and minimise are there', async () => {
     const sent: unknown[] = []
     ;(window as unknown as { spWindow: unknown }).spWindow = { postMessage: (m: unknown) => sent.push(m) }
@@ -297,6 +340,8 @@ describe('SP Aqua at /term', () => {
     expect(sent).toContainEqual({ op: 'grow', left: -236, right: 0 })
     fireEvent.click(screen.getByRole('button', { name: 'Close the window' }))
     expect(sent).toContainEqual({ op: 'close' })
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle fullscreen' }))
+    expect(sent).toContainEqual({ op: 'fullscreen' })
     expect(sent.some((m) => (m as { op: string }).op === 'title')).toBe(true)
   })
 
@@ -474,7 +519,7 @@ describe('SP Aqua at /term', () => {
     expect(screen.queryByRole('button', { name: /\+1/ })).toBeNull()
   })
 
-  it('says the time today on the tab\'s project and in all at the strip\'s end; a click opens the Timer page through the window', async () => {
+  it('stacks today’s project and total timers in the title row and opens the Timer page on click', async () => {
     const a = row({ label: 'api-limits', project: 'harbor' })
     const b = row({ label: 'tide', project: 'harbor' })
     world = { sessions: [a, b], time: { running: [], project: { harbor: 80 }, total: 185, working: ['harbor'] } }
@@ -482,10 +527,10 @@ describe('SP Aqua at /term', () => {
     ;(window as unknown as { spWindow: unknown }).spWindow = { postMessage: (m: unknown) => sent.push(m) }
     page()
     const chip = await screen.findByRole('button', { name: /^Timer: counting\. harbor 1h 20m · today 3h 05m\./ })
+    expect(chip.closest('[data-window-title]')).toBeTruthy()
+    expect(chip.closest('[data-window-tabs]')).toBeNull()
+    expect(chip.querySelector('[data-timer-layout]')?.getAttribute('data-timer-layout')).toBe('stacked')
     expect(chip.dataset.timer).toBe('counting')
-    // At the strip's right end, after the "+" button: the tabs never move for it.
-    const strip = screen.getByRole('tablist', { name: 'Chats' }).parentElement!
-    expect(strip.lastElementChild).toBe(chip)
     fireEvent.click(chip)
     expect(sent).toContainEqual({ op: 'open', url: `${window.location.origin}/time` })
   })
@@ -494,6 +539,23 @@ describe('SP Aqua at /term', () => {
     world = { sessions: [row({ label: 'api-limits' })] }
     page()
     await screen.findAllByRole('tab')
+    expect(screen.queryByRole('button', { name: /^Timer:/ })).toBeNull()
+  })
+
+  it('changes timer sources, hides the selected timer and switches to an inline layout', async () => {
+    world = { sessions: [row({ label: 'api-limits' })], time: { running: [], project: { harbor: 5 }, total: 12, totalAgent: 45 } }
+    page()
+    await screen.findByRole('button', { name: /^Timer:.*today 12m/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Window settings' }))
+    const settings = screen.getByRole('complementary', { name: 'Window settings' })
+    fireEvent.click(within(settings).getByText('Timers'))
+    fireEvent.change(within(settings).getByLabelText('Project timer'), { target: { value: 'off' } })
+    fireEvent.change(within(settings).getByLabelText('Total timer'), { target: { value: 'agents' } })
+    fireEvent.click(within(settings).getByRole('checkbox', { name: 'Stack timers' }))
+    const chip = await screen.findByRole('button', { name: /^Timer:.*today · agents 45m/ })
+    expect(chip.querySelector('[data-timer-layout]')?.getAttribute('data-timer-layout')).toBe('inline')
+    expect(chip.querySelectorAll('[data-timer-source]')).toHaveLength(1)
+    fireEvent.change(within(settings).getByLabelText('Total timer'), { target: { value: 'off' } })
     expect(screen.queryByRole('button', { name: /^Timer:/ })).toBeNull()
   })
 

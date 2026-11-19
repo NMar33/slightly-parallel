@@ -103,6 +103,10 @@ bind -n MouseDown2Pane select-pane -t = \\; if -F "#{||:#{pane_in_mode},#{mouse_
 # program which reads the mouse still receives its own drag and clicks.
 unbind -T copy-mode MouseDragEnd1Pane
 unbind -T copy-mode-vi MouseDragEnd1Pane
+# In copy mode tmux moves to the event's cell before the command. Refresh
+# the linear selection there without clearing its anchor or copying.
+bind -T copy-mode S-MouseDown1Pane send-keys -X rectangle-off
+bind -T copy-mode-vi S-MouseDown1Pane send-keys -X rectangle-off
 bind -T copy-mode C-c send-keys -X cancel \\; send-keys C-c
 bind -T copy-mode-vi C-c send-keys -X cancel \\; send-keys C-c
 bind -T copy-mode DoubleClick1Pane select-pane \\; send-keys -X select-word
@@ -419,13 +423,23 @@ def to_bottom(data_root: Path, sid: str) -> None:
     tmux(data_root, "send-keys", "-X", "-t", PREFIX + sid, "cancel")
 
 
-def copy_selection(data_root: Path, sid: str) -> bool:
-    """Copy only a real selection and let tmux send it to the attached clipboard via OSC 52."""
+def copy_selection(data_root: Path, sid: str) -> str | None:
+    """Return the selected bytes from our buffer, even if OSC 52 is blocked."""
+    prefix = f"sp-copy-{secrets.token_hex(8)}-"
     out = tmux(data_root, "if-shell", "-F", "-t", PREFIX + sid, "#{selection_present}",
-               "send-keys -X copy-selection-and-cancel ; display-message -p copied")
+               f"send-keys -X copy-selection-and-cancel {prefix} ; display-message -p copied")
     if out.returncode != 0:
         raise TmuxError((out.stderr or "").strip() or "tmux selection could not be copied")
-    return out.stdout.strip() == "copied"
+    if out.stdout.strip() != "copied":
+        return None
+    buffers = tmux(data_root, "list-buffers", "-F", "#{buffer_name}")
+    name = next((line for line in buffers.stdout.splitlines() if line.startswith(prefix)), None)
+    if not name:
+        raise TmuxError("tmux did not save the copied selection")
+    contents = tmux(data_root, "save-buffer", "-b", name, "-")
+    if contents.returncode != 0:
+        raise TmuxError((contents.stderr or "").strip() or "tmux selection could not be read")
+    return contents.stdout
 
 
 def cancel_selection(data_root: Path, sid: str) -> None:
@@ -773,7 +787,7 @@ def pane_pos(data_root: Path, sid: str) -> dict[str, int]:
     Everything the page needs to anchor a clicked row to an absolute line."""
     out = tmux_read(data_root, "display-message", "-p", "-t", PREFIX + sid,
                     "#{history_size}:#{scroll_position}:#{pane_height}:#{cursor_y}"
-                    ":#{pane_width}:#{alternate_on}:#{mouse_any_flag}:#{pane_in_mode}")
+                    ":#{pane_width}:#{alternate_on}:#{mouse_any_flag}:#{pane_in_mode}:#{selection_present}")
     parts = (out.stdout or "").strip().split(":")
     def n(i: int) -> int:
         try:
@@ -783,7 +797,7 @@ def pane_pos(data_root: Path, sid: str) -> dict[str, int]:
     # What the wheel should do in the page (Screen.tsx): a full-screen program
     # (alt) or one that reads the mouse gets it; otherwise the history scrolls.
     return {"history": n(0), "scroll": n(1), "rows": n(2), "cursor": n(3), "cols": n(4),
-            "alt": bool(n(5)), "mouse": bool(n(6)), "in_mode": bool(n(7))}
+            "alt": bool(n(5)), "mouse": bool(n(6)), "in_mode": bool(n(7)), "selecting": bool(n(8))}
 
 
 #: The most rows the page's reader asks for at once (about 0.4 s and 5 MB at 50 000).

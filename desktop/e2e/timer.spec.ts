@@ -89,13 +89,14 @@ test.describe('smart timer', () => {
     // Still the same span: the typing kept it open.
     expect((await auto()).working.find((w) => w.project === PROJECT)?.entry_id).toBe(entryId)
 
-    // The window says so at the strip's end; a click opens the Timer page in the browser.
-    const chip = page.locator('[data-timer]')
+    // The timers live above the tabs; a click opens the Timer page in the browser.
+    const chip = page.locator('[data-window-title] [data-timer]')
     await expect(chip).toHaveAttribute('data-timer', 'counting', { timeout: 40_000 })
     await expect(chip).toContainText(`${PROJECT} `)
     await expect(chip).toContainText('today')
     await chip.click()
     await expect.poll(() => linksOut(win.app)).toContain(`${server.url}/time`)
+    await expect(page.locator('[data-window-tabs] [data-timer]')).toHaveCount(0)
 
     await api.post('/api/time/auto/mode', { data: { project: PROJECT, mode: 'remind' } })
   })

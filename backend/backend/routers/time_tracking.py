@@ -191,11 +191,12 @@ def time_summary(
     request: Request,
     project: str = "",
     task_id: str = "",
+    agent_work: bool = False,
     store: ViewStore = Depends(get_store),
 ) -> Response:
     """Attributed minutes for today, the last 7 days, and per goal — of a
     project, of one task (``task_id``), or of everything."""
-    etag = etag_for(f"time:summary:{project}:{task_id}:{_minute()}", store)
+    etag = etag_for(f"time:summary:{project}:{task_id}:{agent_work}:{_minute()}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
 
@@ -226,6 +227,16 @@ def time_summary(
         if gid:
             per_goal[gid] = per_goal.get(gid, 0) + attributed
 
+    agent_minutes = {}
+    if agent_work and not task_id:
+        agent_where = "created_date = ?"
+        agent_params = [today]
+        if project:
+            agent_where += " AND project = ?"
+            agent_params.append(project)
+        agent_rows = store.query(f"SELECT COALESCE(SUM(agent_min), 0) AS minutes FROM sessions WHERE {agent_where}", tuple(agent_params))
+        agent_minutes["today_agent_min"] = round(float(agent_rows[0]["minutes"]))
+
     return json_response(
         {
             "project": project,
@@ -234,6 +245,7 @@ def time_summary(
             "week_min": round(week_sec / 60),
             "total_min": round(total_sec / 60),
             "per_goal_min": {k: round(v / 60) for k, v in per_goal.items()},
+            **agent_minutes,
         },
         etag,
     )

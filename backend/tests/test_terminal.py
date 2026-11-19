@@ -227,13 +227,15 @@ def test_tmux_mouse_bindings_select_without_copying(tmp_path: Path) -> None:
         for table in ("copy-mode", "copy-mode-vi"):
             keys = termlib.tmux(root, "list-keys", "-T", table).stdout
             assert "MouseDragEnd1Pane" not in keys
+            assert "S-MouseDown1Pane" in keys
             assert all("copy-pipe" not in line for line in keys.splitlines()
                        if "DoubleClick1Pane" in line or "TripleClick1Pane" in line)
         assert not termlib.copy_selection(root, "probe")
         termlib.tmux(root, "copy-mode", "-t", "mk-probe")
         for key in ("history-top", "start-of-line", "begin-selection", "end-of-line"):
             termlib.tmux(root, "send-keys", "-X", "-t", "mk-probe", key)
-        assert termlib.copy_selection(root, "probe")
+        assert termlib.pane_pos(root, "probe")["selecting"]
+        assert termlib.copy_selection(root, "probe").strip() == "selected text"
         assert termlib.tmux(root, "show-buffer").stdout.strip() == "selected text"
         assert not termlib.copy_selection(root, "probe")
     finally:
@@ -928,7 +930,10 @@ def test_a_hanging_tmux_still_lists_the_terminals(hanging_tmux) -> None:
 def test_a_hanging_tmux_reads_a_pane_as_empty(hanging_tmux) -> None:
     c, _ = hanging_tmux
     pos = c.get("/api/terminal/sessions/hang1/pos")
-    assert pos.status_code == 200 and pos.json() == {"history": 0, "scroll": 0, "rows": 0, "cursor": 0, "cols": 0, "alt": False, "mouse": False, "in_mode": False}
+    assert pos.status_code == 200 and pos.json() == {
+        "history": 0, "scroll": 0, "rows": 0, "cursor": 0, "cols": 0,
+        "alt": False, "mouse": False, "in_mode": False, "selecting": False,
+    }
     cap = c.post("/api/terminal/sessions/hang1/capture", json={"mode": "screen"})
     assert cap.status_code == 200 and cap.json()["text"] == ""
 

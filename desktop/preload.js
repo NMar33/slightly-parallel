@@ -3,7 +3,7 @@
  *  Nothing else of Electron or Node reaches the page. */
 const { contextBridge, ipcRenderer } = require('electron')
 
-const OPS = new Set(['drag', 'close', 'minimize', 'title', 'grow', 'detach', 'open', 'restore'])
+const OPS = new Set(['drag', 'close', 'minimize', 'fullscreen', 'title', 'grow', 'detach', 'open', 'restore'])
 
 function postMessage(msg) {
   if (!msg || typeof msg !== 'object' || !OPS.has(msg.op)) return

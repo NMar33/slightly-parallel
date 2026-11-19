@@ -24,7 +24,7 @@
  * of the mouse is the terminal's (selecting, tmux, a program's mouse).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Terminal } from 'xterm'
 import { AlignLeft, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Clock, Copy, ExternalLink, GitBranch, Globe, Layers, Link2, ListPlus, Pin, PinOff, Quote, SquareTerminal, X } from 'lucide-react'
@@ -82,9 +82,25 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
   children: (slot: LayerSlot) => ReactNode
 }) {
   const root = useRef<HTMLDivElement>(null)
+  const [bounds, setBounds] = useState({ width: 1000, height: 600 })
   const api = useRef<ScreenApi | null>(null)
   const terms = useRef(new Set<Terminal>())
   const [open, setOpen] = useState<Open | null>(null)
+  const showing = open !== null
+  useLayoutEffect(() => {
+    const element = root.current
+    if (!showing || !element) return
+    const read = () => {
+      const width = element.clientWidth
+      const height = element.clientHeight
+      setBounds((prev) => prev.width === width && prev.height === height ? prev : { width, height })
+    }
+    read()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(read)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [showing])
   const { record } = useChatRecord(agentId)
   const recordRef = useRef(record)
   recordRef.current = record
@@ -238,8 +254,7 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
     return () => { window.removeEventListener('keydown', key, true); window.removeEventListener('pointerdown', down, true) }
   }, [open, close])
 
-  const w = root.current?.clientWidth ?? 1000
-  const h = root.current?.clientHeight ?? 600
+  const { width: w, height: h } = bounds
   return (
     <div ref={root} className="relative w-full h-full min-h-0">
       {children(slot)}

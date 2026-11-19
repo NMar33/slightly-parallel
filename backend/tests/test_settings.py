@@ -213,6 +213,8 @@ def test_terminal_resource_settings_persist_with_ordered_thresholds(env) -> None
     defaults = {
         "terminal.resource_meter": True, "terminal.resource_color": True,
         "terminal.resource_yellow": 75, "terminal.resource_red": 90,
+        "terminal.resource_green_enabled": True, "terminal.resource_yellow_enabled": True,
+        "terminal.resource_red_enabled": True,
     }
 
     def read_values():
@@ -223,8 +225,10 @@ def test_terminal_resource_settings_persist_with_ordered_thresholds(env) -> None
 
     assert read_values() == defaults
     updates = {
+        **defaults,
         "terminal.resource_meter": False, "terminal.resource_color": False,
         "terminal.resource_yellow": 45, "terminal.resource_red": 60,
+        "terminal.resource_red_enabled": False,
     }
     assert client.post("/api/settings", json={"values": updates}).status_code == 200
     assert read_values() == updates

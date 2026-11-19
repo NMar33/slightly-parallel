@@ -137,12 +137,14 @@ test.describe('tab strip', () => {
     const { page } = win
     await ready(page)
     // the dotted strip is the tab state «dots» now; «ритм» is the default
-    await page.getByRole('button', { name: 'Status strip on the tabs' }).click()
+    await page.getByRole('button', { name: 'Window settings' }).click()
+    const settings = page.getByRole('complementary', { name: 'Window settings' })
+    await settings.getByText('Status strip on the tabs', { exact: true }).click()
     await page.getByRole('radio', { name: 'dots' }).click()
     await expect(page.locator('[data-tab] [data-strip="c"] [data-part]')).toHaveCount(3)
     await page.getByRole('radio', { name: 'rhythm' }).click()
     await expect(page.locator('[data-tab] [data-strip="c"]')).toHaveCount(0)
-    await page.keyboard.press('Escape')
+    await settings.getByRole('button', { name: 'Close window settings' }).click()
     const plus = page.getByRole('button', { name: 'New terminal', exact: true })
     await plus.click({ modifiers: ['Control'] })
     const menu = page.getByRole('menu', { name: 'Open a new terminal' })
