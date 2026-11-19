@@ -39,16 +39,18 @@ describe('hydratePrefs — live terminal state stays in the browser', () => {
     expect(posts).toEqual([{ values: { 'sp-term-health-day': null } }])
   })
 
-  it('ignores stale tab selections and keeps a locally selected workspace', async () => {
+  it('ignores stale tab selections and order and keeps the local workspace', async () => {
     localStorage.clear()
     const tabs = JSON.stringify({ 'p:kelp': 'rightmost' })
+    const order = JSON.stringify({ 'p:kelp': ['leftmost', 'rightmost'] })
     localStorage.setItem('sp-aqua-active', 'rightmost')
     localStorage.setItem('sp-aqua-workspace', 'p:kelp')
     localStorage.setItem('sp-aqua-ws-tabs', tabs)
+    localStorage.setItem('sp-aqua-tab-order', order)
     const posts: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
       if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response('{}') }
-      return new Response(JSON.stringify({ prefs: { 'sp-aqua-active': 'leftmost', 'sp-aqua-ws-tabs': '{}' } }),
+      return new Response(JSON.stringify({ prefs: { 'sp-aqua-active': 'leftmost', 'sp-aqua-ws-tabs': '{}', 'sp-aqua-tab-order': '{}' } }),
         { headers: { 'Content-Type': 'application/json' } })
     }))
 
@@ -56,7 +58,8 @@ describe('hydratePrefs — live terminal state stays in the browser', () => {
     expect(localStorage.getItem('sp-aqua-active')).toBe('rightmost')
     expect(localStorage.getItem('sp-aqua-workspace')).toBe('p:kelp')
     expect(localStorage.getItem('sp-aqua-ws-tabs')).toBe(tabs)
-    expect(posts).toEqual([{ values: { 'sp-aqua-active': null, 'sp-aqua-ws-tabs': null } }])
+    expect(localStorage.getItem('sp-aqua-tab-order')).toBe(order)
+    expect(posts).toEqual([{ values: { 'sp-aqua-active': null, 'sp-aqua-ws-tabs': null, 'sp-aqua-tab-order': null } }])
   })
 })
 

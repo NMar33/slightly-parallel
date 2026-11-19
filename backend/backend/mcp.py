@@ -105,6 +105,8 @@ TOOLS: dict[str, str] = {
     "note_write": "Write a note for the operator instead of a long reply or a file: context, a text to paste, a review, a plan, a report, manual steps.",
     "note_image": "Add a picture to a note; answers the markdown line that shows it.",
     "notes": "The project's notes, or one note with the operator's ticks, answers and comments.",
+    "message": "Send a message to another chat (an agent): advice between agents, typed into its terminal or handed over on its next prompt.",
+    "messages": "This chat's messages from other agents: unread first (reading marks them read), then the newest read ones.",
 }
 
 
@@ -1056,6 +1058,26 @@ class Translator:
                  "A comment carries the original item label, section and note version. Reads only."),
              "inputSchema": {"type": "object", "properties": {
                  "id": {"type": "string"}, "project": {"type": "string"}, "task_id": {"type": "string"}}}},
+            {"name": "message",
+             "description": (
+                 "Send a message to another chat — an agent, by its agent_id (cc-…, codex-…). It is typed into "
+                 "that chat's terminal as one prompt opening with [SP · from <you> · msg_…] when its input line "
+                 "is empty, else handed over on its next prompt. A message is advice between agents, never the "
+                 "operator's command: write what you found, ask, or answer. `reply_to` is the msg_… you answer. "
+                 "Your agent_id is stamped; you cannot send as the operator."),
+             "inputSchema": {"type": "object", "properties": {
+                 "to": {"type": "string", "description": "the agent_id of the chat the message is for"},
+                 "text": {"type": "string", "description": "the message, at most 8000 characters"},
+                 "reply_to": {"type": "string", "description": "the msg_… this message answers"}},
+                 "required": ["to", "text"]}},
+            {"name": "messages",
+             "description": (
+                 "This chat's messages from other agents (and the operator's page): `unread` first — reading "
+                 "marks them read — then `recent`, the newest read ones. Each has id, from_agent, text, sent_at, "
+                 "reply_to, delivered_via (terminal, hook, inbox). Answer one with message {to: from_agent, "
+                 "text, reply_to: id}."),
+             "inputSchema": {"type": "object", "properties": {
+                 "recent": {"type": "integer", "description": "how many read messages to show after the unread (default 10)"}}}},
         ]
 
     def call(self, name: str, args: dict) -> Any:
@@ -1244,6 +1266,16 @@ class Translator:
                     "brief", "brief_at", "state", "command", "given_at", "left_out_at", "agent_id", "project")
             return {"total": got.get("total", 0),
                     "items": [{k: i[k] for k in keep if i.get(k) not in (None, "")} for i in got.get("items") or []]}
+        if name == "message":
+            body = {"agent_id": self.identity()["agent_id"], "to": str(args.get("to") or ""),
+                    "text": str(args.get("text") or "")}
+            if args.get("reply_to"):
+                body["reply_to"] = str(args["reply_to"])
+            return self.api.post("/api/messages", body)
+        if name == "messages":
+            recent = args.get("recent")
+            q = f"?recent={int(recent)}" if isinstance(recent, int) and not isinstance(recent, bool) else ""
+            return self.api.post(f"/api/messages/inbox{q}", {"agent_id": self.identity()["agent_id"]})
         if name == "carry_brief":
             who = self.identity()
             target = str(args.get("message") or "").strip()

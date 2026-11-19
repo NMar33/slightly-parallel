@@ -71,10 +71,11 @@ export const msgTarget = (agentId: string, turn: number, side: MsgSide = '') =>
   `${agentId}#${turn}${side ? `/${side}` : ''}`
 
 /** One list, every project: the pages filter in the browser. */
-export function usePinList(list: PinList) {
+export function usePinList(list: PinList, agentId?: string) {
+  const path = agentId ? `${PATH[list]}?agent_id=${encodeURIComponent(agentId)}&full=true` : PATH[list]
   return useQuery({
-    queryKey: key(list),
-    queryFn: ({ signal }) => getJson<{ items: MsgMark[]; deliveries?: CarryDelivery[] }>(PATH[list], signal),
+    queryKey: agentId ? [...key(list), agentId] : key(list),
+    queryFn: ({ signal }) => getJson<{ items: MsgMark[]; deliveries?: CarryDelivery[] }>(path, signal),
     staleTime: 30_000,
   })
 }

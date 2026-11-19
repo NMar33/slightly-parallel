@@ -57,6 +57,10 @@ NOT_OPERATOR: tuple[str, ...] = (
     # A helper stopped from the tasks panel (a queued_command with no origin,
     # commandMode "task-notification"; reached chat.md as a turn in 2.1.2xx).
     'Background agent "',
+    # A message another agent sent through Slightly Parallel, as chat.md
+    # keeps it once the hook has checked its marker against the ledger
+    # (msgledger.py wrap): the sender's words, never the operator's command.
+    "<sp-message",
 )
 
 #: The tool's own bookkeeping inside a Claude Code transcript — "user"

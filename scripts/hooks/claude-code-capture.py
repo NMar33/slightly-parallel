@@ -806,7 +806,7 @@ def main() -> int:
                 return 0
             if args.tool == "claude-code":
                 close_overtaken(cap, prompt, str(payload.get("transcript_path") or ""))
-            signals = cap.open_turn(prompt)
+            signals = cap.open_turn(prompt, deliver=True)
             notice = format_signals(signals, args.tool)
             if args.tool == "claude-code" and not cap.is_helper():
                 # A compaction no SessionStart answered (a folder set up before

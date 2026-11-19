@@ -86,6 +86,31 @@ async function pointOf(page: Page, text: string): Promise<{ x: number; y: number
 
 test.describe('message menu', () => {
   test.beforeEach(() => { AGENT = `cc-e2em${Math.random().toString(16).slice(2, 6)}` })
+  test('the inspector can read the end of a long reply in Messages and Pins', async ({ win, shell, server }) => {
+    const { app, page } = win
+    const ending = 'End of the full inspector reply.'
+    const reply = [
+      ...Array.from({ length: 12 }, (_, n) => `Paragraph ${n + 1} stays readable in a narrow inspector, including all the text on this line.`),
+      'long-unbroken-token-'.repeat(50),
+      ending,
+    ].join('\n')
+    record(shell.id, 'open', 'Check the inspector readability')
+    record(shell.id, 'complete', reply)
+    await expect.poll(async () => (await sessions(server.api)).find((s) => s.id === shell.id && (s as { agent_id?: string }).agent_id === AGENT)).toBeTruthy()
+    await page.reload()
+    await fullSize(app, page)
+    await ready(page)
+    await page.keyboard.press('Alt+BracketRight')
+    const side = page.getByRole('complementary', { name: 'Right sidebar' })
+    const fullText = side.getByText(ending, { exact: false }).first()
+    const fits = () => fullText.evaluate((el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1)
+    await expect(fullText).toBeVisible()
+    await expect.poll(fits).toBe(true)
+    await side.getByRole('button', { name: 'Pin this reply, to come back to it' }).click()
+    await side.getByRole('tab', { name: 'Pins' }).click()
+    await expect(fullText).toBeVisible()
+    await expect.poll(fits).toBe(true)
+  })
   for (const size of ['usual', 'narrow'] as const) test(`a right click on a reply in a ${size} window: Pin, task and note ids; Copy only on a line that is no message`, async ({ win, shell, server }) => {
     const { app, page } = win
     await ready(page)

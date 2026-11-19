@@ -71,6 +71,7 @@ from .routers import (
     lenses,
     logs,
     marks,
+    messages as messages_routes,
     pins,
     done,
     undo,
@@ -274,6 +275,25 @@ async def _memory_loop() -> None:
         await asyncio.sleep(logbook.MEMORY_EVERY_S)
 
 
+#: How often a message that waits is tried in its chat's terminal again.
+MESSAGE_TICK_SECONDS = 3.0
+
+
+async def _message_loop(app: FastAPI) -> None:
+    """Messages between agents that could not be typed into their chat's
+    terminal (the operator was typing, the agent showed a menu): tried
+    again, off the request path. A round with nothing waiting is a stat."""
+    from . import msgdeliver
+    while True:
+        await asyncio.sleep(MESSAGE_TICK_SECONDS)
+        try:
+            await asyncio.to_thread(msgdeliver.retry_waiting, app.state.store.data_root)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one failed round must not end the loop
+            log.exception("waiting messages not tried")
+
+
 async def _backup_loop(app: FastAPI) -> None:
     """Scheduled archives of the data root, taken off the request path.
 
@@ -328,7 +348,7 @@ _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "ta
                 "task_done", "next_tasks",
                 "core_new", "core_note", "core_attach", "core_off", "publish_attach", "publish_write", "usage_prices_write",
                 "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_ask", "entrypoint_answer",
-                "task_topic", "carry_brief", "note_write", "note_image")
+                "task_topic", "carry_brief", "note_write", "note_image", "message", "messages")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
 MCP_REFUSAL = (
     f"agents write through the Slightly Parallel MCP tools ({', '.join(_WRITE_TOOLS)}), not by HTTP. "
@@ -371,6 +391,8 @@ _MCP_WRITE_PATHS = (
     r"/api/carries/brief",
     r"/api/notes/write",
     r"/api/notes/[^/]+/images",
+    r"/api/messages",
+    r"/api/messages/inbox",
 )
 MCP_PATH_REFUSAL = (
     "the Slightly Parallel MCP tools do not write here, so an agent cannot either. "
@@ -755,6 +777,9 @@ def create_app(
             )
             app.state.backup_task = asyncio.create_task(_backup_loop(app))
             app.state.memory_task = asyncio.create_task(_memory_loop())
+            # Messages between agents that wait for their chat's terminal
+            # (msgdeliver.py): tried again every few seconds.
+            app.state.message_task = asyncio.create_task(_message_loop(app))
             # The first page that asks for a day's commits paid for reading
             # every repository's log — 4.8 s on the calendar after a start.
             # Read them now, off the request path, so the first ask is warm.
@@ -809,7 +834,7 @@ def create_app(
             if held is not None:
                 held.close()
                 app.state.root_lock = None
-            for name in ("backup_task", "memory_task"):
+            for name in ("backup_task", "memory_task", "message_task"):
                 task = getattr(app.state, name, None)
                 if task is not None:
                     task.cancel()
@@ -1039,6 +1064,7 @@ def create_app(
     app.include_router(logs.router)
     app.include_router(marks.router)
     app.include_router(pins.router)
+    app.include_router(messages_routes.router)
     app.include_router(done.router)
     app.include_router(undo.router)
     app.include_router(stats.router)

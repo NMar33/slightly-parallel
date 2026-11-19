@@ -61,6 +61,22 @@ The Electron server uses an isolated port and test data. Each phase
 has a timeout. The command prints the temporary directory for logs, Electron
 artifacts and `result.json`.
 
+## `verify.py waves` — terminal feedback pilot
+
+After building the snapshot, the pilot runs the terminal's Vitest files
+first. The short Electron profile and the remaining Vitest and backend
+checks then run in order with `--jobs 1` (default) or overlap with
+`--jobs 2`. Both modes select the same tests and use the same worker limits.
+The outer machine queue stays in force. Only one Electron run starts.
+
+Use `python3 scripts/verify.py waves --ref <commit> --jobs 1` for the
+baseline and repeat with `--jobs 2` for comparison. Start the command as a
+background process to leave the agent free to continue working. The printed
+directory holds `result.json`, updated atomically as each step and wave
+finishes. It records queue time, time until the first test result after
+admission, elapsed time, test counts and load samples. A failed test wave
+does not stop the independent waves. A failed build stops the test waves.
+
 ## `bench_rebuild.py` — DuckDB rebuild timings
 
 Measures how long rebuilding the tables takes for a data root. Its published

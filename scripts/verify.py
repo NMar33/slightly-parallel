@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import errno
 import hashlib
@@ -17,6 +19,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from threading import Event, Lock
 import time
 
 REPO = Path(__file__).resolve().parents[1]
@@ -35,6 +38,9 @@ FAST_TERMINAL = (
 )
 DEPENDENCY_DIRS = ("frontend/node_modules", "desktop/node_modules", "backend/.venv")
 FAST_PYTEST_WORKERS = min(12, getattr(os, "process_cpu_count", os.cpu_count)() or 1)
+TERMINAL_LOGIC = "src/features/terminal"
+Step = tuple[str, list[str], str, int]
+Wave = tuple[str, tuple[Step, ...]]
 
 
 @contextmanager
@@ -98,30 +104,43 @@ def terminal_args() -> list[str]:
     return [*files, "--grep", titles]
 
 
-def run_step(command: list[str], cwd: Path, log: Path, env: dict[str, str], timeout: int) -> int:
+def stop_process(child: subprocess.Popen) -> None:
+    if WINDOWS:
+        subprocess.run(["taskkill", "/pid", str(child.pid), "/t", "/f"], check=False)
+    else:
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        except ProcessLookupError:
+            pass
+    child.wait()
+
+
+def run_step(command: list[str], cwd: Path, log: Path, env: dict[str, str], timeout: int, cancelled: Event) -> int:
     with log.open("wb") as output:
         child = subprocess.Popen(
             command, cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT,
             start_new_session=not WINDOWS,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0,
         )
+        deadline = time.monotonic() + timeout
         try:
-            return child.wait(timeout=timeout)
-        except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
-            if WINDOWS:
-                subprocess.run(["taskkill", "/pid", str(child.pid), "/t", "/f"], check=False)
-            else:
+            while not cancelled.is_set() and (left := deadline - time.monotonic()) > 0:
                 try:
-                    os.killpg(child.pid, signal.SIGTERM)
-                    child.wait(timeout=5)
+                    code = child.wait(timeout=min(left, 0.25))
+                    return code if code >= 0 else 128 - code
                 except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
                     pass
-            child.wait()
-            if isinstance(error, KeyboardInterrupt):
-                raise
-            return 124
+        except KeyboardInterrupt:
+            stop_process(child)
+            raise
+        stop_process(child)
+        return 130 if cancelled.is_set() else 124
 
 
 def load() -> tuple[float, float, float] | None:
@@ -137,12 +156,56 @@ def test_counts(log: Path) -> dict[str, int]:
     return counts
 
 
-def fast(sha: str, report_dir: Path) -> int:
+def write_report(directory: Path, report: dict) -> None:
+    pending = directory / "result.json.tmp"
+    pending.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    pending.replace(directory / "result.json")
+
+
+def run_waves(
+    run_step: Callable[[Step], int],
+    finish_wave: Callable[[str, int], None],
+    waves: tuple[Wave, ...],
+    jobs: int,
+    cancelled: Event,
+) -> int:
+    def run_wave(name: str, steps: tuple[Step, ...]) -> int:
+        code = 0
+        for step in steps:
+            if cancelled.is_set():
+                return 130
+            code = run_step(step) or code
+        finish_wave(name, code)
+        return code
+
+    (first, *remaining) = waves
+    first_code = run_wave(*first)
+    if jobs == 1:
+        return max([first_code, *(run_wave(*wave) for wave in remaining)])
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(run_wave, *wave) for wave in remaining]
+        try:
+            return max([first_code, *(future.result() for future in futures)])
+        except KeyboardInterrupt:
+            cancelled.set()
+            raise
+
+
+def verify(sha: str, report_dir: Path, profile: str, jobs: int, queued_at: float) -> int:
+    started_at = time.monotonic()
+    workers = FAST_PYTEST_WORKERS if profile == "fast" else min(6, FAST_PYTEST_WORKERS)
     report: dict = {
-        "sha": sha, "profile": "fast", "load_start": load(),
-        "pytest_workers": FAST_PYTEST_WORKERS, "steps": {},
+        "sha": sha, "profile": profile, "status": "running", "load_start": load(),
+        "queue_seconds": round(started_at - queued_at, 2),
+        "pytest_workers": workers, "steps": {},
     }
+    if profile == "waves":
+        report.update(jobs=jobs, waves={})
+    lock = Lock()
+    cancelled = Event()
     snapshot = report_dir / "worktree"
+    write_report(report_dir, report)
     try:
         npm = shutil.which("npm.cmd" if WINDOWS else "npm")
         if not npm:
@@ -160,34 +223,71 @@ def fast(sha: str, report_dir: Path) -> int:
         if sys.platform.startswith("linux"):
             env["SP_E2E_HEADLESS"] = "1"
         python = snapshot / "backend" / ".venv" / ("Scripts/python.exe" if WINDOWS else "bin/python")
-        steps = (
-            ("build", [node, "node_modules/vite/bin/vite.js", "build"], "frontend", 240),
-            ("vitest", [npm, "test"], "frontend", 240),
-            ("pytest", [
-                str(python), "-m", "pytest", "-o", "addopts=", "-q",
-                "-n", str(FAST_PYTEST_WORKERS), "--dist", "loadfile",
-                "-m", "not heavy and not slow", "--durations", "15",
-            ], "backend", 480),
-            ("electron", [node, "e2e/run.mjs", *terminal_args(), "--output", str(report_dir / "electron-artifacts")], "desktop", 240),
-        )
-        for name, command, folder, limit in steps:
+        build = ("build", [node, "node_modules/vite/bin/vite.js", "build"], "frontend", 240)
+        vitest = ("vitest", [npm, "test"], "frontend", 240)
+        pytest = ("pytest", [
+            str(python), "-m", "pytest", "-o", "addopts=", "-q",
+            "-n", str(workers), "--dist", "loadfile",
+            "-m", "not heavy and not slow", "--durations", "15",
+        ], "backend", 480)
+        electron = ("electron", [node, "e2e/run.mjs", *terminal_args(), "--output", str(report_dir / "electron-artifacts")], "desktop", 240)
+
+        def run(step: Step) -> int:
+            name, command, folder, limit = step
             log = report_dir / f"{name}.log"
             started = time.monotonic()
-            code = run_step(command, snapshot / folder, log, env, limit)
-            result = {"exit_code": code, "seconds": round(time.monotonic() - started, 2), "log": log.name}
+            code = run_step(command, snapshot / folder, log, env, limit, cancelled)
+            finished = time.monotonic()
+            result = {
+                "exit_code": code, "seconds": round(finished - started, 2), "log": log.name,
+                "started_seconds": round(started - started_at, 2),
+                "finished_seconds": round(finished - started_at, 2), "load": load(),
+            }
             if name != "build":
                 result.update(test_counts(log))
-            elif code == 0:
-                index = snapshot / "frontend" / "dist" / "index.html"
-                report["index_sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
-            report["steps"][name] = result
-            print(f"{name}: {code} · {log}", flush=True)
-            if code:
-                return code
-        return 0
+            with lock:
+                if name == "build" and code == 0:
+                    index = snapshot / "frontend" / "dist" / "index.html"
+                    report["index_sha256"] = hashlib.sha256(index.read_bytes()).hexdigest()
+                elif name != "build":
+                    report.setdefault("first_test_result_seconds", result["finished_seconds"])
+                report["steps"][name] = result
+                write_report(report_dir, report)
+                print(f"{name}: {code} · {log}", flush=True)
+            return code
+
+        def finish_wave(name: str, code: int) -> None:
+            with lock:
+                report["waves"][name] = {
+                    "exit_code": code, "finished_seconds": round(time.monotonic() - started_at, 2),
+                }
+                write_report(report_dir, report)
+
+        code = run(build)
+        if code == 0 and profile == "waves":
+            unit = [npm, "test", "--", "--maxWorkers=3", "--minWorkers=1"]
+            waves = (
+                ("terminal_logic", (("vitest-terminal", [*unit, TERMINAL_LOGIC], "frontend", 120),)),
+                ("terminal_window", (electron,)),
+                ("remaining_logic", (("vitest-remaining", [*unit, "--exclude", f"{TERMINAL_LOGIC}/**"], "frontend", 240), pytest)),
+            )
+            code = run_waves(run, finish_wave, waves, jobs, cancelled)
+        elif code == 0:
+            for step in (vitest, pytest, electron):
+                if code := run(step):
+                    break
+        report.update(status="passed" if code == 0 else "failed", exit_code=code)
+        return code
+    except KeyboardInterrupt:
+        report.update(status="cancelled", exit_code=130)
+        return 130
+    except Exception as error:
+        report.update(status="error", error=str(error))
+        raise
     finally:
+        report["elapsed_seconds"] = round(time.monotonic() - started_at, 2)
         report["load_finish"] = load()
-        (report_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        write_report(report_dir, report)
         if snapshot.exists():
             if WINDOWS:
                 # Remove directory junctions themselves before Git walks the worktree.
@@ -200,14 +300,19 @@ def fast(sha: str, report_dir: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("profile", choices=["fast"])
+    parser.add_argument("profile", choices=["fast", "waves"])
     parser.add_argument("--ref", default="HEAD", help="commit to snapshot before waiting for the queue")
+    parser.add_argument("--jobs", type=int, choices=[1, 2], default=1, help="run one or two groups at once for the waves pilot")
     args = parser.parse_args()
+    if args.profile == "fast" and args.jobs != 1:
+        parser.error("--jobs is only available for waves")
     sha = git("rev-parse", "--verify", "--end-of-options", f"{args.ref}^{{commit}}")
     directory = Path(tempfile.mkdtemp(prefix=f"sp-verify-{sha[:8]}-"))
+    queued_at = time.monotonic()
+    write_report(directory, {"sha": sha, "profile": args.profile, "status": "queued"})
     print(f"{sha} · waiting for the machine test queue · {directory}", flush=True)
     with machine_queue():
-        return fast(sha, directory)
+        return verify(sha, directory, args.profile, args.jobs, queued_at)
 
 
 if __name__ == "__main__":

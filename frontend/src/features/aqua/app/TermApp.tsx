@@ -485,7 +485,12 @@ function AquaWindow({ status }: { status: Status }) {
   const newTerminalOnRight = async (s: AquaSession) => {
     setMenu(null)
     const opened = await act.open({ kind: 'shell', project: s.project, cwd: s.cwd || undefined, label: s.project || t('shell'), role: 'shell', group: s.group })
-    if (opened) showRight(opened.id)
+    if (!opened) return
+    const saved = readTabOrder()
+    const order = orderedTabs(strip_.tabs, saved[ws]).map(({ id }) => id)
+    order.splice(order.indexOf(s.id) + 1, 0, opened.id)
+    saveTabOrder({ ...saved, [ws]: order })
+    go(opened.id, opened)
   }
   /** The agent the chat in front runs: the list offers it while the installed ones are read. */
   const currentAgent: AgentCmd = agentOf(active ? tabInfo?.[active.id]?.chat?.tool : undefined, active?.program, active?.command, status.agent)
@@ -556,6 +561,10 @@ function AquaWindow({ status }: { status: Status }) {
   const strip_ = foldTabs(workspaces, ws, hidden)
   const projectGroups = wsObj?.kind === 'project' ? (groups ?? []).filter((g) => g.project === wsObj.key) : []
   const sections = tabSections(orderedTabs(strip_.tabs, tabOrder[ws]), projectGroups)
+  const saveTabOrder = (order: Record<string, string[]>) => {
+    store.set(TAB_ORDER_KEY, JSON.stringify(order))
+    setTabOrder(order)
+  }
   const visibleTabs = sections.flatMap(({ group, tabs }) => group && collapsedGroups.includes(group.id) ? [] : tabs)
   const tabPositions = new Map(visibleTabs.map((s, i) => [s.id, i]))
   const selection = tabSelection?.ws === ws ? tabSelection : undefined
@@ -665,9 +674,7 @@ function AquaWindow({ status }: { status: Status }) {
         onDropTab={(source, before) => {
           const order = moveTab(sections, source, s.id, before)
           if (!order) return
-          const saved = { ...readTabOrder(), [ws]: order }
-          store.set(TAB_ORDER_KEY, JSON.stringify(saved))
-          setTabOrder(saved)
+          saveTabOrder({ ...readTabOrder(), [ws]: order })
         }}
         onMenu={(el) => {
           const x = menuLeft(el)
@@ -997,7 +1004,8 @@ function AquaWindow({ status }: { status: Status }) {
         </Float>
       )}
       {tabMenuS && menu?.kind === 'tab' && (
-        <Float label={tabMenuS.label} className="w-[280px]" style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + STRIP + 2 }}>
+        <Float label={tabMenuS.label} className="w-[280px] overflow-y-auto [&>*]:shrink-0"
+          style={{ left: Math.max(0, Math.min(menu.x, lw + termW - 284)), top: bar + STRIP + 2, maxHeight: vp.h - bar - STRIP - 6 }}>
           <span className="aq-label px-6 py-4 truncate">{titleOf(tabMenuS)}</span>
           {menu.form === 'rename' ? (
             <form className="p-4" onSubmit={(e) => { e.preventDefault(); const v = String(new FormData(e.currentTarget).get('label') ?? '').trim(); if (v) { markNamed(tabMenuS.id); void act.rename(tabMenuS.id, v) } setMenu(null); refocus() }}>

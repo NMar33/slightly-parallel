@@ -15,7 +15,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Activity, Bot, ChevronDown, ChevronRight, FilePenLine, GitFork, Link2, ListTodo, Menu, MessageSquare, Moon, Pin, Play, Server, Sun, X } from 'lucide-react'
 
 import { getJson } from '../../../lib/getJson'
-import { useMsgMarkActions, useMsgMarks, type MsgMark } from '../../../lib/pins'
+import { useMsgMarkActions, useMsgMarks, usePinList, type MsgMark } from '../../../lib/pins'
 import { MsgMarkButtons } from '../../../components/MsgMarkButtons'
 import { MarkGlyph } from '../../chats/ChatPins'
 import { useSessionTurns, type SessionTurn } from '../../agents/sessionTurns'
@@ -218,7 +218,7 @@ function Messages({ agentId, project }: { agentId: string; project: string }) {
             <span className="aq-label">{who === 'user' ? t('you') : t('agent')} · {n}</span>
             <span className="ml-auto"><MsgMarkButtons msg={{ agent_id: agentId, turn: n, side, project, session_id: sid, excerpt: firstLine(text).slice(0, 160) }} /></span>
           </div>
-          <p className="m-0 text-12 leading-snug whitespace-pre-wrap break-words line-clamp-6" style={{ color: who === 'user' ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{text.trim()}</p>
+          <p className="m-0 text-12 leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: who === 'user' ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{text.trim()}</p>
         </div>
       </div>
     )
@@ -236,17 +236,19 @@ function Messages({ agentId, project }: { agentId: string; project: string }) {
 }
 
 function Pins({ agentId }: { agentId: string }) {
-  const { all } = useMsgMarks()
+  const pins = usePinList('pin', agentId)
+  const carries = usePinList('carry', agentId)
   const act = useMsgMarkActions()
-  const mine = all.filter((m) => m.agent_id === agentId && m.kind !== 'fork').sort((a, b) => a.turn - b.turn)
+  const mine = [...(pins.data?.items ?? []), ...(carries.data?.items ?? [])].sort((a, b) => a.turn - b.turn)
   const master = mine.find((m) => m.kind === 'pin')
+  if (pins.isLoading || carries.isLoading) return <p className="m-0 p-12 text-12 aq-ink3">{t('Reading the chat…')}</p>
   if (!mine.length) return <p className="m-0 p-12 text-12 aq-ink3">{t('Nothing pinned or carried in this chat. Pin a message from Messages, or type #pin in the chat.')}</p>
   const row = (m: MsgMark) => (
     <li key={`${m.kind}:${m.target}`} className="group flex items-start gap-6 px-8 py-6 rounded-[6px] hover:bg-[var(--bg-hover)]">
       <span className="pt-4"><MarkGlyph m={m} /></span>
       <span className="min-w-0 flex-1 flex flex-col gap-2">
         <span className="aq-label">{m.kind === 'pin' ? t('pinned') : m.kind === 'carry' ? t('carried whole') : t('carried as a brief')} · {m.turn}{m.side ? '↩' : ''}</span>
-        <span className="text-12 leading-snug line-clamp-4" style={{ color: 'var(--text-primary)' }}>{(m.text || m.excerpt).trim()}</span>
+        <span className="text-12 leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: 'var(--text-primary)' }}>{(m.text || m.excerpt).trim()}</span>
       </span>
       <button type="button" data-nodrag className="aq-btn icon shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={t('Remove the mark')}
         onClick={() => act.remove(m.kind === 'pin' ? 'pin' : 'carry', m.target)}><X size={11} /></button>
@@ -255,9 +257,9 @@ function Pins({ agentId }: { agentId: string }) {
   return (
     <div className="flex-1 min-h-0 aq-scroll flex flex-col">
       {master && (
-        <div className="m-8 p-10 rounded-[8px] flex flex-col gap-4" style={{ background: 'var(--brand-glow)' }}>
+        <div className="m-8 p-10 shrink-0 rounded-[8px] flex flex-col gap-4" style={{ background: 'var(--brand-glow)' }}>
           <span className="aq-label flex items-center gap-6" style={{ color: 'var(--brand)' }}><Pin size={11} />{t('master message')} · {master.turn}</span>
-          <span className="text-13 leading-snug line-clamp-6" style={{ color: 'var(--text-primary)' }}>{(master.text || master.excerpt).trim()}</span>
+          <span className="text-13 leading-normal whitespace-pre-wrap [overflow-wrap:anywhere]" style={{ color: 'var(--text-primary)' }}>{(master.text || master.excerpt).trim()}</span>
         </div>
       )}
       <ul className="m-0 p-4 list-none flex flex-col">{mine.map(row)}</ul>

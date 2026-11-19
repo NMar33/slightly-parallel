@@ -47,6 +47,7 @@ ARGS: dict[str, dict[str, Any]] = {
     "carry_brief": {"turn": 1, "text": "x"},
     "note_write": {"text": "# A note", "kind": "context"},
     "note_image": {"id": "nt_none", "path": __file__},
+    "message": {"to": "cc-none000", "text": "x"},
 }
 
 

@@ -11,7 +11,16 @@ import { test, expect, ROOT, PROJECT, echoCalc, expectLine, lines, printFile, re
 
 test.describe('tabs', () => {
   test('"+" opens a shell in a new tab; tabs switch; closing one takes its tab away', async ({ win, shell, server }) => {
-    const { page } = win
+    const { app, page } = win
+    // Several tab groups make the close item fall below a short window.
+    await page.route('**/api/terminal/groups', (route) => route.fulfill({ json: {
+      groups: Array.from({ length: 7 }, (_, i) => ({
+        id: `fixture-group-${i}`, name: `Fixture group ${i}`, color: 1, project: PROJECT,
+      })),
+    } }))
+    await page.reload()
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(500, 240) })
+    await expect.poll(() => page.evaluate(() => innerHeight)).toBeLessThan(250)
     await ready(page)
     const strip = page.getByRole('tablist', { name: 'Chats' })
     await expect(strip.getByRole('tab')).toHaveCount(1)
@@ -39,6 +48,9 @@ test.describe('tabs', () => {
     await expectLine(page, 'in-2-second')
 
     await second.click({ button: 'right' })
+    const menu = page.getByRole('menu', { name: PROJECT, exact: true })
+    await expect(menu.getByRole('menuitem', { name: /^Add to tab group Fixture group/ })).toHaveCount(7)
+    await expect.poll(() => menu.evaluate((element) => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true)
     await page.getByRole('menuitem', { name: 'Close the terminal' }).click()
     await expect(strip.getByRole('tab')).toHaveCount(1)
     await expect(first).toHaveAttribute('aria-selected', 'true')

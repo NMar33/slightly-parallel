@@ -503,6 +503,35 @@ skill and the contract have one source. Built-in skills: `make-a-scan`,
 
 ---
 
+## Messages between agents
+
+One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
+`from_agent` (an agent id, or `operator`), `to_agent`, `text`, `sent_at`,
+`reply_to`, `delivered_at`, `delivered_via` (`terminal`, `hook`, `inbox`),
+`landed_at` and `landed_turn` (the prompt the marker came in as),
+`read_at`. Each message is taken once, by the first way that reaches it.
+
+- `POST /api/messages` — `{to, text, reply_to?}`; an agent's through the MCP
+  tool `message` (`agent_id` stamped), the operator's from the page (no
+  agent). 404 for an unknown chat or `reply_to`, 422 for an empty text, one
+  over 8,000 characters or one to itself. Typed at once into the chat's live
+  terminal in Slightly Parallel's tmux as `[SP · from <sender> · msg_…] text`
+  when its input line is empty (Claude Code, Codex); otherwise it waits:
+  tried again every 3 s for a day, and handed over by the capture hook as a
+  notice on the chat's next prompt. Answers `{message, delivered_via,
+  typed, waiting}`.
+- `POST /api/messages/inbox` — `{agent_id}` (the MCP tool `messages`): the
+  chat's `unread` messages, marked read now, then its `recent` read ones
+  (`?recent=`, default 10).
+- `GET /api/messages?agent_id=&project=&limit=` — the ledger, newest first
+  (one chat's sent and received, one project's, or all). No write.
+
+The capture hook reads a prompt that opens with the marker as the sender's
+message only when the ledger holds that id, for this chat, from that
+sender, not taken before; it keeps the turn as
+`<sp-message from="…" id="…">…</sp-message>` in chat.md, so no tag in it
+acts. A marker the ledger does not know is the operator's text.
+
 ## Notes
 
 - `GET /api/notes/feed` and `GET /api/notes/{note_id}/full` include a
@@ -1649,6 +1678,8 @@ the operator's pages call. By purpose:
   (and `standup_postpone`), `architecture_material`, `map_material`,
   `task_evidence_ask`
 - the architecture: `architecture_status`, `architecture_page`, `map_write`
+- messages between agents: `message {to, text, reply_to?}`, `messages`
+  (the inbox; reading marks read)
 - readers: `search`, `project`, `deck`, `doctor`, `usage` (the `#usage`
   text for this chat and the Usage page's numbers; from a chat the hook
   never saw, `block` is "" and the summary is the project asked, else all)

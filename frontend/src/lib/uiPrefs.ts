@@ -52,6 +52,7 @@ const EXCLUDE_PREFIXES = [
   'sp-aqua-active',
   'sp-aqua-workspace',
   'sp-aqua-ws-tabs',
+  'sp-aqua-tab-order',
   // Sidebar/window placement belongs to this desktop profile.
   'sp-aqua-sidebar-mode',
 ]

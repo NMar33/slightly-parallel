@@ -216,6 +216,7 @@ def _sweep_side_ledgers(data_root: Path, trash: Path, code: str, owned: dict[str
         ("core_events.csv", by("core_id", cores)),
         ("commit_links.csv", by("task_id", task_ids)),
         ("carry_briefs.csv", is_project),
+        ("messages.csv", is_project),
         ("task_titles.csv", by("task_id", task_ids)),
         ("now.csv", is_project),
         ("next_tasks.csv", is_project),
