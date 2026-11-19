@@ -9,11 +9,20 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import timeauto
+from backend import idle, timeauto
 from backend.server import create_app
 
 # Now, not a fixed hour: a timer started through the API takes the real clock.
 T0 = datetime.now().replace(microsecond=0).timestamp()
+
+
+def test_sandbox_timer_does_not_read_the_host_idle_clock(monkeypatch):
+    monkeypatch.setenv("SP_SANDBOX", "1")
+    monkeypatch.setattr(idle, "_cache", (0.0, None, ""))
+    monkeypatch.setattr(idle, "_read", lambda: (3600.0, "host"))
+    assert idle.reading() == (None, "")
+    monkeypatch.delenv("SP_SANDBOX")
+    assert idle.reading() == (3600.0, "host")
 
 
 def _when(stored: str) -> float:

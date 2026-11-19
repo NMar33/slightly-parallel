@@ -5,11 +5,12 @@ import { test, expect, KEEP_PLAIN, PROJECT, ROOT, linksOut, ready, typeLine } fr
 /**
  * The window and the smart timer: working in a tab counts on that tab's
  * project. The sandbox server runs the timer (SP_SMART_TIMER=1 in
- * playwright.config.ts) and reads no idle time (no D-Bus session given to
- * it: "unknown" never pauses), so only the window's signals decide.
+ * playwright.config.ts) and reads no host idle time, so the test can
+ * exercise the window's activity signals independently of the desktop.
  */
 
 type Auto = {
+  idle_sec: number | null
   working: Array<{ project: string; entry_id: string }>
   signals: Array<{ project: string; source: string; sec_ago: number }>
 }
@@ -28,6 +29,7 @@ test.describe('smart timer', () => {
     const api = server.api
     await ready(page)
     const auto = async () => (await (await api.get('/api/time/auto')).json()) as Auto
+    expect((await auto()).idle_sec).toBeNull()
     const before = typingRows()
     const screen = page.locator('.aqua-screen .xterm-screen')
     const clickedAt = Date.now() - 1000

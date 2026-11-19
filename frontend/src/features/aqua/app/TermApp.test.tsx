@@ -615,6 +615,12 @@ describe('the tab strip of tk_a9306fb1', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('menu', { name: 'Open a new terminal' })).toBeNull())
 
+    fireEvent.contextMenu(plus, { ctrlKey: true, button: 2 })
+    expect(screen.getByRole('menu', { name: 'Open a new terminal' })).toBeTruthy()
+    expect(posts.filter(([p]) => p === '/api/terminal/sessions')).toHaveLength(1)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('menu', { name: 'Open a new terminal' })).toBeNull()
+
     fireEvent.click(screen.getByRole('button', { name: 'Choose what to open' }))
     posts.length = 0
     fireEvent.keyDown(window, { key: '3' })

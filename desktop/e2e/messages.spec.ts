@@ -63,7 +63,14 @@ test.describe('messages between agents', () => {
     // At once, or on the server's next round once it sees the new link.
     await expect.poll(() => read(log), { timeout: 15_000 }).toBe(`${want}\n`)
     await expect.poll(async () => (await message(server.api, id)).delivered_via).toBe('terminal')
-    await expectLine(page, `got: ${want}`)
+    // A narrow window wraps the fake agent's echo into a second visual row.
+    await expect.poll(async () => {
+      const rows = await lines(page)
+      const echoed = `got: ${want}`
+      return rows.some((row, i) => row === echoed
+        || row + rows[i + 1] === echoed
+        || row + ' ' + rows[i + 1] === echoed)
+    }, { message: 'the complete reply is drawn in the terminal' }).toBe(true)
     // Two more rounds of the server's loop: still once.
     await page.waitForTimeout(7_000)
     expect(read(log)).toBe(`${want}\n`)

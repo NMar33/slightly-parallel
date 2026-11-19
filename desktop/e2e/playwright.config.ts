@@ -92,9 +92,7 @@ export default defineConfig({
       SHELL: '/bin/sh',
       // Its own tmux sockets, inside the copy: the teardown finds them there.
       TMUX_TMPDIR: process.env.SP_DESKTOP_E2E_TMUX!,
-      // The smart timer runs on this sandbox (timer.spec.ts), and reads no
-      // idle time: without the operator's D-Bus session it cannot, so the
-      // operator being away from the laptop meanwhile never pauses it.
+      // The sandbox runs the smart timer without reading the host's idle time.
       SP_SMART_TIMER: '1',
       DBUS_SESSION_BUS_ADDRESS: '',
     },

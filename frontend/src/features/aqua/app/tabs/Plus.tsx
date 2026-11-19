@@ -175,6 +175,12 @@ export function PlusButton({ agent, project, path, chatTitle, asleep, act, open:
   }, [open])
 
   const click = (e: MouseEvent) => { if (e.ctrlKey || e.metaKey) { setOpen(!open); return } act.shell() }
+  // Chromium sends a contextmenu event for Control-click on macOS.
+  const contextMenu = (e: MouseEvent) => {
+    if (!e.ctrlKey) return
+    e.preventDefault()
+    setOpen(true)
+  }
   const plusTip = `${t('New terminal')}: ${t('a shell in')} ${path || project}. ${t('Ctrl+click: choose')} (Ctrl+Shift+T)`
   const chevron = (
     <button type="button" data-nodrag className={`h-full ${look === 'side' ? 'w-[22px]' : 'w-[18px]'} inline-flex items-center justify-center rounded-r-[6px] hover:bg-[var(--aq-hover)] aq-ink3`}
@@ -187,14 +193,14 @@ export function PlusButton({ agent, project, path, chatTitle, asleep, act, open:
       {look === 'side' ? (
         <span className="inline-flex items-center h-[24px] rounded-[6px]" data-plus="side" style={{ border: '1px solid var(--border-default)' }}>
           <button type="button" data-nodrag className="h-full px-6 inline-flex items-center gap-4 rounded-l-[6px] text-12 hover:bg-[var(--aq-hover)]" style={{ color: 'var(--aq-ink2)' }}
-            title={plusTip} onClick={click}><Plus size={12} />{t('New terminal')}</button>
+            title={plusTip} onClick={click} onContextMenu={contextMenu}><Plus size={12} />{t('New terminal')}</button>
           <span className="w-px h-[12px]" style={{ background: 'var(--aq-line)' }} />
           {chevron}
         </span>
       ) : (
         <span className="inline-flex items-center h-[24px] rounded-[6px]" data-plus="a">
           <button type="button" data-nodrag className="h-full w-[26px] inline-flex items-center justify-center rounded-l-[6px] hover:bg-[var(--aq-hover)]" style={{ color: 'var(--aq-ink2)' }}
-            aria-label={t('New terminal')} title={plusTip} onClick={click}><Plus size={14} /></button>
+            aria-label={t('New terminal')} title={plusTip} onClick={click} onContextMenu={contextMenu}><Plus size={14} /></button>
           <span className="w-px h-[12px]" style={{ background: 'var(--aq-line)' }} />
           {chevron}
         </span>
