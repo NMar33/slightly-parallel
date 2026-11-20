@@ -45,43 +45,21 @@ def play(target: Path, repos_dir: Path, end: date) -> engine.Sim:
     # Day 30 of the played month is ``end``. Set before the content modules
     # are imported: some compute their moments at import.
     engine.set_start(end - timedelta(days=29))
-    from engine import D, Repo, Sim
+    from engine import D, Sim
     from world import World
-    import shopfront_chats_a
-    import shopfront_chats_b
-    import shopfront_chats_c
-    import shopfront_lenses
-    import shopfront_desk
-    import shopfront_notes
-    import shopfront_standups
-    import shopfront_story
-    import shopfront_tasks
-    from shopfront_repo import SKELETON
+    from shopfront_month import create_shopfront_repo, schedule_links, schedule_shopfront
 
     sim = Sim(target, repos_dir=repos_dir)
     w = World(sim)
     sim.at(D(1, 7, 31), sim.adopt)
 
-    repo = Repo(sim.repos_dir / CODE, email="operator@shopfront.dev")
-    for rel, text in SKELETON.items():
-        repo.write(rel, text)
-    repo.commit("Initial skeleton: Next.js app, FastAPI service, compose", D(1, 8, 20))
-    sim.repos[CODE] = repo
+    repo = create_shopfront_repo(sim, CODE)
     # Registered in the played folder too: a file entry's lines and a scan's
     # counts are read from the repository the registry names.
     register(sim.root, repo.path, end - timedelta(days=29))
 
-    K: dict = {}
-    shopfront_tasks.setup(sim, w)
-    shopfront_chats_a.setup(sim, w, repo, K)
-    shopfront_chats_b.setup(sim, w, repo, K)
-    shopfront_chats_c.setup(sim, w, repo, K)
-    shopfront_lenses.setup(sim, w, repo, K)
-    shopfront_standups.setup(sim, w, K)
-    shopfront_story.setup(sim, w, repo, K)
-    shopfront_notes.setup(sim, w, repo, K)
-    shopfront_desk.setup(sim, w, repo, K)
-    links(sim, K)
+    K = schedule_shopfront(sim, w, repo)
+    schedule_links(sim, K)
 
     sim.run()
 
@@ -93,21 +71,6 @@ def play(target: Path, repos_dir: Path, end: date) -> engine.Sim:
     sim.adopt()
     sim.store.rebuild()
     return sim
-
-
-def links(sim: engine.Sim, K: dict) -> None:
-    """Why one chat sits next to another on the timeline."""
-    from engine import D
-    for when, a, b, kind, note in [
-        (D(16, 11, 40), "c9", "c10", "handoff", "the signature fix handed over from the webhook chat"),
-        (D(22, 14, 45), "c12", "c13", "same-work", "Stripe Tax went live with the first payment"),
-        (D(30, 9, 12), "c14", "c20", "branch", "partial refunds continue the refunds chat"),
-        (D(28, 14, 35), "c15", "c18", "relates", "outbound events reuse the webhook queue"),
-    ]:
-        def link(a=a, b=b, kind=kind, note=note) -> None:
-            sim.post("/api/agents/links", {"from": K[a].agent_id, "to": K[b].agent_id, "kind": kind,
-                                           "note": note, "actor": "operator"})
-        sim.at(when, link)
 
 
 def only_this_project(root: Path) -> None:

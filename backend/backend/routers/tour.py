@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
+from ..server_address import DEFAULT_PORT
 from ..db import ViewStore
 from ..docs_md import resolve_under
 from ..file_safety import edit_json, safe_read_json
@@ -229,7 +230,7 @@ async def tour_capture(
     # "reseed" plays the month again rather than reusing today's.
     from .. import tour_world
 
-    home = tour_world.world_home(int(getattr(request.app.state.settings, "port", 8123)))
+    home = tour_world.world_home(int(getattr(request.app.state.settings, "port", DEFAULT_PORT)))
     world, error = await asyncio.to_thread(tour_world.prepare, home, bool(body.get("reseed")))
     if error:
         raise HTTPException(status_code=503, detail=f"The example project could not be played: {error}")

@@ -3,13 +3,17 @@
 // asks for anything from another host (a font, a script, an image: offline
 // it would hang or fail), and Monitor shows "No connection".
 // Run from the repository folder: node scripts/ci/offline_pages.mjs
+import { serverUrl } from './server_address.mjs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
 const require = createRequire(path.resolve('frontend/package.json'))
 const { chromium } = require('playwright')
 
-const base = `http://127.0.0.1:${process.env.SP_PORT || 8123}`
+const OFFLINE_PAGE_TIMEOUT_MS = 20000
+const CONNECTION_STATUS_TIMEOUT_MS = 30000
+
+const base = serverUrl()
 const routes = ['/', '/kanban', '/usage', '/settings', '/monitor']
 const outside = []
 const failed = []
@@ -23,8 +27,8 @@ page.on('request', (req) => {
 for (const route of routes) {
   const t = Date.now()
   try {
-    await page.goto(base + route, { waitUntil: 'load', timeout: 20000 })
-    await page.locator('#root > *').first().waitFor({ timeout: 20000 })
+    await page.goto(base + route, { waitUntil: 'load', timeout: OFFLINE_PAGE_TIMEOUT_MS })
+    await page.locator('#root > *').first().waitFor({ timeout: OFFLINE_PAGE_TIMEOUT_MS })
     console.log(`  ok   ${route} opens (${((Date.now() - t) / 1000).toFixed(1)} s)`)
   } catch (err) {
     console.log(`  FAIL ${route} did not open: ${String(err).split('\n')[0]}`)
@@ -33,7 +37,7 @@ for (const route of routes) {
 }
 // The last page is Monitor: its health word reads the open events.
 try {
-  await page.getByText('No connection').first().waitFor({ timeout: 30000 })
+  await page.getByText('No connection').first().waitFor({ timeout: CONNECTION_STATUS_TIMEOUT_MS })
   console.log('  ok   Monitor shows "No connection"')
 } catch {
   console.log('  FAIL Monitor does not show "No connection"')

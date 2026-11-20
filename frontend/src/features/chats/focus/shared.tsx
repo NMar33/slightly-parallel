@@ -15,6 +15,9 @@ import { persistPref, readPref } from '../../../lib/uiPrefs'
 import { TaskChips, type SessionTurn } from '../../agents/dossier'
 
 import { locale, t, tn } from '../../../i18n/scope/views'
+
+const FOCUS_PREF_SAVE_DEBOUNCE_MS = 250
+
 export type Size = 14 | 16 | 18
 export type ListSize = 12 | 13 | 15
 export interface FocusPrefs {
@@ -66,7 +69,7 @@ const storeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 export function storeFocusPrefs(p: FocusPrefs, key: string = PREF) {
   const prev = storeTimers.get(key)
   if (prev) clearTimeout(prev)
-  storeTimers.set(key, setTimeout(() => { storeTimers.delete(key); persistPref(key, JSON.stringify(p)) }, 250))
+  storeTimers.set(key, setTimeout(() => { storeTimers.delete(key); persistPref(key, JSON.stringify(p)) }, FOCUS_PREF_SAVE_DEBOUNCE_MS))
 }
 
 /* ------------------------------------------------------------------ text */

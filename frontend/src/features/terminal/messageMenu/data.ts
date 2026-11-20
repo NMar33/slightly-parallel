@@ -29,6 +29,8 @@ import { useSessionTurns } from '../../agents/sessionTurns'
 import { nowStamp, OPERATOR_ACTOR } from '../../project/types'
 import { Record, type CapturedTurn, type Found } from './match'
 
+const TERMINAL_CHAT_SESSIONS_REFETCH_MS = 15_000
+
 /* ------------------------------------------------------------ the record */
 
 interface ChatSession { id: string; agent_id: string; turns_n?: number; end_time?: string; chat_end_line?: number }
@@ -42,7 +44,7 @@ export function useChatRecord(agentId: string) {
     queryKey: ['msgmenu', 'sessions', agentId],
     queryFn: ({ signal }) => getJson<{ sessions: ChatSession[] }>(`/api/sessions?agent_id=${encodeURIComponent(agentId)}`, signal),
     enabled: !!agentId,
-    refetchInterval: 15_000,
+    refetchInterval: TERMINAL_CHAT_SESSIONS_REFETCH_MS,
     refetchIntervalInBackground: false,
     staleTime: 10_000,
   })

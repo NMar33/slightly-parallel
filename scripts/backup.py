@@ -36,10 +36,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "backend"))
+
 
 try:
     from backend import backup
+    from backend.data_root import home_data_root, named_data_root, read_data_root_env
 except ImportError as exc:  # pragma: no cover — a broken checkout
     print(f"cannot import the backup engine: {exc}", file=sys.stderr)
     raise SystemExit(2) from exc
@@ -53,27 +56,10 @@ def human(n: float) -> str:
     return f"{n:.1f} GB"
 
 
-def _env_file_root() -> str:
-    """SP_DATA_ROOT from the repository's .env, as sp.py reads it — the
-    script said "no data root" on every default install."""
-    env = Path(__file__).resolve().parents[1] / ".env"
-    try:
-        lines = env.read_text(encoding="utf-8-sig").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return ""
-    for raw in lines:
-        line = raw.strip().removeprefix("export ").strip()
-        key, _, value = line.partition("=")
-        if key.strip() in ("SP_DATA_ROOT", "SCAN_DATA_ROOT") and value.strip():
-            return value.strip().strip("'\"")
-    return ""
-
-
 def resolve_root(explicit: str | None) -> Path:
-    raw = (explicit or os.environ.get("SP_DATA_ROOT") or os.environ.get("SCAN_DATA_ROOT")
-           or os.environ.get("DATA_ROOT") or _env_file_root())
-    if not raw and (Path.home() / ".slightly-parallel").is_dir():
-        raw = str(Path.home() / ".slightly-parallel")   # where sp.py puts it when nothing names a folder
+    raw = (explicit or named_data_root(os.environ) or read_data_root_env(REPO_ROOT / ".env"))
+    if not raw and home_data_root().is_dir():
+        raw = str(home_data_root())   # where sp.py puts it when nothing names a folder
     if not raw:
         raise SystemExit(
             "no data root — pass --root or set SP_DATA_ROOT"

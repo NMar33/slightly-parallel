@@ -23,6 +23,12 @@ import { SafetyBadge, unsafe } from './safety'
 
 import { t } from '../../i18n/scope/views'
 import { writeClipboard } from '../../lib/useCopy'
+
+const HASH_SYNC_DEBOUNCE_MS = 400
+const RECENT_QUERY_SAVE_DELAY_MS = 1500
+const ACTION_FLASH_DURATION_MS = 1200
+const SUGGESTIONS_BLUR_DELAY_MS = 150
+
 const STEP_WORDS = ['last', 'where', 'by', 'count', 'sum', 'avg', 'median', 'min', 'max', 'top', 'sort', 'limit', 'as']
 const SQL_WORDS = ['distinct', 'asc', 'desc', 'and', 'or', 'not', 'like', 'ilike', 'is', 'null', 'in', 'between', 'true', 'false']
 const STEPS = ['last 30d', 'where ', 'by ', 'count', 'sum ', 'avg ', 'median ', 'count distinct ', 'top 10', 'sort ', 'limit ', 'as ']
@@ -71,7 +77,7 @@ function PipelineNext({ schema, project = '', hashKey = 'q' }: {
   const [text, setTextState] = useState(() => hash[hashKey] ?? load('sp-analytics-pipeline-next', 'messages | last 90d | by weekday, hour | count | as grid'))
   const setText = (it: string) => { setTextState(it); keep('sp-analytics-pipeline-next', it) }
   // The address follows the line a beat after the typing stops.
-  useEffect(() => { const id = setTimeout(() => setHash({ [hashKey]: text }), 400); return () => clearTimeout(id) }, [text, hashKey, setHash])
+  useEffect(() => { const id = setTimeout(() => setHash({ [hashKey]: text }), HASH_SYNC_DEBOUNCE_MS); return () => clearTimeout(id) }, [text, hashKey, setHash])
   const [recent, setRecent] = useState<string[]>(() => load('sp-analytics-recent', []))
   const [pins, setPins] = useState<Array<{ name: string; line: string }>>(() => load('sp-analytics-pins', []))
   const [naming, setNaming] = useState<string | null>(null)
@@ -95,7 +101,7 @@ function PipelineNext({ schema, project = '', hashKey = 'q' }: {
     if (!res.data || !sql) return
     const id = setTimeout(() => {
       setRecent((r) => { const next = [text, ...r.filter((x) => x !== text)].slice(0, 8); keep('sp-analytics-recent', next); return next })
-    }, 1500)
+    }, RECENT_QUERY_SAVE_DELAY_MS)
     return () => clearTimeout(id)
     // Only a new answer keeps the line; typing alone does not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,7 +135,7 @@ function PipelineNext({ schema, project = '', hashKey = 'q' }: {
   }
   const steps = text.split('|').map((x) => x.trim()).filter(Boolean)
   const dropStep = (i: number) => setText(steps.filter((_, k) => k !== i).join(' | '))
-  const say = (s: string) => { setFlash(s); setTimeout(() => setFlash(''), 1200) }
+  const say = (s: string) => { setFlash(s); setTimeout(() => setFlash(''), ACTION_FLASH_DURATION_MS) }
   const copy = async (s: string, what: string) => say((await writeClipboard(s)) ? what : '')
   const pin = (name: string) => {
     setNaming(null)
@@ -154,7 +160,7 @@ function PipelineNext({ schema, project = '', hashKey = 'q' }: {
                 onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length) }}
                 onSelect={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? text.length)}
                 onScroll={syncScroll} onKeyUp={syncScroll}
-                onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 150)}
+                onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), SUGGESTIONS_BLUR_DELAY_MS)}
                 onKeyDown={(e) => { if (e.key === 'Tab' && sugg.length) { e.preventDefault(); take(sugg[0]!.put) } }}
                 placeholder="messages | last 30d | by day | count"
                 className="absolute inset-0 w-full bg-transparent font-mono text-14 text-transparent"

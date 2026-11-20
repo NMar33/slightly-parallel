@@ -37,6 +37,8 @@ SECRETISH = ("token", "secret", "password", "key")
 LINE_MAX = 300
 SECTION_MAX = 40_000
 REPORT_MAX = 400_000
+GIT_DESCRIBE_TIMEOUT_S = 5
+MONITOR_READ_BUSY_TIMEOUT_S = 2
 _QUERY = __import__("re").compile(r"\?[^\s\"']*")
 
 
@@ -112,7 +114,7 @@ def machine(app_root: Path) -> list[str]:
     version = ""
     try:
         version = subprocess.run(["git", "describe", "--tags", "--always", "--dirty"], cwd=app_root,
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5).stdout.strip()
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_DESCRIBE_TIMEOUT_S).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         pass
     mem = ""
@@ -136,7 +138,7 @@ def memory_history(data_root: Path, now: float) -> list[str]:
     if not db.is_file():
         return ["(no monitor data: the monitor is off or has not run)"]
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=MONITOR_READ_BUSY_TIMEOUT_S)
         try:
             # The bucket's peak where the record keeps one (sysmon.PEAKS), else the average.
             have = {r[1] for r in con.execute("PRAGMA table_info(samples)")}

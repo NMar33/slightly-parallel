@@ -28,8 +28,11 @@ import { useState } from 'react'
 
 import { getJson, postJson } from './getJson'
 
+const PREF_HYDRATE_TIMEOUT_MS = 1500
+
 const PREFIX = 'sp-'
 const OLD_PREFIX = 'merkhet-'
+const PREF_SYNC_DEBOUNCE_MS = 400
 
 const EXCLUDE_PREFIXES = [
   'sp-note-draft:',
@@ -110,7 +113,7 @@ function queue(key: string, value: string | null): void {
   if (!isSyncable(key)) return
   pending[key] = value
   if (timer) clearTimeout(timer)
-  timer = setTimeout(flush, 400)
+  timer = setTimeout(flush, PREF_SYNC_DEBOUNCE_MS)
 }
 
 /**
@@ -146,7 +149,7 @@ export function removePref(key: string): void {
  * backend must never blank the UI, so the fetch races a short timeout and
  * every failure resolves to "use the cache as-is".
  */
-export async function hydratePrefs(timeoutMs = 1500): Promise<void> {
+export async function hydratePrefs(timeoutMs = PREF_HYDRATE_TIMEOUT_MS): Promise<void> {
   adoptOldKeys()
   try {
     const data = await Promise.race([

@@ -8,6 +8,8 @@ import { bytes, clock } from '../../lib/monitor'
 import { termLog, type LogMode } from '../terminal/telemetry'
 import { t } from '../../i18n/scope/pages'
 
+const TERMINAL_LOG_REFETCH_MS = 30_000
+
 /**
  * The terminal's part of the Monitor page (tk_f89e84c4): the terminal log
  * of today (backend/termlog.py). The day in one line, the hours, what the
@@ -103,7 +105,7 @@ export function TerminalSection() {
   const q = useQuery({
     queryKey: ['terminal-log', 'summary'],
     queryFn: ({ signal }) => getJson<TermLogSummary>('/api/terminal/log/summary', signal),
-    refetchInterval: 30_000,
+    refetchInterval: TERMINAL_LOG_REFETCH_MS,
     staleTime: 10_000,
   })
   const s = q.data

@@ -23,6 +23,8 @@ import { persistPref } from '../../../../lib/uiPrefs'
 import { roleOf, shownOf, type AquaSession } from '../model'
 import type { Period, Rhythm } from './rhythm'
 
+const TAB_FACTS_REFETCH_MS = 5000
+
 export interface ChatFacts {
   name: string
   tool: string
@@ -42,7 +44,7 @@ export function useTabInfo() {
   const q = useQuery({
     queryKey: ['terminal', 'tabs-info'],
     queryFn: ({ signal }) => getJson<{ tabs: Record<string, TabInfo> }>('/api/terminal/tabs', signal).then((d) => d.tabs ?? {}),
-    refetchInterval: 5000,
+    refetchInterval: TAB_FACTS_REFETCH_MS,
     refetchIntervalInBackground: false,
     staleTime: 4000,
     retry: false,

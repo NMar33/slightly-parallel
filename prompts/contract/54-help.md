@@ -30,7 +30,7 @@ rest; you see the result on the page named.
 | `#now <text>` | Your message becomes the task this chat starts on, as you wrote it (the agent adds a title): into doing, in the lane for #now (Settings › Tasks) or the one in braces, `#now {ui} …`; then the agent works on it. `#done` closes it. | Kanban |
 | `#now-todo <text>` | Your message, as you wrote it, filed in To do and not started; `-next`, `-backlog`, `-review`, `-parked`, `-done` file it in those columns. | Kanban |
 | `#evidence` | Attaches the proof for the task: what it touched and what it did, the way you asked for it. | The task's window |
-| `#done` | Moves the task to done: the one named, else the last task named since the previous `#done`. Its messages up to here count as its work. | Kanban · the task's window |
+| `#done` | Closes the tasks named next to the tag. A bare tag uses the last local task named in this chat since the previous tag. The notice lists doubtful IDs and gives a command to confirm them. | Kanban · the task's window |
 
 **Keep a message**
 

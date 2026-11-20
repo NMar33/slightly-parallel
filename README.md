@@ -4,31 +4,20 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/NMar33/slightly-parallel/ci.yml?branch=main&label=CI&labelColor=2E3634&logo=githubactions&logoColor=white)](https://github.com/NMar33/slightly-parallel/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/tag/NMar33/slightly-parallel?label=release&labelColor=2E3634&color=3E9B84)](https://github.com/NMar33/slightly-parallel/releases) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-FFD43B?labelColor=3776AB&logo=python&logoColor=FFD43B)](https://www.python.org) [![MIT](https://img.shields.io/badge/license-MIT-3A8FB7?labelColor=2e3634&logo=opensourceinitiative&logoColor=white)](LICENSE) [![Films](https://img.shields.io/badge/films-three%20on%20YouTube-B5533C?labelColor=2E3634&logo=youtube&logoColor=white)](https://youtu.be/NmtQgkg-D-E)
 
-**A local dashboard for running many projects with many coding agents at once, without losing the thread of what is happening.**
+Are you tired of switching between projects?
 
-It keeps every chat, puts the work on a board, and makes the agents write down what matters: what changed, what was decided, what the project is for. The aim is a step from vibe coding to leading a team of agents: you know the code, the architecture and the decisions, even when an agent wrote most of it.
+Slightly Parallel is an open-source dashboard that runs on your own computer and helps you to manage projects with multiple agents. You can work as usual in a terminal or in EDA, in Claude Code or Codex, but on top of that you get task management, program architecture management and the ability to resume any task from any point and never lose the context again.
 
+## Works with
 
-![Six pages of Slightly Parallel on the example project](docs/media/readme/pages.gif)
-
-The project on film, in a minute or in six: [Slightly Parallel in a minute](https://youtu.be/NmtQgkg-D-E) (0:58) · [Every page](https://youtu.be/eZ0_f1sKaLE) (6:42)
-
-**Contents**
-- [Install](#install)
-- [How it is meant to be used](#how-it-is-meant-to-be-used)
-- [Three principles](#three-principles)
-- [Limits](#limits)
-- [In detail](#in-detail): [Chats](#chats) · [The board](#the-board) · [Standups](#standups) · [The commands](#the-commands) · [Skills](#skills) · [Artifacts](#artifacts) · [Entry points](#entry-points)
-- [Work in progress (unreleased)](#work-in-progress-unreleased)
-- [FAQ / Problems](#faq--problems)
-- [What it needs and where the data is](#what-it-needs-and-where-the-data-is)
-- [More](#more)
+- Claude Code, Codex, OpenCode
+- Linux, macOS, Windows
 
 ## Install
 
-The same steps on film: [Install it and connect your first project](https://youtu.be/iVSJEZdb7Nw) (4:08).
+You can watch how to install it on YouTube: [Install it and connect your first project](https://youtu.be/iVSJEZdb7Nw) (4:08).
 
-You need Python 3.11+ and git.
+You need Python 3.11+ and Git.
 
 ```bash
 git clone https://github.com/NMar33/slightly-parallel.git
@@ -38,221 +27,183 @@ cd slightly-parallel
 
 On Windows, instead of `./run.sh --prod`: `sp run --prod`.
 
-The app is at http://127.0.0.1:8123. It makes the data folder `~/.slightly-parallel` and fills it with an example project: a month of work on a small online store, with its chats, tasks, commits and standups, so every page has something on it and you can try everything before connecting your own code. Hide it from the sidebar when you no longer need it.
+The dashboard is available locally at http://127.0.0.1:8123.
 
-![The example project](docs/media/readme/example.png)
+<details>
+<summary>Install and open SP terminal</summary>
 
-Then connect a project. On the **Setup** page:
+You can use SP in your browser and keep working in your usual terminal. If you want the SP terminal, install Node 20+ with npm and turn on the terminal in **Settings › Terminal**. From the Slightly Parallel folder, run `./sp.sh window` (Windows: `sp window`). The first launch installs Electron. Pick your project, open a terminal tab and start your agent there. You can group tabs, switch projects and see your work timer in the window.
 
-1. **Data folder** — where Slightly Parallel keeps its records. The default is fine.
-2. **Integrate a project** — a short code and the folder where its code is. Setup shows the files it is about to write and writes them: a section in the project's `AGENTS.md` (and a line in `CLAUDE.md`), the capture hooks, the MCP server entry.
-3. **Start an agent in that folder** — Claude Code, Codex, OpenCode or Cursor. Open **Chats** to see the recorded conversation.
+</details>
+
+<details>
+<summary>There is a small demo project, so you can check how it works before using it in your own work</summary>
+
+Small demo project. It goes in the folder `~/.slightly-parallel`, and when you open http://127.0.0.1:8123 you will see a project for a small online shop. It has data on all the pages in Slightly Parallel, so it should be easier to understand how to use SP and what benefits it gives you. When you no longer need it, click **Hide** above the example project in the sidebar.
+
+</details>
+
+![Demo project · Fuji at dusk](docs/media/readme/demo-project-fuji.gif)
+
+### How do you connect your own project?
+
+Go to **Setup** → **Data folder** → **Integrate a project**.
+
+That's it.
+
+<details>
+<summary>Connecting a project in more detail</summary>
+
+Go to the **Setup** page:
+
+1. Choose the **Data folder**. This is where SP keeps its records. (The default should be fine.)
+2. Next step: **Integrate a project**.
+   1. Choose a project folder (it can be a new one or an existing one). SP doesn't write files in this folder (except for the `AGENTS.md` and `CLAUDE.md` entries, MCP configuration and hooks it needs to integrate with the agents), but it tracks Git activity and which agents start in this folder. (It stores its own data, including chats and tasks, in the data folder.)
+   2. Give the project a name.
+   3. Check which files will be written to the project folder and which agents you want to integrate. So if you work only with Claude Code, just integrate it, but if you think you might try Codex a month later, just integrate them all.
 
 ![The Setup page, step by step](docs/media/readme/setup.gif)
 
-**Tick the box of every tool you use.** A project records the chats of a tool only if that tool's box was ticked when the project was integrated: Claude Code hooks, Codex hooks, OpenCode plugin, Cursor hooks. Every tool's box is ticked by default: a file a tool never reads costs nothing, a chat that was not recorded is gone. Untick a tool only if you are sure you do not use it. Each integrated project shows which tools it records; a tool you have that a project does not record gets a line and a **Connect** button.
+</details>
 
-![The tool boxes in the Setup form](docs/media/readme/setup-tools.png)
 
-> [!WARNING]
-> The first time OpenCode starts in a project, it downloads a package for its plugins. This can take several minutes, and OpenCode shows nothing while it runs. Wait until it finishes.
+## What Slightly Parallel can do for you
 
-Good to know:
 
-- **The chats are recorded even when the server is not running.** The hooks write them; the server reads them when it is up.
+You can work on the project as usual, in the tools you like. Once you integrate a project, SP uses hooks to record the chats and store them in the folder you chose.
+
+Using special commands (`#rule`, `#vision`, `#important`), you can save messages along with their context. With task commands, you can manage tasks right from your Claude Code chat (or from the SP GUI if you want).
+
+![Check the evidence and hand three tasks to Codex](docs/media/readme/task-evidence-to-codex.gif)
+
+SP also has automatic events. For example, the daily standup helps you keep a development diary and follow changes to the architecture. Besides that, SP has its own terminal (you need Node 20+ to install it). Working with it takes things to a whole new level.
+
+![Six pages of Shopfront, from chat search to artifact files](docs/media/readme/shopfront-tour.gif)
+
+
+There are a few levels of SP adoption.
+
+### Level 1. Install and forget
+
+You install SP, integrate some project (for example, `THE_SAAS_THAT_MAKES_ME_RICH`) and completely forget about SP.
+
+Even in this sad scenario, you still get the benefits. A month later, after hundreds of chats with, for example, Claude Code, you can find that exact chat you need because SP keeps all your chats and agents organised. (And it’s even simpler if you add some tags, for example, `#important`.)
+
+### Level 2. You use SP
+
+In this case, you run the SP server locally on your computer. Here are the things that make your work experience much better.
+
+1. The Kanban board. It has a nice GUI, but most importantly, it’s heavily integrated with agentic development. So you don’t have to switch between your beloved terminal and the GUI. You can work in the terminal as usual and just use special tags to control tasks.
+
+<details>
+<summary>Some of the task commands</summary>
+
+- `#task` gives the agent a nudge to write up the task itself.
+- `#now` creates a task on your behalf (the agent just adds context). The task goes into Doing.
+- `#now-todo` is the bomb. You’re working, you see a bug or get an idea. Just write it down, stick the tag on it, and it goes straight into To do without taking you away from your current work (again, the agent just adds context).
+- One small thing: if you don’t give a task a name, that’s OK. The agent will write one based on the task context.
+
+There are more commands. More on those [below](#the-commands).
+
+</details>
+
+2. You can easily collect and manage the relevant experience you gain on the project.
+
+   2.1. You can create (and collect) prompts, artifacts, skills, problems, rules, decisions and much more. It sounds like a lot, but in reality it’s really simple. SP doesn’t require any special discipline. You just work as usual until there’s a moment. A moment when you think, hmm… that’s worth saving or remembering. Or, WTF, that shouldn’t happen again.
+   So when that moment comes, SP probably has a command for it. So you just type it in your usual tool (Claude Code, Codex, etc.), and that’s it.
+
+   <details>
+   <summary>Commands for the things you want to keep</summary>
+
+   - `#prompt` saves a prompt you want to use again.
+   - `#artifact` keeps something an agent made, like a dataset or a small app.
+   - `#skill` asks the agent to write down how it did the work so another agent can follow the same steps.
+   - `#problem` records a problem. `#problem solved` marks it as solved.
+   - `#rule` saves a rule for agents working on your project.
+   - `#decision` records what you chose and why.
+
+   </details>
+
+   2.2. SP has an easy-to-use GUI for managing these things. You can group important rules into sets, add them to new projects with one click, keep earlier versions, and so on. I’ve used rules as the example here, but of course there are lots of things you can do with the other entries too.
+
+   <details>
+   <summary>Here’s a GIF showing how sets work</summary>
+
+   ![Adding a vision to a set and dragging the set onto a project](docs/media/readme/visions-sets.gif)
+
+   </details>
+
+3. SP helps you manage the architecture of your project with commands like `#core` and `#entrypoint` and with regular architecture reviews.
+
+   <details>
+   <summary>How it works and the philosophy behind it</summary>
+
+   When you work on your project and see something “inside” that’s really important, you can use `#core-new` to start tracking it. Say it’s the terminal. Later, when you’re working on it again, type `#core` to link the message and your current task to it. In **Architecture › Cores**, you can see the files, tasks and notes for the terminal together.
+
+   An entry point is a topic you want to come back to. Say you’re working on the demo. Type `#entrypoint` and name the topic. The agent records where the files are, how to run the demo and where you stopped. Next time, even in a different chat, you can use the same topic name.
+
+   For a regular review, type `#scan` when you finish a stage of work. It records what changed. Use `#architecture` to bring the architecture page and program map up to date.
+
+   </details>
+
+
+### Level 3. You use SP with the SP terminal
+
+It’s a complete game changer. The same things you have in SP, but built into the terminal. Switch between projects and workspaces, create groups, check how long you’ve been working and take care of your health.
+
+![A short tour of the SP terminal · Fuji](docs/media/readme/terminal-tour-fuji.gif)
+
+### More info
+
+<details>
+<summary>How to start the server again and where everything is</summary>
+
 - **To start the server again:** `./run.sh --prod` (Windows: `sp run --prod`). To keep it running in the background: [docs/running.md](docs/running.md).
-- **Where everything is:** the data folder, one folder per project under `projects/<code>/`, the chats in it as `chat.md`, the tasks and the rest as CSV plus one Markdown file per entry. Plain files; copy the folder and you have a backup.
-- **Chat commands** — type `#help` in a chat for the full list, or see [The commands](#the-commands) below.
+- If you don't start the server, chats will still be recorded because the hooks do that, but all other functions will be unavailable.
+- **Where everything is:** SP writes its data to the folder you chose in step one of Setup. In this folder, open `projects`, then the folder with your project's name. That's it. Inside you'll find the chats in `chat.md` files, and the tasks and the rest as CSV plus one Markdown file per entry.
+
+</details>
+
+<details>
+<summary>More about OpenCode</summary>
+
+The first time OpenCode starts in a project, it downloads a package for its plugins. This can take several minutes, and OpenCode shows nothing while it runs.
+
+</details>
+
+<details>
+<summary>Chat commands</summary>
+
+If you want to know more about commands and SP, just type `#help` in the chat with your agent and it will give you the full list, or you can see [The commands](#the-commands) below.
+
+</details>
+
+<details>
+<summary>Dev info</summary>
 
 Working on Slightly Parallel's own code needs Node 20+: [docs/development.md](docs/development.md).
 
-## How it is meant to be used
+</details>
 
-Slightly Parallel is built around a cycle, not a prompt.
 
-You give an agent a long task: something that takes time, or something you want in several variants. While it works, you look at the product. That is when the ideas come, and the fixes: **they go to the kanban board**, into lanes, by theme. When the agent is done, you look at what it made, and give it the next batch from the board. **Every task on the board is tied to the chat** it came from or was done in, so the context of any card is one click away.
+You can work on the project as usual. SP keeps every chat, puts the work on a board, and makes the agents write down what matters: what changed, what was decided, what the project is for. The aim is a step from vibe coding to leading a team of agents: you know the code, the architecture and the decisions, even when an agent wrote most of it.
 
-When a stage of work is over and the agent still holds everything in its context, **you type `#scan`.** The agent writes a checkpoint: what changed since the last one, the files that matter and why, what moved in the architecture. The next morning the first agent that touches the project writes yesterday's **standup** from every chat of the day: what moved, what went wrong, what waits for your answer.
 
-**A month later you open the project and read the standups and the scans, and the month comes back.** 
+![Six pages of Slightly Parallel on the example project](docs/media/readme/example-project-tour.gif)
 
-![The board](docs/media/readme/board.png)
-
-## Three principles
-
-**As little discipline as possible.** Using it must not take attention. The first benefits come right after integrating a project, before you type a single command: the chats are recorded and the statistics counted.
-
-**Against slop.** Better to lose something than to drown everything in noise. That is why almost nothing is written by itself: the chats, the standups and the decisions are; everything else waits for a command.
-
-**Kept, versioned, connected.** What was written stays and keeps its versions. A task knows its chat, a scan knows its files, a decision knows the day it was made. There are many ways into the same thing, and from each you can see what it is connected to.
-
-## Limits
-
-I work on Linux and mostly with Claude Code, so that is where everything is tested most. macOS and Windows, and Codex, OpenCode and Cursor, were built for and tested where I could (the test suite runs on all three systems), but there will be bugs I have not seen. I expect your agent will make it work in your environment without much trouble: the code is plain Python and TypeScript, and the contract the agents follow is in the repository.
-
-One person, one computer. The server has no login and listens on `127.0.0.1` only.
-
-## In detail
-
-I know the look matters to many people, so it can be changed: five skins, the default one in four accent colours, and four interface sizes. All of it is in **Settings › Appearance**, and so is the language. Light or dark theme is there too, or on the sun, moon or monitor button at the top right of any page.
-
-![Settings, then Appearance, then the five skins and the theme button](docs/media/readme/appearance.gif)
-
-### Chats
-
-Whatever tool you work in, every chat of a project goes into one stream. The Chats page shows it by sessions, with the agent, the time, the files it touched and what came out of it; the whole stream without the session breaks; or one chat full screen, the focus mode, with its own text size. Search covers every message of every project. The agents and the chips beside them filter the list; the month at the top takes you to a day.
-
-The recording is done by hooks (Claude Code, Codex, Cursor) and a plugin (OpenCode). The server does not need to be running.
-
-![The Chats page: sessions, the whole stream, the focus mode, search](docs/media/readme/chats.gif)
-
-### The board
-
-A Kanban board per project, with columns including Backlog, Next, From agents, To do, Doing, Review, Done. Tasks suggested by an agent go into From agents. With `#now`, your message becomes a card in Doing. There is a lanes view, where cards group by theme, and a three-column view for the day.
-
-![The board in five columns, three columns, and the lanes](docs/media/readme/board-views.gif)
-
-A card is a task window: description, tags, milestone, the chat it came from, the evidence of what was done. For sorting a backlog there are axes on every card: priority, impact, effort, novelty, tokens; the views order by them. 
-![A task window: the card, its history, the chats it was in](docs/media/readme/task-window.gif)
-
-Two clicks for the day's work. Ctrl-click a card (⌘ on macOS) and it is planned for today: it gets a star, moves to the top of its column, and the Today strip above the board counts it.
-
-![Ctrl-click: three cards planned for today gather in a Today lane above the others, and the strip counts them](docs/media/readme/board-today.gif)
-
-Shift-click cards to select them in order; the bar at the bottom groups them into a queue behind the first, plans them all for today, or copies them to paste to an agent as one batch. Drag any selected card and they all move.
-
-![Shift-click: three cards selected, and the bar that groups, plans or copies them](docs/media/readme/board-batch.gif)
-
-### Standups
-
-One standup per project per day, written by the first agent that works on the project the next day, from every chat of the day: the summary, what went wrong, what moved (new, changed, fixed, decided). 
-This is the project's diary, written without you.
-
-![A standup](docs/media/readme/standups-narrow.png)
-
-### The commands
-
-Type a command anywhere in your message.
-
-![The commands](docs/media/readme/commands.svg)
-
-**`#scan`** — a checkpoint. Type it when a stage is shipped, while the agent still holds the context. The agent writes what changed since the last scan, the important files with why they matter + the architecture form.
-
-![A scan](docs/media/readme/scan-narrow.png)
-
-**`#decision`** — what was chosen, why, and what was rejected. Agents log decisions when a piece of work is done; `#decision` logs one now.
-
-**`#vision`** — an idea of where the project should go, kept as you wrote it; the agent writes what it means. Visions written in a terminal are lost by the next week, and the agents that rebuild the app a year later never knew them. Here they stay, with versions. Visions of one kind (design, backend) go into a set; a set is dragged onto a project and written into its `AGENTS.md`. The relevant vision travels between projects.
-
-![Add to set, New set, then drag the set onto a project: it is written into its AGENTS.md](docs/media/readme/visions-sets.gif)
-
-**`#rule`** — a correction to how agents work. A rule for all agents goes into every project's `AGENTS.md`; a set of rules into one project. **`#problem`** — a problem, with what was tried; `#problem solved` closes it, and a rule can be made from it. Both are kept the same way as visions: sets, versions, projects.
-
-**`#important`** — marks the message, its agent and the task it names; `#important-message`, `-agent`, `-task` mark one of them. The Important page collects them.
-
-**`#prompt`** — keeps the message as a prompt to send again, with versions A and B, a rating, and the chats it was sent in.
-
-**`#task`** and **`#now`** — two commands for tasks. Both are typed in the chat, anywhere in the message; the difference is when the work is done.
-
-`#task` is a task for later. You noticed a bug, deferred a step, had an idea: `#task the form accepts an empty trigger_id`. The agent writes the card from the context of the conversation, the way you would have written it with the time, and puts it in the From agents column. That column is the review: you drag the card on when you have looked at it.
-
-![#task in the chat, then the card in the From agents column](docs/media/readme/task.gif)
-
-`#now` starts a task in Doing, marks it for today and links it to the chat. For example, `#now fix the login timeout`. Type `#done` to close it.
-
-![#now in the chat, then the card in Doing, planned for today](docs/media/readme/now.gif)
-
-The lane goes in braces right after the tag: `#now {ui} fix the login timeout`, `#task {Kanban Board} cards do not sort`. The server reads the lane from the message, not the agent, so there is nothing to guess. A lane that is not on the board is refused with the list of those that are; the agent asks in one line. New lanes are made on the board. Without braces `#task` lands in `unassigned`, `#now` in Now (the name is a setting).
-
-**`#entrypoint`** — saves where to find the files for a topic, how to run it and where work stopped.
-
-**If a tag made an entry by mistake** (a pasted text that mentions `#vision`, a `#rule` typed by accident): **type `#undo` and say what was the mistake. The agent lists the entries by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is archived without `#undo-yes`, and nothing is deleted.**
-
-**`#evidence`** — attaches the proof you asked for to the task. **`#standup`** writes yesterday’s standup.
-
-**`#architecture`** — updates the project’s architecture record. Use **`#page`** for the written overview or **`#map`** for the parts of the program and their connections.
-
-**`#help`** — the list of commands, in the chat.
-
-### Skills
-
-A skill is a folder with a `SKILL.md` that an agent loads when a task fits. Type `#skill` after a piece of work and the agent writes the steps from that chat, so the next agent does it the same way. A skill is installed into one project or into all; skill folders already on your computer are taken in; each use is counted. Everything the commands above do, the agents do through skills that come with Slightly Parallel, and you can rewrite any of them.
-
-### Artifacts
-
-An artifact is a folder an agent made for you that is worth keeping beyond one chat: a dataset, a document, a page, a small app. You say what you want with `#artifact`; the agent writes the folder under the project, the server records it, and the Artifacts page shows the folder and previews its files.
-
-An example. Claude Code started writing the help texts and descriptions in my own program in a strange voice: metaphors, filler, sentences that said nothing. I gave an agent a few samples and asked it to find every text like that and rewrite each in three to five ways, with the context of where the text sits. The result was a file: the original, the variants, and my choice for each. That file is worth more than the fixes: it is now an artifact, and when the same voice comes back in another project, the agent reads it and knows what to do.
-
-![The Artifacts page](docs/media/readme/artifacts.png)
-
-### Entry points
-
-Open a topic to see what it is, where its files are, how to run it and where work stopped.
-
-### Your hours
-
-The Timer page keeps your own time, per project and per block of work (a sprint, a theme, a client). A block's timer is started by hand, or runs on its own while an agent is working in the project and pauses when you step away. One page shows today as a dial, the last 26 weeks as a grid, and every entry with its note.
-
-![The Timer page and a project's Timer tab](docs/media/readme/time.gif)
-
-### Monitor
-
-The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
-
-![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
-
-## Work in progress (unreleased)
-
-### Pages and project views
-
-- **Architecture › Cores** tracks a part of the program, such as the terminal. See its files, tasks, commits and notes, follow changes on a timeline or locate it on the program map.
-- **Entry points** lets you browse topics as a list or as tiles. Open one to see its links, screenshots, open tasks and previous chats, or copy a briefing for another agent.
-- **Notes** collects agents’ plans, reports and reviews. Open a note from its task, enlarge a screenshot, tick off a step or leave a comment.
-- Open **Pins** to find saved messages across projects. Search your pins, find messages saved for the agent to reread, or copy the command to start a separate chat.
-- **Publish** turns cards about shipped work into a document. Edit the text, attach the tasks, files or images behind it, and keep earlier versions.
-- **Usage** shows tokens by chat, task, tool and model, estimated API costs, plan limits and time agents spent waiting for tools.
-- Use **Project tabs** to show or hide sections, including Standups, Scans, Visions, Entry points, Problems and Rules.
-- **Internals** shows how many commits name their task, by project and agent, over the last seven days.
-
-### Chats, tasks and commands
-
-- **`#pin`** saves a message for later. **`#fork-later`** also keeps the command to start another chat from it.
-- **`#carry`** gives the agent your message and its reply again after the chat history is shortened. **`#carry-brief`** keeps a summary.
-- **`#core-new`** starts tracking part of the program. **`#core-note`** adds a note, **`#core`** links the message and its task, and **`#core-off`** hides that part.
-- **`#entrypoint`** now lets you describe a topic and choose from matches. Type its exact name in another chat to update the same record.
-- **`#publish`** makes a card from your text or asks the agent to draft one about a topic you name.
-- **`#now`** keeps your message as the task description and lets the agent title it. **`#now-doing`** does the same.
-- **`#now-todo`**, **`#now-next`**, **`#now-backlog`**, **`#now-review`**, **`#now-parked`** and **`#now-done`** file your message directly in the named column.
-- After **`#done`**, an agent can suggest follow-up tasks. Choose which ones to add by number.
-- **`#mute`** lets you quote commands without running them. Use three hashes, as in **`###now-todo`**, to run just that command in a message.
-- **`#usage`** shows token use and plan limits. **`#usage-on`** and **`#usage-off`** show or hide the count after each reply.
-- **`#usage-warnings-on`** and **`#usage-warnings-off`** control warnings in Claude Code. **`#usage-price`** refreshes the API prices used for estimates.
-- **`#sp`** checks whether your chat is being recorded and whether hooks, storage and backups are working. From a shell, run `python sp.py check`.
-- **Agents** can exchange messages between chats. Helper chats appear under the agent that started them when the parent is known.
-- **Task cards** show the chat from the first task mention through `#done`. The agent titles cards created from the terminal’s message menu. Agents can edit their own cards and comment on others.
-
-### Desktop terminal and diagnostics
-
-- Open the terminal with `./sp.sh window` (Windows: `sp window`). First launch needs Node 20+ and npm. Linux is tested first. On Windows the terminal uses PowerShell without tmux.
-- Group tabs by project, split the view or move a chat into its own window. Windows and tabs can reopen after a restart.
-- Tabs show the chat title and recent activity. Alt+W takes you to a chat waiting for your answer.
-- Right-click a message to pin or copy it, make a task, or branch into another chat. Collapse long replies or scroll back while output arrives.
-- Click a task ID or commit hash to inspect it. Copy a shell command with the button beside it.
-- Add a task’s ID and description to the project’s Markdown draft, or turn selected draft text into a task.
-- Window settings let you choose from 12 colour schemes, adjust the title and tab rows, and control clipboard access. The title bar can show project time, total time and system load.
-- **Monitor › Terminal** shows scroll stalls, errors and lost connections. Download a report of timings and counts without typed or pasted text.
-- **Monitor › Server** offers a diagnostic report. If the server cannot start, create it from the shell with `python sp.py report`.
-
-## FAQ / Problems
-
-- **I integrated the project, but the chat is not recorded.**
-	- Check that the tool you work in records this project: on the Setup page each integrated project lists the tools it records (see [Install](#install)). A Codex, OpenCode or Cursor chat is not recorded without its own box. Press **Connect** beside the tool on the project's row, then start a new chat: a tool reads its hooks when a chat starts.
+<a id="the-commands"></a>
 
 <details>
-<summary><b>Possible problems</b></summary>
+<summary>Chat commands and dashboard pages</summary>
 
-- On Ubuntu, Codex with its default sandbox cannot read the files.
+- **Chats and Pins.** Search recorded conversations. Use `#important` to mark a message, `#pin` to return to it, or `#fork-later` to save the command for starting a separate chat from it.
+- **Kanban.** Use `#task` for later work, `#now` to start a task, `#evidence` to attach proof and `#done` to close the task. Open its card to read the discussion.
+- **Standups, Scans and Architecture.** Read yesterday’s work in Standups or request the report with `#standup`. Use `#scan` for a checkpoint, `#page` for the architecture overview and `#map` for the connections between parts of the program.
+- **Rules, Visions, Problems and Decisions.** Save each with `#rule`, `#vision`, `#problem` or `#decision`. Open its page to read the entry and the conversation behind it.
+- **Prompts, Skills and Artifacts.** Use `#prompt` for text you want to reuse, `#skill` for a procedure and `#artifact` for files you want to keep.
+- **Notes and Publish.** Review a plan, checklist or report in Notes. Use `#publish` to collect shipped work for a document.
+- **Timer, Usage and Monitor.** Timer shows your work hours. Usage shows agent tokens and plan limits. Monitor shows the state of the computer, server and terminal.
+- Type `#help` in a chat for the full command list.
 
 </details>
 

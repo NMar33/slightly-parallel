@@ -1,4 +1,4 @@
-import { t } from '../i18n/scope/shell'
+import { RadioOption } from './RadioOption'
 /**
  * The one segmented switch: a row of joined buttons, one of them on.
  *
@@ -41,17 +41,10 @@ export function Segmented<T extends string>({
       {options.map(([v, text, hint]) => {
         const picked = value === v
         return (
-          <button
-            key={v || 'all'}
-            type="button"
-            role="radio"
-            aria-checked={picked}
-            title={hint ?? (picked && clearable ? t('Click again to clear') : undefined)}
-            onClick={() => onChange(picked && clearable ? ('' as T) : v)}
+          <RadioOption key={v || 'all'} value={v} label={text} hint={hint}
+            picked={picked} clearable={clearable} onChange={onChange}
             className={`${size} whitespace-nowrap shrink-0 font-mono transition-colors ${picked ? on : `${off} ${shape === 'input' ? 'hover:bg-hover' : ''}`}`}
-          >
-            {text}
-          </button>
+          />
         )
       })}
     </div>

@@ -14,6 +14,8 @@ import { ARCHIVE, writeOrder } from './model'
 import { putBack } from '../boardData'
 import { t, tn } from '../../../../i18n/scope/project'
 
+const BOARD_REBUILD_REFETCH_DELAY_MS = 250
+
 export type PendingDrop = {
   draggedId: string; targetStatus: string; targetLane?: string; beforeTaskId?: string | null
 }
@@ -43,7 +45,7 @@ export function boardDrops({
       await postJson(`/api/tasks/${encodeURIComponent(id)}/update`, { ...updates, actor: OPERATOR_ACTOR })
       // A small delay lets the backend watchdog + view rebuild settle before
       // the refetch, avoiding a race where the refetch reads a stale cache.
-      setTimeout(() => setRefreshTick((t) => t + 1), 250)
+      setTimeout(() => setRefreshTick((t) => t + 1), BOARD_REBUILD_REFETCH_DELAY_MS)
     } catch (e) {
       toast.error(t('Could not save the task'), { description: String((e as Error)?.message ?? e) })
       setRefreshTick((t) => t + 1)

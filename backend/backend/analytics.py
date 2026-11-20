@@ -24,7 +24,7 @@ import duckdb
 
 from . import statslib
 from .db import ViewStore
-from .sessions import _TASK_ID_RE
+from .task_refs import task_ids
 
 MAX_ROWS = 5000
 MEMORY_LIMIT = "512MB"
@@ -149,7 +149,7 @@ def _load(store: ViewStore) -> tuple[duckdb.DuckDBPyConnection, dict[str, int]]:
             pasted = " ".join(m.group(1) for m in _PASTED.finditer(user))
             typed = _PASTED.sub(" ", user)
             cmds = sorted({m.group(1).lower() for m in _COMMAND.finditer(typed)})
-            ids = sorted({m.group(1) for m in _TASK_ID_RE.finditer(user) if m.group(1).startswith("tk_")})
+            ids = sorted(task_ids(user))
             messages.append((
                 f"{agent}#{t.get('n')}", s["project"], agent, names.get(agent, ""), s["id"], int(t.get("n") or 0),
                 stamp, stamp.date(), stamp.hour, stamp.strftime("%a"), _count(typed), _count(pasted),

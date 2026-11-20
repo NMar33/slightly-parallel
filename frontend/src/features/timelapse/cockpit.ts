@@ -31,7 +31,7 @@ type Panel = {
 
 const TAU = Math.PI * 2
 
-function rrect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+export function roundRectPath(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   const rr = Math.max(0, Math.min(r, w / 2, h / 2))
   g.beginPath()
   g.moveTo(x + rr, y)
@@ -42,7 +42,7 @@ function rrect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
   g.closePath()
 }
 
-function clip(g: CanvasRenderingContext2D, s: string, max: number): string {
+export function clipCanvasText(g: CanvasRenderingContext2D, s: string, max: number): string {
   if (g.measureText(s).width <= max) return s
   let out = s
   while (out.length > 1 && g.measureText(`${out}…`).width > max) out = out.slice(0, -1)
@@ -53,16 +53,16 @@ function clip(g: CanvasRenderingContext2D, s: string, max: number): string {
 export function bezel(p: Panel, r: Rect, title: string) {
   const { g, t: th, k } = p
   g.fillStyle = mix(p.base, th.ink, 0.035)
-  rrect(g, r.x, r.y, r.w, r.h, 6 * k)
+  roundRectPath(g, r.x, r.y, r.w, r.h, 6 * k)
   g.fill()
   g.strokeStyle = mix(p.base, th.ink, 0.11)
   g.lineWidth = 1 * k
-  rrect(g, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, 6 * k)
+  roundRectPath(g, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, 6 * k)
   g.stroke()
   if (!title) return
   g.fillStyle = th.dim
   g.font = p.font(8, 700)
-  g.fillText(clip(g, title.toUpperCase(), r.w - 14 * k), r.x + 7 * k, r.y + 11 * k)
+  g.fillText(clipCanvasText(g, title.toUpperCase(), r.w - 14 * k), r.x + 7 * k, r.y + 11 * k)
 }
 
 /**
@@ -133,7 +133,7 @@ export function dial(
   g.fillText(o.read, cx, cy - rad * 0.28)
   g.fillStyle = th.dim
   g.font = p.font(8, 700)
-  g.fillText(clip(g, o.label.toUpperCase(), r.w - 8 * k), cx, r.y + r.h - 3 * k)
+  g.fillText(clipCanvasText(g, o.label.toUpperCase(), r.w - 8 * k), cx, r.y + r.h - 3 * k)
   g.textAlign = 'left'
 }
 
@@ -147,7 +147,7 @@ export function meter(
   const y = r.y + r.h - barH - 10 * k
   g.fillStyle = th.dim
   g.font = p.font(8, 700)
-  g.fillText(clip(g, o.label.toUpperCase(), r.w * 0.7), r.x, r.y + 8 * k)
+  g.fillText(clipCanvasText(g, o.label.toUpperCase(), r.w * 0.7), r.x, r.y + 8 * k)
   g.textAlign = 'right'
   g.fillStyle = th.ink
   g.font = p.font(11, 700)
@@ -155,12 +155,12 @@ export function meter(
   g.textAlign = 'left'
 
   g.fillStyle = mix(p.base, th.ink, 0.09)
-  rrect(g, r.x, y, r.w, barH, barH / 2)
+  roundRectPath(g, r.x, y, r.w, barH, barH / 2)
   g.fill()
   const frac = Math.max(0, Math.min(1, o.max ? o.value / o.max : 0))
   if (frac > 0) {
     g.fillStyle = o.tone
-    rrect(g, r.x, y, Math.max(barH, r.w * frac), barH, barH / 2)
+    roundRectPath(g, r.x, y, Math.max(barH, r.w * frac), barH, barH / 2)
     g.fill()
   }
   for (let i = 1; i < 5; i++) {
@@ -215,17 +215,17 @@ export function readout(
   const { g, t: th, k } = p
   g.fillStyle = th.dim
   g.font = p.font(8, 700)
-  g.fillText(clip(g, o.label.toUpperCase(), r.w), r.x, r.y + 8 * k)
+  g.fillText(clipCanvasText(g, o.label.toUpperCase(), r.w), r.x, r.y + 8 * k)
   const size = o.size ?? 26
   g.fillStyle = o.tone ?? th.ink
   g.font = p.font(size, 700)
-  g.fillText(clip(g, o.value, r.w), r.x, r.y + size * k + 6 * k)
+  g.fillText(clipCanvasText(g, o.value, r.w), r.x, r.y + size * k + 6 * k)
   if (!o.sub) return
   // Right under the number, not at the bottom of whatever box it was given:
   // a caption an inch away from its figure stops being its caption.
   g.fillStyle = th.muted
   g.font = p.font(9, 500)
-  g.fillText(clip(g, o.sub, r.w), r.x, r.y + size * k + 19 * k)
+  g.fillText(clipCanvasText(g, o.sub, r.w), r.x, r.y + size * k + 19 * k)
 }
 
 /** A trace: the whole series faint, the part already run solid. */
@@ -318,7 +318,7 @@ export function log(
     g.fill()
     g.fillStyle = mix(p.base, th.ink, 0.62)
     g.font = p.font(9, 500)
-    g.fillText(clip(g, ln.text, r.w - 12 * k), r.x + 9 * k, y)
+    g.fillText(clipCanvasText(g, ln.text, r.w - 12 * k), r.x + 9 * k, y)
     g.restore()
   })
 }
@@ -408,7 +408,7 @@ function stripFrame(
 
   g.fillStyle = th.muted
   g.font = p.font(10, 700)
-  g.fillText(clip(g, o.label.toUpperCase(), labelW - 10 * k), r.x, r.y + r.h * 0.62)
+  g.fillText(clipCanvasText(g, o.label.toUpperCase(), labelW - 10 * k), r.x, r.y + r.h * 0.62)
   g.textAlign = 'right'
   g.fillStyle = th.ink
   g.font = p.font(12, 700)
@@ -416,7 +416,7 @@ function stripFrame(
   g.textAlign = 'left'
 
   g.fillStyle = mix(p.base, th.ink, 0.05)
-  rrect(g, plot.x, plot.y, plot.w, plot.h, 2 * k)
+  roundRectPath(g, plot.x, plot.y, plot.w, plot.h, 2 * k)
   g.fill()
   return plot
 }
@@ -571,7 +571,7 @@ export function flow(
   g.font = p.font(8, 700)
   for (const col of COLUMNS) {
     g.fillStyle = flowTone(p, col)
-    rrect(g, lx, plot.y + 5 * k, 5 * k, 5 * k, 1.5 * k)
+    roundRectPath(g, lx, plot.y + 5 * k, 5 * k, 5 * k, 1.5 * k)
     g.fill()
     g.fillStyle = mix(p.base, th.ink, 0.5)
     g.fillText(COLUMN_LABEL[col], lx + 7.5 * k, plot.y + 10 * k)

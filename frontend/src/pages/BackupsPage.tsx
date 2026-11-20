@@ -24,6 +24,8 @@ import { ErrorBanner, LoadingSkeleton } from '../components/states'
 import { PageHeader } from '../components/PageHeader'
 import { t, tn } from '../i18n/scope/pages'
 
+const BACKUP_STATE_REFETCH_MS = 30_000
+
 /**
  * BackupsPage: the ladder, what is on it, and the way back.
  *
@@ -105,7 +107,7 @@ export default function BackupsPage() {
   const query = useQuery({
     queryKey: QUERY_KEY,
     queryFn: ({ signal }) => getJson<BackupState>('/api/backup', signal),
-    refetchInterval: 30_000,
+    refetchInterval: BACKUP_STATE_REFETCH_MS,
   })
   const state = query.data
   const refresh = () => void qc.invalidateQueries({ queryKey: QUERY_KEY })

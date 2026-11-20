@@ -5,6 +5,8 @@
   its stretch of the chat, or ``unnamed`` when the chat named no task. The
   MCP tool ``task_done`` reads it right after the notice; the board applies
   the same tags on its next read, so a #done stands even if no agent asks.
+- ``GET /api/done-tags/capture`` — the outcome of the hook's exact captured
+  turn on a server connected to the same data root.
 - ``POST /api/done-tags`` ``{agent_id, proposals}`` — the same answer; with
   proposals, the next tasks are offered (nextlib.py): each with the
   project's similar open tasks, and the line the agent shows.
@@ -19,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -26,6 +29,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from .. import donelib, entrypointlib, nextlib, nowlib
 from ..csvio import as_int
 from ..db import ViewStore
+from ..entities import is_done
 from .deps import get_store
 
 router = APIRouter()
@@ -39,7 +43,19 @@ def done_tags(agent_id: str = Query(""), store: ViewStore = Depends(get_store)) 
     return got
 
 
-def _latest_done(store: ViewStore, agent_id: str) -> dict[str, Any]:
+@router.get("/api/done-tags/capture")
+def captured_done(
+    agent_id: str, capture_root: str, capture_turn: int = Query(ge=1),
+    store: ViewStore = Depends(get_store),
+) -> dict[str, Any]:
+    if Path(capture_root).resolve() != store.data_root.resolve():
+        raise HTTPException(status_code=409, detail="the hook and server use different data roots")
+    got = _latest_done(store, agent_id, capture_turn)
+    got.pop("project", None)
+    return got
+
+
+def _latest_done(store: ViewStore, agent_id: str, capture_turn: int | None = None) -> dict[str, Any]:
     if not agent_id.strip():
         # Turn numbers are per chat: without the chat, every chat's #done
         # would be read as one.
@@ -54,29 +70,45 @@ def _latest_done(store: ViewStore, agent_id: str) -> dict[str, Any]:
             log.warning("adoption %r failed on #done; answering from the ledger", name, exc_info=True)
     mine = [r for r in donelib.rows(store) if r.get("agent_id") == agent_id]
     newest = store.query_one("SELECT max(turn) AS turn FROM done_tags WHERE agent_id = ?", (agent_id,)) or {}
-    if newest.get("turn") is not None and as_int(newest.get("turn")) > max((as_int(r.get("turn")) for r in mine), default=0):
+    expected = capture_turn if capture_turn is not None else newest.get("turn")
+    if capture_turn is not None:
+        mine = [r for r in mine if as_int(r.get("turn")) == capture_turn]
+    if expected is not None and as_int(expected) > max((as_int(r.get("turn")) for r in mine), default=0):
         # The chat's latest #done has no ledger row yet: its card is still
         # being written, or its adoption failed above. Not the one before it.
-        return {"found": True, "turn": as_int(newest.get("turn")), "tasks": [], "pending": True,
+        return {"found": True, "turn": as_int(expected), "tasks": [], "pending": True,
                 "next": "This #done is not applied yet (its task card is still being written). "
                         "Call task_done again in a moment; say nothing about tasks until then."}
     if not mine:
         return {"found": False, "tasks": [], "next": "No #done is in this chat's captured messages yet."}
     turn = max(as_int(r.get("turn")) for r in mine)
     latest = [r for r in mine if as_int(r.get("turn")) == turn]
-    if all(r.get("result") == "unnamed" for r in latest):
+    candidates = [r for r in latest if r.get("result") in donelib.DOUBT_REASONS]
+    tasks = store.query("SELECT id, status, archived_at FROM tasks_mutual WHERE id = ANY(?)",
+                        ([r["task_id"] for r in candidates],)) if candidates else []
+    open_ids = {t["id"] for t in tasks if not t["archived_at"] and not is_done(t["status"])}
+    doubt = [{"id": r["task_id"], "reason": donelib.DOUBT_REASONS[r["result"]]}
+             for r in candidates if r["task_id"] in open_ids]
+    caution = {}
+    if doubt:
+        confirmation = "#done " + " ".join(r["id"] for r in doubt)
+        caution = {"doubt": doubt, "confirmation": confirmation}
+    resolved = [r for r in latest if r.get("result") in donelib.RESOLVED]
+    if not resolved:
         typed = store.query_one("SELECT tasks FROM done_tags WHERE agent_id = ? AND turn = ?", (agent_id, turn)) or {}
         ids = [x for x in str(typed.get("tasks") or "").split(",")
                if x and not store.query_one("SELECT id FROM tasks_mutual WHERE id = ?", (x,))]
+        step = ("Say that nothing moved. Show the doubtful IDs, their reasons, and the confirmation line."
+                if doubt else "No task was named in this chat since the last #done. Ask the operator "
+                "which task is done; they answer with #done tk_…")
         if ids:
-            return {"found": True, "turn": turn, "tasks": [], "unnamed": True, "unknown": ids,
-                    "next": f"{', '.join(ids)} is not a task on the board: nothing moved. Tell the operator, "
-                            "in one line; they answer with the right id."}
-        return {"found": True, "turn": turn, "tasks": [], "unnamed": True,
-                "next": "No task was named in this chat since the last #done. Ask the operator "
-                        "which task is done; they answer with #done tk_…"}
+            unknown_step = (f"{', '.join(ids)} is not a task on the board: nothing moved. Tell the operator, "
+                            "in one line; they answer with the right id.")
+            step = f"{unknown_step} {step}" if doubt else unknown_step
+        return {"found": True, "turn": turn, "tasks": [], "unnamed": True, "next": step,
+                **({"unknown": ids} if ids else {}), **caution}
     out = []
-    for r in latest:
+    for r in resolved:
         t = store.query_one("SELECT id, title, status, evidence_required FROM tasks_mutual WHERE id = ?",
                             (r["task_id"],)) or {}
         # Turn numbers are per agent: the stretch of this agent's turn, not another's.
@@ -96,8 +128,10 @@ def _latest_done(store: ViewStore, agent_id: str) -> dict[str, Any]:
                 "one line, what shipped — it is your account on the card, it moves nothing. "
                 "Where evidence is true, follow the answer's evidence_prompt with task_evidence."
                 + (f" {', '.join(archived)} is archived: say so, no report." if archived else ""))
+    if doubt:
+        step += " Show the doubtful IDs, their reasons, and the confirmation line."
     return {"found": True, "turn": turn, "tasks": out, "unnamed": False, "next": step + _topic_step(out),
-            "project": latest[0].get("project") or ""}
+            "project": latest[0].get("project") or "", **caution}
 
 
 def _topic_step(tasks: list[dict[str, Any]]) -> str:

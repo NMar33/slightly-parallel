@@ -36,7 +36,7 @@ from .csvio import append_row, read_rows
 from .date_utils import as_local, now_iso
 from .db import ViewStore
 from .file_safety import atomic_write_json
-from .sessions import _TASK_ID_RE
+from .task_refs import task_ids
 
 NOW_CSV = "now.csv"
 STATE = "now.json"
@@ -200,7 +200,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
             continue
         # A message that names a task already on the board is about that task
         # (a card pasted back to talk about it): a second card would copy it.
-        if any(m.group(1) in tasks for m in _TASK_ID_RE.finditer(str(tag["body"] or ""))):
+        if any(tid in tasks for tid in task_ids(str(tag["body"] or ""), include_documents=True)):
             settled.add(rid)
             continue
         try:

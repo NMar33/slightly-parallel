@@ -29,6 +29,8 @@ import {
 } from './home-data'
 import { monthLabel } from '../../lib/months'
 
+const LIVE_SECTION_REFRESH_MS = 30_000
+
 function reduced(): boolean {
   try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches } catch { return false }
 }
@@ -460,7 +462,7 @@ function sinceText(since: string): string {
 
 function NowSection({ live, last }: ReturnType<typeof useLive>) {
   const [, tick] = useState(0)
-  useEffect(() => { const id = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(id) }, [])
+  useEffect(() => { const id = setInterval(() => tick((n) => n + 1), LIVE_SECTION_REFRESH_MS); return () => clearInterval(id) }, [])
   return (
     <section aria-label={t('Now')} className="flex flex-col gap-10 min-w-0">
       <Heading label={t('Now')} aside={live.length ? live.length : undefined} to="/agent" toLabel={t('agents')} />

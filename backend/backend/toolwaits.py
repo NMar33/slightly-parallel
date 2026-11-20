@@ -20,6 +20,8 @@ from .usagebackfill import find_transcript
 
 log = logging.getLogger(__name__)
 LIMIT = 4 << 20
+COLLECTOR_JOIN_TIMEOUT_S = 2
+COLLECTION_INTERVAL_S = 60
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cursors(path TEXT PRIMARY KEY, identity TEXT, offset INTEGER, skipping INTEGER);
 CREATE TABLE IF NOT EXISTS pending(path TEXT, id TEXT, start REAL, family TEXT, job TEXT,
@@ -356,10 +358,10 @@ class Collector:
 
     def stop(self):
         self.halt.set()
-        self.process.join(timeout=2)
+        self.process.join(timeout=COLLECTOR_JOIN_TIMEOUT_S)
         if self.process.is_alive():
             self.process.terminate()
-            self.process.join(timeout=2)
+            self.process.join(timeout=COLLECTOR_JOIN_TIMEOUT_S)
 
 
 def _collect(root, halt):
@@ -440,4 +442,4 @@ def _collect(root, halt):
                 db.close()
         except Exception:
             log.exception("Tool wait collection paused until next pass")
-        halt.wait(60)
+        halt.wait(COLLECTION_INTERVAL_S)

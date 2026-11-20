@@ -64,6 +64,11 @@ import { PlusButton, agentOf, type AgentCmd, type PlusProps } from './tabs/Plus'
 import { getJson } from '../../../lib/getJson'
 import { t, tn } from '../../../i18n/scope/aqua'
 
+const CLOCK_REFRESH_INTERVAL_MS = 30_000
+const CHAT_LAYOUT_SETTLE_MS = 260
+const NOTICE_DURATION_MS = 2600
+const WINDOW_GROW_ACK_TIMEOUT_MS = 500
+
 type Status = NonNullable<ReturnType<typeof useTerminalStatus>['data']>
 
 const BAR = 34
@@ -150,7 +155,7 @@ export function TermApp() {
 function useMinuteClock() {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const h = setInterval(() => setNow(Date.now()), 30_000)
+    const h = setInterval(() => setNow(Date.now()), CLOCK_REFRESH_INTERVAL_MS)
     return () => clearInterval(h)
   }, [])
   return now
@@ -280,7 +285,7 @@ function AquaWindow({ status }: { status: Status }) {
   const [settled, setSettled] = useState(true)
   useEffect(() => {
     if (level !== 'chat') { setSettled(false); return }
-    const h = setTimeout(() => setSettled(true), 260)
+    const h = setTimeout(() => setSettled(true), CHAT_LAYOUT_SETTLE_MS)
     return () => clearTimeout(h)
   }, [level])
   const [folded, setFolded] = useState(false)
@@ -295,7 +300,7 @@ function AquaWindow({ status }: { status: Status }) {
   const flash = useCallback((text: string) => setFlash((f) => ({ text, n: (f?.n ?? 0) + 1 })), [])
   useEffect(() => {
     if (!flashText) return
-    const h = setTimeout(() => setFlash(null), 2600)
+    const h = setTimeout(() => setFlash(null), NOTICE_DURATION_MS)
     return () => clearTimeout(h)
   }, [flashText])
 
@@ -392,7 +397,7 @@ function AquaWindow({ status }: { status: Status }) {
     else setPendingNativeW(null)
     post({ op: 'grow', left, right })
     clearTimeout(growWait.current)
-    growWait.current = setTimeout(() => setPendingNativeW(null), 500)
+    growWait.current = setTimeout(() => setPendingNativeW(null), WINDOW_GROW_ACK_TIMEOUT_MS)
   }
 
   const changeSidebarMode = (mode: SidebarMode) => {

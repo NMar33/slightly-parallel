@@ -29,13 +29,23 @@ import time
 import urllib.request
 from pathlib import Path
 
+if __package__:
+    from .server_address import server_url
+else:
+    from server_address import server_url
+
+LAUNCHER_COMMAND_TIMEOUT_S = 900
+HEALTH_REQUEST_TIMEOUT_S = 2
+SHORTCUT_QUERY_TIMEOUT_S = 60
+PAGE_REQUEST_TIMEOUT_S = 30
+
 ROOT = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
 
 
 def sp(*args: str) -> str:
     done = subprocess.run([sys.executable, str(ROOT / "sp.py"), *args], cwd=ROOT,
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=LAUNCHER_COMMAND_TIMEOUT_S)
     print(f"$ sp {' '.join(args)}\n{done.stdout}{done.stderr}", flush=True)
     if done.returncode != 0:
         sys.exit(f"sp {' '.join(args)} failed")
@@ -49,7 +59,7 @@ def record() -> dict[str, list[str]]:
 def healthy(seconds: int) -> bool:
     for _ in range(seconds):
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}/api/health", timeout=2)
+            urllib.request.urlopen(server_url() + "/api/health", timeout=HEALTH_REQUEST_TIMEOUT_S)
             return True
         except OSError:
             time.sleep(1)
@@ -70,7 +80,7 @@ def lnk_target(lnk: str) -> str:
     script = (f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}'); "
               "Write-Output ($s.TargetPath + ' ' + $s.Arguments)")
     return subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=60).stdout.strip()
+                          text=True, encoding="utf-8", errors="replace", timeout=SHORTCUT_QUERY_TIMEOUT_S).stdout.strip()
 
 
 def supervisor() -> str:
@@ -119,7 +129,7 @@ def shortcut_opens(path: str) -> None:
         print(server_log.read_text(encoding="utf-8", errors="replace")[-4000:] if server_log.exists() else "no server.log")
         sys.exit("the shortcut did not start the server")
     first = opened(log, 1, 120)
-    page = urllib.request.urlopen(f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}/", timeout=30)
+    page = urllib.request.urlopen(server_url() + "/", timeout=PAGE_REQUEST_TIMEOUT_S)
     body = page.read().decode("utf-8", "replace")
     print(f"down: the shortcut started the server and opened {first}; the page answers {page.status}", flush=True)
     assert first and first[0].startswith("http://127.0.0.1:"), f"the browser was not asked to open the app: {first}"

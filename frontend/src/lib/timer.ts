@@ -13,6 +13,8 @@ import { useQuery } from '@tanstack/react-query'
 
 import { getJson } from './getJson'
 
+const AUTO_TIMER_STATUS_REFETCH_MS = 15_000
+
 export interface WorkContext { project: string; taskId?: string; title?: string }
 
 const ORDER = ['task', 'terminal', 'route'] as const
@@ -100,7 +102,7 @@ export function useTimeAuto() {
   return useQuery({
     queryKey: TIME_AUTO_KEY,
     queryFn: ({ signal }) => getJson<TimeAuto>('/api/time/auto', signal),
-    refetchInterval: 15_000,
+    refetchInterval: AUTO_TIMER_STATUS_REFETCH_MS,
   })
 }
 

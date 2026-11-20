@@ -1036,7 +1036,10 @@ def usage(store: ViewStore, days: int = 30) -> dict[str, Any]:
     }
 
 
-def usage_for(store: ViewStore, name: str, days: int = 30, limit: int = 50) -> dict[str, Any]:
+DEFAULT_SKILL_USAGE_ROWS = 50
+
+
+def usage_for(store: ViewStore, name: str, days: int = 30, limit: int = DEFAULT_SKILL_USAGE_ROWS) -> dict[str, Any]:
     rows = store.query(
         "SELECT project, agent_id, session_id, turn, at_ts, how FROM skill_uses WHERE skill = ? ORDER BY at_ts DESC",
         (name,),

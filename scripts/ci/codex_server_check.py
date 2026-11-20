@@ -33,6 +33,12 @@ from pathlib import Path
 
 import psutil
 
+API_REQUEST_TIMEOUT_S = 30
+OPERATOR_COOKIE_TIMEOUT_S = 10
+HEALTH_REQUEST_TIMEOUT_S = 3
+CHILD_EXIT_CHECK_DELAY_S = 3
+SERVER_EXIT_TIMEOUT_S = 15
+
 ROOT = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
 #: Causes that say the server could not talk to Codex (codexlimits.read).
@@ -51,11 +57,11 @@ class Server:
         self.base = f"http://127.0.0.1:{port}"
         self.cookie = ""
 
-    def call(self, path: str, body: dict | None = None, timeout: float = 30) -> dict:
+    def call(self, path: str, body: dict | None = None, timeout: float = API_REQUEST_TIMEOUT_S) -> dict:
         if not self.cookie:
             # The cookie the server hands its own pages: this stands in for the page.
             req = urllib.request.Request(self.base + "/api/health", headers={"Sec-Fetch-Site": "same-origin"})
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with urllib.request.urlopen(req, timeout=OPERATOR_COOKIE_TIMEOUT_S) as r:
                 self.cookie = (r.headers.get("Set-Cookie") or "").split(";", 1)[0]
         data = json.dumps(body).encode() if body is not None else None
         headers = {"Cookie": self.cookie, **({"Content-Type": "application/json"} if data else {})}
@@ -105,7 +111,7 @@ def main() -> int:
             if proc.poll() is not None:
                 break
             try:
-                server.call("/api/health", timeout=3)
+                server.call("/api/health", timeout=HEALTH_REQUEST_TIMEOUT_S)
                 up = True
                 break
             except OSError:
@@ -139,7 +145,7 @@ def main() -> int:
         if cause:
             print(f"  info Codex says: {cause}", flush=True)
 
-        time.sleep(3)
+        time.sleep(CHILD_EXIT_CHECK_DELAY_S)
         left = {k: v for k, v in codex_or_node().items() if k not in before}
         check("no codex or node process from the read is left", not left, left)
         tmp = temporary_files(data / ".usage")
@@ -154,7 +160,7 @@ def main() -> int:
             except ProcessLookupError:
                 pass
         try:
-            proc.wait(timeout=15)
+            proc.wait(timeout=SERVER_EXIT_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             proc.kill()
         log.close()

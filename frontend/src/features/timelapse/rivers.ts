@@ -15,7 +15,7 @@ import type { Film, Frame } from './film'
 import type { GraphNode } from './source'
 import type { Theme } from './theme'
 import { mix } from './theme'
-import { bezel, dial, flow, lamps, log, meter, readings, readout, strip, trace } from './cockpit'
+import { bezel, clipCanvasText, dial, flow, lamps, log, meter, readings, readout, roundRectPath, strip, trace } from './cockpit'
 
 import { locale, t } from '../../i18n/scope/views'
 import { monthShort } from '../../lib/months'
@@ -136,24 +136,6 @@ const HOUR = 3600_000
 
 const ms = (iso: string) => new Date(iso).getTime()
 
-function rrect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  const rr = Math.max(0, Math.min(r, w / 2, h / 2))
-  g.beginPath()
-  g.moveTo(x + rr, y)
-  g.arcTo(x + w, y, x + w, y + h, rr)
-  g.arcTo(x + w, y + h, x, y + h, rr)
-  g.arcTo(x, y + h, x, y, rr)
-  g.arcTo(x, y, x + w, y, rr)
-  g.closePath()
-}
-
-function clip(g: CanvasRenderingContext2D, text: string, max: number): string {
-  if (g.measureText(text).width <= max) return text
-  let s = text
-  while (s.length > 1 && g.measureText(`${s}…`).width > max) s = s.slice(0, -1)
-  return `${s}…`
-}
-
 /** The strip's title and, at the right, whatever it is counting. */
 function caption(c: RiverCtx, r: Rect, left: string, right: string) {
   const { g, t: th, k } = c
@@ -258,7 +240,7 @@ function pulse(c: RiverCtx, film: Film, f: Frame, r: Rect, u: number, labels: bo
     caption(c, r, t('agents working'), t('{agentsSeen} agents · {sessionsSeen} chats · {turnsSeen} replies', { agentsSeen: f.agentsSeen, sessionsSeen: f.sessionsSeen, turnsSeen: f.turnsSeen }))
     c.g.fillStyle = f.awake.length ? th.ink : th.dim
     c.g.font = c.font(11, 500)
-    c.g.fillText(clip(c.g, f.awake.map((s) => c.name(s.agent_id)).join('  ') || 'none', r.w * 0.4), r.x + 92 * c.k, r.y + 10 * c.k)
+    c.g.fillText(clipCanvasText(c.g, f.awake.map((s) => c.name(s.agent_id)).join('  ') || 'none', r.w * 0.4), r.x + 92 * c.k, r.y + 10 * c.k)
   }
   timeAxis(c, film, r, plot, labels)
   band(c, film, f, r, work, maxW, mid, up, -1, mix(c.base, th.ink, 0.1), false)
@@ -398,7 +380,7 @@ function areas(c: RiverCtx, film: Film, f: Frame, r: Rect, u: number, labels: bo
     list.forEach((area, i) => {
       const tone = th.lanes[AREA_TONE[area] ?? i % th.lanes.length]
       c.g.fillStyle = tone
-      rrect(c.g, x, r.y + r.h - 9 * k, 7 * k, 7 * k, 2 * k)
+      roundRectPath(c.g, x, r.y + r.h - 9 * k, 7 * k, 7 * k, 2 * k)
       c.g.fill()
       c.g.fillStyle = th.dim
       // Measure with the label's own font, or the swatches walk into the text.
@@ -507,7 +489,7 @@ function lanes(c: RiverCtx, film: Film, f: Frame, r: Rect, u: number, labels: bo
         // Live now, or done: a lane that is awake is at full strength.
         c.g.fillStyle = b >= f.at && a <= f.at ? th.ink : mix(c.base, tone, 0.85)
       }
-      rrect(c.g, xa, y, Math.min(w, r.x + r.w - xa), bh, bh / 2)
+      roundRectPath(c.g, xa, y, Math.min(w, r.x + r.w - xa), bh, bh / 2)
       c.g.fill()
     }
   })
@@ -558,15 +540,15 @@ function days(c: RiverCtx, film: Film, f: Frame, r: Rect, u: number, labels: boo
     const live = i === today
     const y = plot.y + plot.h - h
     c.g.fillStyle = past || live ? th.up : mix(c.base, th.ink, 0.1)
-    rrect(c.g, x, y, bw, wh, 2 * k)
+    roundRectPath(c.g, x, y, bw, wh, 2 * k)
     c.g.fill()
     c.g.fillStyle = past || live ? th.down : mix(c.base, th.ink, 0.07)
-    rrect(c.g, x, y + wh, bw, Math.max(0, h - wh), 2 * k)
+    roundRectPath(c.g, x, y + wh, bw, Math.max(0, h - wh), 2 * k)
     c.g.fill()
     if (live) {
       c.g.strokeStyle = th.ink
       c.g.lineWidth = 1
-      rrect(c.g, x - 1.5 * k, y - 1.5 * k, bw + 3 * k, h + 3 * k, 3 * k)
+      roundRectPath(c.g, x - 1.5 * k, y - 1.5 * k, bw + 3 * k, h + 3 * k, 3 * k)
       c.g.stroke()
     }
     if (labels && n <= 32) {
@@ -1216,7 +1198,7 @@ function graph(c: RiverCtx, film: Film, f: Frame, r: Rect, u: number, labels: bo
       const p = px(i)
       const rad = Math.max(0.7 * k, radiusOf(i))
       g.font = c.font(9.5, 600)
-      const text = clip(g, nodes[i].name, 150 * k)
+      const text = clipCanvasText(g, nodes[i].name, 150 * k)
       const w = g.measureText(text).width
       // A round graph in a wide strip leaves both sides empty, so the names
       // live out there — one column each side, with a hairline back to the

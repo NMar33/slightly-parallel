@@ -12,8 +12,8 @@ import { TaskAddModal } from '../../project/kanban/TaskWindow'
 import type { TaskRow } from '../../project/kanban/model'
 import { fetchTask } from '../../tasks/data'
 import { fail as failRead } from '../../../lib/getJson'
-import { CORE_TYPES, coreColor, shownNote, useCore, useCoreWrites, type CoreDetail } from './data'
-import { TrackingWord, TypeDot, typeHint, typeWord } from './parts'
+import { coreColor, shownNote, useCore, useCoreWrites, type CoreDetail } from './data'
+import { CoreTypePicker, TrackingWord, TypeDot, typeWord } from './parts'
 import { GraphBody } from './bodies/GraphBody'
 import { t } from '../../../i18n/scope/system'
 
@@ -165,17 +165,7 @@ function EditModal({ core, busy, onClose, onSave }: {
           {t('name')}
           <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} autoFocus />
         </label>
-        <div className="flex flex-col gap-4 text-11 font-mono text-tertiary">
-          {t('type')}
-          <div className="flex flex-wrap gap-6">
-            {CORE_TYPES.map((ty) => (
-              <button key={ty} type="button" onClick={() => setType(ty)} title={typeHint(ty)}
-                className={`inline-flex items-center gap-6 rounded-pill border px-8 py-3 text-11 ${type === ty ? 'border-border-strong bg-elevated text-primary' : 'border-border-subtle text-secondary hover:text-primary'}`}>
-                <TypeDot type={ty} />{typeWord(ty)}
-              </button>
-            ))}
-          </div>
-        </div>
+        <CoreTypePicker type={type} onPick={setType} />
         <label className="flex flex-col gap-4 text-11 font-mono text-tertiary">
           {t('why it is kept in view')}
           <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} />

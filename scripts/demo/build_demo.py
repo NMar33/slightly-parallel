@@ -32,24 +32,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from engine import CLOCK, D, Repo, Sim  # noqa: E402
+from engine import CLOCK, D, Sim  # noqa: E402
 from world import World  # noqa: E402
 
 PROJECTS = ("shopfront", "tg-notify", "price-etl")
 
 
 def build(target: Path) -> Sim:
-    import shopfront_chats_a
-    import shopfront_chats_b
-    import shopfront_chats_c
-    import shopfront_lenses
-    import shopfront_desk
-    import shopfront_notes
-    import shopfront_standups
-    import shopfront_story
-    import shopfront_tasks
     import small_projects
-    from shopfront_repo import SKELETON
+    from shopfront_month import create_shopfront_repo, schedule_shopfront
 
     t0 = time.time()
     sim = Sim(target)
@@ -58,11 +49,7 @@ def build(target: Path) -> Sim:
     # The first read of the month: #done and friends count from here on.
     sim.at(D(1, 7, 31), sim.adopt)
 
-    repo = Repo(sim.repos_dir / "shopfront", email="operator@shopfront.dev")
-    for rel, text in SKELETON.items():
-        repo.write(rel, text)
-    repo.commit("Initial skeleton: Next.js app, FastAPI service, compose", D(1, 8, 20))
-    sim.repos["shopfront"] = repo
+    repo = create_shopfront_repo(sim, "shopfront")
 
     small_projects.setup(sim, w)
 
@@ -72,16 +59,7 @@ def build(target: Path) -> Sim:
         f"{code},{sim.repos[code].path.resolve()},{started[code]}" for code in PROJECTS]
     (sim.root / "integrations.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
-    K: dict = {}
-    shopfront_tasks.setup(sim, w)
-    shopfront_chats_a.setup(sim, w, repo, K)
-    shopfront_chats_b.setup(sim, w, repo, K)
-    shopfront_chats_c.setup(sim, w, repo, K)
-    shopfront_lenses.setup(sim, w, repo, K)
-    shopfront_standups.setup(sim, w, K)
-    shopfront_story.setup(sim, w, repo, K)
-    shopfront_notes.setup(sim, w, repo, K)
-    shopfront_desk.setup(sim, w, repo, K)
+    K = schedule_shopfront(sim, w, repo)
     small_projects.link_cross(sim, w)
     extras(sim, w, K)
 
@@ -106,17 +84,9 @@ def extras(sim: Sim, w: World, K: dict) -> None:
         sim.post("/api/prefs", {"values": values})
     sim.at(D(30, 10, 20), prefs)
 
-    # Why one chat sits next to another on the timeline.
-    for when, a, b, kind, note in [
-        (D(16, 11, 40), "c9", "c10", "handoff", "the signature fix handed over from the webhook chat"),
-        (D(22, 14, 45), "c12", "c13", "same-work", "Stripe Tax went live with the first payment"),
-        (D(30, 9, 12), "c14", "c20", "branch", "partial refunds continue the refunds chat"),
-        (D(28, 14, 35), "c15", "c18", "relates", "outbound events reuse the webhook queue"),
-    ]:
-        def link(a=a, b=b, kind=kind, note=note) -> None:
-            sim.post("/api/agents/links", {"from": K[a].agent_id, "to": K[b].agent_id, "kind": kind,
-                                           "note": note, "actor": "operator"})
-        sim.at(when, link)
+    from shopfront_month import schedule_links
+
+    schedule_links(sim, K)
 
 
 def finish(sim: Sim) -> None:

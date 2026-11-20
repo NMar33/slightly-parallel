@@ -25,6 +25,8 @@ import { InspectorDraft, useInspectorDraft } from './InspectorDraft'
 import { InspectorTasks } from './InspectorTasks'
 import { t, tn } from '../../../i18n/scope/aqua'
 
+const CHAT_SESSIONS_REFETCH_MS = 15_000
+
 /* ================================================================ left */
 
 export function LeftSidebar({ workspaces, ws, active, canSleep, onChat, onWs, onSleep, onSleepWs, onNew, onGroupMenu, plus }: {
@@ -182,7 +184,7 @@ function useChatSessions(agentId: string) {
   return useQuery({
     queryKey: ['aqua', 'chat-sessions', agentId],
     queryFn: ({ signal }) => getJson<{ sessions: ChatSession[] }>(`/api/sessions?agent_id=${encodeURIComponent(agentId)}`, signal),
-    refetchInterval: 15_000,
+    refetchInterval: CHAT_SESSIONS_REFETCH_MS,
     refetchIntervalInBackground: false,
     staleTime: 10_000,
   })

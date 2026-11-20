@@ -25,7 +25,7 @@ import {
   chatsIn, closeWin, detachWin, isCustom, liveWorkspaces, moveChat, moveWin, raise, useDesk, wsById, wsOfChat, type Win,
 } from '../round2/desk'
 import {
-  AllLevel, Desktop, GroupMenu, Inspector, LeftTree, PaintProvider, TermArea, WsLevel, makeGroup, useDrag,
+  AllLevel, CHAT_ZOOM_SETTLE_MS, Desktop, GroupMenu, Inspector, LeftTree, PaintProvider, TermArea, WsLevel, makeGroup, useDrag,
   type InspTab, type Paint, type Split,
 } from '../round2/parts'
 import { LineageTree } from '../round3/lineage'
@@ -116,7 +116,7 @@ function KWindow({ win, top, instant, setInstant }: { win: Win; top: boolean; in
   const [settled, setSettled] = useState(true)
   useEffect(() => {
     if (level !== 'chat') { setSettled(false); return }
-    const h = setTimeout(() => setSettled(true), 260)
+    const h = setTimeout(() => setSettled(true), CHAT_ZOOM_SETTLE_MS)
     return () => clearTimeout(h)
   }, [level])
 

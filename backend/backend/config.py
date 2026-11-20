@@ -13,20 +13,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .db import default_data_root, home_data_root, make_data_root
+from .server_address import DEFAULT_HOST, DEFAULT_PORT, loopback_url, server_port
 
 _DEFAULT_CORS_ORIGINS = (
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:8123",
-    "http://127.0.0.1:8123",
+    loopback_url(host="localhost"),
+    loopback_url(),
 )
 
 
 @dataclass(frozen=True)
 class Settings:
     data_root: Path
-    host: str = "127.0.0.1"
-    port: int = 8123
+    host: str = DEFAULT_HOST
+    port: int = DEFAULT_PORT
     cors_origins: tuple[str, ...] = _DEFAULT_CORS_ORIGINS
     # The embedded terminal spawns a real shell: off until switched on.
     # Its token is new at every start; the pages fetch it (routers/terminal.py
@@ -42,13 +43,13 @@ class Settings:
         # written before the rename keeps working (db.default_data_root does
         # the same for the data root).
         cors_raw = os.environ.get("SP_CORS_ORIGINS") or os.environ.get("SCAN_CORS_ORIGINS", "")
-        port = int(os.environ.get("SP_PORT") or os.environ.get("SCAN_PORT") or os.environ.get("PORT") or "8123")
+        port = int(server_port(os.environ))
         # The Vite dev server's port, when it is not the default: its pages
         # are Slightly Parallel's too.
         vite = (os.environ.get("VITE_PORT") or "").strip()
-        own = [f"http://localhost:{port}", f"http://127.0.0.1:{port}"]
+        own = [loopback_url(port, host="localhost"), loopback_url(port)]
         if vite.isdigit():
-            own += [f"http://localhost:{vite}", f"http://127.0.0.1:{vite}"]
+            own += [loopback_url(vite, host="localhost"), loopback_url(vite)]
         origins = (
             tuple(o.strip() for o in cors_raw.split(",") if o.strip())
             if cors_raw
@@ -61,7 +62,7 @@ class Settings:
             make_data_root(root)
         return cls(
             data_root=root,
-            host=os.environ.get("HOST", "127.0.0.1"),
+            host=os.environ.get("HOST", DEFAULT_HOST),
             port=port,
             cors_origins=origins,
             terminal_enabled=_env_flag("SP_ENABLE_TERMINAL"),

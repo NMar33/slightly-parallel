@@ -35,7 +35,7 @@ import threading
 from typing import Any
 
 from . import nowlib
-from .csvio import as_int, append_row, read_rows, rewrite_rows
+from .csvio import as_int, read_rows, rewrite_rows
 from .db import ViewStore
 from .entities import ENTITIES, is_done
 from .date_utils import now_iso
@@ -48,6 +48,11 @@ DONE_COLUMNS: tuple[str, ...] = (
 )
 # result: moved · already (done before) · archived · unnamed (no task named)
 RESOLVED = ("moved", "already", "archived")
+DOUBT_REASONS = {
+    "doubt_mentioned": "mentioned",
+    "doubt_project": "other_project",
+    "doubt_history": "history",
+}
 
 _lock = threading.Lock()
 
@@ -91,17 +96,20 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     tags = [t for t in tags if (str(t["agent_id"] or ""), as_int(t["turn"])) not in settled]
     if not tags:
         return []
-    # Every resolved #done is a boundary, whichever task it closed.
+    # A settled #done ends the window for the next bare command.
     bounds: dict[str, list[int]] = {}
     for r in ledger:
-        if r.get("result") in RESOLVED:
-            bounds.setdefault(r.get("agent_id") or "", []).append(as_int(r.get("turn")))
+        bounds.setdefault(r.get("agent_id") or "", []).append(as_int(r.get("turn")))
     tasks = {str(t["id"]): t for t in store.query(
         "SELECT id, project, title, status, archived_at FROM tasks_mutual")}
     mentions: dict[str, list[tuple[int, str, str]]] = {}
+    # A tool or incoming SP message can be stored in the chat's User block.
+    # Only real operator turns have a fingerprint in turn_prints.
     for m in store.query(
-            "SELECT agent_id, turn, task_id, role FROM task_mentions "
-            "WHERE task_id LIKE 'tk_%' ORDER BY turn"):
+            "SELECT m.agent_id, m.turn, m.task_id, m.role FROM task_mentions m "
+            "WHERE m.task_id LIKE 'tk_%' AND (m.role <> 'user' OR EXISTS ("
+            "SELECT 1 FROM turn_prints p WHERE p.project = m.project AND p.agent_id = m.agent_id "
+            "AND p.session_id = m.session_id AND p.turn = m.turn)) ORDER BY m.turn, m.rowid"):
         if str(m["task_id"]) in tasks:
             mentions.setdefault(str(m["agent_id"]), []).append(
                 (int(m["turn"]), str(m["task_id"]), str(m["role"] or "")))
@@ -124,31 +132,35 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         agent, turn = str(tag["agent_id"] or ""), as_int(tag["turn"])
         prev = max((b for b in bounds.get(agent, []) if b < turn), default=0)
         project = tag["project"]
-        direct = set(str(tag["direct_tasks"] or "").split(","))
-        given = [x for x in str(tag["tasks"] or "").split(",")
-                 if x and (x in direct or x not in tasks or tasks[x]["project"] == project)]
-        named = [x for x in given if x in tasks]
+        direct = [x for x in str(tag["direct_tasks"] or "").split(",") if x]
+        mentioned = [x for x in str(tag["tasks"] or "").split(",") if x]
+        named = [x for x in direct if x in tasks]
         window = [m for m in mentions.get(agent, []) if prev < m[0] <= turn]
-        if not given and any(prev < t < turn for t in nowlib.pending(store.data_root, agent)):
-            # The card this #done would close is a #now the server could not
-            # write yet (nowlib tries again): this #done waits for it, or it
-            # would be recorded as "unnamed" for good.
+        before = [tid for at, tid, role in window if at < turn and role == "user"]
+        local = next((tid for tid in reversed(before) if tasks[tid]["project"] == project), "")
+        foreign = {tid for tid in mentioned if tid in tasks and tasks[tid]["project"] != project}
+        # Foreign examples do not change which local task the chat was on.
+        # In the DNS report, the paste repeated that same local task as well.
+        fallback = not direct and (not mentioned or bool(foreign) and set(mentioned) <= foreign | {local})
+        if fallback and any(prev < t < turn for t in nowlib.pending(store.data_root, agent)):
+            # A preceding #now card may still be taking shape.
             continue
-        # An id the operator typed that is no task (a typo) names no task:
-        # the #done is recorded as unnamed and the agent asks (not closing
-        # the last task named before it, which may be the wrong one).
-        if not named and not given:
-            # The last task the operator named — not one an agent's answer
-            # mentioned in passing ("done; tk_B depends on this").
-            before = [m for m in window if m[0] < turn and m[2] == "user" and tasks[m[1]]["project"] == project]
-            named = [before[-1][1]] if before else []
+        if fallback and local:
+            named = [local]
+        doubtful = {
+            tid: "doubt_project" if tid in foreign else "doubt_mentioned"
+            for tid in mentioned if tid in tasks and tid not in named and tid not in direct
+        }
+        for tid in before:
+            if tid not in named and tid != local:
+                reason = "doubt_history" if tasks[tid]["project"] == project else "doubt_project"
+                doubtful.setdefault(tid, reason)
         if not named:
             rid = _id(agent, turn, "")
             if rid not in known:
                 row = _row(rid, "", tag, turn, "unnamed", "")
                 known.add(rid)
                 added.append(row)
-            continue
         for tid in named:
             rid = _id(agent, turn, tid)
             if rid in known:
@@ -167,15 +179,22 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
             if result == "moved":
                 moves.append((tid, status, turn))
                 tasks[tid] = {**t, "status": "done"}
+        for tid, reason in doubtful.items():
+            added.append(_row(_id(agent, turn, tid), tid, tag, turn, reason, ""))
         bounds.setdefault(agent, []).append(turn)
     # The tasks move first and the ledger is written after: a move that
     # fails (a locked file) leaves no row saying it happened, and the tag is
     # tried again at the next read.
     if moves:
         _move(store, moves, {r["task_id"]: r for r in added if r["result"] == "moved"})
-    for row in added:
-        append_row(path, DONE_COLUMNS, row)
     if added:
+        def record(ledger: list[dict[str, str]]) -> bool:
+            recorded = {row["id"] for row in ledger}
+            new = [row for row in added if row["id"] not in recorded]
+            ledger.extend(new)
+            return bool(new)
+
+        rewrite_rows(path, DONE_COLUMNS, record)
         store.rebuild()
     return added
 

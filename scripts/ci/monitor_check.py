@@ -13,16 +13,22 @@ server running.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 import urllib.request
 
-BASE = f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}"
+if __package__:
+    from .server_address import server_url
+else:
+    from server_address import server_url
+
+MONITOR_REQUEST_TIMEOUT_S = 30
+
+BASE = server_url()
 
 
 def get(path: str) -> dict:
-    with urllib.request.urlopen(BASE + path, timeout=30) as r:
+    with urllib.request.urlopen(BASE + path, timeout=MONITOR_REQUEST_TIMEOUT_S) as r:
         return json.loads(r.read().decode("utf-8"))
 
 

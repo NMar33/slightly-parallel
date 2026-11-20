@@ -21,6 +21,10 @@ import { LABEL } from '../promptlib/taskstyle'
 import { t, tn } from '../../i18n/scope/project'
 
 import { rich } from '../../i18n/rich'
+
+const PACK_URL_REVOKE_DELAY_MS = 1000
+const PACK_COPIED_DURATION_MS = 1200
+
 /**
  * Storyboard — where story notes become documents.
  *
@@ -281,9 +285,9 @@ function DocEditor({ doc, onChanged }: { doc: Doc; onChanged: () => void }) {
       a.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }))
       a.download = `${doc.title.replace(/[^\w.-]+/g, '-')}.pack.md`
       // Revoked a moment later: revoking at once can cancel the download.
-      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), PACK_URL_REVOKE_DELAY_MS)
     } else {
-      if (await writeClipboard(text)) { setCopied(true); setTimeout(() => setCopied(false), 1200) } else setPack(text)
+      if (await writeClipboard(text)) { setCopied(true); setTimeout(() => setCopied(false), PACK_COPIED_DURATION_MS) } else setPack(text)
     }
   }
 

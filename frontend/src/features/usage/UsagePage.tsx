@@ -36,6 +36,8 @@ import { dollars, effortSplit, exactTokens, formatTokens, pct, pctValue, ratioTe
 import { clock, dayWord, evenPace, isPast, resetText, shortDate, whenText } from './time'
 import { locale, t, tn } from '../../i18n/scope/system'
 
+const POLLED_LIMITS_REFETCH_DELAY_MS = 3000
+
 const RANGES: Array<readonly [UsageRange, string]> = [
   ['today', t('Today')], ['7d', t('7 days')], ['30d', t('30 days')],
 ]
@@ -61,7 +63,7 @@ export function UsagePage() {
   useEffect(() => {
     if (!codexStale || nowMs - lastAsk.current < 15 * 60_000) return
     lastAsk.current = nowMs
-    void refreshLimits().then((r) => { if (r.refreshed) setTimeout(() => void live.refetch(), 3000) }).catch(() => undefined)
+    void refreshLimits().then((r) => { if (r.refreshed) setTimeout(() => void live.refetch(), POLLED_LIMITS_REFETCH_DELAY_MS) }).catch(() => undefined)
   }, [codexStale, live, nowMs])
 
   return (
@@ -78,7 +80,7 @@ export function UsagePage() {
         <ErrorBanner title={t('Could not read the plan limits.')} message={live.error instanceof Error ? live.error.message : String(live.error)}
           onRetry={() => void live.refetch()} hideDismiss />
       )}
-      {limits ? <LimitsBlock limits={limits} now={now} codexPoll={codexPoll} onRefresh={() => refreshLimits().then((r) => { if (r.refreshed) setTimeout(() => void live.refetch(), 3000) })} /> : null}
+      {limits ? <LimitsBlock limits={limits} now={now} codexPoll={codexPoll} onRefresh={() => refreshLimits().then((r) => { if (r.refreshed) setTimeout(() => void live.refetch(), POLLED_LIMITS_REFETCH_DELAY_MS) })} /> : null}
       {q.isError && <ErrorBanner title={t('Could not load the usage.')} message={q.error instanceof Error ? q.error.message : String(q.error)} onRetry={() => void q.refetch()} hideDismiss />}
       {q.isLoading && <LoadingSkeleton variant="card" count={2} label={t('Loading the usage')} />}
       {q.data && (

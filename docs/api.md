@@ -823,6 +823,10 @@ more, a normal one its alternatives, a major one also what would undo it.
   what this agent's latest `#done` did: `tasks` (each with `result` moved ·
   already · archived and its `stretch`), or `unnamed` when no task was named
   since the previous `#done`, and `next`. The MCP tool `task_done` reads it.
+- `GET /api/done-tags/capture?agent_id=&capture_root=&capture_turn=` — the
+  exact turn's outcome for the capture hook. A different data root returns
+  409. When IDs need confirmation, the outcome includes `doubt` with each
+  ID and reason and `confirmation` with the ready command.
 - `POST /api/done-tags` — the same answer, and the next tasks offered after it
   (nextlib.py, [next-tasks.md](next-tasks.md)). Body: `agent_id`, `proposals`
   (at most three `{title, line}`; absent, null or `[]` answers exactly as the

@@ -29,6 +29,8 @@ import {
   type ActId, type Due, type HealthSettings as Settings, type HealthState, type Reminder, type Zone,
 } from './healthModel'
 
+const HEALTH_TOTALS_REFETCH_MS = 60_000
+
 /* ------------------------------------------------------------ words */
 
 export const actWord = (a: ActId): string => ({
@@ -77,12 +79,12 @@ function useToday(project: string) {
   const mine = useQuery({
     queryKey: ['time-summary', project],
     queryFn: ({ signal }) => getJson<Summary>(`/api/time/summary?project=${encodeURIComponent(project)}`, signal),
-    refetchInterval: 60_000, retry: false, enabled: !!project,
+    refetchInterval: HEALTH_TOTALS_REFETCH_MS, retry: false, enabled: !!project,
   })
   const all = useQuery({
     queryKey: ['time-summary-all'],
     queryFn: ({ signal }) => getJson<Summary>('/api/time/summary', signal),
-    refetchInterval: 60_000, retry: false,
+    refetchInterval: HEALTH_TOTALS_REFETCH_MS, retry: false,
   })
   return { project: mine.data?.today_min ?? 0, all: all.data?.today_min ?? 0 }
 }

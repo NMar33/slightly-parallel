@@ -27,6 +27,8 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
+LIVE_SCHEMA_TIMEOUT_S = 5
+
 REPO = Path(__file__).resolve().parents[1]
 DOC = REPO / "docs" / "api.md"
 LIVE = "http://127.0.0.1:8123/openapi.json"
@@ -38,7 +40,7 @@ def _norm(path: str) -> str:
 
 def _live() -> set[str] | None:
     try:
-        with urllib.request.urlopen(LIVE, timeout=5) as r:
+        with urllib.request.urlopen(LIVE, timeout=LIVE_SCHEMA_TIMEOUT_S) as r:
             return set(json.load(r)["paths"])
     except (urllib.error.URLError, OSError, ValueError, KeyError):
         return None

@@ -249,7 +249,7 @@ def _append_missing(path: Path, lines: list[dict[str, Any]],
     written, when ``unchanged()`` says the chat moved since it was read. A
     file that cannot be read raises (nothing is written)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with acquire_flock(lock_path(path), timeout_s=5.0):
+    with acquire_flock(lock_path(path)):
         if not unchanged():
             return None
         ids: set[str] = set()
@@ -293,7 +293,7 @@ def _mark(folder: Path, value: dict[str, Any], used: dict[str, Any]) -> bool:
     meta.json — only when meta.json is still the one the backfill read
     (``used``): False, nothing written, when it changed."""
     meta_path = folder / "meta.json"
-    with acquire_flock(meta_path.with_name("meta.json.lock"), timeout_s=5.0):
+    with acquire_flock(meta_path.with_name("meta.json.lock")):
         meta = _read_meta(folder)
         if meta != used:
             return False

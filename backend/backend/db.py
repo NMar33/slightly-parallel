@@ -29,6 +29,7 @@ from typing import Any, Iterable
 
 import duckdb
 
+from .data_root import home_data_root, named_data_root
 from .entities import ENTITIES, LEDGERS, Entity
 
 log = logging.getLogger("sp.db")
@@ -42,12 +43,6 @@ SLOW_REBUILD_MS = 2000
 #: The shipped test data: the end-to-end tests and the tools serve a copy of it.
 FIXTURES = _REPO_ROOT / "fixtures"
 
-def home_data_root() -> Path:
-    """Where the data lives when nothing names a folder: ``~/.slightly-parallel``,
-    outside the repository, so a user's chats never sit inside a clone."""
-    return Path.home() / ".slightly-parallel"
-
-
 def default_data_root() -> Path:
     """Resolve the data root from the environment at call time.
 
@@ -56,7 +51,7 @@ def default_data_root() -> Path:
     ``~/.slightly-parallel``. The new name is read first and the old ones keep
     working: nobody's .env breaks.
     """
-    named = os.environ.get("SP_DATA_ROOT") or os.environ.get("SCAN_DATA_ROOT") or os.environ.get("DATA_ROOT")
+    named = named_data_root(os.environ)
     return Path(named).expanduser() if named else home_data_root()
 
 

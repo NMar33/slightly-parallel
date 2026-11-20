@@ -95,6 +95,9 @@ _replace = shared.replace_file
 
 
 META_LOCK = "meta.json.lock"
+META_LOCK_TIMEOUT_S = 5.0
+META_LOCK_POLL_S = 0.01
+DONE_LOOKUP_TIMEOUT_S = 2
 
 
 def _with_meta_lock(fn):
@@ -270,8 +273,9 @@ def usage_only(text: str) -> list[str]:
 def server_url() -> str:
     """Where the operator's own pages are: the port the server takes
     (backend/backend/config.py reads SP_PORT, 8123 by default)."""
-    port = (os.environ.get("SP_PORT") or "8123").strip()
-    return f"http://127.0.0.1:{port if port.isdigit() else '8123'}"
+    address = _backend_module("server_address")
+    port = (os.environ.get("SP_PORT") or "").strip()
+    return address.loopback_url(port if port.isdigit() else address.DEFAULT_PORT)
 
 
 def _round_half_down(n: int, unit: int, decimals: int) -> tuple[int, int]:
@@ -536,7 +540,7 @@ class TurnCapture:
     # -- meta ---------------------------------------------------------------
 
     @contextmanager
-    def _meta_lock(self, timeout_s: float = 5.0):
+    def _meta_lock(self, timeout_s: float = META_LOCK_TIMEOUT_S):
         """The lock is advisory and must never hang the session it observes:
         after ``timeout_s`` the write goes ahead without it."""
         if (fcntl is None and msvcrt is None) or not self.folder.is_dir():
@@ -560,7 +564,7 @@ class TurnCapture:
                 except OSError:
                     if time.monotonic() >= deadline:
                         break
-                    time.sleep(0.01)
+                    time.sleep(META_LOCK_POLL_S)
             yield
         finally:
             if held:
@@ -811,6 +815,7 @@ class TurnCapture:
             "evidence_for": evidence_for,
             "unsigned_commits": {"commits": unsigned, "sure": unsigned_sure} if unsigned else None,
             "commands": commands,
+            "done_lookup": (str(self.data_root.resolve()), self.agent_name) if "done" in commands else None,
             # The hook's own answer to #usage, #usage-on and #usage-off.
             "usage_answer": self.usage_answer(usage_cmds, str(meta.get("tool") or "")) if usage_cmds else None,
             # #map costs a helper run: its notice asks the operator, naming
@@ -2005,6 +2010,41 @@ def _sender(who: str) -> str:
     return "the operator, from Slightly Parallel's page" if who == msgs.OPERATOR else f"the agent {who}"
 
 
+def _read_done_outcome(root: str, agent: str, turn: int) -> dict:
+    from urllib.parse import urlencode
+    from urllib.request import ProxyHandler, build_opener
+
+    query = urlencode({"agent_id": agent, "capture_root": root, "capture_turn": turn})
+    try:
+        # The hook is also usable offline and during a server restart.
+        with build_opener(ProxyHandler({})).open(
+            f"{server_url()}/api/done-tags/capture?{query}", timeout=DONE_LOOKUP_TIMEOUT_S,
+        ) as response:
+            outcome = json.load(response)
+    except (OSError, ValueError):
+        return {}
+    if isinstance(outcome, dict) and outcome.get("turn") == turn and not outcome.get("pending"):
+        return outcome
+    return {}
+
+
+def _done_outcome_notice(outcome: dict) -> str:
+    tasks = outcome.get("tasks") or []
+    moved = [row["id"] for row in tasks if row["result"] == "moved"]
+    lines = ["Closed " + ", ".join(moved) + "." if moved else "No task moved."]
+    for result, label in (("already", "Already done"), ("archived", "Archived")):
+        ids = [row["id"] for row in tasks if row["result"] == result]
+        if ids:
+            lines.append(label + " · " + ", ".join(ids) + ".")
+    reasons = {"mentioned": "mentioned outside the explicit list", "other_project": "another project",
+               "history": "earlier in this chat"}
+    doubt = [f"{row['id']} ({reasons[row['reason']]})" for row in outcome.get("doubt") or []]
+    if doubt:
+        lines.extend(["Needs confirmation · " + ", ".join(doubt) + ".",
+                      "Copy and send this line to close those tasks.", outcome["confirmation"]])
+    return "\n".join(lines) + "\n"
+
+
 def format_signals(signals: dict, tool: str = "claude-code") -> str:
     """Human-readable context notice; empty when nothing is due. ``tool``:
     the one the notice is for, so a helper is offered the way it starts one."""
@@ -2054,6 +2094,12 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"[slightly-parallel] #{name} — " + (f"the skill {skill} holds the steps. Start with {start}."
                                       if skill else f"{start}.")
         )
+        lookup = signals.get("done_lookup")
+        if name == "done" and lookup:
+            capture_root, agent_id = lookup
+            outcome = _read_done_outcome(capture_root, agent_id, signals["turn_number"])
+            if outcome:
+                notes[-1] += "\n" + _done_outcome_notice(outcome)
         lane = signals.get("task_lane")
         if (name == "task" or name.startswith("now")) and lane:
             if lane.get("lane"):

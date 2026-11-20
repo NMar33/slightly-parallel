@@ -36,6 +36,8 @@ from typing import Any, Iterable, Iterator
 
 log = logging.getLogger("sp.turntimes")
 
+BACKFILL_TURN_LOCK_TIMEOUT_S = 2.0
+
 FILE = "turns.jsonl"
 #: The one number: the capture hook loads this file by path and reads it here.
 ACTIVE_GAP_SEC = 20 * 60
@@ -393,7 +395,7 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
         # now, under the lock its append takes, so none lands between the
         # read and the replace.
         try:
-            with acquire_flock(lock_path(folder / FILE), timeout_s=2.0):
+            with acquire_flock(lock_path(folder / FILE), timeout_s=BACKFILL_TURN_LOCK_TIMEOUT_S):
                 now = [r for r in _lines(folder / FILE) if r.get("source") == "hook"]
                 hook = [r for r in now if "busy" in r]
                 fresh = [r for r in fresh if r["turn"] not in {h.get("turn") for h in hook}]

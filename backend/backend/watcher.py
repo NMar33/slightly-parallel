@@ -31,11 +31,15 @@ if os.name == "nt":
 
 log = logging.getLogger("sp.watcher")
 
+CHANGE_DEBOUNCE_MS = 200
+CALLBACK_FINISH_POLL_INTERVAL_S = 0.05
+OBSERVER_JOIN_TIMEOUT_S = 2.0
+
 
 class DebouncedHandler(FileSystemEventHandler):
     """Fires ``on_change`` once, ``delay_ms`` after the last event."""
 
-    def __init__(self, on_change: Callable[[], None], delay_ms: int = 200,
+    def __init__(self, on_change: Callable[[], None], delay_ms: int = CHANGE_DEBOUNCE_MS,
                  root: Path | str | None = None):
         super().__init__()
         # The watched folder: the filters below read the path inside it. The
@@ -67,7 +71,7 @@ class DebouncedHandler(FileSystemEventHandler):
             with self._lock:
                 if not self._running:
                     return
-            time.sleep(0.05)
+            time.sleep(CALLBACK_FINISH_POLL_INTERVAL_S)
         log.warning("a watcher callback still runs after %.0f s", wait)
 
     # Folders whose contents are pictures the server itself writes. A tour
@@ -198,7 +202,7 @@ class Watcher:
         self,
         path: Path,
         on_change: Callable[[], None],
-        delay_ms: int = 200,
+        delay_ms: int = CHANGE_DEBOUNCE_MS,
         recursive: bool = True,
     ):
         self.path = Path(path)
@@ -223,5 +227,5 @@ class Watcher:
         if self._observer is None:
             return
         self._observer.stop()
-        self._observer.join(timeout=2.0)
+        self._observer.join(timeout=OBSERVER_JOIN_TIMEOUT_S)
         self._observer = None

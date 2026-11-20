@@ -32,21 +32,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Union
 
-try:  # pragma: no cover — non-Unix platforms
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None  # type: ignore[assignment]
-try:  # pragma: no cover — Windows: the same lock, spelled msvcrt.locking
-    import msvcrt
-except ImportError:  # pragma: no cover
-    msvcrt = None  # type: ignore[assignment]
-
-
 # ``os.replace``, patient on Windows, and the one-try lock: the capture hook
 # replaces and locks files the same way, so the one copy is in hookshared.py.
-from .hookshared import replace_file  # noqa: E402
-from .hookshared import try_lock as _try_lock  # noqa: E402
-from .hookshared import unlock as _unlock  # noqa: E402
+from .hookshared import fcntl, msvcrt, replace_file
+from .hookshared import try_lock as _try_lock
+from .hookshared import unlock as _unlock
 
 
 __all__ = [
@@ -63,6 +53,10 @@ __all__ = [
 
 
 PathLike = Union[str, os.PathLike]
+
+READ_RETRY_DELAY_S = 0.01
+FILE_LOCK_TIMEOUT_S = 5.0
+FILE_LOCK_POLL_INTERVAL_S = 0.01
 
 
 class FileSafetyError(OSError):
@@ -184,7 +178,7 @@ def safe_read_json(
     path: PathLike,
     *,
     retries: int = 1,
-    retry_delay_s: float = 0.01,
+    retry_delay_s: float = READ_RETRY_DELAY_S,
 ) -> Any:
     """Read + ``json.loads`` a file, retrying on ``ENOENT`` and truncated JSON.
 
@@ -313,8 +307,8 @@ def acquire_flock(
     path: PathLike,
     *,
     mode: str = "a",
-    timeout_s: float = 5.0,
-    poll_s: float = 0.01,
+    timeout_s: float = FILE_LOCK_TIMEOUT_S,
+    poll_s: float = FILE_LOCK_POLL_INTERVAL_S,
 ) -> Iterator[Any]:
     """Acquire an exclusive ``fcntl.flock`` on ``path`` (context manager).
 

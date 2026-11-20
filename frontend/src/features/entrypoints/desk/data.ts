@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { getJson, postJson } from '../../../lib/getJson'
 
+const ENTRY_POINT_DETAIL_REFETCH_MS = 60_000
+
 /**
  * Entry points: the topics the operator comes back to (backend
  * entrypointlib.py, routers/entrypoints.py). The wire shapes, the reads
@@ -157,7 +159,7 @@ export function usePorts(id: string, enabled = true) {
     queryFn: ({ signal }) => getJson<{ ways: PortState[] }>(`/api/entrypoints/${encodeURIComponent(id)}/ports`, signal),
     enabled: !!id && enabled,
     staleTime: 15_000,
-    refetchInterval: 60_000,
+    refetchInterval: ENTRY_POINT_DETAIL_REFETCH_MS,
   })
 }
 

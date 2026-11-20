@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
+import serverDefaults from '../backend/backend/server_defaults.json'
 import react from '@vitejs/plugin-react'
 import tailwind from '@tailwindcss/vite'
 import path from 'node:path'
@@ -16,7 +17,7 @@ import path from 'node:path'
 // The backend the dev server proxies to: SP_API, else the port the
 // launcher was given (sp.py passes SP_PORT / PORT), else 8123.
 const API = process.env.SP_API
-  ?? `http://127.0.0.1:${process.env.SP_PORT ?? process.env.SCAN_PORT ?? process.env.PORT ?? 8123}`
+  ?? `http://${serverDefaults.host}:${serverDefaults.portEnvironment.map((key) => process.env[key]).find((value) => value !== undefined) ?? serverDefaults.port}`
 
 export default defineConfig({
   plugins: [react(), tailwind()],

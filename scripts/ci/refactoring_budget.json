@@ -1,0 +1,19 @@
+{
+  "_version": 3,
+  "backend": {
+    "numeric_settings": 29,
+    "duplicate_windows": 2
+  },
+  "scripts": {
+    "numeric_settings": 50,
+    "duplicate_windows": 2
+  },
+  "frontend/src": {
+    "numeric_settings": 43,
+    "duplicate_windows": 229
+  },
+  "desktop": {
+    "numeric_settings": 0,
+    "duplicate_windows": 0
+  }
+}

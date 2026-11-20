@@ -3,8 +3,29 @@ import type { ReactNode } from 'react'
 
 import { Button } from '../../../components/primitives'
 import { formatStamp } from '../../../utils/dateUtils'
-import { coreColor, weeksOf, type CoreNote, type GridDay, type Tracking } from './data'
+import { CORE_TYPES, coreColor, type CoreType, weeksOf, type CoreNote, type GridDay, type Tracking } from './data'
 import { t, tn } from '../../../i18n/scope/system'
+
+export function CoreTypePicker({ type, onPick, showHint = false }: {
+  type: string
+  onPick: (type: CoreType) => void
+  showHint?: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-4 text-11 font-mono text-tertiary">
+      {t('type')}
+      <div className="flex flex-wrap gap-6">
+        {CORE_TYPES.map((option) => (
+          <button key={option} type="button" onClick={() => onPick(option)} title={typeHint(option)}
+            className={`inline-flex items-center gap-6 rounded-pill border px-8 py-3 text-11 ${type === option ? 'border-border-strong bg-elevated text-primary' : 'border-border-subtle text-secondary hover:text-primary'}`}>
+            <TypeDot type={option} />{typeWord(option)}
+          </button>
+        ))}
+      </div>
+      {showHint && <span className="text-10">{typeHint(type)}</span>}
+    </div>
+  )
+}
 
 /** The small square of a type's colour, before a name. */
 export function TypeDot({ type, size = 10 }: { type: string; size?: number }) {

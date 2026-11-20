@@ -25,11 +25,12 @@ _GNOME = ("gdbus", "call", "--session", "--dest", "org.gnome.Mutter.IdleMonitor"
 _lock = threading.Lock()
 _cache: tuple[float, float | None, str] = (0.0, None, "")
 _CACHE_SEC = 2.0
+IDLE_COMMAND_TIMEOUT_S = 2
 
 
 def _run(argv: tuple[str, ...] | list[str]) -> str | None:
     try:
-        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2)
+        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=IDLE_COMMAND_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout if out.returncode == 0 else None

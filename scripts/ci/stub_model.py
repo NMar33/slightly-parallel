@@ -14,7 +14,11 @@ from __future__ import annotations
 
 import json
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sp_stub_http import LoggedStubHandler  # noqa: E402
 
 WRITE = "mcp__slightly-parallel__write_entry"
 DECISION = {"lens": "decision", "fields": {"decision": "chose the stub model for the CLI test", "why": "no tokens"}}
@@ -35,28 +39,14 @@ def _events(model: str, block: dict, delta: dict, stop: str) -> list[tuple[str, 
     ]
 
 
-class Handler(BaseHTTPRequestHandler):
-    log_file = ""
-
-    def log_message(self, *a) -> None:
-        pass
-
-    def _note(self, line: dict) -> None:
-        with open(self.log_file, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(line) + "\n")
-
+class Handler(LoggedStubHandler):
     def do_GET(self) -> None:
         self._note({"method": "GET", "path": self.path})
         self.send_response(404)
         self.end_headers()
 
     def do_POST(self) -> None:
-        n = int(self.headers.get("content-length") or 0)
-        raw = self.rfile.read(n) if n else b""
-        try:
-            req = json.loads(raw or b"{}")
-        except ValueError:
-            req = {}
+        req = self._read_request()
         tools = [t.get("name") for t in req.get("tools") or [] if isinstance(t, dict)]
         results = [c for m in req.get("messages") or [] if isinstance(m.get("content"), list)
                    for c in m["content"] if isinstance(c, dict) and c.get("type") == "tool_result"]

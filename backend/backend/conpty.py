@@ -47,6 +47,10 @@ import time
 from typing import Any
 
 log = logging.getLogger("sp.terminal")
+HOST_LOOKUP_ATTEMPTS = 11
+HOST_LOOKUP_POLL_INTERVAL_S = 0.01
+PTY_READ_ERROR_RETRY_DELAY_S = 0.02
+PTY_EMPTY_READ_RETRY_DELAY_S = 0.01
 
 #: What the page says when the package is missing (routers/terminal.py, 501).
 MISSING = ("The terminal on Windows needs the pywinpty package. Install it into Slightly Parallel's "
@@ -143,9 +147,9 @@ class ConPty:
         # the new host a short window to appear, without choosing among ties.
         new = []
         if before is not None:
-            for attempt in range(11):
+            for attempt in range(HOST_LOOKUP_ATTEMPTS):
                 if attempt:
-                    time.sleep(0.01)
+                    time.sleep(HOST_LOOKUP_POLL_INTERVAL_S)
                 new = [proc for pid, proc in _hosts().items() if pid not in before]
                 if new:
                     break
@@ -171,7 +175,7 @@ class ConPty:
                 if self._errors > self.MAX_ERRORS:
                     log.warning("terminal: the pseudo console keeps failing to read (%s); ended", exc)
                     return b""
-                time.sleep(0.02)
+                time.sleep(PTY_READ_ERROR_RETRY_DELAY_S)
                 continue
             self._errors = 0
             if text:
@@ -180,7 +184,7 @@ class ConPty:
             # "": pywinpty's reader has stopped. Ended, unless the shell lives on.
             if self.closed or not self._alive(pty):
                 return b""
-            time.sleep(0.01)
+            time.sleep(PTY_EMPTY_READ_RETRY_DELAY_S)
 
     # -------------------------------------------------------------- input
     def write(self, data: bytes) -> None:

@@ -33,6 +33,9 @@ from . import example
 
 STAMP = "tour_world.json"
 START_SECONDS = 60
+HEALTH_REQUEST_TIMEOUT_S = 2
+START_POLL_INTERVAL_S = 0.3
+SERVER_STOP_TIMEOUT_S = 10
 
 
 def world_home(port: int) -> Path:
@@ -93,7 +96,7 @@ def _free_port() -> int:
 
 def _up(url: str) -> bool:
     try:
-        with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310 — this computer only
+        with urllib.request.urlopen(url, timeout=HEALTH_REQUEST_TIMEOUT_S) as r:  # noqa: S310 — this computer only
             return r.status == 200
     except OSError:
         return False
@@ -123,11 +126,11 @@ def server(root: Path) -> Iterator[str]:
         while not _up(base + "/api/snapshot"):
             if proc.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError("the server for the tour's pictures did not start")
-            time.sleep(0.3)
+            time.sleep(START_POLL_INTERVAL_S)
         yield base
     finally:
         proc.terminate()
         try:
-            proc.wait(timeout=10)
+            proc.wait(timeout=SERVER_STOP_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             proc.kill()

@@ -18,6 +18,8 @@ import sys
 import time
 from pathlib import Path
 
+CHILD_EXIT_CHECK_DELAY_S = 3
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 import psutil  # noqa: E402
@@ -50,7 +52,7 @@ def main() -> int:
         print(f"account usage: {'read' if got.get('usage') else 'not read'}")
     else:
         print(f"no limits, Codex says: {got['cause']}")
-    time.sleep(3)
+    time.sleep(CHILD_EXIT_CHECK_DELAY_S)
     left = {k: v for k, v in codex_processes().items() if k not in before}
     failed = False
     if not got["ok"] and got["cause"].startswith(BROKEN):

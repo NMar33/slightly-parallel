@@ -99,7 +99,7 @@ def _mark(folder: Path, value: dict[str, Any], helper: dict[str, Any], used: dic
     """Write the marker and the helper fields only when meta.json is still
     the one read (``used``); False, nothing written, when it changed."""
     meta_path = folder / "meta.json"
-    with acquire_flock(meta_path.with_name("meta.json.lock"), timeout_s=5.0):
+    with acquire_flock(meta_path.with_name("meta.json.lock")):
         meta = _read_meta(folder)
         if meta != used:
             return False

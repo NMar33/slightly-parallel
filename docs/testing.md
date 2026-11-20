@@ -118,3 +118,30 @@ cover all of the input?
 9. What did a refused request write?
 10. Is the same thing spelled the same way by everyone who names it?
 11. What does it look like on each frame, and did the recording cover all of the input?
+## Refactoring budgets
+
+CI runs `python3 scripts/ci/refactoring_budget.py` using Python's AST and
+the TypeScript parser pinned by the frontend lockfile. It counts hard-coded
+timings, retry counts and limits in recognized policy positions, plus exact
+six-line windows shared by different files in each source area. Recognized
+uses include timer calls, Python `range` arguments and named `getattr`
+fallbacks. A local name such as `X = 7` still counts when used in a policy
+position. Declarations such as `TIMEOUT = 7` count as well, regardless of
+where the value is used. Name an extracted setting for its units or the kind of limit
+it represents, such as `SHUTDOWN_TIMEOUT_S` or `MAX_RETRIES`.
+Shipped design routes count alongside the other source files. The source
+scan excludes tests and fixture directories.
+
+After removing an occurrence, run `python3 scripts/ci/refactoring_budget.py --record`
+and commit the lower counts with the change. CI compares the checked-in
+counts to the base revision and rejects increases for the same detector
+version. When changing what the detector counts, measure both revisions
+with the new detector and document the difference before bumping the version.
+The counts describe recognized syntax and literal cross-file copies.
+
+Before committing an affected change, run the relevant type check. Run
+`npm --prefix frontend run -s typecheck` for frontend changes and
+`cd backend && .venv/bin/python -m pyright --pythonpath .venv/bin/python`
+for backend and capture-hook changes on Linux or macOS. On Windows the
+venv executable is `.venv\Scripts\python.exe`. Run both checks on the
+final candidate when a task touches both areas.

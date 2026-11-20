@@ -1,4 +1,4 @@
-import { t } from '../i18n/scope/shell'
+import { RadioOption } from './RadioOption'
 /**
  * A row of separate pills, one of them on.
  *
@@ -35,19 +35,12 @@ export function PillRow<T extends string>({
       {options.map(([v, text, hint]) => {
         const picked = value === v
         return (
-          <button
-            key={v || 'all'}
-            type="button"
-            role="radio"
-            aria-checked={picked}
-            title={hint ?? (picked && clearable ? t('Click again to clear') : undefined)}
-            onClick={() => onChange(picked && clearable ? ('' as T) : v)}
+          <RadioOption key={v || 'all'} value={v} label={text} hint={hint}
+            picked={picked} clearable={clearable} onChange={onChange}
             className={`${dims} rounded-pill border font-mono whitespace-nowrap ${
               picked ? 'border-brand bg-brand text-on-brand' : 'border-border-default text-secondary hover:border-brand'
             }`}
-          >
-            {text}
-          </button>
+          />
         )
       })}
     </div>

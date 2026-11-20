@@ -41,6 +41,14 @@ const {
   restoreChoice, isWayland, windowRecord, savedText, readSaved, onScreen, startPlan,
 } = require('./lib')
 
+const WINDOW_SAVE_DEBOUNCE_MS = 400
+const RESTORE_SETTINGS_TIMEOUT_MS = 4000
+const MAIN_WINDOW_READY_TIMEOUT_MS = 3000
+const RESTORE_AFTER_SHOW_DELAY_MS = 50
+const DRAG_POLL_INTERVAL_MS = 8
+const WINDOW_CHECK_TIMEOUT_MS = 25000
+const WINDOW_CHECK_RENDER_DELAY_MS = 2500
+
 const args = parseArgs(process.argv.slice(app.isPackaged ? 1 : 2), process.env)
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
 
@@ -93,7 +101,7 @@ function saveNow() {
 function saveSoon() {
   if (quitting) return
   clearTimeout(saveTimer)
-  saveTimer = setTimeout(saveNow, 400)
+  saveTimer = setTimeout(saveNow, WINDOW_SAVE_DEBOUNCE_MS)
 }
 
 /** The app is closing: keep the set as it is now, whatever closes after. */
@@ -131,7 +139,7 @@ function openSaved() {
 /** Settings › Terminal › On start, from the server; the default when it does not answer. */
 async function readChoice() {
   const ctl = new AbortController()
-  const timer = setTimeout(() => ctl.abort(), 4000)
+  const timer = setTimeout(() => ctl.abort(), RESTORE_SETTINGS_TIMEOUT_MS)
   try {
     const r = await net.fetch(args.url + '/api/settings', { signal: ctl.signal })
     return restoreChoice(r.ok ? await r.json() : null)
@@ -152,8 +160,8 @@ async function restoreAtStart() {
     // The main window first, then the others over it.
     await new Promise((resolve) => {
       if (!mainWin || mainWin.isDestroyed() || mainWin.isVisible()) return resolve()
-      const t = setTimeout(resolve, 3000)
-      mainWin.once('ready-to-show', () => { clearTimeout(t); setTimeout(resolve, 50) })
+      const t = setTimeout(resolve, MAIN_WINDOW_READY_TIMEOUT_MS)
+      mainWin.once('ready-to-show', () => { clearTimeout(t); setTimeout(resolve, RESTORE_AFTER_SHOW_DELAY_MS) })
     })
     if (quitting) return
     openSaved()
@@ -238,7 +246,7 @@ ipcMain.on('sp-window', (event, msg) => {
         if (win.isDestroyed()) return stopDrag(win)
         const p = screen.getCursorScreenPoint()
         win.setPosition(p.x - d.dx, p.y - d.dy)
-      }, 8)
+      }, DRAG_POLL_INTERVAL_MS)
       dragging.set(win.id, d)
       break
     }
@@ -333,7 +341,7 @@ async function check(url, width, height) {
   const win = openWindow(url, width, height, false)
   const report = { url, ok: false, electron: process.versions.electron, chrome: process.versions.chrome }
   const done = (code) => { process.stdout.write(JSON.stringify(report, null, 1) + '\n'); app.exit(code) }
-  const timer = setTimeout(() => { report.error = 'timed out'; done(1) }, 25000)
+  const timer = setTimeout(() => { report.error = 'timed out'; done(1) }, WINDOW_CHECK_TIMEOUT_MS)
   win.webContents.on('did-fail-load', (_e, _code, text, target) => { report.error = `${target}: ${text}`; clearTimeout(timer); done(1) })
   win.webContents.on('did-finish-load', () => setTimeout(async () => {
     try {
@@ -347,7 +355,7 @@ async function check(url, width, height) {
     } catch (e) { report.error = String(e) }
     clearTimeout(timer)
     done(report.ok ? 0 : 1)
-  }, 2500))
+  }, WINDOW_CHECK_RENDER_DELAY_MS))
 }
 
 const start = pageUrl(args.url, args.path)

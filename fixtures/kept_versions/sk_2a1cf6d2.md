@@ -276,3 +276,209 @@ each task with its stretch, and `next`:
 
 A task the operator moves back out of done stays where they put it: the
 old `#done` is not applied again.
+
+## Version 5 · 2611-20 20:54 · edited
+> Built into Slightly Parallel
+
+---
+name: finish-a-task
+description: "Report what the operator's #done closed, show doubtful tasks with the supplied confirmation line, and add a report and evidence to each task that moved. Use when the [slightly-parallel] #done notice appears."
+---
+
+`#done` is the operator's verdict. The server has already applied it: you
+never change a task's status. Your part is the account.
+
+1. Call `task_done`. It answers `tasks` (each: `id`, `title`, `result`,
+   `stretch` with `start`, `end`, `turns`, `minutes`), `doubt` when IDs
+   need confirmation, and `confirmation` with the ready command.
+   - For each doubtful ID, show its reason. Give the ready line verbatim
+     for the operator to copy and send. A plain yes has no effect.
+   - With `unnamed` and no doubtful IDs, ask which task is done. The
+     operator answers with `#done tk_…`.
+   - `result: already` or `archived`: say so in one line; nothing moved.
+2. Say in one line what moved: `tk_… "title" moved to done — turns
+   12–31, 1h 20m.`
+3. For each moved task, `task_report {id, summary}`: one line, what
+   shipped, as a fact about the product. It moves nothing on a done task;
+   it is the note on the card.
+4. When `evidence` is true for a task, the report's answer carries the
+   operator's instructions: follow them (the skill `task-evidence`).
+5. When the answer names a task's topic (an entry point), add one
+   message of where it stopped: `entrypoint_stop {id, task_id, text}`,
+   one or two plain sentences — what is done, what is not, what waits for
+   whom. One per topic, even when two of its tasks closed. A task with no
+   topic: if its work belongs to an entry point of this project, set it
+   with `task_topic` first. A way in only when you made one or its way to
+   open changed (`entrypoint_way`, a shot while it is up); a new entry
+   point only by section 4's rule (`entrypoint_offer` first).
+6. If choices were made in the stretch that are not logged yet, offer
+   `#decision` in one line.
+7. Next tasks, only when a step follows without which the task does not
+   do what it was for (section 4's examples): call `task_done
+   {proposals}` (at most three `{title, line}`), drop one whose `similar`
+   task is the same thing (call again with the rest), and end the reply
+   with the answer's `show` line as it is. More than three: say the task
+   is not finished instead. None: offer nothing. When the operator
+   answers, `next_tasks {numbers}` with the numbers they wrote. Then go
+   on with the operator's next request.
+
+**`#done`** is the operator closing a task where the work happened. The
+server closes each ID in the list immediately following the tag. The list
+ends at the first intervening word other than `and` or `и`. IDs immediately
+before the tag also count when only punctuation follows them. A bare tag
+closes the last local task the operator named since the previous tag.
+A paste can still trigger the tag. Incidental IDs and earlier tasks go
+into the list for confirmation. Foreign examples can accompany the
+chat's existing local task, which remains the only eligible fallback.
+
+The server records the operator's move on each task it closes
+and gives the task its stretch of the chat: every
+message from after the previous `#done` (or after another task was named,
+or the chat's start) up to and including the `#done` message. Its files,
+commits, messages and time are counted over that stretch.
+
+On the `[slightly-parallel] #done` notice call `task_done`. It answers what moved,
+each task with its stretch, and `next`:
+
+1. Say what moved, with its stretch. If `doubt` is present, show each
+   ID and its reason, and give the `confirmation` line for the operator to
+   copy and send. A plain yes has no effect. With `unnamed` and an empty
+   doubt list, ask which task. The operator answers with `#done tk_…`.
+2. `task_report {id, summary}` for each task: one line, what shipped. On a
+   done task it moves nothing — it is your account on the card.
+3. Where the task has `evidence: true`, the report's answer carries the
+   operator's instructions: follow them with `task_evidence`.
+
+4. **Next tasks — only when the work is unfinished without them.** After
+   the report, offer next tasks if a step follows from this task so that
+   without it the task does not do what it was for. At most three. More
+   than three such steps means the task is not finished: say so in one
+   line instead (the operator decides whether it goes back), and offer
+   nothing. No such step: offer nothing, which is the normal case.
+   - yes: the task was to put the site live; it is deployed, but `www`
+     has no DNS record → "Set up the www DNS record".
+   - yes: the task asked for Linux and Windows; the fix ran on Linux
+     only → "Check the path fix on Windows".
+   - no: "Add caching to the endpoint" — an improvement, not a missing
+     part.
+   - no: "Write docs for the new endpoint" when the task did not ask for
+     docs; nor a retelling of what was done, nor "worth thinking about".
+
+   Call `task_done` again with `proposals`: `[{title, line}]`, the title
+   as a task title, the line what is left and why it follows. The server
+   compares each with the project's open tasks (you never read the board
+   for it) and answers `similar` for each and `show`: the line to give
+   the operator, as it is, as the last line of your reply (`Make these
+   tasks? 1) … 2) …`). A proposal whose similar task is the same thing:
+   send the rest again without it, and name that task instead. The
+   operator answers with numbers or skips; then call `next_tasks
+   {numbers}` with the numbers they wrote (`[]` for none). The server
+   checks them against their message and makes the chosen ones in the
+   `agent` column. Never write them with `write_entry`.
+
+A task the operator moves back out of done stays where they put it: the
+old `#done` is not applied again.
+
+## Version 6 · 2611-20 21:44 · edited
+> Built into Slightly Parallel
+
+---
+name: finish-a-task
+description: "Report what the operator's #done closed, show doubtful tasks with the supplied confirmation line, and add a report and evidence to each task that moved. Use when the [slightly-parallel] #done notice appears."
+---
+
+`#done` is the operator's verdict. The server has already applied it: you
+never change a task's status. Your part is the account.
+
+1. Call `task_done`. It answers `tasks` (each: `id`, `title`, `result`,
+   `stretch` with `start`, `end`, `turns`, `minutes`), `doubt` when IDs
+   need confirmation, and `confirmation` with the ready command.
+   - For each doubtful ID, show its reason. Give the ready line verbatim
+     for the operator to copy and send. A plain yes has no effect.
+   - With `unnamed` and no doubtful IDs, ask which task is done. The
+     operator answers with `#done tk_…`.
+   - `result: already` or `archived`: say so in one line; nothing moved.
+2. Say in one line what moved: `tk_… "title" moved to done — turns
+   12–31, 1h 20m.`
+3. For each moved task, `task_report {id, summary}`: one line, what
+   shipped, as a fact about the product. It moves nothing on a done task;
+   it is the note on the card.
+4. When `evidence` is true for a task, the report's answer carries the
+   operator's instructions: follow them (the skill `task-evidence`).
+5. When the answer names a task's topic (an entry point), add one
+   message of where it stopped: `entrypoint_stop {id, task_id, text}`,
+   one or two plain sentences — what is done, what is not, what waits for
+   whom. One per topic, even when two of its tasks closed. A task with no
+   topic: if its work belongs to an entry point of this project, set it
+   with `task_topic` first. A way in only when you made one or its way to
+   open changed (`entrypoint_way`, a shot while it is up); a new entry
+   point only by section 4's rule (`entrypoint_offer` first).
+6. If choices were made in the stretch that are not logged yet, offer
+   `#decision` in one line.
+7. Next tasks, only when a step follows without which the task does not
+   do what it was for (section 4's examples): call `task_done
+   {proposals}` (at most three `{title, line}`), drop one whose `similar`
+   task is the same thing (call again with the rest), and end the reply
+   with the answer's `show` line as it is. More than three: say the task
+   is not finished instead. None: offer nothing. When the operator
+   answers, `next_tasks {numbers}` with the numbers they wrote. Then go
+   on with the operator's next request.
+
+**`#done`** is the operator closing a task where the work happened. The
+server closes each ID in the list immediately following the tag. The list
+ends at the first intervening word other than `and` or `и`. IDs immediately
+before the tag also count when only punctuation follows them. A bare tag
+closes the last local task the operator named since the previous tag.
+A paste in an operator message can still trigger the tag. Incidental IDs
+and earlier mentions in operator messages go into the list for confirmation
+while those tasks are open. Agent replies and incoming agent messages
+do not supply candidates. Foreign examples can accompany the chat's
+existing local task, which remains the only eligible fallback.
+
+The server records the operator's move on each task it closes
+and gives the task its stretch of the chat: every
+message from after the previous `#done` (or after another task was named,
+or the chat's start) up to and including the `#done` message. Its files,
+commits, messages and time are counted over that stretch.
+
+On the `[slightly-parallel] #done` notice call `task_done`. It answers what moved,
+each task with its stretch, and `next`:
+
+1. Say what moved, with its stretch. If `doubt` is present, show each
+   ID and its reason, and give the `confirmation` line for the operator to
+   copy and send. A plain yes has no effect. With `unnamed` and an empty
+   doubt list, ask which task. The operator answers with `#done tk_…`.
+2. `task_report {id, summary}` for each task: one line, what shipped. On a
+   done task it moves nothing — it is your account on the card.
+3. Where the task has `evidence: true`, the report's answer carries the
+   operator's instructions: follow them with `task_evidence`.
+
+4. **Next tasks — only when the work is unfinished without them.** After
+   the report, offer next tasks if a step follows from this task so that
+   without it the task does not do what it was for. At most three. More
+   than three such steps means the task is not finished: say so in one
+   line instead (the operator decides whether it goes back), and offer
+   nothing. No such step: offer nothing, which is the normal case.
+   - yes: the task was to put the site live; it is deployed, but `www`
+     has no DNS record → "Set up the www DNS record".
+   - yes: the task asked for Linux and Windows; the fix ran on Linux
+     only → "Check the path fix on Windows".
+   - no: "Add caching to the endpoint" — an improvement, not a missing
+     part.
+   - no: "Write docs for the new endpoint" when the task did not ask for
+     docs; nor a retelling of what was done, nor "worth thinking about".
+
+   Call `task_done` again with `proposals`: `[{title, line}]`, the title
+   as a task title, the line what is left and why it follows. The server
+   compares each with the project's open tasks (you never read the board
+   for it) and answers `similar` for each and `show`: the line to give
+   the operator, as it is, as the last line of your reply (`Make these
+   tasks? 1) … 2) …`). A proposal whose similar task is the same thing:
+   send the rest again without it, and name that task instead. The
+   operator answers with numbers or skips; then call `next_tasks
+   {numbers}` with the numbers they wrote (`[]` for none). The server
+   checks them against their message and makes the chosen ones in the
+   `agent` column. Never write them with `write_entry`.
+
+A task the operator moves back out of done stays where they put it: the
+old `#done` is not applied again.

@@ -18,6 +18,9 @@ import tempfile
 import time
 from pathlib import Path
 
+CODEX_LIMITS_READ_TIMEOUT_S = 15
+CHILD_EXIT_CHECK_DELAY_S = 2
+
 BACKEND = Path(__file__).resolve().parents[2] / "backend"
 sys.path.insert(0, str(BACKEND))
 
@@ -46,12 +49,12 @@ def main() -> int:
             if Path(found or "/nonexistent") != target:
                 print(f"FAILED: expected {target}")
                 return 1
-            got = codexlimits.read(timeout=15, exe=found)
+            got = codexlimits.read(timeout=CODEX_LIMITS_READ_TIMEOUT_S, exe=found)
             print(f"read: {'ok, 5-hour ' + str(got['limits_line'].get('five_hour')) if got['ok'] else got['cause']}")
             if made and not got["ok"]:
                 print("FAILED: the stand-in did not answer")
                 return 1
-            time.sleep(2)
+            time.sleep(CHILD_EXIT_CHECK_DELAY_S)
             left = [p.pid for p in psutil.process_iter(["cmdline"])
                     if "fake_codex.py" in " ".join(p.info["cmdline"] or [])]
             if left:

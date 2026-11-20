@@ -24,6 +24,8 @@ import { lineCells } from './cells'
 import type { Record } from './match'
 import { rowTop, useView } from './rowAnchor'
 
+const COMMAND_COPIED_DURATION_MS = 1200
+
 /** A command on the screen, by its lines in the buffer. */
 export interface AbsSpan { cmd: Command; line: number; endLine: number; col: number; endCol: number }
 
@@ -128,7 +130,7 @@ export function CommandCopy({ scanner, feed, say }: {
 
   // The text moved under a pointer that stood still (a scroll): what is under it now.
   useEffect(() => { if (last.current) look() }, [view?.viewportY, look])
-  useEffect(() => { if (!copied) return; const id = window.setTimeout(() => setCopied(''), 1200); return () => window.clearTimeout(id) }, [copied])
+  useEffect(() => { if (!copied) return; const id = window.setTimeout(() => setCopied(''), COMMAND_COPIED_DURATION_MS); return () => window.clearTimeout(id) }, [copied])
 
   const host = hover?.term.element?.querySelector('.xterm-screen') as HTMLElement | null | undefined
   if (!hover || !host || !view) return null

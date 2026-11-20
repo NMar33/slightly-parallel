@@ -59,6 +59,8 @@ from ..folderstate import (  # noqa: E402,F401
 
 router = APIRouter()
 
+GIT_REPO_PROBE_TIMEOUT_S = 3
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -456,7 +458,7 @@ def _is_git_repo(path_raw: str) -> bool:
     try:
         proc = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"], cwd=str(p),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_REPO_PROBE_TIMEOUT_S, check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False

@@ -24,6 +24,9 @@ import { formatClock, liveElapsed, type TimeEntry } from '../project/timeEntry'
 import { t, tn } from '../../i18n/scope/views'
 import { rich } from '../../i18n/rich'
 import { decodeSafe } from '../../hooks/useHashState'
+
+const TOPBAR_SUMMARY_REFETCH_MS = 60_000
+
 interface TimerLine {
   state: 'running' | 'paused' | 'idle'
   /** The timer shown: one that runs before one that is paused, yours before the smart timer's. */
@@ -66,7 +69,7 @@ export function TopbarTimer() {
     queryKey: ['time-summary-all'],
     queryFn: ({ signal }) => getJson<{ today_min: number; week_min: number }>('/api/time/summary', signal),
     // The minute hand: today's total grows while a timer runs, with no write.
-    refetchInterval: 60_000,
+    refetchInterval: TOPBAR_SUMMARY_REFETCH_MS,
   }).data
   const st = useTimeAuto().data
 

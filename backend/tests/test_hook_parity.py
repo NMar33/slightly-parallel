@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from backend import app_settings, sessions, standuplib
 from backend.entities import ENTITIES
+from backend.task_refs import task_ids
 
 _HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
 
@@ -29,8 +30,7 @@ def _hook():
 def test_task_ids_are_found_the_same_way() -> None:
     capture = _hook()
     text = "take tk_0e571cfa, then tk_alpha_1.2 and dc_98ae726a; not xtk_nope or tk_a"
-    server = [m.group(1) for m in sessions._TASK_ID_RE.finditer(text) if m.group(1).startswith("tk_")]
-    assert capture._TASK_ID_RE.findall(text) == server == ["tk_0e571cfa", "tk_alpha_1"]
+    assert capture._TASK_ID_RE.findall(text) == task_ids(text) == ["tk_0e571cfa", "tk_alpha_1"]
 
 
 def test_the_standup_claim_lasts_the_same_time() -> None:
@@ -243,3 +243,31 @@ def test_now_with_a_column_is_one_command_with_its_own_notice(tmp_path) -> None:
     note = capture.format_signals({"commands": ["now-todo"]})
     assert "#now-todo — the skill write-a-task" in note and "status todo" in note and "not started" in note
     assert "title and tags only" in capture.format_signals({"commands": ["now"]})
+
+
+def test_done_notice_shows_confirmed_tasks_and_doubt_with_the_copyable_command(monkeypatch) -> None:
+    capture = _hook()
+    seen = []
+
+    def read(root, agent, turn):
+        seen.append((root, agent, turn))
+        return {
+            "turn": turn, "tasks": [{"id": "tk_closed", "result": "moved"}],
+            "doubt": [{"id": "tk_foreign", "reason": "other_project"}, {"id": "tk_paste", "reason": "mentioned"}],
+            "confirmation": "#done tk_foreign tk_paste",
+        }
+
+    monkeypatch.setattr(capture, "_read_done_outcome", read, raising=False)
+    note = capture.format_signals({"commands": ["done"], "done_lookup": ("/sandbox", "cc-test"), "turn_number": 8})
+    assert seen == [("/sandbox", "cc-test", 8)]
+    assert "Closed tk_closed." in note
+    assert "tk_foreign (another project)" in note
+    assert "tk_paste (mentioned outside the explicit list)" in note
+    assert "\n#done tk_foreign tk_paste\n" in note
+
+
+def test_done_notice_can_fall_back_to_the_mcp_tool(monkeypatch) -> None:
+    capture = _hook()
+    monkeypatch.setattr(capture, "_read_done_outcome", lambda *_args: {}, raising=False)
+    note = capture.format_signals({"commands": ["done"], "done_lookup": ("/sandbox", "cc-test"), "turn_number": 8})
+    assert "#done" in note and "MCP tool task_done" in note

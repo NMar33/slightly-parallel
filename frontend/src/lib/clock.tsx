@@ -11,6 +11,9 @@
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 
+const LIVE_CLOCK_INTERVAL_MS = 1000
+const DAY_START_CHECK_INTERVAL_MS = 60_000
+
 const listeners = new Set<() => void>()
 let nowMs = Date.now()
 let timer: ReturnType<typeof setInterval> | null = null
@@ -22,7 +25,7 @@ function subscribe(listener: () => void): () => void {
     timer = setInterval(() => {
       nowMs = Date.now()
       listeners.forEach((l) => l())
-    }, 1000)
+    }, LIVE_CLOCK_INTERVAL_MS)
   }
   return () => {
     listeners.delete(listener)
@@ -75,7 +78,7 @@ export function useDayStart(): number {
   const [start, setStart] = useState(() => dayStartOf(Date.now()))
   useEffect(() => {
     setStart(dayStartOf(Date.now()))
-    const id = window.setInterval(() => setStart(dayStartOf(Date.now())), 60_000)
+    const id = window.setInterval(() => setStart(dayStartOf(Date.now())), DAY_START_CHECK_INTERVAL_MS)
     return () => window.clearInterval(id)
   }, [])
   return start

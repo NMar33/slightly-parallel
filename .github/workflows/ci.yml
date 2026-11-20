@@ -282,6 +282,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
@@ -291,6 +293,11 @@ jobs:
         run: python3 ../scripts/ci/case_clash_check.py
       - name: Install dependencies
         run: npm ci
+      - name: Refactoring budgets
+        if: matrix.node == 22
+        env:
+          REFACTORING_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 ../scripts/ci/refactoring_budget.py --base "${REFACTORING_BASE:-HEAD^}"
       - name: Lint
         run: npm run lint
       - name: Colors come from tokens.css

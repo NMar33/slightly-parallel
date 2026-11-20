@@ -379,7 +379,7 @@ export function laneUpdate(targetLane: string | undefined): { assignee: string; 
  * stack of five is five tasks of work and hiding them would make the
  * numbers lie.
  */
-type Folded = { task: TaskRow; behind: TaskRow[]; ordinal: number; total: number }
+export type Folded = { task: TaskRow; behind: TaskRow[]; ordinal: number; total: number }
 
 export function foldStacks(items: TaskRow[], all: TaskRow[] = items): Folded[] {
   const out: Folded[] = []
