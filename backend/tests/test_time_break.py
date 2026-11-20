@@ -149,9 +149,11 @@ def test_a_break_survives_a_restart_of_the_timer(env) -> None:
 
 
 def test_today_lists_the_breaks_with_their_notes(env) -> None:
-    c, timer, clock, root = env
+    c, _, clock, root = env
+    # This scenario is a break entirely within one local day.
+    clock.now = datetime.fromtimestamp(clock.now).replace(hour=12, minute=0, second=0).timestamp()
     c.post("/api/time/auto/break", json={"on": True})
-    clock.now = T0 + 900
+    clock.now += 900
     c.post("/api/time/auto/break", json={"on": False, "note": "прогулка"})
     got = c.get("/api/time/auto/break").json()
     assert got["on"] is False
