@@ -347,6 +347,11 @@ def update_entity(
             if target.get(k, "") != new_v:
                 target[k] = new_v
                 changed = True
+        if ent.name == "time_entry" and changed:
+            # A time typed by hand comes naive: kept with its UTC offset,
+            # as the timer's own are (clocktime.py, tk_3a363c87).
+            from ..timelib import stamp_offsets
+            target.update({k: v for k, v in stamp_offsets(target).items() if k in body})
 
         if any(k in body for k in ("l2", "l3", "l4", "body")):
             md_ref, md_path = doc_path(store, ent, target, item_id)

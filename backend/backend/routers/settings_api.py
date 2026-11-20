@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from .. import app_settings, example
+from .. import app_settings, example, termlib
 from ..db import ViewStore
 from .deps import get_store
 from .terminal import enabled as terminal_on
@@ -67,6 +67,10 @@ def update_settings(
     # builds it or removes it (both do nothing when it already is so).
     if example.SETTING in updates:
         example.apply(request.app, bool(values.get(example.SETTING)))
+    # A new colour scheme reaches the open terminals' tmux at once (its
+    # panes and its answers to "what is the ground?" wear the scheme).
+    if "terminal.scheme" in updates:
+        termlib.apply_scheme(store.data_root, values)
     return {"saved": True, "values": values}
 
 

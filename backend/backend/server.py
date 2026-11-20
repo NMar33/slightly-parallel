@@ -66,10 +66,13 @@ from .routers import (
     files_extra,
     integrate,
     entrypoints,
+    notes,
     keep,
     lenses,
     logs,
     marks,
+    messages as messages_routes,
+    pins,
     done,
     undo,
     stats,
@@ -92,6 +95,8 @@ from .routers import (
     timelapse,
     tour,
     terminal,
+    termlog as termlog_routes,
+    termwin as termwin_routes,
     time_tracking,
     evidence,
     calendar,
@@ -270,6 +275,25 @@ async def _memory_loop() -> None:
         await asyncio.sleep(logbook.MEMORY_EVERY_S)
 
 
+#: How often a message that waits is tried in its chat's terminal again.
+MESSAGE_TICK_SECONDS = 3.0
+
+
+async def _message_loop(app: FastAPI) -> None:
+    """Messages between agents that could not be typed into their chat's
+    terminal (the operator was typing, the agent showed a menu): tried
+    again, off the request path. A round with nothing waiting is a stat."""
+    from . import msgdeliver
+    while True:
+        await asyncio.sleep(MESSAGE_TICK_SECONDS)
+        try:
+            await asyncio.to_thread(msgdeliver.retry_waiting, app.state.store.data_root)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one failed round must not end the loop
+            log.exception("waiting messages not tried")
+
+
 async def _backup_loop(app: FastAPI) -> None:
     """Scheduled archives of the data root, taken off the request path.
 
@@ -322,9 +346,9 @@ _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "ta
                 "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
                 "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
                 "task_done", "next_tasks",
-                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "usage_prices_write",
+                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "publish_write", "usage_prices_write",
                 "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_ask", "entrypoint_answer",
-                "task_topic")
+                "task_topic", "carry_brief", "note_write", "note_image", "message", "messages")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
 MCP_REFUSAL = (
     f"agents write through the Slightly Parallel MCP tools ({', '.join(_WRITE_TOOLS)}), not by HTTP. "
@@ -359,11 +383,16 @@ _MCP_WRITE_PATHS = (
     r"/api/next-tasks/make",
     r"/api/cores",
     r"/api/cores/[^/]+/(notes|links|off)",
-    r"/api/publishing/cards/[^/]+/attach",
+    r"/api/publishing/cards/[^/]+/(attach|write)",
     r"/api/entrypoints/[^/]+/(stops|ways|shots)",
     r"/api/entrypoints/(ask|answer)",
     r"/api/tasks/[^/]+/topic",
     r"/api/usage/prices",
+    r"/api/carries/brief",
+    r"/api/notes/write",
+    r"/api/notes/[^/]+/images",
+    r"/api/messages",
+    r"/api/messages/inbox",
 )
 MCP_PATH_REFUSAL = (
     "the Slightly Parallel MCP tools do not write here, so an agent cannot either. "
@@ -671,7 +700,30 @@ def create_app(
                          len(got["migrated"]), got["ways"])
         except (OSError, RuntimeError) as exc:
             log.warning("entry point migration skipped: %s", exc)
+    # Time entries written before their moments carried a UTC offset get it,
+    # once (timelib.migrate_offsets, tk_3a363c87; the file is copied to the
+    # backup folder first). Never on the shipped fixtures.
+    if root.resolve() != FIXTURES.resolve():
+        try:
+            from .timelib import migrate_offsets
+            got = migrate_offsets(root)
+            if got["changed"]:
+                log.info("time entries migrated: %d of %d rows given their UTC offset (copy before: %s)",
+                         got["changed"], got["rows"], got["backup"])
+        except (OSError, RuntimeError, ValueError, DamagedFile) as exc:
+            log.warning("time entry migration skipped: %s", exc)
     store = ViewStore(data_root=root)
+    # Publish cards whose task the server used to guess at every read: the
+    # sound guesses frozen into stored links once (publishlib.migrate).
+    if root.resolve() != FIXTURES.resolve():
+        try:
+            from .publishlib import migrate as migrate_publish
+            got = migrate_publish(store)
+            if got["frozen"] or got["dropped"]:
+                log.info("publish cards migrated: %d task links kept, %d of another project dropped",
+                         got["frozen"], got["dropped"])
+        except (OSError, RuntimeError, ValueError) as exc:
+            log.warning("publish migration skipped: %s", exc)
     # A new data root starts with example visions, rules and problems, once.
     if os.environ.get("SP_EXAMPLES", "1") != "0":
         try:
@@ -725,6 +777,9 @@ def create_app(
             )
             app.state.backup_task = asyncio.create_task(_backup_loop(app))
             app.state.memory_task = asyncio.create_task(_memory_loop())
+            # Messages between agents that wait for their chat's terminal
+            # (msgdeliver.py): tried again every few seconds.
+            app.state.message_task = asyncio.create_task(_message_loop(app))
             # The first page that asks for a day's commits paid for reading
             # every repository's log — 4.8 s on the calendar after a start.
             # Read them now, off the request path, so the first ask is warm.
@@ -740,10 +795,13 @@ def create_app(
             except Exception as exc:  # noqa: BLE001 — no psutil, no monitor; the rest runs
                 log.warning("system monitor not started: %s", exc)
             # The smart timer reads the operator's idle time and pauses their
-            # timers: the served app only, never a sandbox's demo data.
-            if run_monitor:
+            # timers: the served app only, never a sandbox's demo data — but
+            # SP_SMART_TIMER=1 runs it on a sandbox too (the terminal window's
+            # end-to-end suite checks that typing there counts).
+            if run_monitor or os.environ.get("SP_SMART_TIMER") == "1":
                 from . import timeauto
                 timeauto.of(app).start()
+            if run_monitor:
                 # Old Claude Code chats get their answers' ends from the
                 # transcripts, once, off the request path (turntimes.py);
                 # then old chats their tokens, once each (usagebackfill.py).
@@ -754,12 +812,23 @@ def create_app(
                 threading.Thread(target=ensure_statuslines, args=(app.state.settings.data_root,), daemon=True).start()
                 # Codex's plan limits, read on a schedule through codex
                 # app-server (no chat, no tokens): the Usage page's Codex row.
+                from . import toolwaits
+                if toolwaits.enabled():
+                    try:
+                        collector = toolwaits.Collector(app.state.settings.data_root)
+                        collector.start()
+                        app.state.wait_collector = collector
+                    except (OSError, RuntimeError) as exc:
+                        log.warning("tool wait collection unavailable: %s", exc)
                 from .codexlimits import Poller
                 app.state.codex_poller = Poller(app.state.settings.data_root)
                 app.state.codex_poller.start()
         try:
             yield
         finally:
+            collector = getattr(app.state, "wait_collector", None)
+            if collector is not None:
+                collector.stop()
             for w in app.state.watchers:
                 w.stop()
             mon = getattr(app.state, "monitor", None)
@@ -776,7 +845,7 @@ def create_app(
             if held is not None:
                 held.close()
                 app.state.root_lock = None
-            for name in ("backup_task", "memory_task"):
+            for name in ("backup_task", "memory_task", "message_task"):
                 task = getattr(app.state, name, None)
                 if task is not None:
                     task.cancel()
@@ -1005,6 +1074,8 @@ def create_app(
     app.include_router(schema_api.router)
     app.include_router(logs.router)
     app.include_router(marks.router)
+    app.include_router(pins.router)
+    app.include_router(messages_routes.router)
     app.include_router(done.router)
     app.include_router(undo.router)
     app.include_router(stats.router)
@@ -1040,6 +1111,7 @@ def create_app(
     app.include_router(tasks_extra.detail_router)
     app.include_router(keep.router)
     app.include_router(entrypoints.router)  # before the lens router: /api/entrypoints/desk
+    app.include_router(notes.router)  # before the lens router: /api/notes/feed, /api/notes/write
     app.include_router(standups.router)  # before the lens router: /api/standups/material
     app.include_router(skills.router)
     app.include_router(artifacts.router)
@@ -1052,6 +1124,10 @@ def create_app(
     # (setting terminal.enabled, or SP_ENABLE_TERMINAL); the token is
     # made here and handed to Slightly Parallel's own pages (routers/terminal.py).
     app.include_router(terminal.build_router(settings))
+    # The terminal's own log (termlog.py): answers whether the terminal is on or not.
+    app.include_router(termlog_routes.router)
+    # The window's tab strip (termwin.py): titles, chat facts, the "+" menu's reads.
+    app.include_router(termwin_routes.router)
 
     _mount_frontend(app)
     return app

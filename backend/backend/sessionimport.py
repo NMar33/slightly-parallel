@@ -28,9 +28,9 @@ from . import capturewatch
 from .db import ViewStore
 from .file_safety import atomic_write, atomic_write_json
 from .hookshared import (
-    HISTORY_SLACK_S, NOT_OPERATOR, TRANSCRIPT_NOISE, assign_turns, codex_home, epoch_of, escape_content,
-    helper_starts, is_compact, is_human_prompt, local_iso, session_key, usage_line_claude, usage_records_claude,
-    usage_records_codex, yymm_dd,
+    HISTORY_SLACK_S, NO_PROMPT, NOT_OPERATOR, TRANSCRIPT_NOISE, assign_turns, claude_entrypoint, claude_helper_kind,
+    codex_helper_kind, codex_home, codex_session_meta, epoch_of, escape_content, helper_starts, is_compact, local_iso, prompt_record, session_key, usage_line_claude, usage_records_claude,
+    tool_wrote, usage_records_codex, yymm_dd,
 )
 
 #: A session with a message in the last hour may still be going on: the hook
@@ -68,14 +68,50 @@ def _text(content: Any, kinds: tuple[str, ...]) -> str:
 def _claude_prompt(rec: dict[str, Any]) -> str:
     """The person's message in one Claude Code record ("" when it is none):
     tool results, the harness's notes, helper agents and the compact
-    summary are not the person."""
-    if rec.get("isSidechain") or rec.get("isCompactSummary"):
+    summary are not the person; nor is a prompt the tool wrote itself (a
+    scheduled task's, "the usage limit has reset", a message from another
+    session: hookshared.tool_wrote, the rule the prompt hook reads), nor a
+    record the prompt hook never sees (NO_PROMPT). A message typed while the
+    agent worked is a queued_command attachment, not a "user" record
+    (hookshared.queued_prompt): it is read the same way, as the hook records
+    it. A record a fork copied from the session it branched off
+    (``forkedFrom``) is that session's turn, not this one's: the hook never
+    saw it here. A chat read from the log holds the turns a recorded one
+    would."""
+    if rec.get("isSidechain") or rec.get("isCompactSummary") or rec.get("forkedFrom"):
         return ""
-    if rec.get("type") != "user" or rec.get("isMeta") or not is_human_prompt(rec):
+    rec = prompt_record(rec) or {}
+    if not rec or rec.get("isSidechain") or tool_wrote(rec):
         return ""
     msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
     text = _text(msg.get("content"), ("text",)).strip()
-    return "" if not text or text.startswith(NOT_OPERATOR + TRANSCRIPT_NOISE) else text
+    return "" if not text or text.startswith(NOT_OPERATOR + TRANSCRIPT_NOISE + NO_PROMPT) else text
+
+
+def _claude_walk(path: Path):
+    """(kind, record, text) along a Claude Code transcript: ("prompt", rec,
+    the person's words) for each turn the hook would open, ("reply", rec,
+    text) for each assistant text, ("other", rec, "") for the rest. The
+    same words again before any reply are one prompt, as the hook's
+    open_turn counts them (an interrupted turn resent, a queued message
+    that is then sent as typed)."""
+    last, replied = None, True
+    for rec in _jsonl(path):
+        said = _claude_prompt(rec) if rec.get("type") in ("user", "attachment") else ""
+        if said:
+            if said == last and not replied:
+                continue
+            last, replied = said, False
+            yield "prompt", rec, said
+            continue
+        if rec.get("type") == "assistant" and not rec.get("isSidechain") and not rec.get("forkedFrom"):
+            msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+            text = _text(msg.get("content"), ("text",)).strip()
+            if text:
+                replied = True
+                yield "reply", rec, text
+                continue
+        yield "other", rec, ""
 
 
 def claude_turns(path: Path) -> list[dict[str, str]]:
@@ -84,24 +120,13 @@ def claude_turns(path: Path) -> list[dict[str, str]]:
     compact summary are not the person; the reply is the turn's last text,
     as the hook records it."""
     turns: list[dict[str, str]] = []
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(rec, dict) or rec.get("isSidechain") or rec.get("isCompactSummary"):
-                continue
-            msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
-            if rec.get("type") == "user":
-                text = _claude_prompt(rec)
-                if not text:
-                    continue
-                turns.append({"user": text, "at": local_iso(rec.get("timestamp")), "agent": "", "end": ""})
-            elif rec.get("type") == "assistant" and turns:
-                text = _text(msg.get("content"), ("text",)).strip()
-                if text:
-                    turns[-1]["agent"], turns[-1]["end"] = text, local_iso(rec.get("timestamp"))
+    for kind, rec, text in _claude_walk(path):
+        if rec.get("isCompactSummary"):
+            continue
+        if kind == "prompt":
+            turns.append({"user": text, "at": local_iso(rec.get("timestamp")), "agent": "", "end": ""})
+        elif kind == "reply" and turns:
+            turns[-1]["agent"], turns[-1]["end"] = text, local_iso(rec.get("timestamp"))
     return turns
 
 
@@ -166,9 +191,8 @@ def claude_usage_parts(path: Path, session: str) -> _Parts:
     compacts: list[float] = []
     prompts: list[float | None] = []
     texts: list[str] = []
-    for rec in _jsonl(path):
-        said = _claude_prompt(rec) if rec.get("type") == "user" else ""
-        if said:
+    for kind, rec, said in _claude_walk(path):
+        if kind == "prompt":
             prompts.append(epoch_of(rec.get("timestamp")))
             texts.append(said)
             continue
@@ -300,6 +324,18 @@ def preview(store: ViewStore, project: str, tool: str, **roots: Any) -> list[dic
              "first": c["turns"][0]["user"][:160]} for c in candidates(store, project, tool, **roots)]
 
 
+def _helper_kind(tool: str, path: Path) -> tuple[str, str]:
+    """(helper kind, the parent's agent id when the log names it) of a
+    session read from its log; ("", "") for the operator's own chat."""
+    try:
+        if tool == "codex":
+            kind, thread = codex_helper_kind(codex_session_meta(path))
+            return kind, (f"codex-{session_key('codex', thread)}" if thread else "")
+        return claude_helper_kind(claude_entrypoint(path)), ""
+    except Exception:  # noqa: BLE001 — a log that cannot be read is the operator's chat, as before
+        return "", ""
+
+
 def _write(store: ViewStore, project: str, tool: str, c: dict[str, Any]) -> str:
     folder = store.data_root / "projects" / project / "chats" / c["agent_id"]
     if (folder / "meta.json").exists() or (folder / "chat.md").exists():
@@ -322,6 +358,14 @@ def _write(store: ViewStore, project: str, tool: str, c: dict[str, Any]) -> str:
         "tool": _TOOL[tool], "session_ref": c["session"], "cwd": str(c["cwd"]),
         "last_active": turns[-1]["end"] or turns[-1]["at"],
     }
+    # A run another program started (claude -p, a codex exec, a Codex
+    # subagent) is a helper, as the hook would have marked it: its prompts
+    # were written by an agent (hookshared.HELPER_KINDS).
+    kind, parent = _helper_kind(tool, Path(c["file"]))
+    if kind:
+        meta.update({"helper": True, "helper_kind": kind, "helper_of": parent})
+        if parent:
+            meta["helper_of_by"] = "session"
     folder.mkdir(parents=True, exist_ok=True)
     atomic_write(folder / "chat.md", "".join(parts))
     atomic_write_json(folder / "meta.json", meta)

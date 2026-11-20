@@ -38,9 +38,15 @@ export async function saveSettings(
   values: Record<string, number | boolean | string>,
 ): Promise<void> {
   await postJson('/api/settings', { values })
+  try {
+    const channel = new BroadcastChannel(SETTINGS_CHANNEL)
+    channel.postMessage(null)
+    channel.close()
+  } catch { /* windows can still reload settings on focus */ }
 }
 
 export const SETTINGS_QUERY_KEY = ['settings'] as const
+export const SETTINGS_CHANNEL = 'sp-settings'
 
 /** All settings as a flat key→value map (undefined while loading). */
 export function useSettingsValues(): Record<string, number | boolean | string> | undefined {
@@ -156,7 +162,7 @@ export function areasOf(key: readonly unknown[]): string[] | null {
     || (typeof head === 'string' && head.startsWith('time-'))) return ['tasks']
   if (head === 'visions' || head === 'rules' || head === 'problems' || head === 'entrypoints' || head === 'skills'
     || head === 'artifacts' || head === 'standups-page' || head === 'standups-calendar' || head === 'standups'
-    || head === 'decisions-page' || head === 'prompt-library' || head === 'integrate' || head === 'reason'
+    || head === 'decisions-page' || head === 'prompt-library' || head === 'integrate' || head === 'reason' || head === 'notes'
     || head === 'tour') return ['rest']
   // Constants of the server's code: no write ever changes them.
   if (head === 'story-templates') return []

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
 from ..date_utils import today_yymm_dd
 from ..db import ViewStore
-from .. import timeauto
+from .. import timeauto, timebreak
 from .deps import create_answer, etag_for, get_store, json_response, maybe_304
 from .lenses import create_entity
 
@@ -191,11 +191,12 @@ def time_summary(
     request: Request,
     project: str = "",
     task_id: str = "",
+    agent_work: bool = False,
     store: ViewStore = Depends(get_store),
 ) -> Response:
     """Attributed minutes for today, the last 7 days, and per goal — of a
     project, of one task (``task_id``), or of everything."""
-    etag = etag_for(f"time:summary:{project}:{task_id}:{_minute()}", store)
+    etag = etag_for(f"time:summary:{project}:{task_id}:{agent_work}:{_minute()}", store)
     if (r := maybe_304(request, etag)) is not None:
         return r
 
@@ -226,6 +227,16 @@ def time_summary(
         if gid:
             per_goal[gid] = per_goal.get(gid, 0) + attributed
 
+    agent_minutes = {}
+    if agent_work and not task_id:
+        agent_where = "created_date = ?"
+        agent_params = [today]
+        if project:
+            agent_where += " AND project = ?"
+            agent_params.append(project)
+        agent_rows = store.query(f"SELECT COALESCE(SUM(agent_min), 0) AS minutes FROM sessions WHERE {agent_where}", tuple(agent_params))
+        agent_minutes["today_agent_min"] = round(float(agent_rows[0]["minutes"]))
+
     return json_response(
         {
             "project": project,
@@ -234,6 +245,7 @@ def time_summary(
             "week_min": round(week_sec / 60),
             "total_min": round(total_sec / 60),
             "per_goal_min": {k: round(v / 60) for k, v in per_goal.items()},
+            **agent_minutes,
         },
         etag,
     )
@@ -262,11 +274,17 @@ def time_auto(request: Request) -> dict:
 
 @router.post("/api/time/auto/beat")
 def time_auto_beat(request: Request, body: dict = Body(...)) -> dict:
-    """A page says: someone is working on this project (and this task) now."""
+    """A page says: someone is working on this project (and this task) now.
+    ``source`` names the page: ``page`` (the app's pages, the default) or
+    ``window`` (the terminal window, /term: the tab in front, with input).
+    Both count the same way: a beat, then the grace."""
     project = str(body.get("project") or "").strip()
     if not project:
         raise HTTPException(status_code=422, detail="project is required")
-    timeauto.of(request.app).beat(project, str(body.get("task_id") or ""), "page")
+    source = str(body.get("source") or "page")
+    if source not in timeauto.PAGE_SOURCES:
+        raise HTTPException(status_code=422, detail=f"source must be one of {', '.join(timeauto.PAGE_SOURCES)}")
+    timeauto.of(request.app).beat(project, str(body.get("task_id") or ""), source)
     return {"ok": True}
 
 
@@ -309,3 +327,35 @@ def time_auto_away(
         # Ends where you left: the pause up to now is not work.
         return time_stop(entry_id, {}, store)
     return decorate(row)
+
+
+# ---------------------------------------------------------------------------
+# A break the operator takes (timebreak.py, tk_810245f2 · tk_caf2b06a)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/time/auto/break")
+def time_auto_break_status(request: Request) -> dict:
+    """Whether a break is under way (``on``, ``since``, ``sec``, what it
+    paused) and today's breaks with their notes."""
+    return timebreak.status(timeauto.of(request.app))
+
+
+@router.post("/api/time/auto/break")
+def time_auto_break(request: Request, body: dict = Body(...)) -> dict:
+    """``{on: true, project?, note?}`` starts a break: the smart timer's
+    auto spans close and count nothing until it ends, every running manual
+    timer pauses. ``{on: false, note?}`` ends it: the timers it paused
+    resume (only those still paused from it), the note stays with the
+    break. Either again changes nothing."""
+    on = body.get("on")
+    if not isinstance(on, bool):
+        raise HTTPException(status_code=422, detail="on must be true or false")
+    project = body.get("project") or ""
+    note = body.get("note") or ""
+    if not isinstance(project, str) or not isinstance(note, str):
+        raise HTTPException(status_code=422, detail="project and note must be text")
+    timer = timeauto.of(request.app)
+    if on:
+        return timebreak.start(timer, project.strip(), note.strip())
+    return timebreak.finish(timer, note.strip())

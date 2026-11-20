@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { adoptOldKeys, isSyncable, readPref } from './uiPrefs'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { adoptOldKeys, hydratePrefs, isSyncable, readPref } from './uiPrefs'
 
 describe('isSyncable — what reaches the server', () => {
   it('syncs view preferences', () => {
@@ -13,8 +13,69 @@ describe('isSyncable — what reaches the server', () => {
     for (const k of [
       'sp-note-draft:tk_x', 'sp-note-edit:nt_x',
       'sp-task-draft:slightly-parallel', 'sp-doc-block-draft:dc_x',
-      'pdr.sidebar',
+      'pdr.sidebar', 'sp-term-health-day',
+      'sp-aqua-active', 'sp-aqua-workspace', 'sp-aqua-ws-tabs',
     ]) expect(isSyncable(k), k).toBe(false)
+  })
+})
+
+describe('hydratePrefs — live terminal state stays in the browser', () => {
+  afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
+
+  it('a copy the server kept never comes back over the live day, is removed there, and the day is never sent up', async () => {
+    localStorage.clear()
+    const live = JSON.stringify({ date: '2026-11-18', run: 3 })
+    localStorage.setItem('sp-term-health-day', live)
+    const posts: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response('{}') }
+      return new Response(JSON.stringify({ prefs: { 'sp-theme': 'dark', 'sp-term-health-day': JSON.stringify({ date: '2026-11-18', run: 95 }) } }),
+        { headers: { 'Content-Type': 'application/json' } })
+    }))
+    await hydratePrefs()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(localStorage.getItem('sp-term-health-day')).toBe(live)
+    expect(localStorage.getItem('sp-theme')).toBe('dark')
+    expect(posts).toEqual([{ values: { 'sp-term-health-day': null } }])
+  })
+
+  it('ignores stale tab selections and order and keeps the local workspace', async () => {
+    localStorage.clear()
+    const tabs = JSON.stringify({ 'p:kelp': 'rightmost' })
+    const order = JSON.stringify({ 'p:kelp': ['leftmost', 'rightmost'] })
+    localStorage.setItem('sp-aqua-active', 'rightmost')
+    localStorage.setItem('sp-aqua-workspace', 'p:kelp')
+    localStorage.setItem('sp-aqua-ws-tabs', tabs)
+    localStorage.setItem('sp-aqua-tab-order', order)
+    const posts: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response('{}') }
+      return new Response(JSON.stringify({ prefs: { 'sp-aqua-active': 'leftmost', 'sp-aqua-ws-tabs': '{}', 'sp-aqua-tab-order': '{}' } }),
+        { headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await hydratePrefs()
+    expect(localStorage.getItem('sp-aqua-active')).toBe('rightmost')
+    expect(localStorage.getItem('sp-aqua-workspace')).toBe('p:kelp')
+    expect(localStorage.getItem('sp-aqua-ws-tabs')).toBe(tabs)
+    expect(localStorage.getItem('sp-aqua-tab-order')).toBe(order)
+    expect(posts).toEqual([{ values: { 'sp-aqua-active': null, 'sp-aqua-ws-tabs': null, 'sp-aqua-tab-order': null } }])
+  })
+
+  it('keeps the terminal window layout local when a different profile shared its own', async () => {
+    const key = 'sp-aqua-window-layout'
+    const local = JSON.stringify({ titleScale: 2, tabsScale: 1.5 })
+    const server = JSON.stringify({ titleScale: 1.5, tabsScale: 1 })
+    localStorage.setItem(key, local)
+    const posts: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response('{}') }
+      return new Response(JSON.stringify({ prefs: { [key]: server } }), { headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await hydratePrefs()
+    expect(localStorage.getItem(key)).toBe(local)
+    expect(posts).toEqual([{ values: { [key]: null } }])
   })
 })
 

@@ -50,11 +50,48 @@ reference names, both ways. Prints the line that goes at the bottom of
 backend/.venv/bin/python scripts/check_api_doc.py
 ```
 
+## `verify.py fast` — the fast terminal test profile
+
+Run `python3 scripts/verify.py fast` with frontend, Desktop and backend
+dependencies already installed. It records the current commit before joining
+the machine queue. Once admitted, it creates a detached worktree, bundles
+the frontend with Vite, and runs Vitest, the non-heavy backend tests and a
+short Electron profile. The full build in terminal CI also runs TypeScript.
+The Electron server uses an isolated port and test data. Each phase
+has a timeout. The command prints the temporary directory for logs, Electron
+artifacts and `result.json`.
+
+## `verify.py waves` — terminal feedback pilot
+
+After building the snapshot, the pilot runs the terminal's Vitest files
+first. The short Electron profile and the remaining Vitest and backend
+checks then run in order with `--jobs 1` (default) or overlap with
+`--jobs 2`. Both modes select the same tests and use the same worker limits.
+The outer machine queue stays in force. Only one Electron run starts.
+
+Use `python3 scripts/verify.py waves --ref <commit> --jobs 1` for the
+baseline and repeat with `--jobs 2` for comparison. Start the command as a
+background process to leave the agent free to continue working. The printed
+directory holds `result.json`, updated atomically as each step and wave
+finishes. It records queue time, time until the first test result after
+admission, elapsed time, test counts and load samples. A failed test wave
+does not stop the independent waves. A failed build stops the test waves.
+
 ## `bench_rebuild.py` — DuckDB rebuild timings
 
 Measures how long rebuilding the tables takes for a data root. Its published
 numbers date from the August 2026 data model; re-measure before quoting
 them.
+
+## `ci/case_clash_check.py` — the case guard
+
+Fails when two tracked paths are one path on macOS and Windows: names that
+differ only by case, or modules in one folder that do once the extension is
+dropped (`Health.tsx` beside `health.ts`: `./health` is either file there).
+Rename the logic file `<name>Model.ts`. It runs first in CI's frontend job
+and in the terminal workflow, and in the backend tests on every system.
+
+    python3 scripts/ci/case_clash_check.py
 
 ## `check-no-raw-hex.sh` — the colour guard
 

@@ -67,6 +67,8 @@ export interface Topic {
   open_tasks: number
   chats: number
   last_at: string
+  /** When the topic was archived (#undo); "" while it is live. The page folds archived topics. */
+  archived_at?: string
 }
 
 export interface Desk { topics: Topic[]; projects: string[] }

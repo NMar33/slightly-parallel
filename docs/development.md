@@ -44,10 +44,20 @@ mv requirements.lock.new requirements.lock
 cd frontend && npm ci
 npm test && npm run typecheck && npm run lint && npm run build
 bash ../scripts/check-no-raw-hex.sh                          # colours come from the tokens, never a raw hex
+python3 ../scripts/ci/case_clash_check.py                    # no two paths differ only by case (one file on macOS and Windows)
 
 # In the browser, on a copy of the test data. It starts its own server from
 # backend/.venv and serves the build above. Once: npx playwright install chromium
 npm run e2e
+```
+
+```bash
+# The terminal window (desktop/, Electron) against its own sandbox server on
+# port 8131: about a minute. Needs frontend/node_modules (its Playwright) and
+# Electron in desktop/ (npm ci). On Linux with GNOME the windows open on a
+# hidden display of their own; SP_E2E_VISIBLE=1 shows them, SP_E2E_HEADLESS=1
+# draws without any display. CI: .github/workflows/terminal.yml (ci-terminal).
+cd desktop && npm ci && npm test && npm run e2e
 ```
 
 ```bash

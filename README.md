@@ -19,6 +19,7 @@ The project on film, in a minute or in six: [Slightly Parallel in a minute](http
 - [Three principles](#three-principles)
 - [Limits](#limits)
 - [In detail](#in-detail): [Chats](#chats) · [The board](#the-board) · [Standups](#standups) · [The commands](#the-commands) · [Skills](#skills) · [Artifacts](#artifacts) · [Entry points](#entry-points)
+- [Work in progress (unreleased)](#work-in-progress-unreleased)
 - [FAQ / Problems](#faq--problems)
 - [What it needs and where the data is](#what-it-needs-and-where-the-data-is)
 - [More](#more)
@@ -45,7 +46,7 @@ Then connect a project. On the **Setup** page:
 
 1. **Data folder** — where Slightly Parallel keeps its records. The default is fine.
 2. **Integrate a project** — a short code and the folder where its code is. Setup shows the files it is about to write and writes them: a section in the project's `AGENTS.md` (and a line in `CLAUDE.md`), the capture hooks, the MCP server entry.
-3. **Start an agent in that folder** — Claude Code, Codex, OpenCode or Cursor, as you always do. The first answer begins with `[slightly-parallel] project … · your agent_id is …`. From then on the chat is recorded.
+3. **Start an agent in that folder** — Claude Code, Codex, OpenCode or Cursor. Open **Chats** to see the recorded conversation.
 
 ![The Setup page, step by step](docs/media/readme/setup.gif)
 
@@ -61,7 +62,7 @@ Good to know:
 - **The chats are recorded even when the server is not running.** The hooks write them; the server reads them when it is up.
 - **To start the server again:** `./run.sh --prod` (Windows: `sp run --prod`). To keep it running in the background: [docs/running.md](docs/running.md).
 - **Where everything is:** the data folder, one folder per project under `projects/<code>/`, the chats in it as `chat.md`, the tasks and the rest as CSV plus one Markdown file per entry. Plain files; copy the folder and you have a backup.
-- **The commands** you type in a chat: `#task`, `#now`, `#scan`, `#decision`, `#vision`, `#rule`, `#problem`, `#skill`, `#prompt`, `#important`, `#entrypoint`, `#artifact`, `#undo`, `#sp`, `#help`. Each is explained [below](#the-commands).
+- **Chat commands** — type `#help` in a chat for the full list, or see [The commands](#the-commands) below.
 
 Working on Slightly Parallel's own code needs Node 20+: [docs/development.md](docs/development.md).
 
@@ -107,7 +108,7 @@ The recording is done by hooks (Claude Code, Codex, Cursor) and a plugin (OpenCo
 
 ### The board
 
-A Kanban board per project, with columns for the whole cycle: Backlog, Next, From agents, To do, Doing, Review, Done. Agents add cards only to From agents; you move them. There is a lanes view, where cards group by theme, and a three-column view for the day.
+A Kanban board per project, with columns including Backlog, Next, From agents, To do, Doing, Review, Done. Tasks suggested by an agent go into From agents. With `#now`, your message becomes a card in Doing. There is a lanes view, where cards group by theme, and a three-column view for the day.
 
 ![The board in five columns, three columns, and the lanes](docs/media/readme/board-views.gif)
 
@@ -131,7 +132,7 @@ This is the project's diary, written without you.
 
 ### The commands
 
-A command is one word anywhere in a message to an agent. The agent does the writing; you read the pages.
+Type a command anywhere in your message.
 
 ![The commands](docs/media/readme/commands.svg)
 
@@ -157,19 +158,19 @@ A command is one word anywhere in a message to an agent. The agent does the writ
 
 ![#task in the chat, then the card in the From agents column](docs/media/readme/task.gif)
 
-`#now` is the task being done now. `#now fix the login timeout`. The card's text is your message, as you wrote it; the agent only gives it a title. The card goes into Doing, in the Now lane, marked with today, and only then does the work start. Everything that follows in the chat, the decisions, the evidence, the commits, is tied to that card. `#done` closes it: the server moves the card to done and counts its stretch of the chat. Too lazy to open the board: you do not have to.
+`#now` starts a task in Doing, marks it for today and links it to the chat. For example, `#now fix the login timeout`. Type `#done` to close it.
 
 ![#now in the chat, then the card in Doing, planned for today](docs/media/readme/now.gif)
 
-`#now-todo` files the message in To do instead, and the chat goes on with what it was doing. `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and `#now-done` file it in those columns.
-
 The lane goes in braces right after the tag: `#now {ui} fix the login timeout`, `#task {Kanban Board} cards do not sort`. The server reads the lane from the message, not the agent, so there is nothing to guess. A lane that is not on the board is refused with the list of those that are; the agent asks in one line. New lanes are made on the board. Without braces `#task` lands in `unassigned`, `#now` in Now (the name is a setting).
 
-**`#entrypoint`** — the way into a topic you come back to. Say the topic, and the agent writes its record (what it is, where its files and links are, how to run it, where the work stopped, what is next) and adds the ways in it used: the pages, sites and files you open, each with its start command, folder and port. Type it with the topic's name in any chat of the project and that chat's agent writes a new version of the record, adding what it used and where the work stopped; each version shows the chat that wrote it. Coming back to a project after three weeks starts here.
+**`#entrypoint`** — saves where to find the files for a topic, how to run it and where work stopped.
 
 **If a tag made an entry by mistake** (a pasted text that mentions `#vision`, a `#rule` typed by accident): **type `#undo` and say what was the mistake. The agent lists the entries by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is archived without `#undo-yes`, and nothing is deleted.**
 
-**`#sp`** — is it working. The agent checks this chat and folder: messages recorded, MCP, hooks, skills, data, backups, the server's memory. It says what works and what is a concern, and what it could not check. `#sp the messages are not recorded` looks into that too. It changes nothing without your yes; `python sp.py check` does the same from a terminal, also when the server is down.
+**`#evidence`** — attaches the proof you asked for to the task. **`#standup`** writes yesterday’s standup.
+
+**`#architecture`** — updates the project’s architecture record. Use **`#page`** for the written overview or **`#map`** for the parts of the program and their connections.
 
 **`#help`** — the list of commands, in the chat.
 
@@ -187,7 +188,7 @@ An example. Claude Code started writing the help texts and descriptions in my ow
 
 ### Entry points
 
-One card per topic, kept from `#entrypoint`. A topic has a state (active, paused, dead), its ways in, screenshots of each way in over time, and a feed of where it stopped: the agent adds a line at `#done` for the task's topic, and you can add one by hand. What is next is the topic's open tasks. When the page opens it checks each way in's port on this computer and shows the start command of one that is down; it starts nothing itself. Below the card are the chats that worked on the topic, with the command to resume each, and its done tasks, decisions, commits and spend. Copy to agent copies the whole topic as a briefing for a new chat. The topics are a list beside the card or shelves of tiles.
+Open a topic to see what it is, where its files are, how to run it and where work stopped.
 
 ### Your hours
 
@@ -197,9 +198,51 @@ The Timer page keeps your own time, per project and per block of work (a sprint,
 
 ### Monitor
 
-The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. To report it, take one file: **download report** on that page, or `python sp.py report`, which works when the server does not start. It holds the machine, the server's memory over a day, warnings and errors, and the size of the data; no chat text and no values from `.env`; read it before sending it. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
+The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
 
 ![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
+
+## Work in progress (unreleased)
+
+### Pages and project views
+
+- **Architecture › Cores** tracks a part of the program, such as the terminal. See its files, tasks, commits and notes, follow changes on a timeline or locate it on the program map.
+- **Entry points** lets you browse topics as a list or as tiles. Open one to see its links, screenshots, open tasks and previous chats, or copy a briefing for another agent.
+- **Notes** collects agents’ plans, reports and reviews. Open a note from its task, enlarge a screenshot, tick off a step or leave a comment.
+- Open **Pins** to find saved messages across projects. Search your pins, find messages saved for the agent to reread, or copy the command to start a separate chat.
+- **Publish** turns cards about shipped work into a document. Edit the text, attach the tasks, files or images behind it, and keep earlier versions.
+- **Usage** shows tokens by chat, task, tool and model, estimated API costs, plan limits and time agents spent waiting for tools.
+- Use **Project tabs** to show or hide sections, including Standups, Scans, Visions, Entry points, Problems and Rules.
+- **Internals** shows how many commits name their task, by project and agent, over the last seven days.
+
+### Chats, tasks and commands
+
+- **`#pin`** saves a message for later. **`#fork-later`** also keeps the command to start another chat from it.
+- **`#carry`** gives the agent your message and its reply again after the chat history is shortened. **`#carry-brief`** keeps a summary.
+- **`#core-new`** starts tracking part of the program. **`#core-note`** adds a note, **`#core`** links the message and its task, and **`#core-off`** hides that part.
+- **`#entrypoint`** now lets you describe a topic and choose from matches. Type its exact name in another chat to update the same record.
+- **`#publish`** makes a card from your text or asks the agent to draft one about a topic you name.
+- **`#now`** keeps your message as the task description and lets the agent title it. **`#now-doing`** does the same.
+- **`#now-todo`**, **`#now-next`**, **`#now-backlog`**, **`#now-review`**, **`#now-parked`** and **`#now-done`** file your message directly in the named column.
+- After **`#done`**, an agent can suggest follow-up tasks. Choose which ones to add by number.
+- **`#mute`** lets you quote commands without running them. Use three hashes, as in **`###now-todo`**, to run just that command in a message.
+- **`#usage`** shows token use and plan limits. **`#usage-on`** and **`#usage-off`** show or hide the count after each reply.
+- **`#usage-warnings-on`** and **`#usage-warnings-off`** control warnings in Claude Code. **`#usage-price`** refreshes the API prices used for estimates.
+- **`#sp`** checks whether your chat is being recorded and whether hooks, storage and backups are working. From a shell, run `python sp.py check`.
+- **Agents** can exchange messages between chats. Helper chats appear under the agent that started them when the parent is known.
+- **Task cards** show the chat from the first task mention through `#done`. The agent titles cards created from the terminal’s message menu. Agents can edit their own cards and comment on others.
+
+### Desktop terminal and diagnostics
+
+- Open the terminal with `./sp.sh window` (Windows: `sp window`). First launch needs Node 20+ and npm. Linux is tested first. On Windows the terminal uses PowerShell without tmux.
+- Group tabs by project, split the view or move a chat into its own window. Windows and tabs can reopen after a restart.
+- Tabs show the chat title and recent activity. Alt+W takes you to a chat waiting for your answer.
+- Right-click a message to pin or copy it, make a task, or branch into another chat. Collapse long replies or scroll back while output arrives.
+- Click a task ID or commit hash to inspect it. Copy a shell command with the button beside it.
+- Add a task’s ID and description to the project’s Markdown draft, or turn selected draft text into a task.
+- Window settings let you choose from 12 colour schemes, adjust the title and tab rows, and control clipboard access. The title bar can show project time, total time and system load.
+- **Monitor › Terminal** shows scroll stalls, errors and lost connections. Download a report of timings and counts without typed or pasted text.
+- **Monitor › Server** offers a diagnostic report. If the server cannot start, create it from the shell with `python sp.py report`.
 
 ## FAQ / Problems
 
@@ -217,7 +260,7 @@ The Monitor page shows this computer's load: CPU, memory, disk, the connection, 
 
 - One person, one computer. The server listens on `127.0.0.1` and has no login; the network is off unless you turn it on ([docs/configuration.md](docs/configuration.md)).
 - The data is plain files in the folder you chose: one CSV per kind of entry, one Markdown file per entry, the chats as `chat.md`. No database server. Back it up by copying the folder, or let the Backups page do it.
-- Agents write only through the MCP server (`write_entry`); the server refuses an agent's write that comes any other way. The contract they follow is [`SLIGHTLY-PARALLEL.md`](SLIGHTLY-PARALLEL.md).
+- Agents write only through the MCP server. For example, they use `write_entry` to record a decision. The contract they follow is [`SLIGHTLY-PARALLEL.md`](SLIGHTLY-PARALLEL.md).
 - The pages: Overview, Project, Chats, Scans, Standups, Decisions, Kanban, Sprints, Calendar, Timer, Visions, Rules, Problems, Skills, Prompts, Artifacts, Entry points, Important, Architecture, Files, Search, Agents, Timelapse, Monitor, Backups, Settings. English and Russian.
 
 ## More

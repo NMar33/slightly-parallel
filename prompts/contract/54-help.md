@@ -40,7 +40,7 @@ rest; you see the result on the page named.
 | `#rule <text>` | Keeps the message as a rule for agents; the agent writes what it means. | Rules |
 | `#problem <text>` | Keeps the message as a problem; the agent writes what it means. | Problems |
 | `#problem solved <id or text>` | Marks that problem solved. | Problems |
-| `#publish <text>` | Keeps the message as a card of what shipped, worth telling; the agent attaches screenshots and links, writes nothing. | Publish |
+| `#publish <text>` | Makes a card of what shipped, worth telling: your text as is, or "about X" for the agent to write it. The agent adds the context and attaches tasks, commits, files, screenshots and links. `#publish pu_… <more>` adds to that card. | Publish |
 | `#entrypoint <topic>` | The agent shows the topics it may mean, numbered, with a new one last; you answer with a number (and a name for a new one). Then the agent writes what it is, where it lives, how to run it, where the work stopped and what is next; for a topic that exists, a new version of its record. Any chat of the project; the words may be a name, a description or nothing. | Entry points |
 | `#prompt` | Keeps the message in your prompt library, to send again. | Prompts |
 | `#skill` | Turns what was done in this chat into a skill agents can use. | Skills |
@@ -68,10 +68,16 @@ rest; you see the result on the page named.
 
 **Mark**
 
+Each of these marks also has a button on every message of the chat page.
+
 | Command | What it does | Where you see it |
 |---|---|---|
 | `#important` | Stars the message, this chat's agent and the task the message names. | Important |
 | `#important-agent` · `-task` · `-message` | Stars only one of them. `-task` with no id takes the last task named in the chat. | Important |
+| `#pin` | Pins the message, to come back to it. Tell the agent "go back to the pin" and it reads it again. | Pins · the chat's pins |
+| `#carry` | The message survives a context compaction: right after one, the agent is given it back whole, with its reply. | Pins › Carried |
+| `#carry-brief` | The message survives a compaction as a brief the agent writes now; the brief is given back instead of the message. | Pins › Carried |
+| `#fork-later` | Keeps the message as work another agent could take later, with the command that starts it from this chat. | Pins › Fork later |
 
 **Undo a mistake**
 

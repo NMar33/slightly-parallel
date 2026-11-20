@@ -41,7 +41,7 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies (the pinned versions users get, plus the test tools)
         run: pip install -r requirements.lock -r requirements-dev.txt
-      - name: tmux (the terminal's tests skip without it; the terminal runs on macOS and Linux only)
+      - name: tmux (the terminal's tmux tests skip without it; Windows has none, its terminal is a ConPTY)
         if: runner.os != 'Windows'
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux; else brew install tmux; fi
@@ -284,6 +284,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: "No two paths differ only by case (one file on macOS and Windows: scripts/ci/case_clash_check.py)"
+        run: python3 ../scripts/ci/case_clash_check.py
       - name: Install dependencies
         run: npm ci
       - name: Lint
@@ -491,7 +493,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Git identity (the test makes commits in its sample projects)
         run: git config --global user.email ci@example.com && git config --global user.name CI
-      - name: tmux (the terminal stage; the terminal runs on macOS and Linux only)
+      - name: tmux (the terminal stage; Windows has none, its terminal is plain, a ConPTY)
         if: runner.os != 'Windows'
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux; else brew install tmux; fi

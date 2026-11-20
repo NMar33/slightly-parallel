@@ -186,3 +186,75 @@ def test_a_retired_setting_in_settings_json_still_loads(env) -> None:
     stored = json.loads((data_root / "settings.json").read_text(encoding="utf-8"))
     assert "daily_activity_days" not in stored["overview"]
     assert stored["overview"]["recent_activity_limit"] == 9
+
+
+def test_terminal_scheme_round_trips_and_refuses_an_unknown_one(env) -> None:
+    """Settings › Terminal › Colour scheme: sp-now (the colours as they were)
+    until the operator picks; a pick and its scope are stored and read back;
+    an unknown id or scope is refused and changes nothing."""
+    client, data_root = env
+    by_key = lambda: {s["key"]: s["value"] for g in client.get("/api/settings").json()["groups"] for s in g["settings"]}  # noqa: E731
+    assert by_key()["terminal.scheme"] == "sp-now"
+    assert by_key()["terminal.scheme_scope"] == "terminal"
+    r = client.post("/api/settings", json={"values": {"terminal.scheme": "catppuccin-latte", "terminal.scheme_scope": "window"}})
+    assert r.status_code == 200
+    assert by_key()["terminal.scheme"] == "catppuccin-latte"
+    assert by_key()["terminal.scheme_scope"] == "window"
+    stored = json.loads((data_root / "settings.json").read_text(encoding="utf-8"))
+    assert stored["terminal"]["scheme"] == "catppuccin-latte"
+    before = (data_root / "settings.json").read_text(encoding="utf-8")
+    for bad in ({"terminal.scheme": "solarized"}, {"terminal.scheme_scope": "everything"}, {"terminal.scheme": ["nord"]}):
+        assert client.post("/api/settings", json={"values": bad}).status_code == 422
+    assert (data_root / "settings.json").read_text(encoding="utf-8") == before
+
+
+def test_terminal_resource_settings_persist_with_ordered_thresholds(env) -> None:
+    client, data_root = env
+    defaults = {
+        "terminal.resource_meter": True, "terminal.resource_color": True,
+        "terminal.resource_yellow": 75, "terminal.resource_red": 90,
+        "terminal.resource_green_enabled": True, "terminal.resource_yellow_enabled": True,
+        "terminal.resource_red_enabled": True,
+    }
+
+    def read_values():
+        return {
+            s["key"]: s["value"] for g in client.get("/api/settings").json()["groups"]
+            for s in g["settings"] if s["key"] in defaults
+        }
+
+    assert read_values() == defaults
+    updates = {
+        **defaults,
+        "terminal.resource_meter": False, "terminal.resource_color": False,
+        "terminal.resource_yellow": 45, "terminal.resource_red": 60,
+        "terminal.resource_red_enabled": False,
+    }
+    assert client.post("/api/settings", json={"values": updates}).status_code == 200
+    assert read_values() == updates
+    stored = (data_root / "settings.json").read_bytes()
+
+    for bad in ({"terminal.resource_yellow": 61}, {"terminal.resource_red": 45}, {"terminal.resource_red": 101}):
+        values = {**bad, "terminal.resource_meter": True}
+        assert client.post("/api/settings", json={"values": values}).status_code == 422
+        assert (data_root / "settings.json").read_bytes() == stored
+
+    # A bad pair written by hand must not affect visibility or color controls.
+    (data_root / "settings.json").write_text(json.dumps({"terminal": {
+        "resource_meter": False, "resource_color": False, "resource_yellow": 60, "resource_red": 45,
+    }}), encoding="utf-8")
+    assert read_values() == {**defaults, "terminal.resource_meter": False, "terminal.resource_color": False}
+
+
+def test_terminal_restore_windows_defaults_to_restore_and_takes_the_three_choices(env) -> None:
+    """Settings › Terminal › On start, which the terminal window reads at start
+    (desktop/main.js, a plain GET without the operator's cookie): restore
+    until the operator picks; ask and main are stored; anything else is
+    refused."""
+    client, data_root = env
+    by_key = lambda: {s["key"]: s["value"] for g in client.get("/api/settings").json()["groups"] for s in g["settings"]}  # noqa: E731
+    assert by_key()["terminal.restore_windows"] == "restore"
+    for choice in ("ask", "main", "restore"):
+        assert client.post("/api/settings", json={"values": {"terminal.restore_windows": choice}}).status_code == 200
+        assert by_key()["terminal.restore_windows"] == choice
+    assert client.post("/api/settings", json={"values": {"terminal.restore_windows": "all"}}).status_code == 422

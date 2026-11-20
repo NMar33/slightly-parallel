@@ -577,6 +577,38 @@ def commits_signed(project: str = "", days: int = 7, store: ViewStore = Depends(
     return {"days": days, "projects": out}
 
 
+#: The longest diff the commit read hands back whole; past it, cut and said so.
+COMMIT_DIFF_MAX = 400_000
+
+
+@router.get("/api/git/commit")
+def git_commit(repo: str = "", sha: str = "", diff: bool = False, store: ViewStore = Depends(get_store)) -> dict:
+    """One commit of a project's repository, read only: ``repo`` is a
+    project code (never a path; the folder is the one the project is
+    registered with), ``sha`` 7–40 hex. Its subject, author and date, files
+    with lines added and removed, its ``Task:`` and ``Agent:`` lines; with
+    ``diff=1`` the whole change too. 404 for a project with no repository
+    or a hash that is not one of its commits. The terminal window asks this
+    before it underlines a hash it printed."""
+    from ..file_entries import project_repo
+    from .deps import known_project
+
+    code = known_project(store, repo)
+    folder = project_repo(store, code)
+    if folder is None:
+        raise not_found("repository of project", code)
+    c = gitwork.one_commit(folder, str(sha).strip().lower())
+    if c is None:
+        raise not_found("commit", str(sha)[:40])
+    out: dict[str, Any] = {**c.as_dict(), "sha": c.sha, "short": c.sha[:7], "project": code}
+    if diff:
+        got = gitwork.diff(folder, c.sha, None)
+        text = (got or {}).get("diff") or ""
+        out["diff"] = text[:COMMIT_DIFF_MAX]
+        out["diff_cut"] = len(text) > COMMIT_DIFF_MAX
+    return out
+
+
 @router.get("/api/tasks/{task_id}/evidence")
 def evidence_list(
     task_id: str,

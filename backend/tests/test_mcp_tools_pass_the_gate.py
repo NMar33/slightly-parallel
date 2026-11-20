@@ -44,6 +44,10 @@ ARGS: dict[str, dict[str, Any]] = {
     "entrypoint_ask": {"id": "ep_none", "name": "the install film"},
     "entrypoint_answer": {"number": 1},
     "task_topic": {"id": "tk_none", "topic": "ep_none"},
+    "carry_brief": {"turn": 1, "text": "x"},
+    "note_write": {"text": "# A note", "kind": "context"},
+    "note_image": {"id": "nt_none", "path": __file__},
+    "message": {"to": "cc-none000", "text": "x"},
 }
 
 

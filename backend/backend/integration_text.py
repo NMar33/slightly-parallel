@@ -34,8 +34,12 @@ CURSOR_EVENTS = ("beforeSubmitPrompt", "afterAgentResponse", "stop")
 CAPTURE_EVENTS = ("UserPromptSubmit", "Stop")
 #: Claude Code's, with the two that only record the tokens read so far: the
 #: session ended, or the turn ended on an API error (Stop does not come then;
-#: https://code.claude.com/docs/en/hooks, SessionEnd and StopFailure).
-CLAUDE_EVENTS = (*CAPTURE_EVENTS, "SessionEnd", "StopFailure")
+#: https://code.claude.com/docs/en/hooks, SessionEnd and StopFailure); and
+#: SessionStart after a compaction, whose output joins the context: the
+#: chat's #carry and #carry-brief messages are given back there.
+CLAUDE_EVENTS = (*CAPTURE_EVENTS, "SessionEnd", "StopFailure", "SessionStart")
+#: The events our entry fires on only for one source (the hook's matcher).
+HOOK_MATCHERS: dict[str, str] = {"SessionStart": "compact"}
 
 
 def _hook_commands(entry) -> list[str]:
@@ -50,8 +54,11 @@ def _hook_commands(entry) -> list[str]:
     return out
 
 
-def _hook_entry(command: str) -> dict:
-    return {"hooks": [{"type": "command", "command": command}]}
+def _hook_entry(command: str, event: str = "") -> dict:
+    entry: dict = {"hooks": [{"type": "command", "command": command}]}
+    if event in HOOK_MATCHERS:
+        entry = {"matcher": HOOK_MATCHERS[event], **entry}
+    return entry
 
 
 def _ours(text: str) -> bool:
@@ -109,7 +116,7 @@ def _upsert_hooks(
                             h["command"] = command
                             changed = True
         else:
-            entries.append(_hook_entry(command))
+            entries.append(_hook_entry(command, event))
             changed = True
     new_text = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
     if not existing_text.strip():

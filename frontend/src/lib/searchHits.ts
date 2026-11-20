@@ -38,7 +38,7 @@ const ROUTE: Record<string, (id: string) => string> = {
   problem: (id) => `/problems#${id}`,
   rule: (id) => `/rules#${id}`,
   vision: (id) => `/visions#${id}`,
-  entrypoint: (id) => `/entrypoints#${id}`,
+  entrypoint: (id) => `/entrypoints?topic=${encodeURIComponent(id)}`,
   skill: (id) => `/skills#${id}`,
   artifact: (id) => `/artifacts#${id}`,
   sprint: (id) => `/sprints#${id}`,

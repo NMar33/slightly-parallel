@@ -52,6 +52,7 @@ const HELPER = (typeof process !== 'undefined' && Array.isArray(process.argv) &&
 
 export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   const seen = new Set()
+  const typed = new Map()
   const cwd = directory || ((typeof process !== 'undefined' && process.cwd) ? process.cwd() : '')
 
   const textOf = (parts) =>
@@ -65,16 +66,41 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   // are the time (ses_eb5cc9…, ses_eb5cc1…): sessions minutes apart shared
   // them and became one agent. Lower case: the rest are letters of both
   // cases, and on macOS and Windows a folder name ignores case.
+  // A child session — the one OpenCode's task tool opens for a subagent —
+  // gets its prompt from the parent agent, not from the operator: OpenCode
+  // fires chat.message for it as for a typed message. Such a session is a
+  // helper chat ("opencode-subagent"), its parent the chat that started it:
+  // recorded, and no command in it acts. Asked once per session.
+  const parents = new Map()
+  const parentOf = async (sessionID) => {
+    const sid = String(sessionID || '')
+    if (!sid) return ''
+    if (parents.has(sid)) return parents.get(sid)
+    let parent = ''
+    try {
+      const res = await client.session.get({ path: { id: sid } })
+      const info = (res && (res.data || res)) || {}
+      parent = String(info.parentID || info.parentId || '')
+    } catch {
+      /* not known: the operator's chat, as before (never drop a turn on a guess) */
+    }
+    parents.set(sid, parent)
+    return parent
+  }
+  const agentOf = (sessionID) => 'oc-' + String(sessionID || 'unknown').slice(-8).toLowerCase()
+
   const run = async (phase, sessionID, text, extra = [], more = null) => {
     try {
       const sid = String(sessionID || 'unknown')
+      const parent = HELPER ? '' : await parentOf(sid)
+      const helper = HELPER ? { helper: HELPER } : (parent ? { helper: 'opencode-subagent', helper_of: agentOf(parent) } : {})
       // Everything on stdin, as one JSON: as arguments a long paste, and
       // later the times of a long session (every message's, and every
       // helper's), passed the system's limit on a command line — 32 767
       // characters on Windows — the process never started, and the message
       // or the reply was lost without a word.
-      const input = JSON.stringify({ text: String(text || ''), ...(more || {}), ...(HELPER ? { helper: HELPER } : {}) })
-      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${'oc-' + sid.slice(-8).toLowerCase()} --json-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(input)}`.quiet()
+      const input = JSON.stringify({ text: String(text || ''), ...(more || {}), ...helper })
+      const out = await $`${SP.python} ${SP.captureCli} --phase ${phase} --project ${SP.project} --data-root ${SP.dataRoot} --agent ${agentOf(sid)} --json-stdin --tool opencode --session ${sid} --cwd ${cwd} ${extra} < ${new Response(input)}`.quiet()
       return out.text().trim()
     } catch {
       /* capture must never break the session */
@@ -240,6 +266,21 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
     config: async (cfg) => {
       if (cfg && typeof cfg === 'object') await helperAgents(cfg)
     },
+    // A custom command (/name arguments): OpenCode writes the command's
+    // template, filled in, as the message's text before chat.message fires.
+    // The operator typed "/name arguments", and only that is theirs: a tag
+    // in the template is no command of theirs (Claude Code's hook, too, gets
+    // the typed line, not the command's body). Kept here, read once by the
+    // chat.message that follows in the same session.
+    'command.execute.before': async (input) => {
+      try {
+        const sessionID = input && input.sessionID
+        const name = String((input && input.command) || '').trim()
+        if (sessionID && name) typed.set(String(sessionID), ('/' + name + ' ' + String((input && input.arguments) || '')).trim())
+      } catch {
+        /* never throw into the host */
+      }
+    },
     'chat.message': async (input, output) => {
       try {
         const msg = (output && output.message) || {}
@@ -247,7 +288,9 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         const key = 'user:' + (msg.id || (input && input.messageID) || '')
         if (key !== 'user:' && seen.has(key)) return
         seen.add(key)
-        const text = textOf(output && output.parts)
+        const command = typed.get(String(sessionID || ''))
+        typed.delete(String(sessionID || ''))
+        const text = command || textOf(output && output.parts)
         // OpenCode waits for this hook before it sends the prompt: a capture
         // that hangs (a stalled disk) must not hold the prompt. Past the wait
         // the notice is left out; the capture itself still finishes.

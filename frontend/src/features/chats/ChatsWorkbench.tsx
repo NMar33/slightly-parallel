@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Clock, ExternalLink, Focus } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -27,6 +27,8 @@ import { ChatSettings, SettingsButton } from './ChatSettings'
 import { isGroupKey } from '../../lib/groups'
 import { messageTarget, useMarks, useMarkToggle } from '../../lib/marks'
 import { StarButton } from '../../components/StarButton'
+import { MsgMarkButtons } from '../../components/MsgMarkButtons'
+import { ChatPins } from './ChatPins'
 import { agentLines, gapLabel, ofAgent, producedWords, toSession, type Row } from './data'
 import { USAGE_PREF_KEY, paneColumns, readChatsPrefs, storeChatsPrefs, type ChatsPrefs } from './prefs'
 
@@ -212,6 +214,19 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // The pin, carry and fork buttons on each message: stable, so the reader's
+  // messages are not drawn again on every render (the buttons read the marks).
+  const msgExtra = useCallback((sid: string, n: number, who: 'user' | 'agent', full: string) => {
+    const row = (sessions.find((s) => s.id === sid) ?? cur) as Row | undefined
+    if (!row) return null
+    return (
+      <MsgMarkButtons msg={{
+        agent_id: row.agent_id, turn: n, side: who === 'agent' ? 'reply' : '', project: row.project, session_id: sid,
+        excerpt: full.split('\n').find((l) => l.trim())?.trim().slice(0, 160) ?? '',
+      }} />
+    )
+  }, [sessions, cur])
+
   const { open: openDrawer, drawer } = useDrawer()
   const { open: openTask, modal } = useTaskOpener(cur?.project ?? project)
 
@@ -317,6 +332,13 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
       )}
 
       {cur && (
+        <ChatPins agentId={cur.agent_id} onGo={(m) => {
+          const known = sessions.some((s) => s.id === m.session_id)
+          setHash({ sel: all || !known ? cur.id : m.session_id, turn: String(m.turn) })
+        }} />
+      )}
+
+      {cur && (
         <div
           className="grid gap-12 min-w-0 h-[72vh] min-h-[420px]"
           style={{ gridTemplateColumns: all ? 'minmax(0, 1fr)' : paneColumns(prefs.width) }}
@@ -391,6 +413,7 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
                     })} />
                 )
               }}
+              msgExtra={msgExtra}
               find={hash.q ?? ''}
               onFind={(v) => setHash({ q: v })}
               reading={{ size: prefs.chat, md: prefs.md, reverse: prefs.order === 'newest', work: prefs.work, usage: prefs.usage }}

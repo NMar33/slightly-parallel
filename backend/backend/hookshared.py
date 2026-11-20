@@ -49,12 +49,140 @@ NOT_OPERATOR: tuple[str, ...] = (
     "<command-",
     "Another Claude session sent a message",
     "<agent-message",
+    # Another session's message (SendMessage across sessions), Claude Code
+    # 2.1.3xx: a queued_command of origin "peer" whose prompt opens so. The
+    # prompt hook fires for it as for a typed message, before any record
+    # with its origin is written: only the prefix tells it.
+    "<cross-session-message",
+    # A helper stopped from the tasks panel (a queued_command with no origin,
+    # commandMode "task-notification"; reached chat.md as a turn in 2.1.2xx).
+    'Background agent "',
+    # A message another agent sent through Slightly Parallel, as chat.md
+    # keeps it once the hook has checked its marker against the ledger
+    # (msgledger.py wrap): the sender's words, never the operator's command.
+    "<sp-message",
 )
 
 #: The tool's own bookkeeping inside a Claude Code transcript — "user"
 #: records that are no prompt. Only for reading transcripts: a person may
 #: well open a message with "Caveat:", so the hook does not skip on it.
 TRANSCRIPT_NOISE: tuple[str, ...] = ("<command-", "<local-command", "Caveat:")
+
+#: Records of a Claude Code transcript that never reach the prompt hook, so
+#: a chat recorded live has no turn for them: "[Request interrupted …" (the
+#: tool's note when Esc stops a reply) and a "!" shell line with its output
+#: (<bash-input>, <bash-stdout>). A chat read from the log afterwards
+#: (sessionimport.py) leaves them out the same way.
+NO_PROMPT: tuple[str, ...] = ("[Request interrupted", "<bash-")
+
+#: Where a Claude Code prompt came from, as its transcript record says
+#: (``turnOrigin``, ``origin.kind``): the operator is "human"; ``claude -p``
+#: and the Agent SDK are "sdk" (a helper chat, HELPER_KINDS). The rest the
+#: tool wrote itself: a scheduled task's prompt (CronCreate, ScheduleWakeup),
+#: a background task's notification, a message from another session or a
+#: helper (SendMessage, a subagent's report), the "usage limit has reset,
+#: continue" prompt.
+OPERATOR_ORIGINS = frozenset({"human", "sdk"})
+TOOL_ORIGINS = frozenset({"scheduled", "task_notification", "task-notification", "peer",
+                          "auto_continuation", "auto-continuation"})
+#: Origins seen only inside a subagent's own transcript (a coordinator's
+#: brief): never at the prompt hook, and a sidechain the importer skips.
+#: Not skipped by the rule — a coordinated session that did reach the hook
+#: would otherwise record nothing — but known to the probe.
+SUBAGENT_ORIGINS = frozenset({"coordinator"})
+#: ``promptSource`` of the operator's prompts (typed, a suggestion taken, a
+#: prompt queued while the agent worked) and of the rest.
+OPERATOR_SOURCES = frozenset({"typed", "suggestion_accepted", "queued", "sdk"})
+
+
+def _origin_kind(rec: dict[str, Any]) -> str:
+    o = rec.get("origin")
+    return str(o.get("kind") or "") if isinstance(o, dict) else ""
+
+
+def tool_wrote(rec: Any) -> bool:
+    """A Claude Code transcript "user" record (or a prompt hook's payload)
+    the tool put in the chat itself, not the operator typing — as the record
+    says: ``isMeta``, ``promptSource`` "system", an origin the tool names
+    (TOOL_ORIGINS), a wake-up or a scheduled task's id, a queued
+    notification (``commandMode``, queued_prompt). The one rule the
+    prompt hook, the importer and the capture check read. A record with none
+    of these (one with an origin this list does not know yet included) is
+    the operator's: a message is never dropped on a guess, and the probe in
+    tests/test_injected_prompts.py fails when the newest local transcript
+    holds an origin or a source these lists do not know."""
+    if not isinstance(rec, dict):
+        return False
+    if rec.get("isMeta") or str(rec.get("promptSource") or "") == "system":
+        return True
+    if rec.get("wakeupSource") or rec.get("scheduledTaskId"):
+        return True
+    if str(rec.get("commandMode") or "") == "task-notification":
+        return True
+    return str(rec.get("turnOrigin") or "") in TOOL_ORIGINS or _origin_kind(rec) in TOOL_ORIGINS
+
+
+#: ``commandMode`` of a queued_command (QUEUED): the operator's message is
+#: "prompt"; "task-notification" the tool's (a background task done, a
+#: helper stopped). An older build wrote none.
+QUEUED_MODES = frozenset({"prompt", "task-notification", ""})
+
+
+def queued_prompt(rec: Any) -> dict[str, Any] | None:
+    """A message Claude Code delivered into a running turn, as a "user"
+    record — None for any other record.
+
+    A message the operator types while the agent works is not written as a
+    "user" record: it is an ``attachment`` of type ``queued_command`` (its
+    text in ``prompt``, ``origin.kind`` "human", ``commandMode`` "prompt"),
+    written when it reaches the model, with the time it was typed. The
+    prompt hook fires earlier, as it is typed: then the transcript holds
+    only a ``queue-operation`` "enqueue" with the words and no origin, so
+    the hook tells the tool's messages by their prefix (NOT_OPERATOR). A
+    message typed after the turn ended is sent as a "user" record with
+    ``promptSource`` "queued", and no prompt event comes for it then.
+    Another session's message, a background task's notification and a
+    helper's report come as queued_command too, with their own origin. The record answered has the attachment's marks where
+    tool_wrote and is_human_prompt read them, so every reader (the hook,
+    the importer, the capture check) judges both shapes by one rule."""
+    if not isinstance(rec, dict) or rec.get("type") != "attachment":
+        return None
+    a = rec.get("attachment")
+    if not isinstance(a, dict) or a.get("type") != "queued_command":
+        return None
+    text = a.get("prompt")
+    if isinstance(text, list):  # parts, in case a build sends them
+        text = "\n".join(str(p.get("text") or "") for p in text if isinstance(p, dict) and p.get("type") == "text")
+    if not isinstance(text, str):
+        return None
+    out: dict[str, Any] = {"type": "user", "message": {"role": "user", "content": text}, "queued": True,
+                           "commandMode": str(a.get("commandMode") or "")}
+    for key in ("uuid", "timestamp", "isSidechain", "forkedFrom", "sessionId"):
+        if key in rec:
+            out[key] = rec[key]
+    for key in ("origin", "isMeta"):
+        if key in a:
+            out[key] = a[key]
+    return out
+
+
+def prompt_record(rec: Any) -> dict[str, Any] | None:
+    """A transcript record as a prompt: a "user" record that is no tool
+    result as it is, a queued message (queued_prompt) as a "user" record;
+    None for anything else. Whose it is, tool_wrote says."""
+    if not isinstance(rec, dict):
+        return None
+    if rec.get("type") == "user":
+        return rec if is_human_prompt(rec) else None
+    return queued_prompt(rec)
+
+
+def operator_wrote(text: str) -> bool:
+    """A prompt's text that may be the operator's: not one the tool hands in
+    under a prefix of its own (NOT_OPERATOR). Every adapter's turn reads its
+    commands only from such a text (capture.py open_turn), as the server
+    does (sessions._operator_text)."""
+    return not (text or "").lstrip().startswith(NOT_OPERATOR)
 
 
 # ---------------------------------------------------------------------------
@@ -750,7 +878,7 @@ def tracked_cores(data_root: Any, project: str) -> list[dict[str, str]]:
 # a Claude Code inside a Codex …): the one started last is the nearest. A
 # candidate whose time is unknown beside another: no parent, never a guess.
 
-HELPER_KINDS = ("codex-exec", "codex-subagent", "claude-print", "opencode-run")
+HELPER_KINDS = ("codex-exec", "codex-subagent", "claude-print", "opencode-run", "opencode-subagent", "cursor-print")
 
 
 def codex_helper_kind(meta_line: Any) -> tuple[str, str]:
@@ -788,6 +916,70 @@ def claude_helper_kind(entrypoint: Any) -> str:
     """"claude-print" for a Claude Code run that is no interactive chat
     (``claude -p``, a program on the Agent SDK), else ""."""
     return "claude-print" if str(entrypoint or "").startswith("sdk") else ""
+
+
+def process_args(pid: int) -> list[str]:
+    """The command line ``pid`` was started with; [] when it cannot be read
+    (Windows, a process gone). Linux reads /proc; elsewhere one ``ps`` call,
+    split at spaces (enough for the flags read here)."""
+    try:
+        if os.name == "nt" or pid <= 1:
+            return []
+        if os.path.isdir(f"/proc/{pid}"):
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                return [a.decode("utf-8", "replace") for a in f.read().split(b"\0") if a]
+        import subprocess
+        got = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=2)
+        return got.stdout.split()
+    except (OSError, ValueError, Exception):  # noqa: BLE001 — unknown is no helper
+        return []
+
+
+def codex_daemon_above(pids: list[int] | None = None, args_of: Any = None) -> bool:
+    """This hook runs under Codex's shared app-server daemon (``codex
+    app-server … --managed-daemon``, Codex 0.170): the daemon runs the hooks
+    of every Codex chat and keeps the environment of the terminal it was
+    started from, so its SP_TERMINAL names no chat's terminal. ``pids``: the
+    hook's ancestors (read when not given)."""
+    read = args_of or process_args
+    for pid in ancestors() if pids is None else pids:
+        argv = read(pid)
+        name = os.path.basename(str(argv[0]).replace("\\", "/")).lower() if argv else ""
+        if name.startswith("codex") and "app-server" in argv[1:] and "--managed-daemon" in argv[1:]:
+            return True
+    return False
+
+
+#: Cursor's CLI is ``cursor-agent`` (also linked as ``agent``), a Node
+#: program under ``~/.local/share/cursor-agent``; ``-p`` / ``--print`` is its
+#: non-interactive mode, the one a script or another agent runs.
+_CURSOR_CLI = "cursor-agent"
+_PRINT_FLAGS = ("-p", "--print")
+
+
+def cursor_print_run(argv: list[str]) -> bool:
+    """A command line that is Cursor's CLI in print mode: some word of it
+    names cursor-agent (the launcher, or the Node script it runs) and a
+    word after it is -p or --print."""
+    for i, word in enumerate(argv):
+        if _CURSOR_CLI in word.replace("\\", "/").lower():
+            return any(a in _PRINT_FLAGS or a.startswith("--print=") for a in argv[i + 1:])
+    return False
+
+
+def cursor_helper_kind(pids: list[int] | None = None, args_of: Any = None) -> str:
+    """"cursor-print" for a Cursor chat that is a ``cursor-agent -p`` run
+    (a script's, another agent's), else "". Cursor's hook events say
+    nothing of it (https://cursor.com/docs/agent/hooks: no field, no
+    variable), so the hook's ancestors are read: the CLI that started it
+    has the flag on its command line; the editor never does. ``pids``: the
+    ancestors, nearest first (read when not given)."""
+    read = args_of or process_args
+    for pid in ancestors() if pids is None else pids:
+        if cursor_print_run(read(pid)):
+            return "cursor-print"
+    return ""
 
 
 def claude_entrypoint(transcript: Any, max_lines: int = 40) -> str:
@@ -1732,3 +1924,326 @@ def statusline_then_command(rec: dict[str, Any] | None) -> str:
         if command:
             return command
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Marks on a message: #pin, #carry, #carry-brief, #fork-later
+# ---------------------------------------------------------------------------
+
+#: The four tags that mark one message (the server's marklib.py adopts them
+#: into marks.csv, like ``#important``). Longest first in the alternation, so
+#: ``#carry-brief`` is never read as ``#carry``; ``(?![\w-])`` keeps
+#: ``#carry-on`` and ``#pinned`` out.
+MESSAGE_MARK_RE = re.compile(r"(?<![\w#])#(carry-brief|fork-later|carry|pin)(?![\w-])", re.IGNORECASE)
+#: Tag → the mark's kind in marks.csv.
+MESSAGE_MARK_KINDS: dict[str, str] = {"pin": "pin", "carry": "carry", "carry-brief": "carry-brief",
+                                      "fork-later": "fork"}
+#: The two levels of a message carried over a compaction: whole (with the
+#: reply that followed it), or the brief the agent wrote for it.
+CARRY_KINDS: tuple[str, ...] = ("carry", "carry-brief")
+#: The file beside a chat that records each time carried messages were
+#: given back after a compaction (one JSON line each).
+CARRIED_FILE = "carried.jsonl"
+#: The ledger of the briefs agents write for #carry-brief messages.
+BRIEFS_CSV = "carry_briefs.csv"
+MARKS_CSV = "marks.csv"
+#: The agent's reply side of a turn, in a mark's target: ``<agent>#<turn>/reply``.
+REPLY_SIDE = "reply"
+_TARGET_RE = re.compile(r"^(.+)#(\d+)(?:/(reply))?$")
+
+
+def message_mark_kinds(text: str) -> list[str]:
+    """The kinds of the message marks an operator's message carries, in
+    order, once each; none for a message the tool wrote (NOT_OPERATOR). The
+    message is read as the commands read it (``###``, ``#mute``)."""
+    if not text or text.lstrip().startswith(NOT_OPERATOR):
+        return []
+    out: list[str] = []
+    for m in MESSAGE_MARK_RE.finditer(command_text(text)):
+        kind = MESSAGE_MARK_KINDS[m.group(1).lower()]
+        if kind not in out:
+            out.append(kind)
+    return out
+
+
+def mark_target(agent_id: str, turn: Any, side: str = "") -> str:
+    """A message's name: ``<agent>#<turn>``, the reply ``<agent>#<turn>/reply``."""
+    return f"{agent_id}#{int(turn or 0)}" + (f"/{REPLY_SIDE}" if side == REPLY_SIDE else "")
+
+
+def parse_target(target: str) -> tuple[str, int, str] | None:
+    """(agent, turn, side) of a message's name; None when it is none."""
+    m = _TARGET_RE.match(str(target or ""))
+    return (m.group(1), int(m.group(2)), m.group(3) or "") if m else None
+
+
+def tag_mark_id(kind: str, target: str, agent_id: str, turn: Any) -> str:
+    """The id marklib gives the mark a tag makes (marklib._id): the hook
+    names the same mark before the server has adopted it."""
+    seed = "|".join(str(p) for p in (kind, target, agent_id, int(turn or 0)))
+    return "mk_" + hashlib.sha256(seed.encode()).hexdigest()[:8]
+
+
+_CHAT_TURN_RE = re.compile(r"^## Turn (\d+) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+_CHAT_ESCAPED_RE = re.compile(r"^\\(## Turn \d+ · |\*\*User\*\*: ?|\*\*Agent\*\*: ?)")
+_CHAT_USER_RE = re.compile(r"^\*\*User\*\*: ?(.*)")
+_CHAT_AGENT_RE = re.compile(r"^\*\*Agent\*\*: ?(.*)")
+
+
+def chat_turns(chat_path: Any) -> list[tuple[int, str, str, str]]:
+    """(turn, at, user, agent) of every turn of a chat.md — the server's
+    sessions.parse_chat, read the same way (a test holds the two equal)."""
+    try:
+        text = Path(chat_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out: list[tuple[int, str, str, str]] = []
+    head: tuple[int, str] | None = None
+    user: list[str] = []
+    agent: list[str] = []
+    mode = ""
+
+    def flush() -> None:
+        if head is not None:
+            out.append((head[0], head[1], "\n".join(user).strip(), "\n".join(agent).strip()))
+
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    for line in lines:
+        m = _CHAT_TURN_RE.match(line)
+        if m:
+            try:
+                datetime.fromisoformat(m.group(2))
+            except ValueError:
+                continue
+            flush()
+            head, user, agent, mode = (int(m.group(1)), m.group(2)), [], [], ""
+            continue
+        if head is None:
+            continue
+        mu = _CHAT_USER_RE.match(line)
+        if mu:
+            mode = "user"
+            user.append(mu.group(1))
+            continue
+        ma = _CHAT_AGENT_RE.match(line)
+        if ma:
+            mode = "agent"
+            agent.append(ma.group(1))
+            continue
+        if _CHAT_ESCAPED_RE.match(line):
+            line = line[1:]
+        if mode == "user":
+            user.append(line)
+        elif mode == "agent":
+            agent.append(line)
+    flush()
+    return out
+
+
+def _csv_rows(path: Path) -> list[dict[str, str]]:
+    import csv
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            rd = csv.DictReader(fh)
+            rd.fieldnames = [f.strip() for f in rd.fieldnames or []]
+            return list(rd)
+    except (OSError, csv.Error):
+        return []
+
+
+def briefs_of(data_root: Any, agent_id: str = "") -> dict[str, dict[str, str]]:
+    """The newest brief of each carried message (by target), of one chat or all."""
+    out: dict[str, dict[str, str]] = {}
+    for r in sorted(_csv_rows(Path(data_root) / BRIEFS_CSV), key=lambda r: r.get("written_at") or ""):
+        if agent_id and (r.get("agent_id") or "") != agent_id:
+            continue
+        if (r.get("text") or "").strip():
+            out[str(r.get("target") or "")] = r
+    return out
+
+
+def carry_marks(data_root: Any, agent_id: str, turns: list[tuple[int, str, str, str]] | None = None,
+                helper: bool = False) -> list[dict[str, str]]:
+    """The carried messages of one chat in force: the marks in marks.csv
+    (one per message, the newest; none unmarked), and, when ``turns`` are
+    given, a #carry / #carry-brief tag in a turn the server has not adopted
+    yet. A message marked both ways is carried whole. A helper chat's tags
+    do nothing (the server reads them the same way)."""
+    rows = [r for r in _csv_rows(Path(data_root) / MARKS_CSV)
+            if (r.get("kind") or "") in CARRY_KINDS and (r.get("target") or "").startswith(agent_id + "#")]
+    known = {str(r.get("id") or "") for r in rows}
+    newest: dict[tuple[str, str], dict[str, str]] = {}
+    for r in sorted(rows, key=lambda r: r.get("marked_at") or ""):
+        newest[(str(r["kind"]), str(r["target"]))] = r
+    live = {k: r for k, r in newest.items() if not (r.get("removed_at") or "").strip()}
+    for n, at, said, _reply in ([] if helper else turns or []):
+        for kind in message_mark_kinds(said):
+            if kind not in CARRY_KINDS:
+                continue
+            target = mark_target(agent_id, n)
+            mid = tag_mark_id(kind, target, agent_id, n)
+            if mid in known or (kind, target) in newest:
+                continue
+            live[(kind, target)] = {"id": mid, "kind": kind, "target": target, "agent_id": agent_id,
+                                    "turn": str(n), "marked_at": at, "source": "tag", "removed_at": ""}
+    by_target: dict[str, dict[str, str]] = {}
+    for (kind, target), r in live.items():
+        if kind == "carry" or target not in by_target:
+            by_target[target] = r
+    return sorted(by_target.values(), key=lambda r: r.get("marked_at") or "", reverse=True)
+
+
+def briefs_owed(data_root: Any, agent_id: str) -> list[str]:
+    """The #carry-brief messages of this chat whose brief is not written
+    (from marks.csv: a tag of this turn the caller adds itself)."""
+    have = briefs_of(data_root, agent_id)
+    return [str(r["target"]) for r in carry_marks(data_root, agent_id)
+            if r.get("kind") == "carry-brief" and str(r["target"]) not in have]
+
+
+# A task made from a message (the terminal's message menu) ---------------
+#: The ledger of the titles that wait for a chat's agent (titlelib.py writes
+#: it, the hook reads it): one row per change, the newest per task counts.
+TITLES_CSV = "task_titles.csv"
+TITLE_COLUMNS: tuple[str, ...] = ("id", "task_id", "project", "agent_id", "turn", "side", "provisional",
+                                  "state", "at", "by")
+#: The title waits for the source chat's agent; it was given by that agent;
+#: the operator renamed the task first.
+TITLE_WAITING, TITLE_BY_AGENT, TITLE_BY_OPERATOR = "waiting", "agent", "operator"
+
+
+def title_states(data_root: Any) -> dict[str, dict[str, str]]:
+    """The newest ledger row of each task made from a message, by task id."""
+    out: dict[str, dict[str, str]] = {}
+    for r in _csv_rows(Path(data_root) / TITLES_CSV):
+        tid = str(r.get("task_id") or "")
+        if tid:
+            out[tid] = r                 # appended in time order: the last one counts
+    return out
+
+
+def title_waits(data_root: Any, agent_id: str) -> list[dict[str, str]]:
+    """The tasks made from this chat's messages whose title still waits for its agent."""
+    return [r for r in title_states(data_root).values()
+            if r.get("state") == TITLE_WAITING and (r.get("agent_id") or "") == agent_id]
+
+
+def _clip_text(text: str, most: int) -> str:
+    return text if len(text) <= most else text[:most].rstrip() + f"\n[… {len(text) - most} more characters]"
+
+
+def carried_items(data_root: Any, agent_id: str, chat_path: Any, *, reply_cap: int,
+                  helper: bool = False) -> list[dict[str, Any]]:
+    """Each carried message of the chat with what is given back for it:
+    ``text`` the message, ``reply`` the reply that followed (capped), or
+    ``brief`` the agent's brief. Whole ones first, then briefs; newest first."""
+    turns = chat_turns(chat_path)
+    by_n = {n: (at, user, agent) for n, at, user, agent in turns}
+    briefs = briefs_of(data_root, agent_id)
+    out: list[dict[str, Any]] = []
+    for r in carry_marks(data_root, agent_id, turns, helper=helper):
+        parsed = parse_target(str(r["target"]))
+        if parsed is None:
+            continue
+        _agent, n, side = parsed
+        at, user, agent = by_n.get(n, ("", "", ""))
+        text = agent if side == REPLY_SIDE else user
+        item: dict[str, Any] = {"target": r["target"], "kind": r["kind"], "turn": n, "side": side,
+                                "at": at, "marked_at": r.get("marked_at") or ""}
+        if r["kind"] == "carry":
+            item["text"] = text
+            if side != REPLY_SIDE and agent:
+                item["reply"] = _clip_text(agent, reply_cap)
+        else:
+            brief = briefs.get(str(r["target"]))
+            item["brief"] = str(brief.get("text") or "") if brief else ""
+            if not item["brief"]:
+                item["text"] = _clip_text(text, 600)
+        out.append(item)
+    out.sort(key=lambda i: (i["kind"] != "carry", -i["turn"], i["side"] == REPLY_SIDE))
+    return out
+
+
+def _item_text(i: dict[str, Any]) -> str:
+    who = "your reply" if i["side"] == REPLY_SIDE else "the operator's message"
+    head = f"### {i['target']} · turn {i['turn']}{' · ' + i['at'].replace('T', ' ')[:16] if i['at'] else ''}"
+    if i["kind"] == "carry":
+        body = f"{head} · #carry: {who}, whole\n{i['text']}"
+        if i.get("reply"):
+            body += f"\n\n**Your reply to it:**\n{i['reply']}"
+        return body
+    if i.get("brief"):
+        return f"{head} · #carry-brief: the brief written for {who}\n{i['brief']}"
+    return (f"{head} · #carry-brief: no brief was written for {who}; its start, then write the brief now "
+            f"(MCP tool carry_brief {{message: \"{i['target']}\", text}})\n{i.get('text') or ''}")
+
+
+def compose_carried(items: list[dict[str, Any]], budget: int) -> tuple[str, list[str], list[str]]:
+    """(the text given back to the agent, the targets in it, the targets
+    left out). Items go in the order given (whole ones first, then briefs,
+    newest first) while they fit ``budget`` characters; one that does not
+    fit is left out and named, and a smaller one after it may still go in."""
+    if not items:
+        return "", [], []
+    head = ("[slightly-parallel] carried — the context was just compacted. The operator marked these messages "
+            "to survive it: #carry gives a message back whole with your reply to it, #carry-brief gives back the "
+            "brief written for it. Read them as part of what you know about this chat before going on.")
+    parts: list[str] = []
+    given: list[str] = []
+    left: list[dict[str, Any]] = []
+    used = len(head)
+    for i in items:
+        block = _item_text(i)
+        if used + len(block) + 2 > budget:
+            left.append(i)
+            continue
+        parts.append(block)
+        given.append(str(i["target"]))
+        used += len(block) + 2
+    if not given:
+        return "", [], [str(i["target"]) for i in left]
+    text = head + "\n\n" + "\n\n".join(parts)
+    if left:
+        named = ", ".join(f"{i['target']} (turn {i['turn']}, #{i['kind']})" for i in left)
+        text += (f"\n\nLeft out, over the {budget}-character budget: {named}. MCP tool pins "
+                 "{kind: \"carry\"} gives every carried message whole.")
+    return text, given, [str(i["target"]) for i in left]
+
+
+def carried_deliveries(folder: Any) -> list[dict[str, Any]]:
+    """Every record of carried messages given back, oldest first."""
+    out: list[dict[str, Any]] = []
+    for raw in tail_lines(Path(folder) / CARRIED_FILE, 1024 * 1024):
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def compactions_in(transcript_path: Any, pos: int = 0) -> list[float]:
+    """When the context was compacted, read from ``pos`` bytes on (the
+    stretch since the last Stop): the compaction boundary records only."""
+    out: list[float] = []
+    try:
+        with open(transcript_path, "rb") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            fh.seek(pos if 0 <= pos <= size else 0)
+            for raw in fh:
+                if b'"compact_boundary"' not in raw:
+                    continue
+                try:
+                    rec = json.loads(raw.decode("utf-8", errors="replace"))
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("subtype") == "compact_boundary":
+                    at = epoch_of(rec.get("timestamp"))
+                    if at is not None:
+                        out.append(at)
+    except (OSError, TypeError):
+        return []
+    return out

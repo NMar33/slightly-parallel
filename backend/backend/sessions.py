@@ -34,7 +34,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .hookshared import NOT_OPERATOR, command_text, plain_text, yymm_dd as _yymm_dd
+from .hookshared import (
+    MESSAGE_MARK_RE, NOT_OPERATOR, command_text, message_mark_kinds, plain_text, yymm_dd as _yymm_dd,
+)
 
 _TURN_RE = re.compile(r"^## Turn (\d+) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 # Quoted structure inside captured content is escaped at write time.
@@ -82,7 +84,8 @@ class Session:
     turn_prints: list[dict] = field(default_factory=list)
     # Turns tagged #vision, #rule, #problem or #skill — kept by keeplib.py.
     keep_marks: list[dict] = field(default_factory=list)
-    # Turns tagged #important[-agent|-task|-message] — marked by marklib.py.
+    # Turns tagged #important[-agent|-task|-message], and the marks on one
+    # message (#pin, #carry, #carry-brief, #fork-later) — marked by marklib.py.
     important_tags: list[dict] = field(default_factory=list)
     # Turns tagged #done — the operator closing a task; donelib.py applies them.
     done_tags: list[dict] = field(default_factory=list)
@@ -467,6 +470,31 @@ def _importants_of(
     return out
 
 
+def _message_marks_of(
+    session_id: str, project: str, agent_id: str, block: list[Turn]
+) -> list[dict]:
+    """One row per message mark (#pin, #carry, #carry-brief, #fork-later)
+    per user turn: its kind is the mark's (pin, carry, carry-brief, fork)."""
+    out: list[dict] = []
+    for t in block:
+        text = _operator_text(t)
+        if not text or "#" not in text:
+            continue
+        kinds = message_mark_kinds(text)
+        if not kinds:
+            continue
+        body = MESSAGE_MARK_RE.sub("", plain_text(text)).strip()
+        head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+        for kind in kinds:
+            out.append({
+                "kind": kind, "project": project, "agent_id": agent_id,
+                "session_id": session_id, "turn": t.number,
+                "at": t.at.strftime("%Y-%m-%dT%H:%M:%S"),
+                "excerpt": _clip(head, 160), "tasks": "",
+            })
+    return out
+
+
 def _dones_of(
     session_id: str, project: str, agent_id: str, block: list[Turn]
 ) -> list[dict]:
@@ -747,7 +775,7 @@ def _close(
         prompt_marks=marks,
         turn_prints=prints,
         keep_marks=_keeps_of(sid, project, agent_id, block),
-        important_tags=_importants_of(sid, project, agent_id, block),
+        important_tags=_importants_of(sid, project, agent_id, block) + _message_marks_of(sid, project, agent_id, block),
         done_tags=_dones_of(sid, project, agent_id, block),
         now_tags=_nows_of(sid, project, agent_id, block, answered_later),
     )

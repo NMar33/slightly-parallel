@@ -5,17 +5,20 @@
  */
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Power, RotateCcw, SquareTerminal, X } from 'lucide-react'
 
 import { Segmented } from '../../components/Segmented'
 import { api, qk } from '../../lib/api'
 import {
-  STATE_COLOR, STATE_WORD, useTerminalActions, useTerminalStatus, type TermSession, type TermState,
+  PYWINPTY, STATE_COLOR, STATE_WORD, useTerminalActions, useTerminalStatus, type TermSession, type TermState,
 } from '../../lib/terminal'
 import { agentLabel } from '../../utils/agentLabel'
 import { useWaitingNotify } from './waiting'
-import { useStrSetting } from '../../lib/settings'
+import { SETTINGS_QUERY_KEY, useStrSetting } from '../../lib/settings'
+import { postJson } from '../../lib/getJson'
+import { termLog, type LogMode } from './telemetry'
+import { TermWindowSettings } from '../aqua/app/tabs/WindowSettings'
 import { t, tn } from '../../i18n/scope/system'
 
 export function StateDot({ state, size = 8 }: { state: TermState; size?: number }) {
@@ -38,8 +41,13 @@ export function TurnOn({ compact = false }: { compact?: boolean }) {
   if (st?.supported === false) {
     return (
       <div className="flex flex-col gap-4 max-w-[560px] p-16">
-        <span className="text-14 font-semibold text-primary">{t('The terminal needs macOS or Linux.')}</span>
-        {!compact && <p className="text-12 text-secondary leading-relaxed">{t('It does not run on Windows yet. Every other page works.')}</p>}
+        <span className="text-14 font-semibold text-primary">{t('The terminal needs the pywinpty package.')}</span>
+        {!compact && (
+          <p className="text-12 text-secondary leading-relaxed">
+            {t('Install it into Slightly Parallel\'s environment, then restart Slightly Parallel. Every other page works.')}
+            {' '}<code className="font-mono">{PYWINPTY}</code>
+          </p>
+        )}
       </div>
     )
   }
@@ -50,7 +58,7 @@ export function TurnOn({ compact = false }: { compact?: boolean }) {
         {!compact && (
           <p className="text-12 text-secondary leading-relaxed">
             {t("When on, it opens a shell on this computer here. Resume reopens an agent's chat in it, Start starts an agent on a task, and each terminal shows whether its agent is working or waiting.")}
-            {' '}{st?.tmux ? t('In tmux, terminals keep running after the page closes or Slightly Parallel restarts.') : t('Install tmux to keep terminals running after the page closes or a restart.')}
+            {' '}{st?.windows ? t('On Windows, terminals close when Slightly Parallel stops.') : st?.tmux ? t('In tmux, terminals keep running after the page closes or Slightly Parallel restarts.') : t('Install tmux to keep terminals running after the page closes or a restart.')}
             {' '}{t("Only Slightly Parallel's own pages can reach it.")}
           </p>
         )}
@@ -181,6 +189,8 @@ export function TerminalSettings() {
   const act = useTerminalActions()
   const notify = useWaitingNotify()
   const editorChoice = useStrSetting('terminal.editor', 'auto')
+  const logMode = useStrSetting('terminal.log', 'light') as LogMode
+  const qc = useQueryClient()
   if (!st) return null
   return (
     <div className="flex flex-col w-[360px] p-12 gap-2">
@@ -192,10 +202,14 @@ export function TerminalSettings() {
         <Segmented label={t('Agent')} shape="pill" height={20} value={st.agent} onChange={(v) => act.setting({ 'terminal.agent': v })}
           options={[['claude', 'claude'], ['codex', 'codex'], ['opencode', 'opencode']] as const} />
       </Row>
-      <Row label={t('Keep terminals')} hint={st.tmux ? t('With tmux ({v}), terminals keep running after the page closes or the server restarts.', { v: st.tmux_version ?? '' }) : t('tmux is not installed. Terminals close when the server stops.')}>
-        <Segmented label={t('Keep')} shape="pill" height={20} value={st.keep} onChange={(v) => act.setting({ 'terminal.keep': v })}
-          options={[['tmux', 'tmux'], ['plain', t('plain')]] as const} />
-      </Row>
+      {st.windows ? (
+        <Row label={t('Keep terminals')} hint={t('On Windows, terminals close when the server stops: tmux does not run there.')}>{null}</Row>
+      ) : (
+        <Row label={t('Keep terminals')} hint={st.tmux ? t('With tmux ({v}), terminals keep running after the page closes or the server restarts.', { v: st.tmux_version ?? '' }) : t('tmux is not installed. Terminals close when the server stops.')}>
+          <Segmented label={t('Keep')} shape="pill" height={20} value={st.keep} onChange={(v) => act.setting({ 'terminal.keep': v })}
+            options={[['tmux', 'tmux'], ['plain', t('plain')]] as const} />
+        </Row>
+      )}
       {notify.supported && (
         <Row label={t('When an agent waits')} hint={notify.blocked
           ? t('The browser blocks notifications for this page — allow them in its site settings.')
@@ -218,12 +232,29 @@ export function TerminalSettings() {
           onChange={(v) => act.setting({ 'terminal.scrollback': v })}
           options={[['10000', '10k'], ['50000', '50k'], ['200000', '200k']] as const} />
       </Row>
+      <Row label={t('Smooth scrolling')} hint={t('The history moves by pixels under the touchpad and the wheel, as in a native terminal. Off: steps of whole lines.')}>
+        <Segmented label={t('Smooth scrolling')} shape="pill" height={20} value={st.smooth_scroll === false ? 'off' : 'on'}
+          onChange={(v) => act.setting({ 'terminal.smooth_scroll': v === 'on' })}
+          options={[['on', t('on')], ['off', t('off')]] as const} />
+      </Row>
+      <Row label={t('Terminal log')} hint={logMode === 'full'
+        ? t('Full: every key, paste, wheel and frame with its time, to find a bug. Uses more memory and disk; goes back to light after 2 hours.')
+        : t('Light: counts slow frames, stalls, errors and lost connections; a small file a day, shown on the Monitor. Typed and printed text is never kept.')}>
+        <Segmented label={t('Terminal log')} shape="pill" height={20} value={logMode}
+          onChange={(v) => {
+            void postJson<{ mode: LogMode }>('/api/terminal/log/mode', { mode: v })
+              .then((got) => termLog.setMode(got.mode), () => undefined)
+              .finally(() => void qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY }))
+          }}
+          options={[['off', t('off')], ['light', t('light')], ['full', t('full')]] as const} />
+      </Row>
+      <TermWindowSettings />
       <Row label={t('Text')}>
         <Segmented label={t('Text')} shape="pill" height={20} value={String(st.font_size)} onChange={(v) => act.setting({ 'terminal.font_size': Number(v) })}
           options={[['12', 'S'], ['13', 'M'], ['15', 'L'], ['17', 'XL']] as const} />
       </Row>
       {!st.forced && (
-        <Row label={t('The terminal')} hint={t('Turns off new shells. Open terminals keep running in tmux.')}>
+        <Row label={t('The terminal')} hint={st.windows ? t('Turns off new shells.') : t('Turns off new shells. Open terminals keep running in tmux.')}>
           <button type="button" onClick={() => act.setting({ 'terminal.enabled': false })}
             className="h-20 px-8 rounded-pill border border-border-default text-11 text-secondary hover:text-primary">{t('turn off')}</button>
         </Row>

@@ -63,7 +63,7 @@ KINDS: dict[str, str] = {
 # Kinds whose own status has an archived value, shown and restored on their page.
 STATUS_ARCHIVED = ("rule", "skill", "artifact", "prompt")
 # Kinds hidden by archived_at alone: the list reads leave them out.
-HIDDEN_BY_DATE = ("vision", "problem", "entrypoint", "publish")
+HIDDEN_BY_DATE = ("vision", "problem", "entrypoint", "publish", "note")
 
 CONFIRM = "#undo-yes"
 MAX_CANDIDATES = 30

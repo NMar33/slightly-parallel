@@ -91,20 +91,21 @@ def test_operator_metadata_is_dropped_and_named(client: TestClient) -> None:
 # board has. The agent's own lane or assignee is dropped and named back.
 
 
-def _chat(root: Path, agent: str, user_text: str) -> None:
+def _chat(root: Path, agent: str, user_text: str, **meta: object) -> None:
     d = root / "projects" / "alpha" / "chats" / agent
     d.mkdir(parents=True, exist_ok=True)
     (d / "meta.json").write_text(json.dumps({
         "agent_id": agent, "agent_name": "lead", "project": "alpha",
-        "created_date": "2609-01", "last_active": "2026-09-01T11:00:00",
+        "created_date": "2609-01", "last_active": "2026-09-01T11:00:00", **meta,
     }), encoding="utf-8")
     (d / "chat.md").write_text(
         f"# Chat log — {agent}\n\n## Turn 1 · 2026-09-01T10:01:00\n**User**: hello\n**Agent**: hi\n"
         f"\n## Turn 2 · 2026-09-01T10:02:00\n**User**: {user_text}\n", encoding="utf-8")
 
 
-def _board(root: Path, user_text: str, lanes: tuple[str, ...] = ("Bugs", "Kanban Board")) -> TestClient:
-    _chat(root, "cc-a", user_text)
+def _board(root: Path, user_text: str, lanes: tuple[str, ...] = ("Bugs", "Kanban Board"),
+           **meta: object) -> TestClient:
+    _chat(root, "cc-a", user_text, **meta)
     c = TestClient(create_app(data_root=root, watch=False))
     c.__enter__()
     for i, lane in enumerate(lanes):
@@ -203,6 +204,49 @@ def test_without_a_command_the_card_is_an_agent_card_with_no_lane(tmp_path: Path
     out = _post(c, assignee="Bugs")
     assert out["metadata"]["status"] == "agent" and str(out["metadata"].get("lane") or "") == ""
     assert "assignee" in out["ignored"]
+    c.__exit__(None, None, None)
+
+
+def test_a_second_card_after_the_now_card_is_refused_for_the_real_reason(tmp_path: Path) -> None:
+    """The #now card is written; a second card in todo is refused, and the
+    refusal never says the message had no #now when it had one."""
+    c = _board(tmp_path / "data", "#now-todo the note ids come back wrong")
+    assert _post(c, description="")["metadata"]["status"] == "todo"
+    r = _post(c, expect=422, created_time="21:14", status="todo", title="Another finding")
+    assert "already has its card" in r["detail"] and "starts a task in" not in r["detail"]
+    # A message with no #now still says how one starts.
+    c2 = _board(tmp_path / "data2", "a plain message")
+    r = _post(c2, expect=422, status="todo")
+    assert "starts a task in `doing`" in r["detail"]
+    c.__exit__(None, None, None)
+    c2.__exit__(None, None, None)
+
+
+HELPER = {"helper": True, "helper_kind": "codex-subagent", "helper_of": ""}
+
+
+@pytest.mark.parametrize("status", [None, "todo", "agent"])
+def test_a_command_in_a_chat_marked_a_helper_is_refused_by_name(tmp_path: Path, status: str | None) -> None:
+    """tk_2484f160: the operator's chat was marked a helper by mistake; its
+    #now-todo made no task, and the agent's card went quietly to `agent`
+    without the message. Now the write is refused and says why."""
+    c = _board(tmp_path / "data", "#now-todo the note ids come back wrong", **HELPER)
+    before = c.get("/api/tasks", params={"project": "alpha"}).json()
+    over = {"description": ""} if status is None else {"status": status, "description": ""}
+    r = _post(c, expect=422, **over)
+    assert r["detail"].startswith("this chat (cc-a) is marked a helper chat (codex-subagent); "
+                                  "operator commands do not apply here")
+    assert "#now-todo" in r["detail"] and "tell the operator" in r["detail"]
+    assert "starts a task in" not in r["detail"]
+    assert c.get("/api/tasks", params={"project": "alpha"}).json() == before
+    c.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("text", ["a brief with no command", "a pasted #now-todo the operator muted #mute"])
+def test_a_helper_without_a_command_still_files_its_card_in_agent(tmp_path: Path, text: str) -> None:
+    c = _board(tmp_path / "data", text, **HELPER)
+    out = _post(c)
+    assert out["metadata"]["status"] == "agent"
     c.__exit__(None, None, None)
 
 

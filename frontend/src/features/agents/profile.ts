@@ -151,7 +151,7 @@ export interface HelperRow {
   chat_title?: string
   project: string
   tool: string
-  /** codex-exec · codex-subagent · claude-print · opencode-run */
+  /** codex-exec · codex-subagent · claude-print · opencode-run · opencode-subagent · cursor-print */
   helper_kind: string
   helper_of: string
   helper_of_by?: string

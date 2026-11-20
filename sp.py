@@ -12,6 +12,11 @@
                                          the running server, no restart
     python3 sp.py open              open the app in the browser, starting the
                                          server first when it is not running
+    python3 sp.py window [menu|off] the terminal in a window of its own, apart
+                                         from the browser (Electron, installed
+                                         into desktop/ on the first start); on
+                                         Linux `menu` adds it to the applications
+                                         menu, `off` removes it
     python3 sp.py autostart on|off  start the server when you log in
     python3 sp.py shortcut [off]    a desktop and menu shortcut that runs open
     python3 sp.py report            one file to send when something is wrong
@@ -971,6 +976,99 @@ def cmd_open(_: list[str] | None = None) -> None:
     webbrowser.open(url)
 
 
+WINDOW_ENTRY = "slightly-parallel-terminal.desktop"
+DESKTOP = ROOT / "desktop"
+
+
+def window_entry(python: str) -> str:
+    """The menu entry (Linux): starts the server when it is down, then the window."""
+    exec_line = " ".join('"' + part.replace('"', '\\"') + '"' for part in (python, str(ROOT / "sp.py"), "window"))
+    return ("[Desktop Entry]\nType=Application\nName=Slightly Parallel Terminal\n"
+            "Comment=The terminal of Slightly Parallel in a window of its own\n"
+            f"Exec={exec_line}\nIcon=utilities-terminal\nTerminal=false\n"
+            "Categories=Development;TerminalEmulator;\nStartupWMClass=slightly-parallel-terminal\n")
+
+
+def electron_bin() -> Path:
+    """Electron's own program, not npm's `electron` launcher: that one is a
+    Node script, and a start from the applications menu has no Node on its
+    PATH when Node came from nvm."""
+    dist = DESKTOP / "node_modules" / "electron" / "dist"
+    try:
+        name = (DESKTOP / "node_modules" / "electron" / "path.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        name = "electron.exe" if WINDOWS else "electron"
+    return dist / name
+
+
+def sandbox_usable(dist: Path) -> bool:
+    """Whether Chromium's sandbox can start on this Linux. Ubuntu 24.04 and
+    later forbid the user namespaces it uses to programs without an AppArmor
+    profile; then it needs its helper owned by root with the setuid bit,
+    which only an administrator can set."""
+    if not sys.platform.startswith("linux"):
+        return True
+    try:
+        restricted = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").read_text().strip() == "1"
+    except OSError:
+        restricted = False
+    if not restricted:
+        return True
+    helper = dist / "chrome-sandbox"
+    try:
+        st = helper.stat()
+    except OSError:
+        return False
+    return st.st_uid == 0 and bool(st.st_mode & 0o4000)
+
+
+def cmd_window(args: list[str]) -> None:
+    """The terminal in a window of its own (desktop/, Electron)."""
+    word = args[0] if args else ""
+    if word in ("menu", "off"):
+        if WINDOWS or sys.platform == "darwin":
+            fail("the menu entry is written for Linux so far; start the window with: sp window")
+        entry = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "applications" / WINDOW_ENTRY
+        if word == "menu":
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            entry.write_text(window_entry(sys.executable), encoding="utf-8")
+            say(f"window: {entry} — “Slightly Parallel Terminal” is in the applications menu")
+        else:
+            gone = entry.exists()
+            entry.unlink(missing_ok=True)
+            say("window: removed from the applications menu" if gone else "window: it was not in the menu")
+        return
+    if not electron_bin().exists():
+        npm = shutil.which("npm")
+        if not npm:
+            fail("the window needs Node 20+ with npm to install Electron once (https://nodejs.org)")
+        say("window: installing Electron into desktop/ (about 100 MB, once)…")
+        if subprocess.run([npm, "install", "--no-audit", "--no-fund"], cwd=DESKTOP).returncode != 0:
+            fail("npm install in desktop/ failed: run it there by hand to see why")
+    if not health():
+        cmd_up([])
+    import json
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"{base_url()}/api/terminal/state", headers={"Cookie": operator_cookie()})
+        state = json.loads(urllib.request.urlopen(req, timeout=5).read())
+    except Exception:  # noqa: BLE001 — the window itself says what is wrong
+        state = {}
+    if state and not state.get("enabled"):
+        say("the terminal is switched off: sp terminal on (the window opens, and says the same)")
+    extra: list[str] = []
+    dist = DESKTOP / "node_modules" / "electron" / "dist"
+    if not sandbox_usable(dist):
+        # The window shows only this computer's own server and refuses to
+        # navigate anywhere else, so it runs without Chromium's sandbox
+        # rather than not at all.
+        extra.append("--no-sandbox")
+        say("window: this Linux does not let Chromium's sandbox start without an administrator; running without it.")
+        say(f"        to switch it on: sudo chown root '{dist / 'chrome-sandbox'}' && sudo chmod 4755 '{dist / 'chrome-sandbox'}'")
+    pid = detached([str(electron_bin()), str(DESKTOP), *extra, f"--url={base_url()}", *args], STATE / "window.log")
+    say(f"window: started (pid {pid}); its log is {STATE / 'window.log'}")
+
+
 def _switch(kind: str, args: list[str], what_on: str) -> None:
     auto = autostart_module()
     word = args[0] if args else ("on" if kind == "shortcut" else "status")
@@ -997,7 +1095,7 @@ def cmd_shortcut(args: list[str]) -> None:
 COMMANDS = {
     "run": cmd_run, "up": cmd_up, "down": cmd_down, "restart": cmd_restart, "status": cmd_status,
     "logs": cmd_logs, "terminal": cmd_terminal, "open": cmd_open, "autostart": cmd_autostart,
-    "shortcut": cmd_shortcut, "report": cmd_report, "check": cmd_check, "__supervise": cmd_supervise,
+    "shortcut": cmd_shortcut, "window": cmd_window, "report": cmd_report, "check": cmd_check, "__supervise": cmd_supervise,
 }
 
 

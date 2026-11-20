@@ -3,21 +3,33 @@ time on a task, and each project's mode."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import timeauto
+from backend import idle, timeauto
 from backend.server import create_app
 
 # Now, not a fixed hour: a timer started through the API takes the real clock.
 T0 = datetime.now().replace(microsecond=0).timestamp()
 
 
-def _hms(sec: int) -> str:
-    return (datetime.fromtimestamp(T0) + timedelta(seconds=sec)).strftime("%H:%M:%S")
+def test_sandbox_timer_does_not_read_the_host_idle_clock(monkeypatch):
+    monkeypatch.setenv("SP_SANDBOX", "1")
+    monkeypatch.setattr(idle, "_cache", (0.0, None, ""))
+    monkeypatch.setattr(idle, "_read", lambda: (3600.0, "host"))
+    assert idle.reading() == (None, "")
+    monkeypatch.delenv("SP_SANDBOX")
+    assert idle.reading() == (3600.0, "host")
+
+
+def _when(stored: str) -> float:
+    """A stored moment as Unix time; it carries its UTC offset (tk_3a363c87)."""
+    got = datetime.fromisoformat(stored)
+    assert got.tzinfo is not None, f"{stored} has no offset"
+    return got.timestamp()
 
 
 class Clock:
@@ -93,7 +105,7 @@ def test_working_on_an_auto_project_writes_its_own_entry_on_the_task(env) -> Non
     # Gone past the grace: the span ends where the last beat was.
     _at(clock, 500, timer)
     [done] = _entries(c)
-    assert done["ended_at"].endswith(_hms(320)) and done["duration_min"] == 5
+    assert _when(done["ended_at"]) == T0 + 320 and done["duration_min"] == 5
     got = c.get("/api/time/summary", params={"task_id": "tk_one"}).json()
     assert got["total_min"] == 5
 
@@ -176,4 +188,78 @@ def test_a_restart_closes_the_span_where_it_was_last_seen(env) -> None:
     fresh = timeauto.AutoTimer(timer.store, read_idle=clock.reading, clock=clock)
     fresh.recover()
     [row] = _entries(c)
-    assert row["ended_at"].endswith(_hms(180)) and row["duration_min"] == 3
+    assert _when(row["ended_at"]) == T0 + 180 and row["duration_min"] == 3
+
+
+# ------------------------------------------------------------------ the terminal window
+#
+# The terminal window (/term) sends the pages' beat with source "window"
+# while it is in front on a tab of the project and there is input.
+
+
+def _window(c, project: str, task_id: str = "") -> None:
+    got = c.post("/api/time/auto/beat", json={"project": project, "task_id": task_id, "source": "window"})
+    assert got.status_code == 200, got.text
+
+
+def test_a_window_beat_starts_the_projects_span_and_more_beats_extend_it(env) -> None:
+    c, timer, clock = env
+    c.post("/api/time/auto/mode", json={"project": "alpha", "mode": "auto"})
+    _window(c, "alpha", "tk_w")
+    _at(clock, 0, timer)
+    [span] = c.get("/api/time/auto").json()["working"]
+    assert span["project"] == "alpha" and span["task_id"] == "tk_w"
+    assert c.get("/api/time/auto").json()["signals"] == [{"project": "alpha", "source": "window", "task_id": "tk_w", "sec_ago": 0}]
+    for s in range(20, 181, 20):
+        clock.now = T0 + s
+        _window(c, "alpha", "tk_w")
+        _at(clock, s, timer)
+    assert [s["entry_id"] for s in c.get("/api/time/auto").json()["working"]] == [span["entry_id"]]
+    _at(clock, 400, timer)                    # no beat past the grace: it ends at the last one
+    [done] = _entries(c)
+    assert done["source"] == "auto" and done["duration_min"] == 3 and done["task_id"] == "tk_w"
+
+
+def test_idle_stops_a_window_span_even_with_a_fresh_beat(env) -> None:
+    c, timer, clock = env
+    c.post("/api/time/auto/mode", json={"project": "alpha", "mode": "auto"})
+    for s in range(0, 121, 20):
+        clock.now = T0 + s
+        _window(c, "alpha")
+        _at(clock, s, timer)
+    clock.now = T0 + 140
+    _window(c, "alpha")
+    _at(clock, 140, timer, idle=11 * 60)      # the computer says nobody is here
+    assert c.get("/api/time/auto").json()["working"] == []
+    [done] = _entries(c)
+    assert done["ended_at"] and done["duration_min"] == 2
+
+
+def test_switching_the_tab_to_another_project_moves_the_time_there(env) -> None:
+    c, timer, clock = env
+    for p in ("alpha", "beta"):
+        c.post("/api/time/auto/mode", json={"project": p, "mode": "auto"})
+    for s in range(0, 121, 20):
+        clock.now = T0 + s
+        _window(c, "alpha")
+        _at(clock, s, timer)
+    for s in range(140, 321, 20):             # the tab of beta in front from here
+        clock.now = T0 + s
+        _window(c, "beta")
+        _at(clock, s, timer)
+    working = c.get("/api/time/auto").json()["working"]
+    assert [w["project"] for w in working] == ["beta"]
+    alpha = [e for e in _entries(c) if e["project"] == "alpha"]
+    assert len(alpha) == 1 and alpha[0]["ended_at"] and alpha[0]["duration_min"] == 2
+    _at(clock, 500, timer)
+    beta = [e for e in _entries(c) if e["project"] == "beta"]
+    assert len(beta) == 1 and beta[0]["duration_min"] == 3
+
+
+def test_a_beat_from_an_unknown_source_is_refused_and_counts_nothing(env) -> None:
+    c, timer, clock = env
+    c.post("/api/time/auto/mode", json={"project": "alpha", "mode": "auto"})
+    got = c.post("/api/time/auto/beat", json={"project": "alpha", "source": "terminal"})
+    assert got.status_code == 422
+    _at(clock, 0, timer)
+    assert c.get("/api/time/auto").json()["working"] == []

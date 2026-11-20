@@ -179,6 +179,36 @@ describe('Entry points, the desk on the real routes', () => {
     expect(await screen.findAllByTestId('ep-shelf')).toHaveLength(1)
   })
 
+  it('archived topics are folded under Archived and open on a click', async () => {
+    const GONE: Topic = { ...THIN, id: 'ep_gone', name: 'Cut-up texts', archived_at: '2026-11-10T09:00:00' }
+    serve({ topics: [FILMS, GONE], projects: ['merkhet', '2604-writing-tracker'] })
+    mount()
+    await screen.findByTestId('ep-card')
+    expect(screen.getAllByTestId('ep-list-item')).toHaveLength(1)
+    expect(screen.queryByText('Cut-up texts')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Archived · 1/ }))
+    fireEvent.click(await screen.findByText('Cut-up texts'))
+    const card = await screen.findByTestId('ep-card')
+    expect(within(card).getByRole('heading', { name: 'Cut-up texts' })).toBeTruthy()
+    expect(within(card).getByTestId('ep-card-archived')).toBeTruthy()
+  })
+
+  it('a link with the topic (search) opens it, an archived one unfolded', async () => {
+    const GONE: Topic = { ...THIN, id: 'ep_gone', name: 'Cut-up texts', archived_at: '2026-11-10T09:00:00' }
+    serve({ topics: [FILMS, GONE], projects: ['merkhet', '2604-writing-tracker'] })
+    mount('/entrypoints?topic=ep_gone')
+    const card = await screen.findByTestId('ep-card')
+    expect(within(card).getByRole('heading', { name: 'Cut-up texts' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Archived · 1/ }).getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('an old link with the topic after # opens it too', async () => {
+    serve({ topics: [FILMS, THIN], projects: ['merkhet', '2604-writing-tracker'] })
+    mount('/entrypoints#ep_thin')
+    const card = await screen.findByTestId('ep-card')
+    expect(within(card).getByText('no name yet')).toBeTruthy()
+  })
+
   it('all history shows every message from the context, not only the five the desk sent', async () => {
     const many = { ...FILMS, stops: [...STOPS].reverse().slice(0, 5), stops_n: 7 }
     serve({ topics: [many], projects: ['merkhet'] })

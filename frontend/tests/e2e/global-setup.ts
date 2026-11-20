@@ -28,5 +28,9 @@ export default function globalSetup(): void {
   const builtAt = fs.existsSync(built) ? fs.statSync(built).mtimeMs : 0
   const source = Math.max(newest(path.join(root, 'src')),
     ...['index.html', 'vite.config.ts'].map((f) => fs.statSync(path.join(root, f)).mtimeMs))
-  if (source > builtAt) execSync('npm run build', { cwd: root, stdio: 'inherit' })
+  if (source <= builtAt) return
+  if (process.env.SP_E2E_NO_BUILD === '1') {
+    throw new Error(`SP_E2E_NO_BUILD requires a current build in ${built}`)
+  }
+  execSync('npm run build', { cwd: root, stdio: 'inherit' })
 }

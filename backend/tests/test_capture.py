@@ -208,6 +208,44 @@ def test_system_payloads_are_not_turns(root: Path, tmp_path: Path) -> None:
     assert not (root / "projects/alpha/chats/cc-sys12345").exists()
 
 
+def test_a_scheduled_prompt_is_no_operator_turn(root: Path, tmp_path: Path) -> None:
+    """A scheduled task's prompt (an agent's own reminder, CronCreate or
+    ScheduleWakeup) arrives as a plain prompt; its transcript record says it
+    was scheduled. A #publish inside it makes no card and no turn; the
+    operator's own prompt with the same words is a turn."""
+    script = _HOOKS / "claude-code-capture.py"
+    words = "Remind the operator in one line: card fixes for #publish are due."
+
+    def run(payload: dict) -> str:
+        proc = subprocess.run(
+            [sys.executable, str(script), "--project", "alpha", "--data-root", str(root)],
+            input=json.dumps(payload), capture_output=True, text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return proc.stdout
+
+    t = tmp_path / "sched.jsonl"
+    t.write_text("\n".join(json.dumps(r) for r in [
+        {"type": "system", "subtype": "scheduled_task_fire", "content": "Running scheduled task"},
+        {"type": "user", "message": {"role": "user", "content": words}, "isMeta": True, "promptSource": "system",
+         "turnOrigin": "scheduled", "wakeupSource": "schedule_wakeup", "scheduledTaskId": "c66fc97c"},
+    ]) + "\n", encoding="utf-8")
+    out = run({"hook_event_name": "UserPromptSubmit", "session_id": "sch12345", "prompt": words,
+               "transcript_path": str(t)})
+    assert "#publish" not in out and not (root / "projects/alpha/chats/cc-sch12345").exists()
+    # The payload's own word is enough too.
+    run({"hook_event_name": "UserPromptSubmit", "session_id": "sch12346", "prompt": words, "turnOrigin": "scheduled"})
+    assert not (root / "projects/alpha/chats/cc-sch12346").exists()
+    # The operator typing it: a turn, and the notice.
+    h = tmp_path / "human.jsonl"
+    h.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": words},
+                             "promptSource": "typed", "turnOrigin": "human"}) + "\n", encoding="utf-8")
+    out = run({"hook_event_name": "UserPromptSubmit", "session_id": "sch12347", "prompt": words,
+               "transcript_path": str(h)})
+    assert "#publish" in out
+    assert "#publish" in (root / "projects/alpha/chats/cc-sch12347/chat.md").read_text(encoding="utf-8")
+
+
 def test_pasted_structure_is_escaped_and_round_trips(root: Path) -> None:
     from backend.sessions import parse_turns
 

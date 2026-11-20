@@ -51,6 +51,8 @@ def play(target: Path, repos_dir: Path, end: date) -> engine.Sim:
     import shopfront_chats_b
     import shopfront_chats_c
     import shopfront_lenses
+    import shopfront_desk
+    import shopfront_notes
     import shopfront_standups
     import shopfront_story
     import shopfront_tasks
@@ -65,6 +67,9 @@ def play(target: Path, repos_dir: Path, end: date) -> engine.Sim:
         repo.write(rel, text)
     repo.commit("Initial skeleton: Next.js app, FastAPI service, compose", D(1, 8, 20))
     sim.repos[CODE] = repo
+    # Registered in the played folder too: a file entry's lines and a scan's
+    # counts are read from the repository the registry names.
+    register(sim.root, repo.path, end - timedelta(days=29))
 
     K: dict = {}
     shopfront_tasks.setup(sim, w)
@@ -74,6 +79,8 @@ def play(target: Path, repos_dir: Path, end: date) -> engine.Sim:
     shopfront_lenses.setup(sim, w, repo, K)
     shopfront_standups.setup(sim, w, K)
     shopfront_story.setup(sim, w, repo, K)
+    shopfront_notes.setup(sim, w, repo, K)
+    shopfront_desk.setup(sim, w, repo, K)
     links(sim, K)
 
     sim.run()
@@ -121,6 +128,17 @@ def only_this_project(root: Path) -> None:
         rewrite_rows(root / sprint.csv, sprint.columns, mutate)
 
 
+def relocate(src: Path, dst: Path) -> None:
+    """A path the server wrote into the played folder (an artifact's folder)
+    names the data root the example is restored into, not the temporary one."""
+    old, new = str(src), str(dst)
+    for path in sorted(src.rglob("*")):
+        if path.is_file() and path.suffix in (".csv", ".md", ".json", ".jsonl"):
+            text = path.read_text(encoding="utf-8", errors="surrogateescape")
+            if old in text:
+                path.write_text(text.replace(old, new), encoding="utf-8", errors="surrogateescape")
+
+
 def build(root: Path, end: date) -> dict:
     root = root.resolve()
     if (root / "projects" / CODE).exists():
@@ -134,6 +152,7 @@ def build(root: Path, end: date) -> dict:
         from backend import project_admin
         from backend.db import ViewStore
         only_this_project(sim.root)
+        relocate(sim.root, root)
         sim.store.rebuild()
         archived = project_admin.delete_project_data(sim.store, CODE)
         sim.client.close()

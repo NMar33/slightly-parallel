@@ -231,6 +231,68 @@ def test_deleting_a_project_sweeps_kept_versions_and_story_images(
     assert out["moved"]["story_images"] == 1
 
 
+def test_deleting_a_project_takes_the_side_ledgers_of_its_notes_entry_points_cards_and_cores(
+    client: TestClient, data_root: Path
+) -> None:
+    """A note's versions, pictures, marks and comments, an entry point's ways and shots,
+    a publish document's versions and a core's notes live in ledgers of their
+    own, keyed by the note, topic, document or core. They go with the project
+    and come back with a restored archive (the example project is built that
+    way); another project's rows stay."""
+    from backend import project_admin
+    from backend.csvio import append_row, read_rows
+    from backend.entities import (CORE_COLUMNS, CORE_NOTE_COLUMNS, ENTITIES, ENTRYPOINT_WAY_COLUMNS,
+                                  NOTE_COMMENT_COLUMNS, NOTE_MARK_COLUMNS, NOTE_VERSION_COLUMNS, PUBLISH_DOC_COLUMNS,
+                                  PUBLISH_VERSION_COLUMNS)
+
+    def put(ledger: str, cols: tuple[str, ...], **row: str) -> None:
+        append_row(data_root / ledger, cols, row)
+
+    def touch(rel: str) -> None:
+        (data_root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (data_root / rel).write_text("x", encoding="utf-8")
+
+    for code, nid, ep, doc, core in (("ALPHA", "nt_aaaa0001", "ep_aaaa0001", "pd_a", "cr_a"),
+                                     ("BETA", "nt_bbbb0001", "ep_bbbb0001", "pd_b", "cr_b")):
+        put(ENTITIES["note"].csv, ENTITIES["note"].columns, id=nid, project=code, title="A note", kind="plan")
+        put("note_versions.csv", NOTE_VERSION_COLUMNS, id=f"{nid}#1", note_id=nid, n="1",
+            file=f"note_details/{nid}/v001.md")
+        put("note_marks.csv", NOTE_MARK_COLUMNS, id=f"nm_{nid}", note_id=nid, item=f"{nid}:k:1", kind="tick", value="1")
+        put("note_comments.csv", NOTE_COMMENT_COLUMNS, id=f"nc_{nid}", note_id=nid, text="A comment", version="1")
+        touch(f"note_details/{nid}/v001.md")
+        touch(f"note_images/{nid}/ni_0000000001.png")
+        put(ENTITIES["entrypoint"].csv, ENTITIES["entrypoint"].columns, id=ep, project=code, l1="A topic")
+        put("entrypoint_ways.csv", ENTRYPOINT_WAY_COLUMNS, id=f"ew_{ep}", entrypoint_id=ep, name="site", kind="site")
+        touch(f"entrypoint_shots/{ep}/es_1.png")
+        put("publish_docs.csv", PUBLISH_DOC_COLUMNS, id=doc, project=code, name="Post")
+        put("publish_versions.csv", PUBLISH_VERSION_COLUMNS, id=f"{doc}#1", doc_id=doc, n="1")
+        put("cores.csv", CORE_COLUMNS, id=core, project=code, name="A core", type="store", status="view")
+        put("core_notes.csv", CORE_NOTE_COLUMNS, id=f"cn_{core}", core_id=core, text="first")
+    client.app.state.store.rebuild()
+
+    alpha = {"ALPHA", "nt_aaaa0001", "ep_aaaa0001", "pd_a", "cr_a"}
+    beta = {"BETA", "nt_bbbb0001", "ep_bbbb0001", "pd_b", "cr_b"}
+    out = project_admin.delete_project_data(client.app.state.store, "ALPHA")
+    trash = Path(out["trash"])
+    for name, key in (("note_versions.csv", "note_id"), ("note_marks.csv", "note_id"),
+                      ("note_comments.csv", "note_id"),
+                      ("entrypoint_ways.csv", "entrypoint_id"), ("publish_versions.csv", "doc_id"),
+                      ("core_notes.csv", "core_id"), ("publish_docs.csv", "project"), ("cores.csv", "project")):
+        left = {r[key] for r in read_rows(data_root / name)}
+        gone = {r[key] for r in read_rows(trash / name)}
+        assert left and left <= beta and gone and gone <= alpha, (name, left, gone)
+    for rel in ("note_details/nt_aaaa0001/v001.md", "note_images/nt_aaaa0001/ni_0000000001.png",
+                "entrypoint_shots/ep_aaaa0001/es_1.png"):
+        assert not (data_root / rel).exists() and (trash / rel).exists(), rel
+    assert (data_root / "note_details/nt_bbbb0001/v001.md").exists()
+
+    # And back: the archive restored, the note reads its version again.
+    project_admin.restore_project_archive(client.app.state.store, trash)
+    assert (data_root / "note_details/nt_aaaa0001/v001.md").exists()
+    assert {r["note_id"] for r in read_rows(data_root / "note_versions.csv")} == {"nt_aaaa0001", "nt_bbbb0001"}
+    assert {r["note_id"] for r in read_rows(data_root / "note_comments.csv")} == {"nt_aaaa0001", "nt_bbbb0001"}
+
+
 # ---------------------------------------------------------------------------
 # 7 · The architecture page is part of what the ETag sees
 # ---------------------------------------------------------------------------

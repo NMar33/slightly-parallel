@@ -85,6 +85,10 @@ def main() -> int:
             # "opencode-run": the plugin runs inside `opencode run`, no chat
             # the operator types in (hookshared.HELPER_KINDS).
             args.helper = str(given.get("helper") or "") if given.get("helper") in shared.HELPER_KINDS else ""
+            # "opencode-subagent": a child session OpenCode's task tool opened;
+            # the plugin names the parent's chat (helper_of).
+            given_parent = str(given.get("helper_of") or "")
+            args.helper_of = given_parent if args.helper and given_parent.startswith("oc-") else ""
             if "times" in given:
                 args.times = json.dumps(given["times"])
             if "touched" in given:
@@ -105,9 +109,10 @@ def main() -> int:
             kind = getattr(args, "helper", "")
             # Who started it: the environment this process inherited from
             # the tool, which inherited it from its parent.
-            parent = shared.helper_parent(args.tool or "cli", args.session, data_root=args.data_root) if kind else ""
+            given_parent = getattr(args, "helper_of", "")
+            parent = given_parent or (shared.helper_parent(args.tool or "cli", args.session, data_root=args.data_root) if kind else "")
             cap.note_origin(args.tool, args.session, args.cwd, helper_kind=kind, helper_of=parent,
-                            helper_of_by="env" if parent else "")
+                            helper_of_by=("session" if given_parent else "env") if parent else "")
         if args.phase == "open" and args.cwd:
             # The per-cwd identity file the MCP server reads (GET /api/whoami).
             # Without it every write from an OpenCode agent failed with

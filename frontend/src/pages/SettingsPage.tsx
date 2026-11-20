@@ -10,6 +10,8 @@ import { ProjectTabsCard } from '../features/settings/ProjectTabsCard'
 import { SidebarCard } from '../features/settings/SidebarCard'
 import { PromptsCard } from '../features/settings/PromptsCard'
 import { ComputerCard } from '../features/setup/Computer'
+import { SchemeSetting } from '../features/terminal/SchemePicker'
+import { SCHEME_KEY, SCOPE_KEY } from '../features/terminal/useScheme'
 import { Button, Input } from '../components/primitives'
 import { ErrorBanner, LoadingSkeleton } from '../components/states'
 import {
@@ -113,7 +115,10 @@ export default function SettingsPage() {
               className="rounded-card border border-border-subtle bg-surface p-24 flex flex-col gap-16 scroll-mt-16"
             >
               <h2 className="text-16 font-semibold text-primary">{t(group.name)}</h2>
-              {group.settings.map((s) => (
+              {group.settings.map((s) => s.key === SCOPE_KEY ? null : s.key === SCHEME_KEY ? (
+                // The terminal's colour scheme: a grid of previews that applies at once.
+                <SchemeSetting key={s.key} label={t(s.label)} name={s.key} description={t(s.description)} />
+              ) : (
                 <SettingRow
                   key={s.key}
                   spec={s}

@@ -73,6 +73,9 @@ def test_a_guessed_chat_is_unknown_not_a_concern(client: TestClient, monkeypatch
     assert sure["status"] == "concern" and sure["title"].startswith("No message recorded in this chat for")
     assert checkup.mcp(True, "folder")["title"] == "MCP answers this caller"
     assert checkup.mcp(True, "process")["title"] == "MCP answers from this chat"
+    # A Codex chat named by its own thread (tk_49aa81aa) is as sure as its process.
+    assert checkup.this_chat(store, "cc-other001", now, "thread")["status"] == "concern"
+    assert checkup.mcp(True, "thread")["title"] == "MCP answers from this chat"
 
 
 def test_every_reason_a_check_can_give_has_a_recipe_that_says_who_acts() -> None:

@@ -8,6 +8,12 @@ as two hook entries invoking this script:
   turn opens with it. Due signals (standup / decision hint / contract
   refresh) are printed to stdout, which Claude Code injects into the
   model's context.
+- ``SessionStart`` with the source ``compact`` — the context was just
+  compacted: the chat's carried messages (#carry whole, #carry-brief as
+  its brief) are printed to stdout, which Claude Code adds to the context
+  the agent goes on with. Once per compaction (carried.jsonl beside the
+  chat records each time); a folder set up before this hook gets them at
+  the next prompt instead, from the compaction a Stop read.
 - ``Stop`` — the response is finished; the assistant's final message
   arrives in the payload (``last_assistant_message``) and completes the
   turn verbatim. Builds without that field fall back to the transcript —
@@ -60,6 +66,65 @@ _SYSTEM_PREFIXES = shared.NOT_OPERATOR
 
 def is_system_payload(prompt: str) -> bool:
     return prompt.lstrip().startswith(_SYSTEM_PREFIXES)
+
+
+# A prompt Claude Code put in the chat itself, with no prefix to tell it by:
+# a scheduled task's prompt (CronCreate, ScheduleWakeup), the "usage limit
+# has reset, continue" prompt, fire as a plain "user" message. Its transcript
+# record says where it came from (hookshared.tool_wrote: turnOrigin,
+# promptSource, isMeta; the operator's own is turnOrigin "human"). A
+# #publish inside an agent's reminder made a card.
+is_injected = shared.tool_wrote
+
+
+def _said(rec: dict) -> str:
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    return "\n".join(p.get("text", "") for p in content or [] if isinstance(p, dict) and p.get("type") == "text")
+
+
+def injected_prompt(payload: dict, prompt: str, tail_bytes: int = 512 * 1024) -> bool:
+    """Is this UserPromptSubmit a prompt the tool injected? The payload's own
+    fields when it carries them; else the transcript, whose record of the
+    prompt is written before the hook runs: the latest user record with this
+    prompt's words (or the queued message with them, hookshared.queued_prompt)
+    — notes the tool wrote after it (isMeta) are passed over, and an
+    operator's prompt with other words after it ends the search.
+    Unreadable or not found: the operator's (never drop a turn on a guess)."""
+    if is_injected(payload):
+        return True
+    path = str(payload.get("transcript_path") or "")
+    if not path:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - tail_bytes))
+            # At the newline only: str.splitlines also splits at U+2028 and
+            # \x85, which a JSON string may hold unescaped.
+            lines = fh.read().decode("utf-8", "replace").split("\n")
+    except OSError:
+        return False
+    want = prompt.strip()
+    for line in reversed(lines):
+        if '"user"' not in line and "queued_command" not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        # A message delivered into a running turn is a queued_command
+        # attachment, not a "user" record (hookshared.queued_prompt).
+        rec = shared.prompt_record(rec)
+        if rec is None or rec.get("isSidechain"):
+            continue
+        if _said(rec).strip() == want:
+            return is_injected(rec)
+        if not is_injected(rec):
+            return False
+    return False
 
 
 _is_human_prompt = shared.is_human_prompt
@@ -193,6 +258,8 @@ class Segment:
     def __init__(self, transcript_path: str, pos: int = 0, tt=None) -> None:
         self.path, self.end, self.tt = transcript_path, max(0, int(pos)), tt
         self.text = ""
+        # When ``text`` was written (epoch; None unknown).
+        self.text_at: float | None = None
         self.title = ""
         self.skills: list[dict] = []
         self.touched: list[str] = []
@@ -283,7 +350,22 @@ class Segment:
             content = (rec.get("message") or {}).get("content")
             said = content if isinstance(content, str) else "\n".join(
                 p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
-            self.woken = is_system_payload(said)
+            # A queued message sent as a prompt after the turn it was typed
+            # in had ended ("promptSource": "queued"): its turn was opened
+            # when it was typed, and no prompt event comes now — its reply
+            # goes on that turn, as a continuation.
+            self.woken = is_system_payload(said) or is_injected(rec) or rec.get("promptSource") == "queued"
+        elif kind == "attachment":
+            # A message delivered into the running turn (hookshared.queued_prompt).
+            # The operator's opened its turn at the prompt hook already, when
+            # it was typed (close_overtaken closed the one before), so
+            # nothing here is reset. The tool's (a background task's notice, another
+            # session's message) wakes the agent: a reply with no turn open
+            # continues the last one, as after such a "user" record.
+            queued = shared.queued_prompt(rec)
+            if queued is not None and not queued.get("isSidechain"):
+                said = _said(queued)
+                self.woken = is_system_payload(said) or is_injected(queued)
         elif kind == "assistant":
             content = (rec.get("message") or {}).get("content") or []
             parts = [
@@ -294,6 +376,7 @@ class Segment:
             text = "\n".join(t for t in parts if t).strip()
             if text:
                 self.text = text
+                self.text_at = shared.epoch_of(rec.get("timestamp"))
         for path in shared.touched_files(rec):
             if path not in self.touched:
                 self.touched.append(path)
@@ -553,6 +636,26 @@ def codex_usage(payload: dict, session_id: str, since: float | None = None) -> t
     return shared.codex_turn_usage(rollout, str(payload.get("turn_id") or ""), back=1)
 
 
+def codex_thread(payload: dict, session_id: str) -> str:
+    """The Codex thread an event belongs to. Codex (0.170) calls the hooks
+    for a subagent's turn with the parent's ``session_id`` and the
+    subagent's own session file as ``transcript_path``; that file's first
+    line names the subagent's thread (``payload.id``; its ``session_id`` is
+    the parent's). Such a turn is the subagent's: it goes to the subagent's
+    own chat, a helper of the parent, and never into the parent's chat as
+    the operator's message, nor makes the parent a helper (tk_2484f160).
+    ``session_id`` otherwise, and whenever the file cannot be read."""
+    given = str(payload.get("transcript_path") or "")
+    if not session_id or not given or not Path(given).name.startswith("rollout-"):
+        return session_id
+    meta = shared.codex_session_meta(given)
+    pl = meta.get("payload") if meta else None
+    own = str(pl.get("id") or "") if isinstance(pl, dict) else ""
+    if own and own.lower() != session_id.lower() and re.fullmatch(r"[0-9A-Za-z-]{8,80}", own):
+        return own
+    return session_id
+
+
 def helper_signal(tool: str, payload: dict, session_id: str, data_root: str) -> tuple[str, str, str]:
     """(helper kind, the parent's agent id, how it was found) of this chat;
     ("", "", "") for a chat the operator runs. Claude Code: the entrypoint
@@ -572,6 +675,10 @@ def helper_signal(tool: str, payload: dict, session_id: str, data_root: str) -> 
                 shared.claude_helper_kind(shared.claude_entrypoint(str(payload.get("transcript_path") or "")))
         if not kind:
             return "", "", ""
+        if parent_thread and shared.session_key("codex", parent_thread) == shared.session_key("codex", session_id):
+            # A session file that names this chat as its parent is another
+            # thread's: never a reason to make the parent a helper.
+            return "", "", ""
         if parent_thread:
             return kind, f"codex-{shared.session_key('codex', parent_thread)}", "session"
         parent = shared.helper_parent(tool, session_id, os.environ, data_root)
@@ -585,6 +692,43 @@ def helper_signal(tool: str, payload: dict, session_id: str, data_root: str) -> 
 #: read position moves: the next Stop reads the same records, and the ids
 #: already kept are skipped.
 _USAGE_ONLY_EVENTS = ("SessionEnd", "StopFailure")
+
+
+#: The answer of a turn the operator's next message overtook with nothing
+#: written yet (capture.py's own marker is for a reply the Stop missed).
+OVERTAKEN = "(no reply yet when the next message was typed)"
+
+
+def close_overtaken(cap: TurnCapture, prompt: str, transcript_path: str) -> None:
+    """A prompt while the turn before it is still open: the operator typed
+    while the agent worked (Claude Code queues the message; the prompt hook
+    fires as it is typed, hookshared.queued_prompt), or the turn was stopped
+    with Esc (no Stop comes for it). The open turn is closed here with what
+    the agent had written of its answer so far, else a marker: opening the
+    next one over it used to leave it without any answer, the text written
+    before the message lost. The answer that follows goes to the new turn,
+    which it answers too. The same words again are the same turn (open_turn)
+    and close nothing. The read position does not move: the Stop reads the
+    stretch again for its tokens."""
+    meta = cap._load_meta() if cap.meta_path.exists() else {}
+    if meta.get("pending_turn") is None or meta.get("pending_user_text") == prompt.strip():
+        return
+    seg = Segment(transcript_path, cap.transcript_pos(transcript_path), _turntimes()) if transcript_path else None
+    if seg is not None:
+        seg.read()
+    text = seg.text if seg is not None else ""
+    # Only what was written in this turn: an earlier queued message's turn
+    # has no prompt record in front of it yet to mark where it began.
+    began = next((float(h[1]) for h in meta.get("turns") or []
+                  if isinstance(h, list) and len(h) >= 2 and h[0] == meta.get("pending_turn")
+                  and isinstance(h[1], (int, float))), None)
+    if text and began is not None and seg is not None and seg.text_at is not None and seg.text_at < began:
+        text = ""
+    text = text or OVERTAKEN
+    cap.complete_turn(text, transcript=transcript_path or None,
+                      points=seg.points if seg is not None else None,
+                      touched=seg.touched if seg is not None else None,
+                      committed=seg.committed if seg is not None else None)
 
 
 def main() -> int:
@@ -603,6 +747,12 @@ def main() -> int:
 
     event = str(payload.get("hook_event_name") or "")
     session_id = str(payload.get("session_id") or "")
+    # A Codex subagent's turn comes under its parent's session id: it is
+    # recorded as the subagent's own chat (codex_thread).
+    called_as = session_id
+    if args.tool == "codex":
+        session_id = codex_thread(payload, session_id)
+    other_thread = session_id != called_as
     agent = agent_name(session_id, args.tool)
     # Where a notice is seen: on UserPromptSubmit stdout joins the agent's
     # context; on Stop Claude Code ignores stdout and shows stderr.
@@ -624,15 +774,25 @@ def main() -> int:
 
     try:
         cap = TurnCapture(args.data_root, args.project, agent)
+        if event == "SessionStart":
+            # Only a compaction: a new chat, a resume or a /clear has nothing to give back.
+            if args.tool == "claude-code" and str(payload.get("source") or "") == "compact":
+                carried = cap.give_back_carried("session-start", shared.now_epoch())
+                if carried:
+                    print(carried)
+            return 0
         if event == "UserPromptSubmit":
             prompt = str(payload.get("prompt") or "")
-            if is_system_payload(prompt):
+            if is_system_payload(prompt) or (args.tool == "claude-code" and injected_prompt(payload, prompt)):
                 return 0
             cwd = str(payload.get("cwd") or "")
             # Before the message is recorded: a helper's commands never act.
             kind, parent, by = helper_signal(args.tool, payload, session_id, args.data_root)
             cap.note_origin(args.tool, session_id, cwd, helper_kind=kind, helper_of=parent, helper_of_by=by)
-            write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
+            if not other_thread:
+                # A subagent shares its parent's process: its breadcrumb would
+                # make the parent's MCP calls its own.
+                write_breadcrumb(args.data_root, args.project, session_id, cwd, tool=args.tool)
             if args.tool == "claude-code" and usage_only(prompt) and not cap.is_helper():
                 # #usage, #usage-on, #usage-off alone: answered here, shown to
                 # the user only, and the prompt never reaches the model
@@ -644,8 +804,18 @@ def main() -> int:
                                   "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
                                                          "suppressOriginalPrompt": True}}, ensure_ascii=False))
                 return 0
-            signals = cap.open_turn(prompt)
+            if args.tool == "claude-code":
+                close_overtaken(cap, prompt, str(payload.get("transcript_path") or ""))
+            signals = cap.open_turn(prompt, deliver=True)
             notice = format_signals(signals, args.tool)
+            if args.tool == "claude-code" and not cap.is_helper():
+                # A compaction no SessionStart answered (a folder set up before
+                # that hook): the carried messages come with this prompt.
+                due = cap.compactions_due(str(payload.get("transcript_path") or ""))
+                if due:
+                    carried = cap.give_back_carried("prompt", due[-1])
+                    if carried:
+                        notice = f"{notice}\n{carried}" if notice else carried
             if notice:
                 tell(notice)
         elif event == "Stop" or event in _USAGE_ONLY_EVENTS:
@@ -688,6 +858,8 @@ def main() -> int:
                     seg.usage_lines() + (helpers.usage if helpers else []),
                     {**seg.starts, **(helpers.starts if helpers else {})}, compacts=seg.compacts,
                     whole=bool(transcript_path) and (seg.from_top or bool(helpers and helpers.replay)))
+            if args.tool == "claude-code" and seg.compacts:
+                cap.note_compacts(seg.compacts)
             if not stop:
                 return 0
             kept = not cap.usage_failed

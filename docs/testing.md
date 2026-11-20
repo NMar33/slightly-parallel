@@ -91,6 +91,20 @@ session"; so did a folder name holding `$`, which sh read as a variable.
 
 Question: is the same thing spelled the same way by everyone who names it?
 
+## 11. Look at it frame by frame
+
+The terminal's tests scrolled with the wheel and checked that the text
+changed. The operator found the scrolling jerky. A probe that read the
+view's position on every animation frame showed it at once: a touchpad
+left the text still on 22 of 48 frames and then jumped a whole row; in
+tmux it jumped five rows and moved 468% of the finger; a full-screen
+program in tmux did not move at all (desktop/e2e/scroll.spec.ts). The
+same probe also misled once: its recording stopped before the input did,
+and half the deltas looked lost.
+
+Question: what does it look like on each frame, and did the recording
+cover all of the input?
+
 ## Questions before writing a test
 
 1. What did the test see at the moment it failed?
@@ -103,3 +117,4 @@ Question: is the same thing spelled the same way by everyone who names it?
 8. What is stored when the meaning is right and the shape is not?
 9. What did a refused request write?
 10. Is the same thing spelled the same way by everyone who names it?
+11. What does it look like on each frame, and did the recording cover all of the input?

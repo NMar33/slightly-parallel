@@ -20,7 +20,9 @@ ALL = {LINUX, MAC, WIN}
 
 # (reason pattern, systems where it may skip): runs on the others.
 ALLOWED: list[tuple[str, set[str]]] = [
-    (r"the terminal needs macOS or Linux", {WIN}),
+    (r"a Unix pty", {WIN}),                      # the Windows pty: tests/test_conpty.py
+    (r"ConPTY is Windows only", {LINUX, MAC}),
+    (r"a symlink needs privileges on Windows", {WIN}),
     (r"tmux is not (installed|on this machine)", {WIN}),
     (r"Windows refuses to replace a file the archiver holds open", {WIN}),
     (r"needs a file its owner cannot read|read-only by permissions|permissions do not stop this user|root reads every file", {WIN}),

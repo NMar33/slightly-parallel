@@ -40,7 +40,8 @@ def _cases(client: TestClient) -> list[tuple[str, str, dict]]:
         # A lens create: CSV row plus a detail document.
         ("vision", "/api/visions", {**_BASE, "l1": "One shape for every create",
                                     "horizon": "quarter", "status": "active"}),
-        ("note", "/api/notes", {**_BASE, "title": "A bare note"}),
+        # A note is written through note_write (notelib); an idea is the plain library lens.
+        ("idea", "/api/ideas", {**_BASE, "title": "A bare idea"}),
         # A decision carries contract warnings when it falls short.
         ("decision", "/api/decisions", {**_BASE, "decision_text": "Chose X over Y"}),
         # JSON state at the data root, not a CSV.
@@ -69,7 +70,7 @@ def test_every_create_carries_warnings_as_a_list(client: TestClient) -> None:
 # one row. The rest mint a fresh id on purpose (a set's name may repeat, a
 # calendar entry on the same day is a second entry) and answer 201 twice —
 # they still carry both keys, which is what the walk above checks.
-_IDEMPOTENT = {"vision", "note", "decision", "board", "task note"}
+_IDEMPOTENT = {"vision", "idea", "decision", "board", "task note"}
 
 
 def test_a_repeated_create_answers_200_and_says_existing(client: TestClient) -> None:

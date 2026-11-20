@@ -14,6 +14,35 @@ function json(status: number, body: unknown) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear() })
 
 describe('TaskAddModal', () => {
+  it('saves a task from supplied text and leaves the regular board draft alone', async () => {
+    const boardDraft = JSON.stringify({ title: 'Other unfinished task', body: 'Keep this draft' })
+    localStorage.setItem('sp-task-draft:p', boardDraft)
+    const posts: Array<Record<string, unknown>> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)))
+        return json(200, { metadata: { id: 'tk_seed' } })
+      }
+      return json(200, {})
+    }))
+    const saved = vi.fn()
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <TaskAddModal projectCode="p" initialStatus="todo" initialTitle="Task from the draft"
+            initialDescription="Markdown from the terminal" onClose={() => {}} onSaved={saved} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(screen.getByDisplayValue('Task from the draft')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Markdown from the terminal')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saved).toHaveBeenCalledWith({ id: 'tk_seed' }))
+    expect(posts).toMatchObject([{ title: 'Task from the draft', description: 'Markdown from the terminal' }])
+    expect(localStorage.getItem('sp-task-draft:p')).toBe(boardDraft)
+  })
+
   it('a description it could not read is not overwritten by the empty box', async () => {
     const posts: Array<{ url: string; body: Record<string, unknown> }> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

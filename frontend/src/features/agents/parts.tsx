@@ -413,6 +413,8 @@ export const HELPER_KIND_LABEL: Record<string, string> = {
   'codex-subagent': 'Codex subagent',
   'claude-print': 'claude -p',
   'opencode-run': 'opencode run',
+  'opencode-subagent': 'OpenCode subagent',
+  'cursor-print': 'cursor-agent -p',
 }
 
 /**

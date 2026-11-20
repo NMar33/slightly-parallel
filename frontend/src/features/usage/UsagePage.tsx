@@ -84,11 +84,33 @@ export function UsagePage() {
       {q.data && (
         // While another range or project loads, the last answer stays, dimmed.
         <div className={`flex flex-col gap-16 min-w-0 transition-opacity ${q.isPlaceholderData ? 'opacity-60' : ''}`} aria-busy={q.isPlaceholderData || undefined}>
+          {q.data.tool_waits && <ToolWaits waits={q.data.tool_waits} />}
           <Body key={`${project}|${range}`} data={q.data} project={project} now={now} />
         </div>
       )}
     </div>
   )
+}
+
+function ToolWaits({ waits }: { waits: NonNullable<UsageSummary['tool_waits']> }) {
+  return <section className="rounded-card border border-border-subtle bg-surface px-16 py-12">
+    <h2>{t('Agent tool waits')}</h2>
+    {waits.ready ? <>
+      {waits.catching_up && <p>{t('Earlier calls are still being indexed.')}</p>}
+      {!!waits.missing && <p>{t('Unavailable session files')}: {waits.missing}</p>}
+      <p>{t('Minutes in calls longer than 30 seconds')}: {(waits.seconds / 60).toLocaleString(locale(), { maximumFractionDigits: 1 })}</p>
+      <ul>{Object.entries(waits.families).sort((a, b) => b[1] - a[1]).map(([family, seconds]) =>
+        <li key={family}>{t(family)} · {(seconds / 60).toFixed(1)} {t('min')}</li>)}</ul>
+      <p>{t('Background jobs')}: {waits.jobs} · {t('Result collected')}: {waits.collected} · {t('Collection took over 30 seconds')}: {waits.blocked}</p>
+      <p>{t('Polled before another tool call')}: {waits.immediate} · {t('No result collected yet')}: {waits.jobs - waits.collected}</p>
+      {waits.median !== null && waits.p90 !== null && <p>{t('Result collection time in seconds')} · p50 {waits.median.toFixed(1)} · p90 {waits.p90.toFixed(1)}</p>}
+      {Object.keys(waits.daily).length > 0 && <details><summary>{t('Daily wait and top agents')}</summary>
+        <ul>{Object.entries(waits.daily).sort().map(([day, seconds]) => <li key={day}>{day} · {(seconds / 60).toFixed(1)} {t('min')}</li>)}</ul>
+        <ul>{Object.entries(waits.agents).map(([agent, seconds]) => <li key={agent}>{agent} · {(seconds / 60).toFixed(1)} {t('min')}</li>)}</ul>
+      </details>}
+      <p className="text-11 text-secondary">{t('Calls with conflicting clocks')}: {waits.clock} · {t('Updated')} {waits.updated.replace('T', ' ')}</p>
+    </> : <p>{t('Waiting for the first tool wait report.')}</p>}
+  </section>
 }
 
 /* ---------------------------------------------------------------- limits */

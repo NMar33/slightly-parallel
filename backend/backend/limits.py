@@ -75,3 +75,19 @@ MAX_STORY_PART = 80_000        # a story preset (focus, brief, style)
 MAX_DOCUMENT_CHARS = 200_000   # an artifact's document, as served for reading
 MAX_DOC_VERSION = 200_000      # one version of a Storyboard document
 MAX_ENTRYPOINT_RECORD = 200_000  # an entry point's record, one version: no word limit, only this file size guard
+
+# ---------------------------------------------------------------------------
+# Messages carried over a context compaction (#carry, #carry-brief)
+# ---------------------------------------------------------------------------
+
+#: Everything given back to an agent after one compaction, in characters:
+#: whole messages first, then briefs, newest first; what does not fit is
+#: named in the text and left to the MCP tool ``pins``. The capture hook
+#: loads this file by path for it (scripts/hooks/capture.py).
+CARRY_BUDGET = 30_000
+
+#: The reply that followed a #carry message, as it is given back with it.
+CARRY_REPLY_CAP = 4_000
+
+#: A brief an agent writes for a #carry-brief message: short on purpose.
+MAX_CARRY_BRIEF = 4_000

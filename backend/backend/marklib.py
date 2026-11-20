@@ -16,6 +16,14 @@ the operator's ☆ wins over the old message that set it.
 
 A message is known by its agent and turn (``<agent_id>#<turn>``): turn
 numbers are fixed in a chat, while session ids regroup with the gap setting.
+The agent's reply in that turn is ``<agent_id>#<turn>/reply``.
+
+The same ledger holds the marks on one message that are not a star
+(pinlib.py): ``#pin`` (come back to it), ``#carry`` / ``#carry-brief`` (give
+it back to the agent after a context compaction, whole or as a brief) and
+``#fork-later`` (work another agent could take, kind ``fork``, whose
+``state`` the operator sets: started or dropped). Their tags are adopted
+here like ``#important``'s.
 """
 
 from __future__ import annotations
@@ -27,19 +35,24 @@ from typing import Any
 from .csvio import append_row, read_rows, rewrite_rows
 from .db import ViewStore
 from .date_utils import now_iso
+from .hookshared import mark_target
 
 MARKS_CSV = "marks.csv"
 MARK_COLUMNS: tuple[str, ...] = (
     "id", "kind", "target", "project", "agent_id", "session_id", "turn",
-    "excerpt", "marked_at", "source", "removed_at",
+    "excerpt", "marked_at", "source", "removed_at", "state", "state_at",
 )
 KINDS: tuple[str, ...] = ("agent", "task", "message")
+#: The marks on one message that are not a star (pinlib.py).
+MESSAGE_KINDS: tuple[str, ...] = ("pin", "carry", "carry-brief", "fork")
+#: What a fork-later mark can be set to; "" is waiting.
+FORK_STATES: tuple[str, ...] = ("", "started", "dropped")
 
 _lock = threading.Lock()
 
 
-def message_target(agent_id: str, turn: int | str) -> str:
-    return f"{agent_id}#{int(turn or 0)}"
+def message_target(agent_id: str, turn: int | str, side: str = "") -> str:
+    return mark_target(agent_id, turn, side)
 
 
 def _id(*parts: Any) -> str:
@@ -75,6 +88,7 @@ def _adopt_locked(store: ViewStore) -> list[str]:
             "agent_id": tag["agent_id"] or "", "session_id": tag["session_id"] or "",
             "turn": int(tag["turn"] or 0), "excerpt": tag["excerpt"] or "",
             "marked_at": str(tag["at_ts"] or ""), "source": "tag", "removed_at": "",
+            "state": "", "state_at": "",
         })
         known.add(mid)
         added.append(mid)
@@ -82,6 +96,9 @@ def _adopt_locked(store: ViewStore) -> list[str]:
     for t in tags:
         kind, agent, turn = str(t["kind"]), str(t["agent_id"] or ""), int(t["turn"] or 0)
         named = [x for x in str(t["tasks"] or "").split(",") if x in tasks]
+        if kind in MESSAGE_KINDS:
+            put(kind, message_target(agent, turn), t)
+            continue
         if kind in ("all", "message"):
             put("message", message_target(agent, turn), t)
         if kind in ("all", "agent") and agent:
@@ -121,8 +138,8 @@ def active(store: ViewStore, project: str = "") -> list[dict[str, str]]:
 
 def mark(store: ViewStore, kind: str, target: str, fields: dict[str, Any]) -> dict[str, str]:
     """Star one thing by hand. Marking what is already marked changes nothing."""
-    if kind not in KINDS:
-        raise ValueError(f"kind must be one of {', '.join(KINDS)}")
+    if kind not in KINDS + MESSAGE_KINDS:
+        raise ValueError(f"kind must be one of {', '.join(KINDS + MESSAGE_KINDS)}")
     if not target:
         raise ValueError("a mark needs a target")
     with _lock:
@@ -136,7 +153,7 @@ def mark(store: ViewStore, kind: str, target: str, fields: dict[str, Any]) -> di
             "project": str(fields.get("project") or ""), "agent_id": str(fields.get("agent_id") or ""),
             "session_id": str(fields.get("session_id") or ""), "turn": int(fields.get("turn") or 0),
             "excerpt": str(fields.get("excerpt") or "")[:160], "marked_at": now,
-            "source": "operator", "removed_at": "",
+            "source": "operator", "removed_at": "", "state": "", "state_at": "",
         }
         append_row(path, MARK_COLUMNS, row)
         return {k: str(v) for k, v in row.items()}
@@ -155,6 +172,31 @@ def unmark(store: ViewStore, kind: str, target: str) -> int:
         for r in rows:
             if r.get("kind") == kind and r.get("target") == target and not r.get("removed_at"):
                 r["removed_at"] = now
+                n += 1
+        return n > 0
+
+    with _lock:
+        rewrite_rows(path, MARK_COLUMNS, mutate)
+    return n
+
+
+def set_state(store: ViewStore, kind: str, target: str, state: str) -> int:
+    """Set the state of the mark in force on a target (a fork-later's:
+    started, dropped, or "" for waiting again). Answers how many changed."""
+    if state not in FORK_STATES:
+        raise ValueError(f"state must be one of: waiting (empty), {', '.join(s for s in FORK_STATES if s)}")
+    path = store.data_root / MARKS_CSV
+    if not path.exists():
+        return 0
+    n = 0
+
+    def mutate(rows: list[dict[str, str]]) -> bool:
+        nonlocal n
+        now = now_iso()
+        for r in rows:
+            if r.get("kind") == kind and r.get("target") == target and not r.get("removed_at") \
+                    and (r.get("state") or "") != state:
+                r["state"], r["state_at"] = state, now if state else ""
                 n += 1
         return n > 0
 

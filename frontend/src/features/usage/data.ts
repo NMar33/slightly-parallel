@@ -185,6 +185,7 @@ export interface TaskUsage extends Partial<UsageCounts> {
 }
 
 export interface UsageSummary {
+  tool_waits?: {ready: false} | {ready: true; catching_up?: boolean; missing?: number; updated: string; seconds: number; families: Record<string, number>; clock: number; jobs: number; collected: number; blocked: number; immediate: number; median: number | null; p90: number | null; daily: Record<string, number>; agents: Record<string, number>}
   api_prices?: ApiPrices
   by_cause?: CauseUsage[]
   analysis?: UsageAnalysis

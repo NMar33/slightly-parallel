@@ -345,12 +345,20 @@ ENTITIES: dict[str, Entity] = {
             ),
             headline_field="title",
         ),
+        # Notes: the long texts agents write for the operator (notelib.py).
+        # The first eight columns are the old library lens's; the rest came
+        # with the Notes page (tk_3e544086) and are added to an old header
+        # on the first write. Versions, pictures and the operator's marks
+        # are ledgers of their own (NOTE_*_COLUMNS below).
         _e(
             "note", "notes.csv", "note_details", "nt_",
             (
                 "id", "created_date", "created_time", "project", "agent_id",
                 "title", "tags", "md_ref",
+                "kind", "task_id", "entrypoint_id", "replaces", "versions_n",
+                "updated_at", "updated_by", "archived_at",
             ),
+            ints=("versions_n",),
             headline_field="title",
         ),
         # The prompt library. Rows are harvested from the chat logs by
@@ -633,10 +641,35 @@ PUBLISH_VERSION_COLUMNS: tuple[str, ...] = ("id", "doc_id", "n", "at", "actor", 
 PUBLISH_ITEM_COLUMNS: tuple[str, ...] = (
     "id", "doc_id", "version_n", "card_id", "text", "position", "at", "actor", "removed_at",
 )
-# What is attached to a card beyond what the server finds itself: an image
-# (target: its file under publish_images/) or a link (target: the URL),
-# by the operator on the page or by the agent (MCP publish_attach).
-PUBLISH_ATTACHMENT_COLUMNS: tuple[str, ...] = ("id", "card_id", "kind", "title", "target", "at", "actor", "removed_at")
+# What is attached to a card, stored as it was attached (the server finds
+# nothing by itself): an image (target: its file under publish_images/), a
+# link (the URL), a file (its copy under publish_files/; source: the path it
+# was copied from; size in bytes), a task (tk_…), a note (nt_…) or a commit
+# (target: the sha; source: the repository). By the operator on the page or
+# by the agent (MCP publish_write).
+PUBLISH_ATTACHMENT_COLUMNS: tuple[str, ...] = (
+    "id", "card_id", "kind", "title", "target", "at", "actor", "removed_at", "source", "size",
+)
+# The operator's messages a card carries beyond the one that made it: a
+# `#publish pu_… …` from any chat of the project (from_card empty), or a
+# card merged into this one (from_card: the merged card, hidden while the
+# row stands). The id of an appended message is the keep id of its turn.
+PUBLISH_SOURCE_COLUMNS: tuple[str, ...] = (
+    "id", "card_id", "from_card", "project", "agent_id", "session_id", "turn", "at", "text", "actor", "removed_at",
+)
+# Who wrote each version of a card's text and context (part: text | context).
+PUBLISH_WRITE_COLUMNS: tuple[str, ...] = ("id", "card_id", "part", "n", "at", "actor", "note")
+
+# Notes (notelib.py): what a note is for; each write a version (its text
+# under note_details/<nt>/vNNN.md); its pictures; the operator's ticks,
+# answers and copies, one row per act, the latest per item winning.
+NOTE_KINDS: tuple[str, ...] = ("context", "paste", "review", "plan", "report", "actions")
+NOTE_VERSION_COLUMNS: tuple[str, ...] = ("id", "note_id", "n", "at", "agent_id", "title", "kind", "words", "file")
+NOTE_IMAGE_COLUMNS: tuple[str, ...] = (
+    "id", "note_id", "file", "caption", "at", "agent_id", "width", "height", "removed_at",
+)
+NOTE_MARK_COLUMNS: tuple[str, ...] = ("id", "note_id", "item", "kind", "value", "at", "actor")
+NOTE_COMMENT_COLUMNS: tuple[str, ...] = ("id", "note_id", "item", "text", "at", "version", "section", "label")
 
 # Every append-only ledger that is not a full Entity but still needs a
 # typed view: (view name, csv file, columns).
@@ -645,6 +678,8 @@ LEDGERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("publish_versions_mutual", "publish_versions.csv", PUBLISH_VERSION_COLUMNS),
     ("publish_items_mutual", "publish_items.csv", PUBLISH_ITEM_COLUMNS),
     ("publish_attachments_mutual", "publish_attachments.csv", PUBLISH_ATTACHMENT_COLUMNS),
+    ("publish_sources_mutual", "publish_sources.csv", PUBLISH_SOURCE_COLUMNS),
+    ("publish_writes_mutual", "publish_writes.csv", PUBLISH_WRITE_COLUMNS),
     ("entrypoint_ways_mutual", "entrypoint_ways.csv", ENTRYPOINT_WAY_COLUMNS),
     ("entrypoint_stops_mutual", "entrypoint_stops.csv", ENTRYPOINT_STOP_COLUMNS),
     ("entrypoint_shots_mutual", "entrypoint_shots.csv", ENTRYPOINT_SHOT_COLUMNS),
@@ -669,4 +704,8 @@ LEDGERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("calendar_entries_mutual", "calendar_entries.csv", CALENDAR_ENTRY_COLUMNS),
     ("milestones_mutual", "milestones.csv", MILESTONE_COLUMNS),
     ("milestone_tasks_mutual", "milestone_tasks.csv", MILESTONE_TASK_COLUMNS),
+    ("note_versions_mutual", "note_versions.csv", NOTE_VERSION_COLUMNS),
+    ("note_images_mutual", "note_images.csv", NOTE_IMAGE_COLUMNS),
+    ("note_marks_mutual", "note_marks.csv", NOTE_MARK_COLUMNS),
+    ("note_comments_mutual", "note_comments.csv", NOTE_COMMENT_COLUMNS),
 )

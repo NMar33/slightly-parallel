@@ -2,7 +2,8 @@
  * The Monitor page: a tile per measure with its last minutes, the charts
  * over a chosen span (the unusual moments shaded), and beside them what is
  * going on, what was unusual lately, and the heaviest programs. The
- * settings open in a drawer. Under all that, the server itself: its state,
+ * settings open in a drawer. Under all that, the terminal's log
+ * (TerminalSection), then the server itself: its state,
  * capture, backups, the slow requests and the log (ServerSection).
  */
 
@@ -24,6 +25,7 @@ import {
   EventDetail, EventRow, MonitorSettings, PowerSwitch, Processes, StripFor, measuresFor,
 } from './parts'
 import { ServerSection } from './ServerSection'
+import { TerminalSection } from './TerminalSection'
 import { t, tn } from '../../i18n/scope/system'
 
 const RANGE_WORDS: Record<Range, string> = {
@@ -216,6 +218,7 @@ function Console() {
           <Cost now={now} />
         </>
       )}
+      <TerminalSection />
       <ServerSection />
       <Drawer open={settings} onClose={() => setSettings(false)} title={t('Monitor settings')}><MonitorSettings /></Drawer>
     </div>

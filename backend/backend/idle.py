@@ -86,6 +86,8 @@ def idle_seconds() -> float | None:
 
 def reading() -> tuple[float | None, str]:
     """(idle seconds or None, which source answered: gnome, xprintidle, macos, windows, "")."""
+    if os.environ.get("SP_SANDBOX") == "1":
+        return None, ""
     global _cache
     with _lock:
         at, value, how = _cache

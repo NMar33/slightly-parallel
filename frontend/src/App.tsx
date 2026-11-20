@@ -8,6 +8,7 @@ import { useFreshness } from './lib/settings'
 import { WaitingNotice } from './features/terminal/waiting'
 import { SmartTimer } from './features/time/SmartTimer'
 import { useApplyAppearance } from './lib/appearance'
+import { useApplyTermScheme } from './features/terminal/useScheme'
 import { useSidebarCollapsed } from './hooks/useSidebarCollapsed'
 import { Sidebar } from './features/shell/Sidebar'
 import { Topbar } from './features/shell/Topbar'
@@ -26,6 +27,7 @@ const GuidePage = lazy(() => import('./pages/GuidePage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
 const InternalsPage = lazy(() => import('./pages/InternalsPage'))
 const ImportantPage = lazy(() => import('./pages/ImportantPage'))
+const PinsPage = lazy(() => import('./pages/PinsPage'))
 const MonitorPage = lazy(() => import('./pages/MonitorPage'))
 const UsagePage = lazy(() => import('./pages/UsagePage'))
 const TerminalPageRoute = lazy(() => import('./pages/TerminalPage'))
@@ -59,6 +61,11 @@ const ScansPage = lazy(() => import('./pages/ScansPage'))
 const StandupsPage = lazy(() => import('./pages/StandupsPage'))
 const DecisionsPage = lazy(() => import('./pages/DecisionsPage'))
 const PublishPage = lazy(() => import('./pages/PublishPage'))
+const NotesPage = lazy(() => import('./pages/NotesPage'))
+const NotesDesignPage = lazy(() => import('./pages/NotesDesignPage'))
+const AquaPage = lazy(() => import('./pages/AquaPage'))
+// SP Aqua, the terminal window (tk_bbb84183): a page of its own, without the app's sidebar and top bar.
+const TermWindow = lazy(() => import('./features/aqua/app/TermApp').then((m) => ({ default: m.TermApp })))
 const NotFoundPage = lazy(() =>
   import('./pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })),
 )
@@ -94,8 +101,19 @@ export function App() {
   const appLocation = useLocation()
   // Skin, accent and interface scale — the operator's appearance choices.
   useApplyAppearance()
+  // The terminal's colour scheme on the page's terminal tokens (the drawer, /term).
+  useApplyTermScheme()
   const [collapsed, toggleSidebar] = useSidebarCollapsed()
   useDockShortcut()
+  // /term is a window of its own (the desktop app's, or a browser tab): no
+  // sidebar, no top bar, no drawer — the terminal is the whole page.
+  if (appLocation.pathname === '/term') {
+    return (
+      <ErrorBoundary resetKey={appLocation.pathname}>
+        <Suspense fallback={null}><TermWindow /></Suspense>
+      </ErrorBoundary>
+    )
+  }
   return (
     // `h-screen` and not `min-h-screen`: with a minimum, a long page makes
     // the whole row taller than the window, the sidebar grows with it, and
@@ -129,6 +147,10 @@ export function App() {
             <Suspense fallback={<LoadingSkeleton variant="card" count={3} />}>
               <ErrorBoundary resetKey={appLocation.pathname}>
               <Routes>
+                {/* Notes: the design round's variants on mock data (tk_3e544086); the page itself is /notes, below. A design round, so the guide leaves it out. */}
+                <Route path="/notes/design" element={<NotesDesignPage />} />
+                {/* SP Aqua: the design round of the desktop terminal app, on mock data (tk_bbb84183). A design round, so the guide leaves it out. */}
+                <Route path="/aqua" element={<AquaPage />} />
                 {/* ------------------------------- the product ---------- */}
                 <Route path="/" element={<Overview />} />
                 <Route path="/project/:code" element={<ProjectPage />} />
@@ -167,6 +189,9 @@ export function App() {
                 {/* Health became the lower half of Monitor; the hash (#capture, #level=…) still points into it. */}
                 <Route path="/health" element={<ToMonitor />} />
                 <Route path="/important" element={<ImportantPage />} />
+                <Route path="/pins" element={<PinsPage />} />
+                {/* Notes: the long texts agents write for you (tk_3e544086), the design round's K on the server's notes. */}
+                <Route path="/notes" element={<NotesPage />} />
                 <Route path="/monitor" element={<MonitorPage />} />
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/terminal" element={<TerminalPageRoute />} />

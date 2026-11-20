@@ -24,6 +24,8 @@ from .file_safety import edit_json, safe_read_json
 log = logging.getLogger("sp.settings")
 
 SETTINGS_FILENAME = "settings.json"
+RESOURCE_YELLOW = "terminal.resource_yellow"
+RESOURCE_RED = "terminal.resource_red"
 
 
 @dataclass(frozen=True)
@@ -410,7 +412,7 @@ SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec(
         key="terminal.keep", label="Keep terminals when Slightly Parallel restarts",
-        description="tmux: every terminal lives on in tmux, and a restart or a closed tab rejoins it — an agent keeps working. plain: a terminal ends with the server.",
+        description="tmux: every terminal lives on in tmux, and a restart or a closed tab rejoins it — an agent keeps working. plain: a terminal ends with the server. On Windows every terminal is plain: tmux does not run there.",
         type="choice", default="tmux", group="Terminal", options=("tmux", "plain"),
     ),
     SettingSpec(
@@ -425,9 +427,86 @@ SPECS: tuple[SettingSpec, ...] = (
         type="choice", default="50000", group="Terminal", options=("10000", "50000", "200000"),
     ),
     SettingSpec(
+        key="terminal.smooth_scroll", label="Smooth scrolling",
+        description="The wheel and the touchpad move a terminal's history by pixels, as a native terminal does; a mouse notch glides. Off: xterm's own steps of whole lines (in tmux, five lines a step).",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_meter", label="Show resource indicators",
+        description="Show temperature, CPU, memory and network in the terminal title bar when the system monitor is on.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_color", label="Color resource bars by load",
+        description="On: the resource indicator turns green, yellow or red. Off: it stays gray.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_green_enabled", label="Green resource level",
+        description="Show the healthy resource level.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_yellow_enabled", label="Yellow resource level",
+        description="Let the resource indicator show warnings at its yellow threshold.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key="terminal.resource_red_enabled", label="Red resource level",
+        description="Let the resource indicator show high load at its red threshold.",
+        type="bool", default=True, group="Terminal",
+    ),
+    SettingSpec(
+        key=RESOURCE_YELLOW, label="Yellow resource threshold",
+        description="Threshold on a percent scale for CPU and memory, 40–95 °C for temperature, and 0–100 MiB/s for network traffic.",
+        type="int", default=75, group="Terminal", minimum=0, maximum=99,
+    ),
+    SettingSpec(
+        key=RESOURCE_RED, label="Red resource threshold",
+        description="The level at which a bar turns red. Keep it above the yellow threshold.",
+        type="int", default=90, group="Terminal", minimum=1, maximum=100,
+    ),
+    SettingSpec(
+        key="terminal.program_clipboard", label="Programs may write to the clipboard (OSC 52)",
+        description="Terminal programs may request a clipboard write. Block, ask first, or allow. Your own copy shortcuts still work.",
+        type="choice", default="block", group="Terminal", options=("block", "ask", "allow"),
+    ),
+    SettingSpec(
+        key="terminal.log", label="Terminal log",
+        description="light: counts how the terminal works (slow frames, stalls, errors, reconnects) and keeps a small file a day; the Monitor shows it. full: also every key, paste, wheel and frame with its time, for finding a bug; uses more memory and disk, and turns back to light after 2 hours. What you type and what the terminal prints is never kept.",
+        type="choice", default="light", group="Terminal", options=("off", "light", "full"),
+    ),
+    SettingSpec(
         key="terminal.font_size", label="Terminal text",
         description="The size of the text in every terminal.",
         type="int", default=13, group="Terminal", unit="px", minimum=10, maximum=22,
+    ),
+    # The colour schemes (frontend/src/features/terminal/schemes.ts holds
+    # their colours; the ids here and there are the same, a test checks).
+    SettingSpec(
+        key="terminal.scheme", label="Colour scheme",
+        description="The colours of every terminal: its ground, text, cursor, selection and the 16 colours programs print in. sp-now is the terminal's colours as they were.",
+        type="choice", default="sp-now", group="Terminal",
+        options=("sp-now", "sp-graphite", "sp-paper", "catppuccin-mocha", "catppuccin-latte", "tokyo-night",
+                 "gruvbox-dark", "one-dark", "nord", "solarized-light", "dracula", "rose-pine"),
+    ),
+    SettingSpec(
+        key="terminal.scheme_scope", label="Where the scheme applies",
+        description="terminal: the terminal only. window: the terminal window's title row, tabs, sidebars and menus take the scheme's colours too.",
+        type="choice", default="terminal", group="Terminal", options=("terminal", "window"),
+    ),
+    # The terminal window (desktop/main.js) reads this at start: the windows
+    # besides the main one that were open when the app was closed.
+    SettingSpec(
+        key="terminal.restore_windows", label="On start",
+        description=(
+            "The terminal window, started again after it was closed with detached windows open. "
+            "restore: they open again with their chat or workspace, size and place. "
+            "ask: the main window asks whether to open them. main: only the main window. "
+            "A window you closed yourself does not come back. "
+            "On Wayland they come back in their size only: the desktop decides where a window stands."
+        ),
+        type="choice", default="restore", group="Terminal", options=("restore", "ask", "main"),
     ),
     # --------------------------------------------------------------- time ---
     # The smart timer (timeauto.py): what counts as away, and what a project
@@ -631,6 +710,10 @@ def _merged(stored_raw: Any) -> dict[str, Any]:
             values[key] = coerce(key, value)
         except ValueError as exc:
             log.warning("settings.json: %s — using default", exc)
+    if values[RESOURCE_YELLOW] >= values[RESOURCE_RED]:
+        log.warning("settings.json: yellow resource threshold must be below red — using defaults")
+        for key in (RESOURCE_YELLOW, RESOURCE_RED):
+            values[key] = _SPEC_BY_KEY[key].default
     return values
 
 
@@ -660,6 +743,8 @@ def save(data_root: Path, updates: dict[str, Any]) -> dict[str, Any]:
         values = _merged(stored_raw)
         for key, value in updates.items():
             values[key] = coerce(key, value)  # raises on invalid input
+        if values[RESOURCE_YELLOW] >= values[RESOURCE_RED]:
+            raise ValueError("The yellow resource threshold must be below the red threshold.")
         saved.append(values)
         return _nest(values)
 

@@ -61,8 +61,8 @@ def marks_list(project: str = Query(""), store: ViewStore = Depends(get_store)) 
     tagged = {r["target"]: r for r in marklib.rows(store) if r["kind"] == "task"}
     out: list[dict[str, Any]] = []
     for r in marklib.active(store, project):
-        if r["kind"] == "task":
-            continue  # the board's star answers for tasks, below
+        if r["kind"] not in ("agent", "message"):
+            continue  # the board's star answers for tasks, below; pins are pinlib's
         item: dict[str, Any] = {**r, "turn": int(r.get("turn") or 0)}
         item["agent"] = agents.get(r["target"] if r["kind"] == "agent" else (r.get("agent_id") or ""))
         out.append(item)
@@ -91,6 +91,8 @@ def marks_add(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> 
     operator_only({"actor": body.get("actor") or "operator"}, "Marking something important",
                   "the operator types #important in the chat")
     kind, target = str(body.get("kind") or ""), str(body.get("target") or "")
+    if kind not in marklib.KINDS:
+        raise HTTPException(status_code=422, detail=f"kind must be one of {', '.join(marklib.KINDS)}")
     if kind == "task":
         if not store.query_one("SELECT id FROM tasks_mutual WHERE id = ?", (target,)):
             raise HTTPException(status_code=404, detail=f"task not found: {target}")

@@ -262,6 +262,62 @@ def test_a_codex_subagent_names_its_parent_thread(root: Path, tmp_path: Path) ->
     assert meta["helper_of_by"] == "session"
 
 
+CODEX_PARENT = "01a1ed5c-65ce-7863-985c-460dff244127"
+CODEX_SUB = "01a1f1fd-b9aa-7481-994b-f6f172b691a1"
+
+
+def test_a_codex_subagent_turn_under_the_parents_session_id_stays_out_of_the_parent(
+        root: Path, tmp_path: Path) -> None:
+    """Codex 0.170 calls the hooks for a subagent's turn with the parent's
+    session_id and the subagent's session file (its first line names the
+    subagent's own thread: fixtures/helpers/codex-subagent-0170.jsonl, from
+    the run of 19 Nov). The turn goes to the subagent's own helper chat; the
+    operator's chat stays not a helper, gets no turn from it, and its #now /
+    #now-todo still act (tk_2484f160)."""
+    parent_file = tmp_path / f"rollout-2026-11-18T17-33-38-{CODEX_PARENT}.jsonl"
+    meta_line = _first("codex-interactive.jsonl")
+    meta_line["payload"].update(session_id=CODEX_PARENT, id=CODEX_PARENT)
+    parent_file.write_text(json.dumps(meta_line) + "\n", encoding="utf-8")
+    sub_file = tmp_path / f"rollout-2026-11-19T15-08-19-{CODEX_SUB}.jsonl"
+    sub_file.write_text((FIX / "codex-subagent-0170.jsonl").read_text(encoding="utf-8"), encoding="utf-8")
+    args = ["--project", "alpha", "--data-root", str(root), "--tool", "codex"]
+
+    def turn(path: Path, prompt: str, reply: str) -> str:
+        out = _hook("claude-code-capture.py", args, {
+            "hook_event_name": "UserPromptSubmit", "session_id": CODEX_PARENT, "cwd": str(tmp_path),
+            "transcript_path": str(path), "turn_id": "t", "prompt": prompt}, _env())
+        _hook("claude-code-capture.py", args, {
+            "hook_event_name": "Stop", "session_id": CODEX_PARENT, "cwd": str(tmp_path),
+            "transcript_path": str(path), "turn_id": "t", "last_assistant_message": reply}, _env())
+        return out.stdout
+
+    parent, sub = "codex-ff244127", "codex-72b691a1"
+    assert "#now" in turn(parent_file, "#now look at the charts", "on it")
+    turn(sub_file, "Be a critic of the data plan. #now-todo the brief's own tag", "critique done")
+    told = turn(parent_file, "#now-todo the note ids come back wrong", "filed")
+    meta = _meta(root, "alpha", parent)
+    assert "helper" not in meta and meta["message_count"] == 2
+    chat = (root / "projects/alpha/chats" / parent / "chat.md").read_text(encoding="utf-8")
+    assert "Be a critic" not in chat and "critique done" not in chat
+    assert "#now look at the charts" in chat and "#now-todo the note ids" in chat
+    assert "#now" in told                                   # the hook still names the command
+    # The subagent's turn is in its own chat, a helper of the operator's.
+    ms = _meta(root, "alpha", sub)
+    assert (ms["helper"], ms["helper_kind"], ms["helper_of"]) == (True, "codex-subagent", parent)
+    sub_chat = (root / "projects/alpha/chats" / sub / "chat.md").read_text(encoding="utf-8")
+    assert "Be a critic" in sub_chat and "critique done" in sub_chat
+    # Its breadcrumb never stands for the parent's process.
+    crumbs = [json.loads(p.read_text(encoding="utf-8")) for p in (root / ".sessions").rglob("*.json")]
+    assert crumbs and all(c.get("agent_id") == parent for c in crumbs)
+    # The server reads the operator's last command from the parent chat.
+    from backend import tasklib
+    store = ViewStore(data_root=root)
+    store.rebuild()
+    assert tasklib._operator_command(store, parent)[:3] == ("now", "", "todo")
+    assert store.query("SELECT count(*) AS n FROM now_tags WHERE agent_id = ?", (parent,))[0]["n"] == 2
+    assert store.query("SELECT count(*) AS n FROM now_tags WHERE agent_id = ?", (sub,))[0]["n"] == 0
+
+
 def test_codex_notify_marks_an_exec_run_found_by_its_thread(root: Path, tmp_path: Path) -> None:
     home = tmp_path / "codexhome"
     day = home / "sessions" / "2026" / "11" / "01"

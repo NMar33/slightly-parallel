@@ -1,0 +1,586 @@
+/* SP Aqua — the design round's palettes. One block per variant and theme.
+   The terminal surface is always opaque; glass (blur) only on chrome.
+   Colours are oklch so every hue is chosen, not picked from a swatch. */
+
+.aq {
+  /* semantic states — the same meaning in every variant */
+  --aq-wait: oklch(0.80 0.15 75);
+  --aq-up: oklch(0.74 0.15 150);
+  --aq-down: oklch(0.66 0.17 25);
+  --aq-verbatim: oklch(0.64 0.20 25);
+  --aq-summary: oklch(0.84 0.15 95);
+  --aq-important: oklch(0.70 0.17 350);
+  --aq-fork: oklch(0.74 0.12 300);
+  /* the terminal — Claude Code's colours on an opaque ground */
+  --aq-term-bg: oklch(0.17 0.015 240);
+  --aq-term-fg: oklch(0.93 0.008 240);
+  --aq-term-dim: oklch(0.68 0.015 240);
+  --aq-term-you: oklch(0.24 0.015 240);
+  --aq-term-box: oklch(0.45 0.02 240);
+  --aq-term-claude: oklch(0.74 0.13 45);
+  --aq-term-ok: oklch(0.78 0.15 150);
+  --aq-term-err: oklch(0.70 0.17 25);
+  --aq-term-add: oklch(0.32 0.07 150);
+  --aq-term-del: oklch(0.32 0.08 25);
+  --aq-term-link: oklch(0.80 0.10 220);
+  --aq-term-hint: oklch(0.86 0.17 95);
+  --aq-term-hint-ink: oklch(0.2 0.02 95);
+  --aq-term-match: oklch(0.55 0.12 95 / 0.55);
+  --aq-radius: 10px;
+  --aq-radius-sm: 6px;
+  --aq-dur: 160ms;
+  --aq-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: var(--font-sans);
+  color: var(--aq-ink);
+  background: var(--aq-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- A · Rail — "Deep water": dense, matte, one teal accent -------------- */
+.aq[data-v='a'][data-th='dark'], .aq:is([data-v='g'], [data-v='h'], [data-v='i'])[data-th='dark'] {
+  --aq-bg: linear-gradient(165deg, oklch(0.24 0.05 215) 0%, oklch(0.17 0.035 235) 55%, oklch(0.14 0.03 250) 100%);
+  --aq-panel: oklch(0.195 0.02 238);
+  --aq-raise: oklch(0.235 0.022 238);
+  --aq-hover: oklch(0.27 0.025 238);
+  --aq-line: oklch(0.29 0.02 238);
+  --aq-ink: oklch(0.95 0.006 230);
+  --aq-ink2: oklch(0.80 0.012 230);
+  --aq-ink3: oklch(0.66 0.015 230);
+  --aq-accent: oklch(0.80 0.11 185);
+  --aq-accent-ink: oklch(0.18 0.03 185);
+  --aq-accent-soft: oklch(0.80 0.11 185 / 0.14);
+  --aq-glass: oklch(0.21 0.02 238 / 0.82);
+  --aq-glass-line: oklch(1 0 0 / 0.08);
+  --aq-term-bg: oklch(0.145 0.016 238);
+}
+.aq[data-v='a'][data-th='light'], .aq:is([data-v='g'], [data-v='h'], [data-v='i'])[data-th='light'] {
+  --aq-bg: linear-gradient(165deg, oklch(0.90 0.04 210) 0%, oklch(0.95 0.015 220) 100%);
+  --aq-panel: oklch(0.985 0.005 215);
+  --aq-raise: oklch(1 0 0);
+  --aq-hover: oklch(0.92 0.018 215);
+  --aq-line: oklch(0.88 0.015 215);
+  --aq-ink: oklch(0.22 0.02 240);
+  --aq-ink2: oklch(0.40 0.02 240);
+  --aq-ink3: oklch(0.52 0.02 240);
+  --aq-accent: oklch(0.50 0.10 200);
+  --aq-accent-ink: oklch(0.99 0 0);
+  --aq-accent-soft: oklch(0.50 0.10 200 / 0.12);
+  --aq-glass: oklch(0.99 0.004 215 / 0.85);
+  --aq-glass-line: oklch(0.2 0.02 240 / 0.10);
+  --aq-wait: oklch(0.62 0.15 65);
+  --aq-up: oklch(0.56 0.14 150);
+  --aq-summary: oklch(0.74 0.15 90);
+  --aq-term-bg: oklch(0.99 0.004 220);
+  --aq-term-fg: oklch(0.24 0.02 240);
+  --aq-term-dim: oklch(0.50 0.02 240);
+  --aq-term-you: oklch(0.95 0.012 220);
+  --aq-term-box: oklch(0.72 0.02 240);
+  --aq-term-claude: oklch(0.57 0.15 40);
+  --aq-term-ok: oklch(0.50 0.14 150);
+  --aq-term-err: oklch(0.55 0.18 25);
+  --aq-term-add: oklch(0.92 0.06 150);
+  --aq-term-del: oklch(0.92 0.05 25);
+  --aq-term-link: oklch(0.47 0.12 230);
+  --aq-term-match: oklch(0.85 0.14 95 / 0.7);
+}
+
+/* ---- B · Spaces — "Gel": wallpaper, glass chrome, gel pills -------------- */
+.aq[data-v='b'][data-th='light'] {
+  --aq-bg: linear-gradient(160deg, oklch(0.83 0.07 235) 0%, oklch(0.90 0.05 205) 45%, oklch(0.95 0.03 180) 100%);
+  --aq-panel: oklch(0.99 0.004 230 / 0.72);
+  --aq-raise: oklch(1 0 0 / 0.86);
+  --aq-hover: oklch(0.6 0.12 245 / 0.10);
+  --aq-line: oklch(0.3 0.04 245 / 0.14);
+  --aq-ink: oklch(0.21 0.03 250);
+  --aq-ink2: oklch(0.36 0.03 250);
+  --aq-ink3: oklch(0.47 0.03 250);
+  --aq-accent: oklch(0.56 0.17 252);
+  --aq-accent-ink: oklch(0.99 0 0);
+  --aq-accent-soft: oklch(0.56 0.17 252 / 0.14);
+  --aq-glass: oklch(0.99 0.006 230 / 0.58);
+  --aq-glass-line: oklch(1 0 0 / 0.65);
+  --aq-gel-hi: oklch(0.80 0.11 235);
+  --aq-gel-lo: oklch(0.52 0.18 255);
+  --aq-wait: oklch(0.64 0.16 60);
+  --aq-up: oklch(0.58 0.15 150);
+  --aq-summary: oklch(0.76 0.15 90);
+  --aq-radius: 14px;
+}
+.aq[data-v='b'][data-th='dark'] {
+  --aq-bg: radial-gradient(120% 90% at 20% 0%, oklch(0.32 0.09 250) 0%, oklch(0.18 0.05 255) 45%, oklch(0.12 0.03 245) 100%);
+  --aq-panel: oklch(0.22 0.04 250 / 0.72);
+  --aq-raise: oklch(0.26 0.045 250 / 0.9);
+  --aq-hover: oklch(0.8 0.08 240 / 0.10);
+  --aq-line: oklch(0.9 0.04 240 / 0.12);
+  --aq-ink: oklch(0.96 0.008 240);
+  --aq-ink2: oklch(0.82 0.02 240);
+  --aq-ink3: oklch(0.68 0.03 240);
+  --aq-accent: oklch(0.74 0.14 240);
+  --aq-accent-ink: oklch(0.16 0.04 250);
+  --aq-accent-soft: oklch(0.74 0.14 240 / 0.16);
+  --aq-glass: oklch(0.22 0.045 250 / 0.55);
+  --aq-glass-line: oklch(1 0 0 / 0.12);
+  --aq-gel-hi: oklch(0.78 0.13 235);
+  --aq-gel-lo: oklch(0.45 0.17 258);
+  --aq-radius: 14px;
+  --aq-term-bg: oklch(0.15 0.025 252);
+}
+
+/* ---- C · Spine — "Sea glass on paper": warm, quiet, a light terminal ---- */
+.aq[data-v='c'][data-th='light'] {
+  --aq-bg: oklch(0.965 0.012 85);
+  --aq-panel: oklch(0.985 0.008 85);
+  --aq-raise: oklch(1 0 0);
+  --aq-hover: oklch(0.93 0.015 85);
+  --aq-line: oklch(0.88 0.015 80);
+  --aq-ink: oklch(0.24 0.015 70);
+  --aq-ink2: oklch(0.42 0.015 70);
+  --aq-ink3: oklch(0.53 0.015 70);
+  --aq-accent: oklch(0.52 0.08 175);
+  --aq-accent-ink: oklch(0.99 0 0);
+  --aq-accent-soft: oklch(0.62 0.08 175 / 0.14);
+  --aq-glass: oklch(0.985 0.008 85 / 0.9);
+  --aq-glass-line: oklch(0.3 0.02 70 / 0.10);
+  --aq-wait: oklch(0.62 0.15 60);
+  --aq-up: oklch(0.55 0.13 150);
+  --aq-summary: oklch(0.76 0.15 88);
+  --aq-term-bg: oklch(0.99 0.006 85);
+  --aq-term-fg: oklch(0.25 0.015 70);
+  --aq-term-dim: oklch(0.50 0.015 70);
+  --aq-term-you: oklch(0.945 0.012 85);
+  --aq-term-box: oklch(0.70 0.015 70);
+  --aq-term-claude: oklch(0.58 0.15 40);
+  --aq-term-ok: oklch(0.50 0.14 150);
+  --aq-term-err: oklch(0.55 0.18 25);
+  --aq-term-add: oklch(0.92 0.06 150);
+  --aq-term-del: oklch(0.92 0.05 25);
+  --aq-term-link: oklch(0.48 0.12 230);
+  --aq-term-match: oklch(0.85 0.14 95 / 0.7);
+}
+.aq[data-v='c'][data-th='dark'] {
+  --aq-bg: oklch(0.185 0.008 65);
+  --aq-panel: oklch(0.21 0.009 65);
+  --aq-raise: oklch(0.245 0.01 65);
+  --aq-hover: oklch(0.28 0.012 65);
+  --aq-line: oklch(0.31 0.01 65);
+  --aq-ink: oklch(0.94 0.01 80);
+  --aq-ink2: oklch(0.80 0.012 80);
+  --aq-ink3: oklch(0.66 0.012 80);
+  --aq-accent: oklch(0.78 0.09 175);
+  --aq-accent-ink: oklch(0.18 0.02 175);
+  --aq-accent-soft: oklch(0.78 0.09 175 / 0.14);
+  --aq-glass: oklch(0.21 0.009 65 / 0.9);
+  --aq-glass-line: oklch(1 0 0 / 0.08);
+  --aq-term-bg: oklch(0.155 0.008 65);
+  --aq-term-fg: oklch(0.92 0.01 80);
+  --aq-term-dim: oklch(0.66 0.012 80);
+  --aq-term-you: oklch(0.22 0.01 65);
+}
+
+/* ---- D · Mosaic — "Pools": charcoal wall, a project's hue as its pool ---- */
+.aq[data-v='d'] {
+  --aq-bg: radial-gradient(140% 100% at 50% 0%, oklch(0.22 0.04 220) 0%, oklch(0.15 0.02 240) 60%, oklch(0.12 0.015 255) 100%);
+  --aq-panel: oklch(0.18 0.008 260);
+  --aq-raise: oklch(0.215 0.01 260);
+  --aq-hover: oklch(0.25 0.012 260);
+  --aq-line: oklch(0.27 0.01 260);
+  --aq-ink: oklch(0.95 0.005 260);
+  --aq-ink2: oklch(0.80 0.01 260);
+  --aq-ink3: oklch(0.66 0.012 260);
+  --aq-accent: oklch(0.82 0.12 195);
+  --aq-accent-ink: oklch(0.18 0.03 195);
+  --aq-accent-soft: oklch(0.82 0.12 195 / 0.14);
+  --aq-glass: oklch(0.19 0.008 260 / 0.9);
+  --aq-glass-line: oklch(1 0 0 / 0.08);
+  --aq-term-bg: oklch(0.125 0.006 260);
+}
+
+/* ---- E · Tide — "Night swim": one terminal, frosted HUD, the tide line --- */
+.aq[data-v='e'] {
+  --aq-tide: linear-gradient(90deg, oklch(0.20 0.05 210 / 0.9), oklch(0.17 0.04 235 / 0.9));
+  --aq-bg: oklch(0.12 0.016 225);
+  --aq-panel: oklch(0.165 0.02 225);
+  --aq-raise: oklch(0.20 0.022 225);
+  --aq-hover: oklch(0.24 0.025 225);
+  --aq-line: oklch(0.27 0.02 225);
+  --aq-ink: oklch(0.95 0.006 210);
+  --aq-ink2: oklch(0.80 0.012 210);
+  --aq-ink3: oklch(0.65 0.015 210);
+  --aq-accent: oklch(0.84 0.10 190);
+  --aq-accent-ink: oklch(0.16 0.03 190);
+  --aq-accent-soft: oklch(0.84 0.10 190 / 0.13);
+  --aq-glass: oklch(0.18 0.025 225 / 0.78);
+  --aq-glass-line: oklch(0.9 0.05 200 / 0.14);
+  --aq-term-bg: oklch(0.12 0.016 225);
+}
+
+/* ---- F · Lineage — "Channels": the tree of chats and tasks, clean ------- */
+.aq[data-v='f'][data-th='light'] {
+  --aq-bg: linear-gradient(180deg, oklch(0.93 0.03 215) 0%, oklch(0.965 0.012 230) 100%);
+  --aq-panel: oklch(1 0 0);
+  --aq-raise: oklch(1 0 0);
+  --aq-hover: oklch(0.945 0.012 230);
+  --aq-line: oklch(0.90 0.01 230);
+  --aq-ink: oklch(0.23 0.02 250);
+  --aq-ink2: oklch(0.41 0.02 250);
+  --aq-ink3: oklch(0.52 0.02 250);
+  --aq-accent: oklch(0.55 0.13 215);
+  --aq-accent-ink: oklch(0.99 0 0);
+  --aq-accent-soft: oklch(0.55 0.13 215 / 0.11);
+  --aq-glass: oklch(1 0 0 / 0.9);
+  --aq-glass-line: oklch(0.2 0.02 250 / 0.1);
+  --aq-wait: oklch(0.63 0.15 62);
+  --aq-up: oklch(0.56 0.14 150);
+  --aq-summary: oklch(0.76 0.15 90);
+  --aq-term-bg: oklch(0.19 0.02 250);
+}
+.aq[data-v='f'][data-th='dark'] {
+  --aq-bg: linear-gradient(180deg, oklch(0.21 0.04 230) 0%, oklch(0.16 0.025 250) 100%);
+  --aq-panel: oklch(0.195 0.022 255);
+  --aq-raise: oklch(0.23 0.025 255);
+  --aq-hover: oklch(0.26 0.028 255);
+  --aq-line: oklch(0.29 0.025 255);
+  --aq-ink: oklch(0.95 0.006 240);
+  --aq-ink2: oklch(0.80 0.015 240);
+  --aq-ink3: oklch(0.66 0.02 240);
+  --aq-accent: oklch(0.78 0.12 215);
+  --aq-accent-ink: oklch(0.17 0.03 215);
+  --aq-accent-soft: oklch(0.78 0.12 215 / 0.14);
+  --aq-glass: oklch(0.2 0.022 255 / 0.9);
+  --aq-glass-line: oklch(1 0 0 / 0.08);
+  --aq-term-bg: oklch(0.14 0.018 255);
+}
+
+/* ---- shared parts ------------------------------------------------------- */
+.aq-panel { background: var(--aq-panel); border: 1px solid var(--aq-line); }
+.aq-raise { background: var(--aq-raise); border: 1px solid var(--aq-line); }
+.aq-glass {
+  background: var(--aq-glass);
+  border: 1px solid var(--aq-glass-line);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  backdrop-filter: blur(16px) saturate(1.5);
+}
+.aq-ink2 { color: var(--aq-ink2); }
+.aq-ink3 { color: var(--aq-ink3); }
+.aq-accent { color: var(--aq-accent); }
+.aq-line { border-color: var(--aq-line); }
+
+.aq-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 24px; padding: 0 8px; border-radius: var(--aq-radius-sm);
+  font-size: 12px; color: var(--aq-ink2); background: transparent; border: 1px solid transparent;
+  transition: background var(--aq-dur) var(--aq-ease), color var(--aq-dur) var(--aq-ease);
+  white-space: nowrap; cursor: pointer;
+}
+.aq-btn:hover { background: var(--aq-hover); color: var(--aq-ink); }
+.aq-btn:focus-visible, .aq-row:focus-visible, .aq-tab:focus-visible { outline: 2px solid var(--aq-accent); outline-offset: 1px; }
+.aq-btn[aria-pressed='true'], .aq-btn[data-on='true'] { background: var(--aq-accent-soft); color: var(--aq-accent); }
+.aq-btn.solid { background: var(--aq-accent); color: var(--aq-accent-ink); }
+.aq-btn.solid:hover { filter: brightness(1.08); }
+.aq-btn.icon { width: 24px; padding: 0; }
+.aq-btn.line { border-color: var(--aq-line); }
+
+[data-timer-group] [data-timer] { height: 22px; }
+[data-window-title][data-compact] .aq-btn { height: 16px; }
+[data-window-title][data-compact] [data-resource-bars] { row-gap: 0; }
+[data-window-title][data-compact] [data-resource-bars] svg { width: 8px; height: 8px; }
+[data-window-title][data-compact] button:has(> [data-resource-bars]) { height: 16px; }
+[data-window-title][data-compact] [data-health-label] { line-height: 16px !important; }
+[data-window-tabs][data-compact] [data-plus="a"],
+[data-window-tabs][data-compact] .aq-btn { max-height: var(--aq-tab-height); }
+[data-window-tabs][data-compact] [data-alt="b"] > :nth-child(2) { display: none; }
+
+.aq-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border-radius: var(--aq-radius-sm); color: var(--aq-ink2); cursor: pointer;
+  transition: background var(--aq-dur) var(--aq-ease);
+}
+.aq-row:hover { background: var(--aq-hover); color: var(--aq-ink); }
+.aq-row[aria-current='true'], .aq-row[aria-selected='true'] { background: var(--aq-accent-soft); color: var(--aq-ink); }
+
+.aq-tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  font-size: 12px; color: var(--aq-ink3); border-radius: var(--aq-radius-sm) var(--aq-radius-sm) 0 0; cursor: pointer;
+  white-space: nowrap; max-width: 220px;
+}
+.aq-tab:hover { color: var(--aq-ink); background: var(--aq-hover); }
+.aq-tab[aria-selected='true'] { color: var(--aq-term-fg); background: var(--aq-term-bg); }
+
+.aq-kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px;
+  font-family: var(--font-mono); font-size: 10px; line-height: 1; color: var(--aq-ink3);
+  border: 1px solid var(--aq-line); border-bottom-width: 2px; border-radius: 4px; background: var(--aq-raise);
+}
+.aq-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--aq-ink3); }
+.aq-chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--aq-ink2); background: var(--aq-hover); white-space: nowrap;
+}
+
+.aq-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; display: inline-block; }
+.aq-dot.working { background: var(--aq-accent); box-shadow: 0 0 0 3px var(--aq-accent-soft); }
+.aq-dot.waiting { background: transparent; border: 2.5px solid var(--aq-wait); animation: aq-ripple 4s var(--aq-ease) infinite; }
+.aq-dot.idle { background: transparent; border: 1.5px solid var(--aq-ink3); }
+.aq-dot.asleep { background: transparent; border: 1.5px dashed var(--aq-ink3); opacity: 0.7; }
+.aq-dot.up { background: var(--aq-up); }
+.aq-dot.down { background: transparent; border: 1.5px solid var(--aq-down); }
+/* one ripple ring every four seconds: present, not blinking */
+@keyframes aq-ripple { 0% { box-shadow: 0 0 0 0 var(--aq-wait); } 25%, 100% { box-shadow: 0 0 0 6px transparent; } }
+
+/* the carry light: a rule the full height of a message — red solid = carried
+   whole over a compaction, yellow dashed = carried as a brief, a faint line = not carried */
+.aq-light { display: block; width: 4px; align-self: stretch; min-height: 18px; flex: none; border-radius: 2px; background: var(--aq-line); opacity: 0.6; }
+.aq-light[data-m='red'] { background: var(--aq-verbatim); opacity: 1; }
+.aq-light[data-m='yellow'] { background: repeating-linear-gradient(180deg, var(--aq-summary) 0 5px, transparent 5px 8px); opacity: 1; }
+.aq-light-key { display: inline-block; width: 4px; height: 12px; border-radius: 2px; background: var(--aq-line); vertical-align: -2px; }
+.aq-light-key[data-m='red'] { background: var(--aq-verbatim); }
+.aq-light-key[data-m='yellow'] { background: repeating-linear-gradient(180deg, var(--aq-summary) 0 4px, transparent 4px 6px); }
+.aq-wait-edge { box-shadow: inset 3px 0 0 var(--aq-wait); }
+
+/* three layers only: ground, chrome, overlay — the overlay's one shadow */
+.aq-float {
+  box-shadow: 0 24px 48px -12px oklch(0 0 0 / 0.55), 0 0 0 1px var(--aq-glass-line), inset 0 1px 0 oklch(1 0 0 / 0.10);
+}
+
+/* the terminal */
+.aq-term {
+  background: var(--aq-term-bg); color: var(--aq-term-fg); font-family: var(--font-mono);
+  font-size: 13px; line-height: 1.5; font-variant-ligatures: none;
+}
+.aq-term .dim { color: var(--aq-term-dim); }
+.aq-term .claude { color: var(--aq-term-claude); }
+.aq-term .ok { color: var(--aq-term-ok); }
+.aq-term .err { color: var(--aq-term-err); }
+.aq-term .you { background: var(--aq-term-you); }
+.aq-term .add { background: var(--aq-term-add); }
+.aq-term .del { background: var(--aq-term-del); }
+.aq-term .box { border: 1px solid var(--aq-term-box); border-radius: 6px; }
+.aq-term .link { color: var(--aq-term-link); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; cursor: pointer; }
+.aq-term .hint { background: var(--aq-term-hint); color: var(--aq-term-hint-ink); font-weight: 600; padding: 0 3px; border-radius: 3px; margin-right: 2px; }
+.aq-term mark { background: var(--aq-term-match); color: inherit; border-radius: 2px; }
+.aq-cursor { display: inline-block; width: 0.6em; height: 1.15em; vertical-align: -0.2em; background: var(--aq-term-cursor, var(--aq-term-fg)); animation: aq-blink 1.1s steps(1) infinite; }
+@keyframes aq-blink { 50% { opacity: 0; } }
+
+/* B's gel: on small controls only */
+.aq-gel {
+  background: linear-gradient(180deg, var(--aq-gel-hi) 0%, var(--aq-gel-lo) 100%);
+  color: oklch(0.99 0 0); border: 1px solid oklch(0.4 0.15 255 / 0.5);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.55), inset 0 -6px 10px oklch(0.85 0.1 220 / 0.35), 0 1px 3px oklch(0.3 0.1 255 / 0.35);
+  text-shadow: 0 -1px 0 oklch(0.3 0.12 255 / 0.5);
+}
+
+.aq-fade { animation: aq-fade var(--aq-dur) var(--aq-ease); }
+@keyframes aq-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.aq-slide-r { animation: aq-slide-r 180ms var(--aq-ease); }
+@keyframes aq-slide-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+.aq-scroll { overflow: auto; scrollbar-width: thin; scrollbar-color: var(--aq-line) transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aq *, .aq *::before, .aq *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---- round 2 (G, H, I): a medium terminal window on a desktop ----------- */
+.aq:is([data-v='g'], [data-v='h'], [data-v='i']) {
+  --r2-close: oklch(0.62 0.17 27);
+  --r2-shadow: 0 10px 30px -8px oklch(0 0 0 / 0.45), 0 0 0 1px oklch(0 0 0 / 0.2);
+  --r2-shadow-top: 0 24px 60px -12px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(0 0 0 / 0.25);
+}
+.aq:is([data-v='g'], [data-v='h'], [data-v='i'])[data-th='dark'] {
+  --r2-wall: linear-gradient(160deg, oklch(0.30 0.012 250), oklch(0.22 0.01 260));
+  --r2-topbar: oklch(0.12 0 0); --r2-topbar-ink: oklch(0.92 0 0);
+  --r2-bar: oklch(0.25 0.004 260); --r2-bar-ink: oklch(0.93 0.004 260); --r2-ctl: oklch(0.38 0.004 260);
+  --r2-strip: oklch(0.21 0.004 260); --r2-edge: oklch(0.32 0.005 260);
+  --r2-over: oklch(0.19 0.012 245);
+  --aq-panel: oklch(0.20 0.006 260); --aq-raise: oklch(0.235 0.008 260);
+  --aq-term-bg: oklch(0.16 0.006 260);
+}
+.aq:is([data-v='g'], [data-v='h'], [data-v='i'])[data-th='light'] {
+  --r2-wall: linear-gradient(160deg, oklch(0.80 0.012 250), oklch(0.72 0.012 255));
+  --r2-topbar: oklch(0.14 0 0); --r2-topbar-ink: oklch(0.95 0 0);
+  --r2-bar: oklch(0.93 0.003 260); --r2-bar-ink: oklch(0.25 0.01 260); --r2-ctl: oklch(0.82 0.004 260);
+  --r2-strip: oklch(0.90 0.004 260); --r2-edge: oklch(0.78 0.006 260);
+  --r2-over: oklch(0.96 0.008 230);
+  --aq-panel: oklch(0.975 0.003 260); --aq-raise: oklch(1 0 0);
+}
+/* H: the window's chrome takes the deep-water bar */
+.aq[data-v='h'][data-th='dark'] { --r2-bar: oklch(0.22 0.025 238); --r2-strip: oklch(0.19 0.02 238); --r2-over: oklch(0.18 0.025 238); }
+.aq[data-v='h'][data-th='light'] { --r2-bar: oklch(0.95 0.012 215); --r2-strip: oklch(0.92 0.015 215); }
+/* I: the most fluid — light glass on the bar, the overview on deep water */
+.aq[data-v='i'][data-th='dark'] {
+  --r2-bar: linear-gradient(180deg, oklch(0.30 0.03 220 / 0.92), oklch(0.24 0.025 230 / 0.92));
+  --r2-over: radial-gradient(120% 100% at 50% 0%, oklch(0.26 0.05 215), oklch(0.17 0.03 240));
+}
+.aq[data-v='i'][data-th='light'] {
+  --r2-bar: linear-gradient(180deg, oklch(0.97 0.015 215 / 0.95), oklch(0.92 0.02 220 / 0.95));
+  --r2-over: radial-gradient(120% 100% at 50% 0%, oklch(0.95 0.03 210), oklch(0.90 0.03 225));
+}
+.r2-handle {
+  position: absolute; top: 50%; width: 10px; height: 64px; margin-top: -32px; z-index: 6;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 5px;
+  color: var(--aq-ink3); background: transparent; opacity: 0; transition: opacity var(--aq-dur), background var(--aq-dur);
+}
+.r2-win:hover .r2-handle, .r2-handle:focus-visible { opacity: 1; background: var(--aq-hover); }
+.r2-side-l { animation: r2-in-l 140ms var(--aq-ease); }
+.r2-side-r { animation: r2-in-r 140ms var(--aq-ease); }
+@keyframes r2-in-l { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+@keyframes r2-in-r { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+.r2-sheet { animation: r2-sheet 180ms var(--aq-ease); }
+@keyframes r2-sheet { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+@keyframes r2-grow { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
+.r2-under { color: var(--r2-topbar-ink); opacity: 0.75; text-shadow: 0 1px 2px oklch(0 0 0 / 0.4); }
+.r2-tabs { scrollbar-width: none; }
+.r2-tabs::-webkit-scrollbar { display: none; }
+/* a terminal's top line is never cut hard: the scrollback fades out under the tab strip */
+.aq-term-scroll { -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 26px); mask-image: linear-gradient(to bottom, transparent 0, black 26px); }
+
+/* ---- J (round 3): Slightly Parallel's own tokens, nothing of a separate palette ---- */
+.aq:is([data-v='j'], [data-v='k'], [data-v='l']) {
+  --aq-bg: var(--bg-base); --aq-panel: var(--bg-surface); --aq-raise: var(--bg-base); --aq-hover: var(--bg-hover);
+  --aq-line: var(--border-default); --aq-ink: var(--text-primary); --aq-ink2: var(--text-secondary); --aq-ink3: var(--text-tertiary);
+  --aq-accent: var(--brand); --aq-accent-ink: var(--bg-base); --aq-accent-soft: var(--brand-glow);
+  --aq-glass: var(--bg-base); --aq-glass-line: var(--border-default);
+  --aq-wait: var(--status-amber); --aq-up: var(--status-green); --aq-down: var(--status-red);
+  --aq-verbatim: var(--status-red); --aq-summary: var(--status-amber); --aq-important: var(--star); --aq-fork: var(--status-purple);
+  --aq-radius: var(--radius-card); --aq-radius-sm: var(--radius-input);
+  /* SP's terminal: dark in both themes */
+  --aq-term-bg: var(--term-ground); --aq-term-fg: var(--term-text); --aq-term-dim: var(--term-muted);
+  --aq-term-you: var(--term-bar); --aq-term-box: var(--term-muted);
+  /* the desktop is not the app: a plain ground, no wallpaper */
+  --r2-wall: var(--bg-hover); --r2-topbar: var(--term-ground); --r2-topbar-ink: var(--term-text);
+  --r2-bar: var(--bg-surface); --r2-bar-ink: var(--text-primary); --r2-ctl: var(--bg-hover);
+  --r2-strip: var(--bg-surface); --r2-edge: var(--border-strong); --r2-over: var(--bg-base);
+  --r2-shadow: var(--shadow-md); --r2-shadow-top: var(--shadow-lg);
+}
+.aq:is([data-v='j'], [data-v='k'], [data-v='l']) .aq-glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* nothing animates at rest: a waiting dot is a steady amber ring, the cursor does not blink */
+.aq:is([data-v='j'], [data-v='k'], [data-v='l']) .aq-dot.waiting { animation: none; }
+.aq:is([data-v='j'], [data-v='k'], [data-v='l']) .aq-cursor { animation: none; }
+.aq:is([data-v='j'], [data-v='k'], [data-v='l']) .aq-dot.working { box-shadow: none; }
+.r2-unfold { opacity: 0; color: var(--text-tertiary); transition: opacity var(--dur-fast); }
+.r2-win:hover .r2-unfold, .r2-unfold:focus-visible { opacity: 1; }
+
+/* In the app's own window (desktop/, Electron) the title row moves the window:
+   the window system does the drag, on Wayland and X11 alike. Its buttons stay
+   buttons. A double click on the row then belongs to the window system. */
+.aq-app-drag { -webkit-app-region: drag; }
+.aq-app-drag button, .aq-app-drag [data-nodrag], .aq-app-drag input, .aq-app-drag [role="menu"] { -webkit-app-region: no-drag; }
+/* A button laid over a drag region from outside it (the folded title row's
+   sidebar toggles sit on the tab strip but are not in it) must say no-drag
+   itself: the window system cuts out only what is marked. */
+[data-aqua-frame] [data-nodrag] { -webkit-app-region: no-drag; }
+
+/* ---- J lab 2 (round3/lab2): colour schemes and the message menu -------------
+   The scheme's variables are set on the J desktop (round2/parts.tsx Desktop);
+   these defaults are xterm's 16 colours, for a terminal outside the lab. */
+.aq {
+  --ansi-0: #000000; --ansi-1: #cd3131; --ansi-2: #0dbc79; --ansi-3: #e5e510; --ansi-4: #2472c8; --ansi-5: #bc3fbc; --ansi-6: #11a8cd; --ansi-7: #e5e5e5;
+  --ansi-8: #666666; --ansi-9: #f14c4c; --ansi-10: #23d18b; --ansi-11: #f5f543; --ansi-12: #3b8eea; --ansi-13: #d670d6; --ansi-14: #29b8db; --ansi-15: #ffffff;
+}
+.aq-term .a-f0 { color: var(--ansi-0); }
+.aq-term .a-f1 { color: var(--ansi-1); }
+.aq-term .a-f2 { color: var(--ansi-2); }
+.aq-term .a-f3 { color: var(--ansi-3); }
+.aq-term .a-f4 { color: var(--ansi-4); }
+.aq-term .a-f5 { color: var(--ansi-5); }
+.aq-term .a-f6 { color: var(--ansi-6); }
+.aq-term .a-f7 { color: var(--ansi-7); }
+.aq-term .a-f8 { color: var(--ansi-8); }
+.aq-term .a-f9 { color: var(--ansi-9); }
+.aq-term .a-f10 { color: var(--ansi-10); }
+.aq-term .a-f11 { color: var(--ansi-11); }
+.aq-term .a-f12 { color: var(--ansi-12); }
+.aq-term .a-f13 { color: var(--ansi-13); }
+.aq-term .a-f14 { color: var(--ansi-14); }
+.aq-term .a-f15 { color: var(--ansi-15); }
+.aq-term .a-b0 { background: var(--ansi-0); }
+.aq-term .a-b1 { background: var(--ansi-1); }
+.aq-term .a-b2 { background: var(--ansi-2); }
+.aq-term .a-b3 { background: var(--ansi-3); }
+.aq-term .a-b4 { background: var(--ansi-4); }
+.aq-term .a-b5 { background: var(--ansi-5); }
+.aq-term .a-b6 { background: var(--ansi-6); }
+.aq-term .a-b7 { background: var(--ansi-7); }
+.aq-term .a-b8 { background: var(--ansi-8); }
+.aq-term .a-b9 { background: var(--ansi-9); }
+.aq-term .a-b10 { background: var(--ansi-10); }
+.aq-term .a-b11 { background: var(--ansi-11); }
+.aq-term .a-b12 { background: var(--ansi-12); }
+.aq-term .a-b13 { background: var(--ansi-13); }
+.aq-term .a-b14 { background: var(--ansi-14); }
+.aq-term .a-b15 { background: var(--ansi-15); }
+.aq-term ::selection { background: var(--aq-term-sel, Highlight); color: var(--aq-term-sel-fg, inherit); }
+
+/* the lab panel: outside the window, in SP's own colours */
+.lab-panel { background: var(--bg-base); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-card, 10px); box-shadow: var(--shadow-md); }
+.lab-scheme { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 8px; border: 1px solid transparent; }
+.lab-scheme:hover { background: var(--bg-hover); }
+.lab-scheme[data-on] { border-color: var(--brand); background: var(--brand-glow); }
+.lab-swatch { width: 50px; height: 34px; flex: none; border-radius: 6px; border: 1px solid; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 7px; }
+.lab-swatch-dot { width: 6px; height: 6px; border-radius: 2px; }
+.lab-panel [data-grade='—'], .lab-panel [data-grade='AA large'] { color: var(--status-red-ink); }
+
+/* a message block: a faint frame when pointed at, a left edge when pinned */
+.lab-block { position: relative; margin: 0 -6px; padding: 0 6px; border-radius: 6px; box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 120ms var(--aq-ease); }
+.lab-block:hover, .lab-block[data-open] { box-shadow: inset 0 0 0 1px var(--aq-term-frame); }
+.lab-block[data-pinned] { box-shadow: inset 2px 0 0 var(--aq-term-accent); }
+.lab-block[data-pinned]:hover, .lab-block[data-pinned][data-open] { box-shadow: inset 2px 0 0 var(--aq-term-accent), inset 0 0 0 1px var(--aq-term-frame); }
+.lab-marks { position: absolute; right: 6px; top: -7px; display: flex; gap: 4px; z-index: 2; pointer-events: none; }
+.lab-mark { display: inline-flex; align-items: center; gap: 3px; height: 15px; padding: 0 5px; border-radius: 4px; font-size: 10px; line-height: 1;
+  color: var(--aq-term-fg); background: color-mix(in srgb, var(--aq-term-fg) 10%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); }
+.lab-mark.on { color: var(--aq-term-accent); border-color: color-mix(in srgb, var(--aq-term-accent) 50%, transparent); }
+
+/* a task id: its column's colour */
+.aq-term .task, .lab-mark.task { text-decoration: none; padding: 0 4px; border-radius: 4px; color: var(--aq-term-link); background: color-mix(in srgb, var(--aq-term-link) 15%, transparent); }
+.aq-term .task[data-column='doing'], .lab-mark.task[data-column='doing'] { color: var(--ansi-3); background: color-mix(in srgb, var(--ansi-3) 18%, transparent); }
+.aq-term .task[data-column='done'], .lab-mark.task[data-column='done'] { color: var(--aq-term-ok); background: color-mix(in srgb, var(--aq-term-ok) 18%, transparent); }
+.lab-col-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--aq-term-link); }
+.lab-col-dot[data-column='doing'] { background: var(--ansi-3); }
+.lab-col-dot[data-column='done'] { background: var(--aq-term-ok); }
+
+/* the menus: in the terminal's own colours */
+.lab-menu { position: absolute; z-index: 20; font-family: var(--font-sans); font-size: 12px; color: var(--aq-term-fg); }
+.lab-list { background: color-mix(in srgb, var(--aq-term-fg) 6%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); border-radius: 8px; padding: 4px;
+  box-shadow: 0 12px 32px -8px rgb(0 0 0 / 0.45); animation: lab-in 110ms var(--aq-ease); }
+.lab-list-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 6px; font-size: 11px; color: var(--aq-term-dim); }
+.lab-list-sub { color: var(--aq-term-fg); }
+.lab-list-row { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border-radius: 5px; text-align: left; color: inherit; }
+button.lab-list-row:hover, button.lab-list-row:focus-visible { background: color-mix(in srgb, var(--aq-term-fg) 10%, transparent); outline: none; }
+.lab-list-row[data-on] svg { color: var(--aq-term-accent); }
+.lab-list-row.static { cursor: default; }
+.lab-list-label { color: var(--aq-term-dim); margin-right: auto; }
+.lab-pill { height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; color: var(--aq-term-fg); border: 1px solid var(--aq-term-frame); }
+.lab-pill:hover { background: color-mix(in srgb, var(--aq-term-fg) 10%, transparent); }
+.lab-pill[data-on] { background: var(--aq-term-accent); border-color: var(--aq-term-accent); color: var(--aq-term-bg); }
+.lab-pill[data-on][data-column='todo'] { background: var(--aq-term-link); border-color: var(--aq-term-link); }
+.lab-pill[data-on][data-column='doing'] { background: var(--ansi-3); border-color: var(--ansi-3); }
+.lab-pill[data-on][data-column='done'] { background: var(--aq-term-ok); border-color: var(--aq-term-ok); }
+.lab-card { font-size: 12px; }
+@keyframes lab-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* a: the round menu, centred on the pointer */
+.lab-radial { width: 0; height: 0; }
+.lab-radial-ring { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--aq-term-bg) 97%, transparent) 0 72%, transparent 73%);
+  border: 1px solid var(--aq-term-frame); box-shadow: 0 16px 40px -10px rgb(0 0 0 / 0.5); animation: lab-pop 140ms var(--aq-ease); }
+.lab-radial-centre { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); width: 96px; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; pointer-events: none; }
+.lab-radial-title { font-size: 10px; color: var(--aq-term-dim); }
+.lab-radial-hot { font-size: 11px; font-weight: 600; line-height: 1.2; }
+.lab-radial-btn { position: absolute; left: -20px; top: -20px; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--aq-term-fg); background: color-mix(in srgb, var(--aq-term-fg) 9%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame);
+  transition: background 100ms, border-color 100ms, color 100ms; animation: lab-pop 160ms var(--aq-ease) both; }
+.lab-radial-btn:hover, .lab-radial-btn:focus-visible, .lab-radial-btn[data-open] { background: var(--aq-term-accent); border-color: var(--aq-term-accent); color: var(--aq-term-bg); outline: none; }
+.lab-radial-btn[data-on]:not(:hover):not([data-open]) { color: var(--aq-term-accent); border-color: var(--aq-term-accent); }
+.lab-radial-sub { position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 999px; white-space: nowrap;
+  color: var(--aq-term-fg); background: color-mix(in srgb, var(--aq-term-fg) 9%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); box-shadow: 0 6px 16px -6px rgb(0 0 0 / 0.5); animation: lab-in 110ms var(--aq-ease); }
+.lab-radial-sub:hover, .lab-radial-sub[data-on] { background: var(--aq-term-accent); border-color: var(--aq-term-accent); color: var(--aq-term-bg); }
+@keyframes lab-pop { from { opacity: 0; scale: 0.85; } to { opacity: 1; scale: 1; } }
+
+/* c: the bar on the block's top edge */
+.lab-edge { position: absolute; right: 6px; top: -13px; z-index: 3; display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 7px;
+  background: color-mix(in srgb, var(--aq-term-fg) 7%, var(--aq-term-bg)); border: 1px solid var(--aq-term-frame); box-shadow: 0 6px 18px -6px rgb(0 0 0 / 0.5);
+  font-family: var(--font-sans); font-size: 11px; animation: lab-in 90ms var(--aq-ease); }
+.lab-edge-btn { height: 22px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 5px; color: var(--aq-term-fg); white-space: nowrap; }
+.lab-edge-btn.icon { width: 24px; padding: 0; justify-content: center; }
+.lab-edge-btn:hover, .lab-edge-btn:focus-visible { background: color-mix(in srgb, var(--aq-term-fg) 12%, transparent); outline: none; }
+.lab-edge-btn[data-on] { color: var(--aq-term-accent); }
+@media (prefers-reduced-motion: reduce) { .lab-list, .lab-radial-ring, .lab-radial-btn, .lab-radial-sub, .lab-edge { animation: none; } }

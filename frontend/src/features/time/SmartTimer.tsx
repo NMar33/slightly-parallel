@@ -11,7 +11,6 @@
  *   becomes the project's mode.
  */
 
-import { useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Timer } from 'lucide-react'
 
@@ -23,17 +22,15 @@ import {
 } from '../../lib/timer'
 import { hMin } from '../../utils/format'
 import type { TimeEntry } from '../project/timeEntry'
+import { useWorkBeats } from './beats'
 
 import { t } from '../../i18n/scope/views'
 import { rich } from '../../i18n/rich'
-const BEAT_MS = 20_000
-/** Reading counts: input this recent still means you are here. */
-const READING_MS = 120_000
-
 const DISMISSED = 'sp-time-ask-dismissed:'
 
 export function SmartTimer() {
-  useBeats()
+  // Beats: input anywhere on the page, Slightly Parallel in front, a project in hand.
+  useWorkBeats(currentWork)
   const st = useTimeAuto().data
   return (
     <div className="fixed right-16 top-[56px] z-toast flex flex-col gap-8 w-[340px] max-w-[calc(100vw-32px)] pointer-events-none">
@@ -41,36 +38,6 @@ export function SmartTimer() {
       <Reminder />
     </div>
   )
-}
-
-/** Beats: input anywhere on the page, Slightly Parallel in front, a project in hand. */
-function useBeats() {
-  const lastInput = useRef(0)
-  useEffect(() => {
-    let lastMove = 0
-    const mark = () => { lastInput.current = Date.now() }
-    const move = () => { const tv = Date.now(); if (tv - lastMove > 1000) { lastMove = tv; mark() } }
-    const opts = { passive: true, capture: true } as const
-    window.addEventListener('keydown', mark, opts)
-    window.addEventListener('pointerdown', mark, opts)
-    window.addEventListener('wheel', mark, opts)
-    window.addEventListener('pointermove', move, opts)
-    const send = () => {
-      const work = currentWork()
-      if (!work || document.visibilityState !== 'visible' || !document.hasFocus()) return
-      if (Date.now() - lastInput.current > READING_MS) return
-      // A lost beat is covered by the next one, a few seconds later; nothing to say.
-      void postJson('/api/time/auto/beat', { project: work.project, task_id: work.taskId ?? '' }).catch(() => undefined)
-    }
-    const id = window.setInterval(send, BEAT_MS)
-    return () => {
-      window.clearInterval(id)
-      window.removeEventListener('keydown', mark, opts)
-      window.removeEventListener('pointerdown', mark, opts)
-      window.removeEventListener('wheel', mark, opts)
-      window.removeEventListener('pointermove', move, opts)
-    }
-  }, [])
 }
 
 const minutes = (sec: number) => hMin(Math.max(1, Math.round(sec / 60)), '1m')

@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   CalendarDays,
   BookOpenText, Clapperboard, Cog, DatabaseBackup, KanbanSquare,
-  LayoutDashboard, MessagesSquare, PlugZap, Search, SlidersHorizontal, Users, Star, Activity, SquareTerminal, BarChart3, Timer, Gauge, Megaphone,
+  LayoutDashboard, MessagesSquare, NotebookText, Pin, PlugZap, Search, SlidersHorizontal, Users, Star, Activity, SquareTerminal, BarChart3, Timer, Gauge, Megaphone,
 } from 'lucide-react'
 
 import { LENS_HEAD_LIST } from '../../lenses/heads'
@@ -42,6 +42,8 @@ export const CATALOG: NavEntry[] = [
   { key: '/calendar', label: t('Calendar'), icon: CalendarDays, home: 'views', blurb: t('due dates, plans, meetings and milestones') },
   { key: '/agent', label: t('Agents'), icon: Users, end: true, home: 'views', blurb: t('every agent and when it worked') },
   { key: '/important', label: t('Important'), icon: Star, home: 'views', blurb: t('the messages, agents and tasks you starred') },
+  { key: '/pins', label: t('Pins'), icon: Pin, home: 'views', blurb: t('messages pinned, carried over a compaction, or kept to fork later') },
+  { key: '/notes', label: t('Notes'), icon: NotebookText, home: 'views', blurb: t('long texts agents wrote for you: context, texts to paste, reviews, plans, reports, steps to do') },
   { key: '/stats', label: t('Statistics'), icon: BarChart3, home: 'views', blurb: t('what each finished task took') },
   { key: '/time', label: t('Timer'), icon: Timer, home: 'views', blurb: t('project timers and time spent') },
   { key: '/publish', label: t('Publish'), icon: Megaphone, home: 'views', blurb: t('the #publish cards and the documents made from them') },

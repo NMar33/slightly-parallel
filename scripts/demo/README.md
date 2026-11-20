@@ -12,7 +12,9 @@ root as an ordinary project with its repository at `<root>/example/shopfront`.
 The server runs it on a new data folder and from Settings › Example project
 (`backend/backend/example.py`); every tour walks and photographs it. The
 content writes its dates as tokens (`{dm:22}`, `{iso:22}`, …) that are
-filled in when it is played (`engine.dated`).
+filled in when it is played (`engine.dated`). Two builds with the same `--end` into the same folder are
+byte-identical, git hashes included: the capture core's own clock is
+faked too, and ids the server draws at random come from the build's seed.
 
 ## The demo dataset
 
@@ -78,6 +80,8 @@ writes carry the MCP header, the way the MCP server sends them.
 | `world.py` | one helper per kind of write (task, move, scan, standup …) |
 | `codegen.py`, `common.py` | plausible code for commits |
 | `shopfront_*.py` | the main project: repo skeleton, tasks, 20 chats, lenses, standups, architecture page and map |
+| `shopfront_notes.py` | six notes agents wrote, with pictures, a second version and the operator's ticks, answers and copies |
+| `shopfront_desk.py` | two entry points, two cores, three #publish cards and a document, pins, a carry and a fork |
 | `small_projects.py` | tg-notify and price-etl |
 
 ## What it contains
@@ -93,6 +97,11 @@ writes carry the MCP header, the way the MCP server sends them.
     page v1–v3, program map v1–v2.
   - 14 decisions, 21 standups, 21 timer entries and 5 automatic ones, and 10
     calendar entries.
+  - 6 notes (context, paste, review with pictures, plan with an open choice,
+    report, actions with ticks and a second version), 2 entry points with
+    ways in, stops, shots and task topics, 2 cores, 3 #publish cards placed
+    in a document, 2 pins, a carry and a fork-later, and the tokens of
+    every turn (usage.jsonl).
   - Milestones: one reached, two active, one planned.
 - **tg-notify** (a Telegram notification bot) and **price-etl** (a supplier
   price pipeline): 15 tasks, 4 chats, 2 scans, 7 standups and 2–3 decisions

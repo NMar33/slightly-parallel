@@ -221,6 +221,11 @@ The board, its blocks, and everything hung off a task.
 
 - `GET /api/tasks` · `GET /api/tasks/{id}` · `POST /api/tasks` —
   the lens trio. Create takes the text in `description`; turns come later.
+  The operator's create may add `title_from: "message"` and `title_source`
+  (`<agent_id>#<turn>`, `…/reply`): the server titles the task from that
+  message for now, and the title waits for that chat's agent, who sets it
+  once with `title` on update (the hook's `#task-title` notice asks); an
+  operator rename first ends the wait.
 - `POST /api/tasks/{task_id}/update` — body: `title`, `description`,
   `status`, `turn` (which round to rewrite), plus the mutable columns
   (`assignee`, `priority`, `lane`, `sprint_id`, `remember`, `today_on`,
@@ -232,7 +237,12 @@ The board, its blocks, and everything hung off a task.
   an agent's tags are `ag_*`. `comment`
   adds a note after the task's text, under `--- comment from agent:` (an
   agent's) — each call adds one; on a #now card an agent's `description` is
-  refused, since its text is the operator's message.
+  refused, since its text is the operator's message. An agent changes
+  `title`, `description` and `today_on` only on a task it created (the
+  task's `agent_id`); on the operator's or another agent's task they are
+  refused, naming the creator. `comment` is open to every agent on any
+  task. The one exception is the waiting title of a task made from a
+  message (above).
 - `POST /api/tasks/{task_id}/turn` — the next round of instruction. Body:
   `text`, `actor`, `created_date`, `created_time`. Answers: `task`, `turn`,
   `turns`, `description`, `ref`.
@@ -257,6 +267,14 @@ The board, its blocks, and everything hung off a task.
 - `GET /api/commits/signed?project=&days=7` — per project with a repository:
   commits in the last `days` days, how many carry a `Task:` line (`signed`),
   how many were linked later (`linked`), and the same by the `Agent:` line.
+- `GET /api/git/commit?repo=<project>&sha=<7–40 hex>[&diff=1]` — one commit
+  of a project's repository, read only (the terminal window's commit card,
+  and its check before a printed hash is underlined). `repo` is a project
+  code, never a path. Answers `sha`, `short`, `subject`, `author`, `at`,
+  `files` (`path`, `add`, `del`), `add`, `del`, `tasks` (its `Task:` lines),
+  `agent`; with `diff=1` also `diff` (cut at 400 000 characters, `diff_cut`).
+  404 for an unknown project, a project with no repository, or a hash that
+  is not one of its commits.
 - `GET /api/tasks/{task_id}/mentions` — every captured turn naming this
   task, newest first. Copying a task puts its id in the text (`tk_… · Title`)
   and the chat reading scans every turn for task ids (`tk_…`, readable ids too), so
@@ -416,11 +434,18 @@ operator writes about it, as a new version under `kept_versions/`.
 **Publish** (`#publish`, the operator's: what shipped, worth telling): the
 cards are the kept kind `publish` (`GET /api/publish`, `GET /api/publish/{id}`,
 `POST /api/publish/{id}/update` — `tags`; `POST /api/publish/{id}/interpretation` is
-the operator's edit of the text, the same as the page's `text` route); nothing is asked of the agent, and
-an agent's write is refused. The Publish page reads and writes under
+the operator's edit of the text, the same as the page's `text` route); an agent's
+write there is refused: it writes a card with MCP `publish_write`. The Publish page reads and writes under
 `/api/publishing` (docs/publish.md): `GET /api/publishing?project=` (the
-cards with their text versions, tasks, cores, commits, images and
-placements; the documents with their versions and items) ·
+cards with their sources, text and context versions, and what was attached
+— tasks, notes, commits, files, images, links — and placements; the
+documents with their versions and items) ·
+`POST /api/publishing/cards/{card_id}/write` (`text?`, `context?`, `note?`,
+`base?`, `tasks?`, `notes?`, `commits?`, `links?`, `files?`, `images?`,
+`merge?` — the agent with MCP `publish_write`, or the operator) ·
+`POST /api/publishing/cards/{card_id}/merge` (`into`; the operator's) ·
+`POST /api/publishing/sources/{source_id}/remove` (a merge taken back, or an
+appended message dropped; the operator's) ·
 `GET /api/publishing/cards/{card_id}` (with `history`) ·
 `POST /api/publishing/cards` (`project`, `text`: a card written by hand on the page) ·
 `POST /api/publishing/cards/{card_id}/text` (`text`, `note?`) ·
@@ -431,10 +456,10 @@ current items copied) · `POST /api/publishing/docs/{doc_id}/items`
 (`card_id`, `text?`, `before?`) · `GET /api/publishing/docs/{doc_id}/markdown`
 (`n?`) · `POST /api/publishing/items/{item_id}/update` (`text?`, `before?`) ·
 `POST /api/publishing/items/{item_id}/remove` ·
-`POST /api/publishing/cards/{card_id}/attach` (`images[]` with `title`, `ext`,
-`data_base64`; `links[]` with `title`, `url` — the operator on the page, or
-the agent with MCP `publish_attach`; the same image again is the existing
-attachment) · `GET /api/publishing/attachments/{attachment_id}/file` ·
+`POST /api/publishing/cards/{card_id}/attach` (attachments only, as `write`
+takes them — the operator on the page, or the agent with MCP
+`publish_attach`, which forwards to `write`; the same attachment again is
+the existing one) · `GET /api/publishing/attachments/{attachment_id}/file` ·
 `POST /api/publishing/attachments/{attachment_id}/remove` (the operator's).
 - `GET /api/example` — the example project: `enabled`, `present`, `building`
   and the last error.
@@ -477,6 +502,47 @@ skill and the contract have one source. Built-in skills: `make-a-scan`,
 `make-an-artifact`, `finish-a-task`, `sp-help`.
 
 ---
+
+## Messages between agents
+
+One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
+`from_agent` (an agent id, or `operator`), `to_agent`, `text`, `sent_at`,
+`reply_to`, `delivered_at`, `delivered_via` (`terminal`, `hook`, `inbox`),
+`landed_at` and `landed_turn` (the prompt the marker came in as),
+`read_at`. Each message is taken once, by the first way that reaches it.
+
+- `POST /api/messages` — `{to, text, reply_to?}`; an agent's through the MCP
+  tool `message` (`agent_id` stamped), the operator's from the page (no
+  agent). 404 for an unknown chat or `reply_to`, 422 for an empty text, one
+  over 8,000 characters or one to itself. Typed at once into the chat's live
+  terminal in Slightly Parallel's tmux as `[SP · from <sender> · msg_…] text`
+  when its input line is empty (Claude Code, Codex); otherwise it waits:
+  tried again every 3 s for a day, and handed over by the capture hook as a
+  notice on the chat's next prompt. Answers `{message, delivered_via,
+  typed, waiting}`.
+- `POST /api/messages/inbox` — `{agent_id}` (the MCP tool `messages`): the
+  chat's `unread` messages, marked read now, then its `recent` read ones
+  (`?recent=`, default 10).
+- `GET /api/messages?agent_id=&project=&limit=` — the ledger, newest first
+  (one chat's sent and received, one project's, or all). No write.
+
+The capture hook reads a prompt that opens with the marker as the sender's
+message only when the ledger holds that id, for this chat, from that
+sender, not taken before; it keeps the turn as
+`<sp-message from="…" id="…">…</sp-message>` in chat.md, so no tag in it
+acts. A marker the ledger does not know is the operator's text.
+
+## Notes
+
+- `GET /api/notes/feed` and `GET /api/notes/{note_id}/full` include a
+  `comments` array for the notes returned. `GET /api/notes/{note_id}/agent`
+  includes the same comments for the MCP `notes` tool.
+- `POST /api/notes/{note_id}/comments` adds an operator comment. Send
+  `{text, item?, section?, request_id?}`. Text is limited to 2,000 characters.
+  Omit `item` for a note-level comment. Supply the section title when the same
+  item text appears in multiple sections. Keep the same `request_id` when
+  retrying a submission. The returned `comment` records the original label,
+  section and note version.
 
 ## Artifacts
 
@@ -997,6 +1063,11 @@ block, and kept current.
   one per block. Body: `project`, `sprint_id`, `goal_id`, `note`,
   `share_pct`, `actor`, `task_id`. Entries the auto-timer writes carry
   `source: auto`; their share is the top-up above the manual timers.
+  `started_at`, `ended_at` and `paused_at` are local ISO times with their
+  UTC offset (`2026-11-01T01:30:00-07:00`); a time sent without one is
+  read as local and stored with it. Rows from before the offset are given
+  it once at start (`time-offsets-migration-<stamp>/` in the backup folder
+  holds the file as it was).
 - `POST /api/time/{entry_id}/pause` — hold the clock without closing.
 - `POST /api/time/{entry_id}/resume` — bank the paused stretch, count again.
 - `POST /api/time/{entry_id}/stop` — close it and freeze the duration.
@@ -1007,12 +1078,27 @@ block, and kept current.
   the last seven days, and per block; `task_id` narrows it to one task.
 - `GET /api/time/auto` — the smart timer: idle seconds and where they are read
   from (`idle_source`), the away settings, each project's mode
-  (`remind`/`auto`/`manual`), the auto spans counting now, the away notices.
-- `POST /api/time/auto/beat` — `{project, task_id?}`: a page says someone is
-  working on this project now (sent every 20 s while there is input).
+  (`remind`/`auto`/`manual`), the auto spans counting now, the away notices,
+  and `signals`: the last beat per project (`source`, `task_id`, `sec_ago`).
+- `POST /api/time/auto/beat` — `{project, task_id?, source?}`: a page says
+  someone is working on this project now (sent every 20 s while there is
+  input, and at once on the first input after a quiet spell). `source`:
+  `page` (default) or `window` (the terminal window, the tab in front).
 - `POST /api/time/auto/mode` — `{project, mode}`.
 - `POST /api/time/auto/away/{entry_id}` — `{action}`: `count` (the away stretch
   counts after all), `resume`, `stop`, `dismiss`.
+- `GET /api/time/auto/break` — a break the operator took: `on`, and while
+  it lasts `since`, `sec`, `project`, `note`, `paused` (manual timers it
+  paused) and `closed` (auto spans it closed); `today`: today's breaks
+  (`from`, `to`, `sec`, `project`, `note`, `resumed`).
+- `POST /api/time/auto/break` — `{on: true, project?, note?}` starts a break:
+  the smart timer's open auto spans close and count nothing while it lasts,
+  whatever beats arrive; every running manual timer pauses. `project` holds
+  one project only (empty: all). `{on: false, note?}` ends it: the manual
+  timers it paused resume, only those still paused from its start; the
+  note stays with the break. Either again changes nothing. Kept in
+  `timer/break.json`, so a restart keeps a break under way. The terminal
+  window's «Перерыв» / «Готово» send it.
 - The entries themselves are the `time-entries` lens (see **Entries**).
 
 ### Cores
@@ -1435,11 +1521,18 @@ A real shell in Slightly Parallel's pages (termlib.py). Off until the operator
 switches it on (setting `terminal.enabled`, one click in the drawer;
 `SP_ENABLE_TERMINAL` forces it on). With tmux installed each terminal
 runs on Slightly Parallel's own tmux socket and stays open after the page and the server close.
+On Windows every terminal is plain: a ConPTY (pywinpty) the server holds,
+running PowerShell 7, else Windows PowerShell, else cmd; it ends with the
+server, the history routes below (tmux only) answer 409, and restore never
+offers one.
 Every route refuses a foreign `Origin` or a cross-site request.
 
 - `GET /api/terminal/state` — `enabled`, `token` (only while on; the page
-  passes it to the socket), `tmux`, and the settings: `keep`, `launch`,
-  `agent`, `font_size`, and the `projects` a terminal may open in.
+  passes it to the socket), `tmux`, `supported` (false only on Windows
+  without the pywinpty package; the other routes then answer 501 saying what
+  to install), `windows` (true on Windows: plain terminals only), and the
+  settings: `keep`, `launch`, `agent`, `font_size`, and the `projects` a
+  terminal may open in.
 - `GET /api/terminal/sessions?project=` — every terminal: `id`, `label`,
   `kind` (shell · resume · start), `project`, `cwd`, `command`,
   `agent_id` (the agent the capture hook saw started in it), `task_id`, and
@@ -1457,7 +1550,9 @@ Every route refuses a foreign `Origin` or a cross-site request.
   wrapped lines joined: `{mode: "screen"}` the visible screen,
   `{mode: "last"}` everything since the last Enter that crossed the
   socket, `{mode: "range", from, to}` the lines between two absolute
-  ids. At most 20 000 lines (`truncated` says when). tmux only.
+  ids. At most 20 000 lines (`truncated` says when). `{mode: "selection"}`
+  asks tmux to send its active selection as an explicit clipboard copy.
+  It returns `copied: false` when there is no selection. tmux only.
 - `POST /api/terminal/sessions/{sid}/open` — `{path, line?, col?}`: open a
   path the terminal printed in the operator's editor (Settings › Terminal ›
   Open printed paths in; `auto` takes the first installed). A relative path
@@ -1467,8 +1562,84 @@ Every route refuses a foreign `Origin` or a cross-site request.
   copy mode; answers the new position.
 - `POST /api/terminal/sessions/{sid}/rename` — `{label}`.
 - `POST /api/terminal/sessions/{sid}/close` — end it (tmux too).
+- `POST /api/terminal/sessions/{sid}/sleep` — stop what runs in it and keep
+  its row (`state: asleep`, `wake`: what it will run): a chat's agent is
+  resumed on waking, a server (`role: server`) runs its command again, a
+  plain shell comes back empty.
+- `POST /api/terminal/sessions/{sid}/wake` — bring it back under the same id.
+  With `{shell: true}`, open an ended terminal with an empty shell and keep its
+  original command for a later wake. A sleeping terminal refuses this mode with
+  409. `GET …/state` advertises support as `open_shell`.
+  A terminal's `role` is `chat`, `server` or `shell` (sent on opening, else
+  worked out from its kind).
+- `GET /api/terminal/restore` — `needed` and the `sessions` that ended
+  without being closed or put to sleep because their tmux server is gone (a
+  restart of the computer), each with the `wake` command it would run.
+  `POST /api/terminal/restore` — `{ids?}`: bring them back; `results` holds
+  `id`, `label`, `ok`, `error`, `command` per terminal.
+- `GET /api/terminal/groups` — custom workspaces and tab groups: `id`, `name`,
+  `color` (1–8), and `project` for groups inside a project.
+  `POST /api/terminal/groups` `{name, color?, project?, tabs?}` makes one.
+  With `project` and `tabs`, it adds the selected terminals on creation.
+  `POST /api/terminal/groups/{gid}` `{name?, color?}` changes it,
+  `POST /api/terminal/groups/{gid}/remove` removes it (its terminals return
+  to their projects). `POST /api/terminal/sessions/{sid}/group` `{group}`
+  moves a terminal into a group, `""` back to its project; `group` is also
+  accepted on opening.
+- `POST /api/terminal/groups/move` — `{project, group, tabs}` assigns a
+  selection to a tab group in its project. An empty `group` clears their
+  memberships. The whole selection must belong to the project.
+- `POST /api/terminal/typing` — `{sid, keys}`: the operator typed that many
+  keys into a terminal since the last report (the window sends it; the text
+  is never sent). `GET /api/terminal/typing?day=YYYY-MM-DD` — `minutes` per
+  project in which the operator typed, and `total`.
+- `GET /api/terminal/tabs` — what the window's tab strip shows, per terminal
+  id: `title` (the title its program set, OSC 0/2, as tmux keeps it; `""`
+  for plain terminals and programs that set none), `agent_id` and `chat`
+  (`null`, or `name`, `tool`, `tasks_done`, `tasks_all` — tasks named in
+  its turns —, `branches` — `branch` links from it and the chats it
+  started, helpers left out —, `ctx_pct`, `ctx_size`, `ctx_at` — Claude
+  Code's context from its status line, `null` when not known —, `rhythm`:
+  `period_min` (60) and `periods`, the last six clock hours oldest first,
+  the last the hour now running, each `start`, `end`, `msgs` — the
+  operator's messages and the agent's answers, from the turn stamps —,
+  `commits` — the chat's repository, signed `Agent:` by it, or unsigned and
+  naming one of its tasks or listed in its own turn stamps —, `tasks` — its
+  tasks moved to done —, `tokens` — the main agent's new input + output; the
+  tab's six dots, tk_d2e11125).
+- `GET /api/terminal/agents` — `agents: {claude, codex, opencode}`: which of
+  them this computer has (the "+" menu offers only those).
+- `GET /api/terminal/resumable?project=` — `chats`: the newest chats of the
+  project (at most 12) that a terminal can resume and no open terminal
+  holds: `agent_id`, `name`, `tool`, `last_active`.
+- `GET /api/terminal/branch/{agent_id}` — `command`, `project`, `cwd`,
+  `name`: the command that opens a copy of the chat from where it stands
+  (`claude -r <session> --fork-session`, `codex fork <session>`); 422 for a
+  tool that cannot.
 - `WS /ws/terminal/{id}?token=&project=&cols=&rows=` — the screen. Not an
-  HTTP route and not in the OpenAPI document.
+  HTTP route and not in the OpenAPI document. Closed with 4000 when the
+  terminal ended, 4500 when its shell did not start (the reason says why).
+
+The terminal log (`backend/termlog.py`): how the terminal works, for
+finding its bugs and slowdowns. Counts, sizes and times only — never what
+was typed, pasted or printed. Kept under `<data root>/terminal/log/`.
+
+- `POST /api/terminal/log` — a page's batch: `{page, rows, events}`. `rows`
+  are minute counters (at most 20), `events` the Full stream as
+  `[t_ms, kind, sid, a, b]` (at most 20 000); 2 MB at most. A wrong batch is
+  refused whole (422) and writes nothing. Answers the mode in force
+  (`mode`, `setting`, `full_until`) and how much was `kept`.
+- `GET /api/terminal/log/mode` · `POST /api/terminal/log/mode`
+  `{mode: off|light|full, hours?}` — read or switch it; Full turns back to
+  Light after `hours` (2 by default, at most 24). The operator's.
+- `GET /api/terminal/log/summary?day=YYYY-MM-DD` — a day for the Monitor:
+  `totals` (frames, p50/p95/max, slow frames, stalls, errors, reconnects,
+  findings, bytes), `hours` (24), `findings` (newest first), `by_kind`,
+  `scroll` and `paste` paths, `mem`, `server` (tmux calls per command,
+  writes, sends), `files`, `days` kept.
+- `GET /api/terminal/log/report` — one JSON file for a bug report: versions,
+  system, the terminal settings, today's and yesterday's rows, the last hour
+  of the full log.
 
 ---
 
@@ -1507,6 +1678,8 @@ the operator's pages call. By purpose:
   (and `standup_postpone`), `architecture_material`, `map_material`,
   `task_evidence_ask`
 - the architecture: `architecture_status`, `architecture_page`, `map_write`
+- messages between agents: `message {to, text, reply_to?}`, `messages`
+  (the inbox; reading marks read)
 - readers: `search`, `project`, `deck`, `doctor`, `usage` (the `#usage`
   text for this chat and the Usage page's numbers; from a chat the hook
   never saw, `block` is "" and the summary is the project asked, else all)

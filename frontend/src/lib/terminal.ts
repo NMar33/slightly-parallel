@@ -33,30 +33,41 @@ export interface TermSession {
   agent_id: string
   task_id: string
   created: string
+  woken_at?: string
   backend: 'tmux' | 'plain'
   state: TermState
+  asleep?: boolean
   program: string
   last_output: number
 }
 
 interface TermStatus {
   enabled: boolean
-  /** False on Windows: the terminal is a Unix pty. */
+  /** False only on Windows without the pywinpty package (the server's ConPTY). */
   supported?: boolean
+  /** Windows: plain terminals only (no tmux), none survives a server restart. */
+  windows?: boolean
   forced: boolean
   token: string
   tmux: boolean
   tmux_version: string
+  /** Whether Wake accepts an explicit request for an empty shell. */
+  open_shell?: boolean
   keep: 'tmux' | 'plain'
   launch: 'run' | 'type'
   agent: 'claude' | 'codex' | 'opencode'
   font_size: number
   /** Lines a new terminal keeps (Settings › Terminal history). */
   scrollback: number
+  /** The history scrolls by pixels (Settings › Smooth scrolling); absent from an older server: on. */
+  smooth_scroll?: boolean
   /** The editor a printed path opens in ("" = off or none installed). */
   editor: string
   projects: Record<string, string>
 }
+
+/** How to install the Windows terminal's one package into the backend's environment. */
+export const PYWINPTY = 'backend\\.venv\\Scripts\\python -m pip install pywinpty'
 
 export const STATE_WORD: Record<TermState, string> = {
   shell: t('a prompt'), working: t('working'), waiting: t('your turn'), running: t('running'), ended: t('ended'),
@@ -155,7 +166,7 @@ export function useTerminalsWatch(hidden: boolean) {
 
 /** The terminal an agent runs in, if any (the newest that is not over). */
 export function terminalOfAgent(sessions: TermSession[] | undefined, agentId: string): TermSession | undefined {
-  return (sessions ?? []).filter((s) => s.agent_id === agentId && s.state !== 'ended').slice(-1)[0]
+  return (sessions ?? []).filter((s) => s.agent_id === agentId && s.state !== 'ended' && !s.asleep).slice(-1)[0]
 }
 
 /* ------------------------------------------------------------------ acts */
@@ -212,6 +223,12 @@ export function useTerminalActions() {
     // in the server's words, not left as an unhandled rejection.
     close: async (id: string) => {
       try { await postJson(`/api/terminal/sessions/${id}/close`, { actor: 'operator' }) } catch (e) { saidFailed(t('The terminal could not close'), e) }
+      refresh()
+    },
+    wake: async (id: string, shell = false) => {
+      try {
+        await postJson(`/api/terminal/sessions/${encodeURIComponent(id)}/wake`, { actor: 'operator', shell })
+      } catch (e) { toast.error(t('Could not open the terminal: {error}', { error: e instanceof Error ? e.message : String(e) })) }
       refresh()
     },
     rename: async (id: string, label: string) => {
