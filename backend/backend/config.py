@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .db import default_data_root, home_data_root, make_data_root
-from .server_address import DEFAULT_HOST, DEFAULT_PORT, loopback_url
+from .server_address import DEFAULT_HOST, DEFAULT_PORT, loopback_url, server_port
 
 _DEFAULT_CORS_ORIGINS = (
     "http://localhost:5173",
@@ -43,7 +43,7 @@ class Settings:
         # written before the rename keeps working (db.default_data_root does
         # the same for the data root).
         cors_raw = os.environ.get("SP_CORS_ORIGINS") or os.environ.get("SCAN_CORS_ORIGINS", "")
-        port = int(os.environ.get("SP_PORT") or os.environ.get("SCAN_PORT") or os.environ.get("PORT") or DEFAULT_PORT)
+        port = int(server_port(os.environ))
         # The Vite dev server's port, when it is not the default: its pages
         # are Slightly Parallel's too.
         vite = (os.environ.get("VITE_PORT") or "").strip()

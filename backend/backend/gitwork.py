@@ -37,6 +37,7 @@ GIT_TIMEOUT = 5
 #: These switch that off for every call made from here.
 from .file_safety import given_path  # noqa: E402
 from .hookshared import GIT_PLAIN_PATHS, numstat_path  # noqa: E402 — shared with the hook
+from .task_refs import task_ids  # noqa: E402
 
 SAFE_GIT = ("-c", "core.fsmonitor=", "-c", f"core.hooksPath={_os.devnull}", *GIT_PLAIN_PATHS)
 
@@ -79,7 +80,6 @@ _RS, _US = "\x1e", "\x1f"
 # The subject comes last: whatever it holds cannot move the other fields.
 _FORMAT = (f"{_RS}%H{_US}%aI{_US}%cI{_US}%an{_US}%(trailers:key=Claude-Session,valueonly,separator=%x2C)"
            f"{_US}%(trailers:key=Task,valueonly,separator=%x2C){_US}%(trailers:key=Agent,valueonly,separator=%x2C){_US}%s")
-TASK_ID_RE = _re.compile(r"\btk_[a-z0-9][a-z0-9_-]{2,40}\b")
 
 
 @dataclass
@@ -251,7 +251,7 @@ def _parse_log(raw: str) -> list[Commit]:
         if len(parts) < 8:
             continue
         sha, at_iso, made_iso, author, session = parts[0], parts[1], parts[2], parts[3], parts[4].strip()
-        tasks = list(dict.fromkeys(TASK_ID_RE.findall(parts[5])))
+        tasks = task_ids(parts[5])
         agent = parts[6].split(",")[0].strip()[:64]
         subject = _US.join(parts[7:])
         try:

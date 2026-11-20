@@ -32,7 +32,6 @@ or as an administrator (Windows): GitHub's runners are both.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import socket
 import subprocess
@@ -43,13 +42,18 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+if __package__:
+    from .server_address import server_url
+else:
+    from server_address import server_url
+
 TOOL_COMMAND_TIMEOUT_S = 120
 CONNECT_TIMEOUT_S = 3
 OFFLINE_STATUS_SETTLE_S = 2
 TOUR_COMMAND_TIMEOUT_S = 300
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}"
+BASE = server_url()
 SYSTEM = sys.platform
 STATE = Path(tempfile.gettempdir()) / "sp-offline-state.json"
 RULE = "SP offline check"

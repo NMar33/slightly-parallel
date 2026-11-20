@@ -46,6 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
+from .server_address import DEFAULT_PORT
 from . import __version__, app_settings, backup as backup_engine, logbook
 from .csvio import DamagedFile
 from .config import Settings, lan_refusal
@@ -472,7 +473,7 @@ def load_operator_token(root: Path) -> str:
 
 def operator_cookie_name(app: Any) -> str:
     # By port: a sandbox on another port of 127.0.0.1 keeps its own cookie.
-    return f"sp_operator_{getattr(app.state.settings, 'port', 8123)}"
+    return f"sp_operator_{getattr(app.state.settings, 'port', DEFAULT_PORT)}"
 
 
 def operator_cookie(app: Any) -> tuple[str, str]:

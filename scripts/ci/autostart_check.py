@@ -29,6 +29,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+if __package__:
+    from .server_address import server_url
+else:
+    from server_address import server_url
+
 LAUNCHER_COMMAND_TIMEOUT_S = 900
 HEALTH_REQUEST_TIMEOUT_S = 2
 SHORTCUT_QUERY_TIMEOUT_S = 60
@@ -54,7 +59,7 @@ def record() -> dict[str, list[str]]:
 def healthy(seconds: int) -> bool:
     for _ in range(seconds):
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}/api/health", timeout=HEALTH_REQUEST_TIMEOUT_S)
+            urllib.request.urlopen(server_url() + "/api/health", timeout=HEALTH_REQUEST_TIMEOUT_S)
             return True
         except OSError:
             time.sleep(1)
@@ -124,7 +129,7 @@ def shortcut_opens(path: str) -> None:
         print(server_log.read_text(encoding="utf-8", errors="replace")[-4000:] if server_log.exists() else "no server.log")
         sys.exit("the shortcut did not start the server")
     first = opened(log, 1, 120)
-    page = urllib.request.urlopen(f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}/", timeout=PAGE_REQUEST_TIMEOUT_S)
+    page = urllib.request.urlopen(server_url() + "/", timeout=PAGE_REQUEST_TIMEOUT_S)
     body = page.read().decode("utf-8", "replace")
     print(f"down: the shortcut started the server and opened {first}; the page answers {page.status}", flush=True)
     assert first and first[0].startswith("http://127.0.0.1:"), f"the browser was not asked to open the app: {first}"

@@ -15,7 +15,6 @@ folder, the disk). Run from the repository folder.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -23,11 +22,16 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+if __package__:
+    from .server_address import server_url
+else:
+    from server_address import server_url
+
 CHECKUP_CLI_TIMEOUT_S = 180
 CHECKUP_API_TIMEOUT_S = 60
 SEARCH_REQUEST_TIMEOUT_S = 60
 
-BASE = f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}"
+BASE = server_url()
 SECTIONS = ("## Machine", "## Server now", "## Memory and machine, last 24 hours", "## Server log",
             "## Capture hook errors", "## Data", "## Tool transcripts", "## Settings",
             "## Supervisor output (last 60 lines)")

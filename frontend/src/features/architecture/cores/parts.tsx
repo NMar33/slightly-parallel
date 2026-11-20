@@ -6,7 +6,6 @@ import { formatStamp } from '../../../utils/dateUtils'
 import { CORE_TYPES, coreColor, type CoreType, weeksOf, type CoreNote, type GridDay, type Tracking } from './data'
 import { t, tn } from '../../../i18n/scope/system'
 
-/** The small square of a type's colour, before a name. */
 export function CoreTypePicker({ type, onPick, showHint = false }: {
   type: string
   onPick: (type: CoreType) => void
@@ -28,6 +27,7 @@ export function CoreTypePicker({ type, onPick, showHint = false }: {
   )
 }
 
+/** The small square of a type's colour, before a name. */
 export function TypeDot({ type, size = 10 }: { type: string; size?: number }) {
   return <i aria-hidden="true" className="inline-block shrink-0 rounded-[2px]" style={{ width: size, height: size, background: coreColor(type) }} />
 }

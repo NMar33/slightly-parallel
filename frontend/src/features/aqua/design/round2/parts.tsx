@@ -22,6 +22,8 @@ import {
   type Win,
 } from './desk'
 
+export const CHAT_ZOOM_SETTLE_MS = 260
+
 export const wsInk = (hue: number) => `oklch(0.70 0.13 ${hue})`
 export const wsTint = (hue: number, a = 0.14) => `oklch(0.70 0.13 ${hue} / ${a})`
 

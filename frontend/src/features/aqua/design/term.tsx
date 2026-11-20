@@ -21,12 +21,13 @@ import { noteOf, type Line, type Session } from './mock'
 import { dock, flash, useAqua, wake } from './store'
 
 /* one clock for every screen: a second's tick while something is mounted */
+const MOCK_CLOCK_TICK_MS = 1000
 let now = 0
 const ticks = new Set<() => void>()
 let timer: ReturnType<typeof setInterval> | null = null
 function subscribeClock(l: () => void) {
   ticks.add(l)
-  if (!timer) timer = setInterval(() => { now += 1; for (const f of ticks) f() }, 1000)
+  if (!timer) timer = setInterval(() => { now += 1; for (const f of ticks) f() }, MOCK_CLOCK_TICK_MS)
   return () => { ticks.delete(l); if (!ticks.size && timer) { clearInterval(timer); timer = null } }
 }
 export const useClock = () => useSyncExternalStore(subscribeClock, () => now, () => now)

@@ -631,13 +631,15 @@ function Floating({ id, index, size }: { id: string; index: number; size: number
 
 /* --------------------------------------------------------------- flash */
 
+const FLASH_VISIBLE_MS = 2600
+
 export function Flash() {
   const st = useAqua()
   const [shown, setShown] = useState<number | null>(null)
   useEffect(() => {
     if (!st.flash) return
     setShown(st.flash.n)
-    const h = setTimeout(() => setShown(null), 2600)
+    const h = setTimeout(() => setShown(null), FLASH_VISIBLE_MS)
     return () => clearTimeout(h)
   }, [st.flash])
   if (!st.flash || shown !== st.flash.n) return null

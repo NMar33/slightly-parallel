@@ -1078,7 +1078,7 @@ def remove_attachment(store: ViewStore, attachment_id: str) -> bool:
 def _legacy_tasks(store: ViewStore, row: dict[str, Any], message: str) -> list[str]:
     """The tasks the server used to compute for a card: the tk_ ids in the
     message, else the last task the operator named in the chat up to it."""
-    from .sessions import task_ids
+    from .task_refs import task_ids
 
     ids = task_ids(message)
     if not ids:

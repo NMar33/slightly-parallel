@@ -38,6 +38,7 @@ from typing import Any
 from .hookshared import (
     MESSAGE_MARK_RE, NOT_OPERATOR, command_text, message_mark_kinds, plain_text, yymm_dd as _yymm_dd,
 )
+from .task_refs import TASK_REF_RE, task_ids
 
 _TURN_RE = re.compile(r"^## Turn (\d+) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
 # Quoted structure inside captured content is escaped at write time.
@@ -101,25 +102,6 @@ class Session:
     timed: str = "exact"
 
 
-# Minted ids are tk_ + 8 hex, but imported or hand-written boards may use
-# readable ids (tk_bc_replica); accept both — consumers keep only ids that
-# exist as tasks, so a stray token in prose is not a mention. Storyboard
-# docs (dc_…) are found the same way, so a doc's history shows who worked
-# on it.
-# A reference may carry the task's turn — tk_28b1b490.2 — so a chat turn
-# can be tied to the round of instruction that asked for it. The id is
-# group 1, the turn (when written) group 2.
-_TASK_ID_RE = re.compile(r"\b((?:tk|dc)_[a-z0-9][a-z0-9_-]{2,40})(?:\.(\d{1,3}))?\b")
-
-
-def task_ids(text: str, *, include_documents: bool = False) -> list[str]:
-    """Return unique IDs in mention order, without their optional turn suffix."""
-    return list(dict.fromkeys(
-        match[1] for match in _TASK_ID_RE.finditer(text)
-        if include_documents or match[1].startswith("tk_")
-    ))
-
-
 def _mentions_of(session_id: str, project: str, agent_id: str, block: list[Turn]) -> list[dict]:
     out: list[dict] = []
     for t in block:
@@ -129,7 +111,7 @@ def _mentions_of(session_id: str, project: str, agent_id: str, block: list[Turn]
             # One mention per task per chat turn, as before; the task turn
             # is taken from the first reference that names one.
             found: dict[str, int] = {}
-            for m in _TASK_ID_RE.finditer(text):
+            for m in TASK_REF_RE.finditer(text):
                 tid, ref_turn = m.group(1), int(m.group(2) or 0)
                 if tid not in found or (found[tid] == 0 and ref_turn):
                     found[tid] = ref_turn
@@ -508,7 +490,7 @@ def _message_marks_of(
 
 
 def _direct_done_tasks(command: str, tags: list[re.Match[str]]) -> list[str]:
-    ids = [match for match in _TASK_ID_RE.finditer(command) if match.group(1).startswith("tk_")]
+    ids = [match for match in TASK_REF_RE.finditer(command) if match.group(1).startswith("tk_")]
     starts = [match.start() for match in ids]
     direct: set[int] = set()
     for tag in tags:

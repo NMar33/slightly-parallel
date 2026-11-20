@@ -13,6 +13,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from ..server_address import DEFAULT_PORT
 from .. import frontmatter
 from ..db import ViewStore
 from ..docs_md import parse_sections, resolve_under
@@ -69,7 +70,7 @@ LOOPBACK_NAMES: tuple[str, ...] = ("127.0.0.1", "localhost", "[::1]")
 def own_origins(settings: Any) -> frozenset[str]:
     """The origins Slightly Parallel's pages are served from: the CORS list (the Vite
     dev server among them) and the address the server itself is bound to."""
-    port = getattr(settings, "port", 8123)
+    port = getattr(settings, "port", DEFAULT_PORT)
     out = {str(o).rstrip("/").lower() for o in getattr(settings, "cors_origins", ())}
     out.update(f"http://{name}:{port}" for name in LOOPBACK_NAMES)
     host = str(getattr(settings, "host", "") or "")

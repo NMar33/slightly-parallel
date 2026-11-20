@@ -3,6 +3,7 @@
 // asks for anything from another host (a font, a script, an image: offline
 // it would hang or fail), and Monitor shows "No connection".
 // Run from the repository folder: node scripts/ci/offline_pages.mjs
+import { serverUrl } from './server_address.mjs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
@@ -12,7 +13,7 @@ const { chromium } = require('playwright')
 const OFFLINE_PAGE_TIMEOUT_MS = 20000
 const CONNECTION_STATUS_TIMEOUT_MS = 30000
 
-const base = `http://127.0.0.1:${process.env.SP_PORT || 8123}`
+const base = serverUrl()
 const routes = ['/', '/kanban', '/usage', '/settings', '/monitor']
 const outside = []
 const failed = []

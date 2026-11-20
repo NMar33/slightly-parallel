@@ -41,6 +41,7 @@ from typing import Iterable
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 from backend.data_root import home_data_root, named_data_root, read_data_root_env  # noqa: E402
+from backend.server_address import DEFAULT_PORT  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Defaults + constants
@@ -73,7 +74,7 @@ ACTIVITY_REQUIRED_ANY = [
 
 YYMMDD_RE = re.compile(r"^\d{4}-\d{2}$")  # e.g. 2608-06
 
-DASHBOARD_PORT = 8123
+DASHBOARD_PORT = DEFAULT_PORT
 
 # ---------------------------------------------------------------------------
 # Finding model

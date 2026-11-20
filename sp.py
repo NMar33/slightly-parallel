@@ -37,6 +37,7 @@ the hot-reload start.
 from __future__ import annotations
 
 import os
+import runpy
 import shutil
 import signal
 import subprocess
@@ -49,6 +50,14 @@ from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent
 
+_address = runpy.run_path(str(ROOT / "backend" / "backend" / "server_address.py"))
+DEFAULT_HOST = _address["DEFAULT_HOST"]
+server_port = _address["server_port"]
+_data_root = runpy.run_path(str(ROOT / "backend" / "backend" / "data_root.py"))
+_home_data_root = _data_root["home_data_root"]
+named_data_root = _data_root["named_data_root"]
+read_launcher_env = _data_root["read_launcher_env"]
+
 # UTF-8 out, here and in every process this starts. Under `sp up` the output
 # goes to server.log, and Windows would write it in the locale's code page:
 # cp932 or cp949 cannot encode the "—" of the launcher's lines, and the start
@@ -59,9 +68,6 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except (AttributeError, ValueError, OSError):
         pass
-def _home_data_root() -> Path:
-    """Mirrors backend.db.home_data_root: ~/.slightly-parallel."""
-    return Path.home() / ".slightly-parallel"
 
 
 STATE = ROOT / ".sp"
@@ -87,34 +93,10 @@ def fail(msg: str) -> NoReturn:
 
 
 def read_env() -> dict[str, str]:
-    """KEY=value lines, as bash's `set -a; source .env` reads the simple ones:
-    `export` allowed, quotes stripped, # comments, $VAR expanded."""
-    out: dict[str, str] = {}
-    if not ENV_FILE.exists():
-        return out
     try:
-        # utf-8-sig: Notepad's byte-order mark made the first key "\ufeffSP_DATA_ROOT",
-        # which nothing read, and the server opened the demo folder.
-        text = ENV_FILE.read_text(encoding="utf-8-sig")
+        return read_launcher_env(ENV_FILE)
     except UnicodeDecodeError as exc:
         sys.exit(f"[sp] .env is not UTF-8 (byte {exc.start}): save it as UTF-8 and run sp again")
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        if line.startswith("export "):
-            line = line[7:].lstrip()
-        key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            quoted, value = value[0], value[1:-1]
-        else:
-            quoted = ""
-            value = value.split(" #", 1)[0].rstrip()
-        if quoted != "'":
-            value = os.path.expandvars(value)
-        out[key] = value
-    return out
 
 
 def env_set(key: str, value: str) -> None:
@@ -147,8 +129,8 @@ def settings() -> dict[str, str]:
 
 def base_url() -> str:
     e = settings()
-    port = e.get("SP_PORT") or e.get("SCAN_PORT") or e.get("PORT") or "8123"
-    return f"http://{e.get('HOST') or '127.0.0.1'}:{port}"
+    port = server_port(e)
+    return f"http://{e.get('HOST') or DEFAULT_HOST}:{port}"
 
 
 def app_url() -> str:
@@ -469,10 +451,10 @@ def preflight(dev: bool) -> None:
         if got[1] < 20:
             fail(f"Node 20+ is needed, this is {got[0]} — install a newer Node (https://nodejs.org)")
     e = settings()
-    host = e.get("HOST") or "127.0.0.1"
+    host = e.get("HOST") or DEFAULT_HOST
     if host.lower() not in ("127.0.0.1", "localhost", "::1") and (e.get("SP_ALLOW_LAN") or "").lower() not in ("1", "true", "yes", "on"):
         fail(f"HOST={host} opens Slightly Parallel to the network, and Slightly Parallel has no login — leave HOST unset, or add SP_ALLOW_LAN=1 to .env to start anyway")
-    port = int(e.get("SP_PORT") or e.get("SCAN_PORT") or e.get("PORT") or "8123")
+    port = int(server_port(e))
     if not port_free(host, port):
         fail(f"port {port} is already in use — stop what is using it, or set SP_PORT=<another port> in .env")
     if dev:
@@ -585,7 +567,7 @@ def prepare(ui: bool = True) -> dict[str, str]:
 
     env = settings()
     # SP_DATA_ROOT > SCAN_DATA_ROOT (former name) > DATA_ROOT > ~/.slightly-parallel
-    data = env.get("SP_DATA_ROOT") or env.get("SCAN_DATA_ROOT") or env.get("DATA_ROOT") or ""
+    data = named_data_root(env)
     if not data:
         # The server fills it with the demo data on the first start (backend.db.seed_data_root).
         data = str(_home_data_root())
@@ -600,8 +582,8 @@ def prepare(ui: bool = True) -> dict[str, str]:
     # with each of its ~40 threads. 357 → 294 MB under load, no slower
     # (docs/performance.md). glibc only; macOS and Windows ignore it.
     env.setdefault("MALLOC_ARENA_MAX", "2")
-    env["HOST"] = env.get("HOST") or "127.0.0.1"
-    env["PORT"] = env.get("PORT") or env.get("SP_PORT") or env.get("SCAN_PORT") or "8123"
+    env["HOST"] = env.get("HOST") or DEFAULT_HOST
+    env["PORT"] = server_port(env, prefer_port=True)
     return env
 
 
@@ -920,7 +902,7 @@ def cmd_check(_: list[str] | None = None) -> None:
         sys.exit(1 if result["counts"].get("concern") else 0)
     say(f"the server does not answer on {base_url()}")
     env = settings()
-    data = Path(env.get("SP_DATA_ROOT") or env.get("SCAN_DATA_ROOT") or env.get("DATA_ROOT") or str(_home_data_root()))
+    data = Path(named_data_root(env) or str(_home_data_root()))
     host, port = base_url().split("//", 1)[1].rsplit(":", 1)
     print(f"  {'ok  ' if running() else '!!  '} supervisor: {'running' if running() else 'not running'}"
           + ("" if running() else "  → python sp.py up"))
@@ -959,7 +941,7 @@ def cmd_report(_: list[str] | None = None) -> None:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         env = settings()
-        data = env.get("SP_DATA_ROOT") or env.get("SCAN_DATA_ROOT") or env.get("DATA_ROOT") or str(_home_data_root())
+        data = named_data_root(env) or str(_home_data_root())
         text = mod.report(app_root=ROOT, data_root=Path(data), log_file=APP_LOG, supervisor_file=LOG_FILE)
     out.write_text(text, encoding="utf-8")
     say(f"report: {out}")

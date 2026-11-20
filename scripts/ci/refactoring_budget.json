@@ -1,15 +1,16 @@
 {
+  "_version": 2,
   "backend": {
-    "numeric_settings": 0,
+    "numeric_settings": 23,
     "duplicate_windows": 2
   },
   "scripts": {
-    "numeric_settings": 33,
-    "duplicate_windows": 1
+    "numeric_settings": 49,
+    "duplicate_windows": 2
   },
   "frontend/src": {
-    "numeric_settings": 34,
-    "duplicate_windows": 2
+    "numeric_settings": 42,
+    "duplicate_windows": 229
   },
   "desktop": {
     "numeric_settings": 0,

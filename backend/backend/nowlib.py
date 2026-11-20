@@ -36,7 +36,7 @@ from .csvio import append_row, read_rows
 from .date_utils import as_local, now_iso
 from .db import ViewStore
 from .file_safety import atomic_write_json
-from .sessions import task_ids
+from .task_refs import task_ids
 
 NOW_CSV = "now.csv"
 STATE = "now.json"

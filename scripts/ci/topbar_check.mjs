@@ -4,6 +4,7 @@
 // readings — processor and memory as percents, the ping in milliseconds —
 // and saves a picture of the bar to .sp/ci/topbar.png for the run's
 // artifacts. Run from the repository folder: node scripts/ci/topbar_check.mjs
+import { serverUrl } from './server_address.mjs'
 import { createRequire } from 'node:module'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
@@ -15,7 +16,7 @@ const TOPBAR_TEXT_TIMEOUT_MS = 5000
 const TOPBAR_POLL_INTERVAL_MS = 1000
 const TOPBAR_POLL_ATTEMPTS = 90
 
-const base = `http://127.0.0.1:${process.env.SP_PORT || 8123}`
+const base = serverUrl()
 const out = path.resolve('.sp/ci')
 mkdirSync(out, { recursive: true })
 

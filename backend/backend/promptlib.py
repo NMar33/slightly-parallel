@@ -41,7 +41,8 @@ from .csvio import append_row, rewrite_rows
 from .db import ViewStore
 from .entities import ENTITIES
 from .file_safety import acquire_flock, atomic_write, lock_path
-from .sessions import fingerprint, prompt_title, task_ids
+from .sessions import fingerprint, prompt_title
+from .task_refs import task_ids
 
 # "## Version 2 · 2609-07 16:40 · edited"
 VERSION_HEAD_RE = re.compile(

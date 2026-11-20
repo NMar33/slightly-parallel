@@ -41,6 +41,7 @@ from pathlib import Path
 
 from . import frontmatter
 from .file_safety import atomic_write
+from .task_refs import TASK_REF_RE
 
 # "## Turn 2 · 2608-29 22:55" on a line of its own. The date is Slightly Parallel's
 # YYMM-DD; the time is optional so a hand-written heading still parses.
@@ -69,11 +70,6 @@ _LEGACY_SECTION_RE = re.compile(r"^\s*##\s+(L2|L3|L4)\b.*$", re.MULTILINE | re.I
 _LEGACY_MARK_RE = re.compile(
     r"^--- turn (\d+) · (\d{4}-\d{2})(?: (\d{2}:\d{2}))? ---[ \t]*$",
     re.MULTILINE,
-)
-
-# A task/doc id, optionally carrying a turn: tk_28b1b490.2
-TASK_REF_RE = re.compile(
-    r"\b((?:tk|dc)_[a-z0-9][a-z0-9_-]{2,40})(?:\.(\d{1,3}))?\b"
 )
 
 MAX_TURNS = 200

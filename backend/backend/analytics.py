@@ -24,7 +24,7 @@ import duckdb
 
 from . import statslib
 from .db import ViewStore
-from .sessions import task_ids
+from .task_refs import task_ids
 
 MAX_ROWS = 5000
 MEMORY_LIMIT = "512MB"
