@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from backend import app_settings, sessions, standuplib
 from backend.entities import ENTITIES
+from backend.task_refs import task_ids
 
 _HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
 
@@ -29,8 +30,7 @@ def _hook():
 def test_task_ids_are_found_the_same_way() -> None:
     capture = _hook()
     text = "take tk_0e571cfa, then tk_alpha_1.2 and dc_98ae726a; not xtk_nope or tk_a"
-    server = [m.group(1) for m in sessions._TASK_ID_RE.finditer(text) if m.group(1).startswith("tk_")]
-    assert capture._TASK_ID_RE.findall(text) == server == ["tk_0e571cfa", "tk_alpha_1"]
+    assert capture._TASK_ID_RE.findall(text) == task_ids(text) == ["tk_0e571cfa", "tk_alpha_1"]
 
 
 def test_the_standup_claim_lasts_the_same_time() -> None:
