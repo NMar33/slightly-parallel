@@ -77,7 +77,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     if start is None:
         return []
     tags = store.query(
-        "SELECT project, agent_id, session_id, turn, at_ts, excerpt, tasks FROM done_tags "
+        "SELECT project, agent_id, session_id, turn, at_ts, excerpt, tasks, direct_tasks FROM done_tags "
         "WHERE at_ts >= ? ORDER BY agent_id, turn", (start,))
     if not tags:
         return []
@@ -97,7 +97,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         if r.get("result") in RESOLVED:
             bounds.setdefault(r.get("agent_id") or "", []).append(as_int(r.get("turn")))
     tasks = {str(t["id"]): t for t in store.query(
-        "SELECT id, title, status, archived_at FROM tasks_mutual")}
+        "SELECT id, project, title, status, archived_at FROM tasks_mutual")}
     mentions: dict[str, list[tuple[int, str, str]]] = {}
     for m in store.query(
             "SELECT agent_id, turn, task_id, role FROM task_mentions "
@@ -123,7 +123,10 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     for tag in tags:
         agent, turn = str(tag["agent_id"] or ""), as_int(tag["turn"])
         prev = max((b for b in bounds.get(agent, []) if b < turn), default=0)
-        given = [x for x in str(tag["tasks"] or "").split(",") if x]
+        project = tag["project"]
+        direct = set(str(tag["direct_tasks"] or "").split(","))
+        given = [x for x in str(tag["tasks"] or "").split(",")
+                 if x and (x in direct or x not in tasks or tasks[x]["project"] == project)]
         named = [x for x in given if x in tasks]
         window = [m for m in mentions.get(agent, []) if prev < m[0] <= turn]
         if not given and any(prev < t < turn for t in nowlib.pending(store.data_root, agent)):
@@ -137,7 +140,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         if not named and not given:
             # The last task the operator named — not one an agent's answer
             # mentioned in passing ("done; tk_B depends on this").
-            before = [m for m in window if m[0] < turn and m[2] == "user"]
+            before = [m for m in window if m[0] < turn and m[2] == "user" and tasks[m[1]]["project"] == project]
             named = [before[-1][1]] if before else []
         if not named:
             rid = _id(agent, turn, "")

@@ -176,6 +176,7 @@ IMPORTANT_TAG_RE = re.compile(
 # ``#done`` closes a task: the one it names, else the last task named since
 # the previous #done in the chat (donelib.py).
 DONE_TAG_RE = re.compile(r"(?<![\w#])#done(?![\w-])", re.IGNORECASE)
+_DONE_TARGETS_RE = re.compile(r"(?:[ \t,]+tk_[a-z0-9][a-z0-9_-]{2,40}\b)+")
 # ``#task`` writes a card for later, ``#now`` one the chat starts on; either
 # may name the board lane in braces: ``#now {ui} fix the login timeout``.
 # ``#now-todo`` (``-next``, ``-backlog``, ``-review``, ``-parked``, ``-done``,
@@ -502,18 +503,28 @@ def _dones_of(
     out: list[dict] = []
     for t in block:
         text = _operator_text(t)
-        if not text or "#done" not in text.lower() or not DONE_TAG_RE.search(command_text(text)):
+        if not text or "#done" not in text.lower():
+            continue
+        command = command_text(text)
+        tags = list(DONE_TAG_RE.finditer(command))
+        if not tags:
             continue
         named: list[str] = []
         for m in _TASK_ID_RE.finditer(text):
             if m.group(1).startswith("tk_") and m.group(1) not in named:
                 named.append(m.group(1))
+        # Only IDs next to a live tag can name a task in another project.
+        direct = dict.fromkeys(
+            task.group(1) for tag in tags
+            if (targets := _DONE_TARGETS_RE.match(command, tag.end()))
+            for task in _TASK_ID_RE.finditer(targets.group())
+        )
         body = DONE_TAG_RE.sub("", plain_text(text)).strip()
         head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         out.append({
             "project": project, "agent_id": agent_id, "session_id": session_id,
             "turn": t.number, "at": t.at.strftime("%Y-%m-%dT%H:%M:%S"),
-            "excerpt": _clip(head, 160), "tasks": ",".join(named),
+            "excerpt": _clip(head, 160), "tasks": ",".join(named), "direct_tasks": ",".join(direct),
         })
     return out
 

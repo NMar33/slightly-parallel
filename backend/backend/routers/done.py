@@ -66,7 +66,8 @@ def _latest_done(store: ViewStore, agent_id: str) -> dict[str, Any]:
     latest = [r for r in mine if as_int(r.get("turn")) == turn]
     if all(r.get("result") == "unnamed" for r in latest):
         typed = store.query_one("SELECT tasks FROM done_tags WHERE agent_id = ? AND turn = ?", (agent_id, turn)) or {}
-        ids = [x for x in str(typed.get("tasks") or "").split(",") if x]
+        ids = [x for x in str(typed.get("tasks") or "").split(",")
+               if x and not store.query_one("SELECT id FROM tasks_mutual WHERE id = ?", (x,))]
         if ids:
             return {"found": True, "turn": turn, "tasks": [], "unnamed": True, "unknown": ids,
                     "next": f"{', '.join(ids)} is not a task on the board: nothing moved. Tell the operator, "

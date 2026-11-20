@@ -58,16 +58,18 @@ _winpty: Any = None
 HOST_NAMES = {"openconsole", "conhost"}
 
 
-def _hosts() -> dict[int, Any]:
-    """This server's console hosts of pseudo consoles (started --headless), by pid."""
+def _children() -> list[Any] | None:
     try:
         import psutil
-        me = psutil.Process(os.getpid())
-        kids = me.children()
+        return psutil.Process().children()
     except Exception:  # noqa: BLE001 — no psutil or no process table: no host known
-        return {}
+        return None
+
+
+def _hosts() -> dict[int, Any]:
+    """This server's console hosts of pseudo consoles (started --headless), by pid."""
     out = {}
-    for k in kids:
+    for k in _children() or ():
         try:
             name = os.path.basename(k.name() or "").lower()
             name = name[:-4] if name.endswith(".exe") else name
@@ -119,7 +121,8 @@ class ConPty:
         # The host is the console host that appears with this pseudo console.
         # The router makes one pty at a time (under its lock); two new ones
         # at once leave the host unknown rather than guessed.
-        before = _hosts()
+        children = _children()
+        before = {proc.pid for proc in children} if children is not None else None
         try:
             pty = winpty.PTY(cols, rows, backend=winpty.Backend.ConPTY)
         except self._error:
@@ -131,7 +134,16 @@ class ConPty:
             raise OSError(f"the shell did not start: {exe}")
         self._pty: Any = pty
         self.pid: int = int(pty.pid or 0)
-        new = [proc for pid, proc in _hosts().items() if pid not in before]
+        # A child may be visible before its command line is readable. Give
+        # the new host a short window to appear, without choosing among ties.
+        new = []
+        if before is not None:
+            for attempt in range(11):
+                if attempt:
+                    time.sleep(0.01)
+                new = [proc for pid, proc in _hosts().items() if pid not in before]
+                if new:
+                    break
         # Kept as the process itself: psutil will not kill another program that got its pid later.
         self._host: Any = new[0] if len(new) == 1 else None
         self.host_pid: int = self._host.pid if self._host is not None else 0

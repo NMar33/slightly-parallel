@@ -11,6 +11,23 @@ if (!rootEl) {
   throw new Error('PDR: #root element missing from index.html')
 }
 
+const CHUNK_RELOAD_KEY = 'sp-chunk-reload'
+const CHUNK_LOAD_ERROR = /dynamically imported module|importing a module script failed|unable to preload css/i
+window.addEventListener('vite:preloadError', (event) => {
+  const error = (event as Event & { payload?: unknown }).payload
+  if (!(error instanceof Error) || !CHUNK_LOAD_ERROR.test(error.message)) return
+  // An old document can still ask for an asset that an upgrade removed.
+  // Remember the entry that tried to recover, even across a reload.
+  try {
+    if (sessionStorage.getItem(CHUNK_RELOAD_KEY) === import.meta.url) return
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, import.meta.url)
+  } catch {
+    return
+  }
+  event.preventDefault()
+  window.location.reload()
+})
+
 // Prefs live on the server (ui_prefs.json); localStorage is a per-origin
 // cache. Hydrate before the first render so every synchronous pref read
 // sees the durable values — bounded, so a dead backend never blanks the UI.

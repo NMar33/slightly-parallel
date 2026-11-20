@@ -963,7 +963,7 @@ class ViewStore:
             ],
             "done_tags": [
                 (k["project"], k["agent_id"], k["session_id"], k["turn"], k["at"],
-                 k["excerpt"], k["tasks"])
+                 k["excerpt"], k["tasks"], k["direct_tasks"])
                 for r in rows for k in r.done_tags if acts(r, k)
             ],
             "now_tags": [
@@ -1036,6 +1036,7 @@ class ViewStore:
         "done_tags": {
             "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",
             "turn": "INTEGER", "at_ts": "VARCHAR", "excerpt": "VARCHAR", "tasks": "VARCHAR",
+            "direct_tasks": "VARCHAR",
         },
         "now_tags": {
             "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",

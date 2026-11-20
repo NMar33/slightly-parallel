@@ -148,6 +148,34 @@ def test_a_task_the_agent_mentioned_in_passing_is_not_the_one_closed(env) -> Non
     assert _status(c, t1) == "done" and _status(c, t2) == "doing"
 
 
+@pytest.mark.parametrize("done_turn", ["#done", 'Compare with {other}; then the note says "#done".'])
+@pytest.mark.parametrize("local_mentioned", [True, False])
+def test_a_mention_in_another_project_is_not_a_done_target(env, done_turn: str, local_mentioned: bool) -> None:
+    c, root, (local, _, _) = env
+    (root / "projects" / "beta").mkdir()
+    c.app.state.store.rebuild()
+    response = c.post("/api/tasks", json={
+        "created_date": "2609-01", "created_time": "09:00", "project": "beta",
+        "agent_id": "operator", "title": "Other project's task", "status": "doing",
+    })
+    assert response.is_success, response.text
+    other = response.json()["metadata"]["id"]
+    turns = [f"Work on {local}"] if local_mentioned else []
+    turns.extend([f"Compare with {other}", done_turn.format(other=other)])
+    _chat(root, turns)
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in got["tasks"]] == ([local] if local_mentioned else [])
+    assert got["unnamed"] is not local_mentioned and "unknown" not in got
+    assert _status(c, local) == ("done" if local_mentioned else "doing")
+    assert _status(c, other) == "doing"
+
+    # The operator can still name a task from another project directly.
+    _chat(root, turns + [f"Review complete #done {other}"])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in got["tasks"]] == [other]
+    assert _status(c, other) == "done"
+
+
 def test_done_in_the_chat_re_arms_a_repeating_task(env) -> None:
     c, root, (t1, _t2, _t3) = env
     c.post(f"/api/tasks/{t1}/update", json={"resurface_every_days": "7", "actor": "operator"})

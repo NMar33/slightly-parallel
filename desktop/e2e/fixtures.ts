@@ -131,7 +131,9 @@ export const test = base.extend<{ shell: Shell; win: Win; bare: Win }, { server:
     const token = fs.readFileSync(path.join(ROOT, 'data', 'operator.token'), 'utf-8').trim()
     const api = await http.newContext({
       baseURL: URL_,
-      extraHTTPHeaders: { origin: URL_, cookie: `sp_operator_${new URL(URL_).port}=${token}` },
+      // The fixture is idle while Electron is in use. A lifecycle request
+      // must not reuse a connection that uvicorn may be closing meanwhile.
+      extraHTTPHeaders: { origin: URL_, cookie: `sp_operator_${new URL(URL_).port}=${token}`, connection: 'close' },
     })
     const dir = path.join(ROOT, 'work', 'shell')
     fs.mkdirSync(dir, { recursive: true })

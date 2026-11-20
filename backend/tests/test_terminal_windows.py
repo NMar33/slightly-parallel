@@ -601,17 +601,34 @@ def python_is_a_host(monkeypatch):
     monkeypatch.setattr(conpty, "HOST_NAMES", {name[:-4] if name.endswith(".exe") else name})
 
 
-def test_closing_a_conpty_ends_its_console_host(python_is_a_host) -> None:
+@pytest.mark.parametrize("late_host", [False, True])
+def test_closing_a_conpty_ends_its_console_host(python_is_a_host, monkeypatch, late_host: bool) -> None:
+    if late_host:
+        read_hosts = conpty._hosts
+        empty_reads = iter([None, None])
+
+        def hosts():
+            # The process table may not identify a new host on the first lookup.
+            return {} if next(empty_reads, True) is None else read_hosts()
+
+        monkeypatch.setattr(conpty, "_hosts", hosts)
     con = conpty.ConPty(["cmd.exe"], "", 80, 24, {}, module=HOSTED)
     proc, host = HostPTY.made_procs[-1]
-    assert con.host_pid == host.pid
-    con.kill()
-    host.wait(timeout=10)
-    proc.wait(timeout=10)
-    assert con.read() == b""
-    t0 = time.time()
-    con.release()
-    assert time.time() - t0 < 0.5
+    try:
+        assert con.host_pid == host.pid
+        con.kill()
+        host.wait(timeout=10)
+        proc.wait(timeout=10)
+        assert con.read() == b""
+        t0 = time.time()
+        con.release()
+        assert time.time() - t0 < 0.5
+    finally:
+        for child in (proc, host):
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=10)
+        con.release()
 
 
 def test_a_close_that_waits_holds_only_its_own_thread(python_is_a_host) -> None:

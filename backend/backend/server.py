@@ -1133,7 +1133,11 @@ def create_app(
     return app
 
 
-PAGE_HEADERS = {"X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'"}
+PAGE_HEADERS = {
+    "X-Frame-Options": "SAMEORIGIN",
+    "Content-Security-Policy": "frame-ancestors 'self'",
+    "Cache-Control": "no-cache",
+}
 
 
 def _mount_frontend(app: FastAPI) -> None:

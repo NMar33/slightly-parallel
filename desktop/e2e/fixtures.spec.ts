@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { test, expect, request } from '@playwright/test'
-import { closeAll } from './fixtures'
+import { expect, request } from '@playwright/test'
+import { closeAll, test } from './fixtures'
 
 test('shell setup reports an unsuccessful close instead of continuing', async () => {
   const server = createServer((req, res) => {
@@ -23,5 +23,29 @@ test('shell setup reports an unsuccessful close instead of continuing', async ()
   } finally {
     await api.dispose()
     server.close()
+  }
+})
+
+test('shell setup can make its next request after the server stops accepting a socket', async ({ server }) => {
+  const sockets = new WeakSet()
+  const listener = createServer((req, res) => {
+    if (sockets.has(req.socket)) {
+      req.socket.destroy()
+      return
+    }
+    sockets.add(req.socket)
+    res.end('ok')
+  })
+  listener.listen(0, '127.0.0.1')
+  await once(listener, 'listening')
+  const address = listener.address()
+  if (!address || typeof address === 'string') throw new Error('test server is not listening on TCP')
+  const url = `http://127.0.0.1:${address.port}`
+  try {
+    expect(await (await server.api.get(url)).text()).toBe('ok')
+    expect(await (await server.api.post(url)).text()).toBe('ok')
+  } finally {
+    listener.closeAllConnections()
+    listener.close()
   }
 })
