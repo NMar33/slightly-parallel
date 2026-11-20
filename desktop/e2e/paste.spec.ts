@@ -280,8 +280,18 @@ test('typing after a mouse drag reaches the shell without copying', async ({ win
   await expect(page.getByText('Copied', { exact: true })).toHaveCount(0)
 })
 
-test('Shift-click extends a selection across scrollback without an automatic copy', async ({ win, server }, info) => {
+for (const native of [false, true]) test(`Shift-click extends a selection across scrollback without an automatic copy${native ? ' in tmux copy mode' : ''}`, async ({ win, server, shell }, info) => {
+  test.skip(native && shell.backend !== 'tmux', 'tmux copy mode needs a tmux terminal')
   const { app, page } = win
+  let waitForPaneKind = native
+  if (native) {
+    // Exercise the real tmux selection while the window has yet to learn
+    // the pane kind. Release the held reads so scrolling uses that state.
+    const hold = (route: import('@playwright/test').Route) => waitForPaneKind ? route.fulfill({ status: 503 }) : route.continue()
+    await page.route(`**/sessions/${shell.id}/pos`, hold)
+    await page.route(`**/sessions/${shell.id}/capture*`, hold)
+    await page.reload()
+  }
   await ready(page)
   await page.evaluate(() => {
     document.addEventListener('mousedown', (mouse) => {
@@ -341,6 +351,7 @@ test('Shift-click extends a selection across scrollback without an automatic cop
   expect(await clipboard()).toBe('previous clipboard')
   if (x11) expect(primaryOwner(x11)).toBe(primary)
 
+  waitForPaneKind = false
   await page.mouse.wheel(0, -1100)
   await expect.poll(async () => (await inventory()).some((row) => row.n < 130)).toBe(true)
   // Wait for the wheel animation to settle before targeting a rendered row.
@@ -353,6 +364,7 @@ test('Shift-click extends a selection across scrollback without an automatic cop
     return settled
   }).toBe(true)
   const last = previous!
+  if (native) await expect(page.locator('.aqua-screen .sp-reader')).toHaveCount(0)
   await page.keyboard.down('Shift')
   await page.mouse.click(last.x, last.y)
   await page.keyboard.up('Shift')

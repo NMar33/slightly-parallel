@@ -103,10 +103,16 @@ bind -n MouseDown2Pane select-pane -t = \\; if -F "#{||:#{pane_in_mode},#{mouse_
 # program which reads the mouse still receives its own drag and clicks.
 unbind -T copy-mode MouseDragEnd1Pane
 unbind -T copy-mode-vi MouseDragEnd1Pane
-# In copy mode tmux moves to the event's cell before the command. Refresh
-# the linear selection there without clearing its anchor or copying.
-bind -T copy-mode S-MouseDown1Pane send-keys -X rectangle-off
-bind -T copy-mode-vi S-MouseDown1Pane send-keys -X rectangle-off
+# tmux moves to the mouse cell before a copy-mode command. Newer tmux
+# freezes selection endpoints on release. Reactivate the end, then restore
+# the view captured before other-end moves it so the same mouse cell names
+# the same line. run-shell -C expands the view and runs only tmux commands.
+bind -T copy-mode S-MouseDown1Pane if-shell -F '#{&&:#{selection_present},#{&&:#{==:#{selection_active},0},#{!=:#{copy_position},}}}' {
+    run-shell -C 'send-keys -X other-end ; send-keys -X goto-line #{copy_position} ; send-keys -X rectangle-off ; send-keys -X stop-selection'
+} { send-keys -X rectangle-off }
+bind -T copy-mode-vi S-MouseDown1Pane if-shell -F '#{&&:#{selection_present},#{&&:#{==:#{selection_active},0},#{!=:#{copy_position},}}}' {
+    run-shell -C 'send-keys -X other-end ; send-keys -X goto-line #{copy_position} ; send-keys -X rectangle-off ; send-keys -X stop-selection'
+} { send-keys -X rectangle-off }
 bind -T copy-mode C-c send-keys -X cancel \\; send-keys C-c
 bind -T copy-mode-vi C-c send-keys -X cancel \\; send-keys C-c
 bind -T copy-mode DoubleClick1Pane select-pane \\; send-keys -X select-word
