@@ -2,6 +2,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
 import { getJson, postJson } from '../../lib/getJson'
 
+const LIMITS_REFETCH_MS = 60_000
+
 /**
  * Usage: the tokens agents used, per turn, per chat, per task, and the plan
  * limits (backend usagelib.py, routers/usage.py). The wire shapes and the
@@ -229,7 +231,7 @@ export function useUsageLimits() {
     queryKey: ['usage', 'limits'],
     queryFn: ({ signal }) => getJson<LimitsAnswer>('/api/usage/limits', signal)
       .then((r) => ({ limits: r.limits ?? {}, codex_poll: r.codex_poll })),
-    refetchInterval: 60_000,
+    refetchInterval: LIMITS_REFETCH_MS,
   })
 }
 

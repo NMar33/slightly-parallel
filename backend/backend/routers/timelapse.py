@@ -89,6 +89,7 @@ GRAPH_EDGES = 420
 
 # Anything bigger is a vendored lockfile or a generated blob, not work.
 BIG_COMMIT = 20_000
+GIT_LOG_TIMEOUT_S = 20
 
 
 def _area(path: str) -> str:
@@ -107,7 +108,7 @@ def _git_log(cwd: str, since: str, until: str) -> list[str] | None:
             ["git", *SAFE_GIT, "log", f"--since={since}", f"--until={until}",
              "--numstat", "--date=format:%Y-%m-%dT%H:%M:%S",
              "--pretty=format:C%H\t%ad"],
-            cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=False,
+            cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=GIT_LOG_TIMEOUT_S, check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None

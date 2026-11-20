@@ -1078,11 +1078,9 @@ def remove_attachment(store: ViewStore, attachment_id: str) -> bool:
 def _legacy_tasks(store: ViewStore, row: dict[str, Any], message: str) -> list[str]:
     """The tasks the server used to compute for a card: the tk_ ids in the
     message, else the last task the operator named in the chat up to it."""
-    from .sessions import _TASK_ID_RE
-    ids: list[str] = []
-    for m in _TASK_ID_RE.finditer(message):
-        if m.group(1).startswith("tk_") and m.group(1) not in ids:
-            ids.append(m.group(1))
+    from .sessions import task_ids
+
+    ids = task_ids(message)
     if not ids:
         named = store.query(
             "SELECT task_id FROM task_mentions WHERE agent_id = ? AND role = 'user' AND turn <= ? "

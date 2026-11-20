@@ -5,7 +5,8 @@
  * points at the same moment.
  */
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, type ReactNode } from 'react'
+import { useElementWidth } from '../../hooks/useElementWidth'
 
 import { SEVERITY_COLOR, clock, type MonitorEvent } from '../../lib/monitor'
 import { dayMonth } from '../../lib/months'
@@ -46,19 +47,7 @@ export function Spark({ values, color, width = 48, height = 14, max, fill = true
   )
 }
 
-function useWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
-  const ref = useRef<T>(null)
-  const [w, setW] = useState(600)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const ro = new ResizeObserver(() => setW(el.clientWidth))
-    ro.observe(el)
-    setW(el.clientWidth)
-    return () => ro.disconnect()
-  }, [])
-  return [ref, w]
-}
+const MONITOR_CHART_INITIAL_WIDTH_PX = 600
 
 /** A fixed empty list, so a strip without gaps keeps its memoized paths. */
 const NO_GAPS: Array<[number, number]> = []
@@ -98,7 +87,7 @@ export function Strip({
   /** Leave out the title row (the value under the cursor moves into a tooltip). */
   bare?: boolean
 }) {
-  const [ref, width] = useWidth<HTMLDivElement>()
+  const [ref, width] = useElementWidth<HTMLDivElement>(MONITOR_CHART_INITIAL_WIDTH_PX)
   const span = Math.max(1, to - from)
   const x = useCallback((ts: number) => ((ts - from) / span) * width, [from, span, width])
   const top = useMemo(() => {
@@ -207,7 +196,7 @@ export function Strip({
 
 /** Time ticks for the bottom of a stack of strips. */
 export function TimeAxis({ from, to }: { from: number; to: number }) {
-  const [ref, width] = useWidth<HTMLDivElement>()
+  const [ref, width] = useElementWidth<HTMLDivElement>(MONITOR_CHART_INITIAL_WIDTH_PX)
   const span = to - from
   const steps = [60, 300, 900, 1800, 3600, 3 * 3600, 6 * 3600, 12 * 3600, 86400, 2 * 86400, 7 * 86400, 30 * 86400]
   const step = steps.find((s) => span / s <= Math.max(3, width / 110)) ?? 30 * 86400

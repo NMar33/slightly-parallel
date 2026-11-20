@@ -41,7 +41,7 @@ from .csvio import append_row, rewrite_rows
 from .db import ViewStore
 from .entities import ENTITIES
 from .file_safety import acquire_flock, atomic_write, lock_path
-from .sessions import _TASK_ID_RE, fingerprint, prompt_title
+from .sessions import fingerprint, prompt_title, task_ids
 
 # "## Version 2 · 2609-07 16:40 · edited"
 VERSION_HEAD_RE = re.compile(
@@ -546,7 +546,10 @@ CANDIDATE_SENDS = 4
 CANDIDATE_WORDS = 25
 
 
-def candidates(store: ViewStore, limit: int = 12) -> list[dict[str, Any]]:
+DEFAULT_EXPLORE_CANDIDATES = 12
+
+
+def candidates(store: ViewStore, limit: int = DEFAULT_EXPLORE_CANDIDATES) -> list[dict[str, Any]]:
     """Messages sent again and again that are not in the library yet.
 
     The tag is a door the operator has to remember to walk through *before*
@@ -777,7 +780,7 @@ def facts_for(store: ViewStore, send: dict[str, Any]) -> dict[str, Any]:
 
     moved: list[dict[str, str]] = []
     text = str(send.get("body") or send.get("head") or "")
-    ids = sorted({m.group(1) for m in _TASK_ID_RE.finditer(text)})
+    ids = sorted(task_ids(text, include_documents=True))
     if ids:
         ph = ",".join("?" * len(ids))
         events = store.query(

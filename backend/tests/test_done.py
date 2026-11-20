@@ -76,6 +76,8 @@ def test_a_named_task_and_one_applied_once(env) -> None:
     _chat(root, [f"{t1} and {t2}", f"#done {t3}"])
     got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
     assert [t["id"] for t in got["tasks"]] == [t3]
+    assert [(t["id"], t["reason"]) for t in got["doubt"]] == [(t1, "history")]
+    assert got["confirmation"] == f"#done {t1}"
     assert _status(c, t1) == "doing" and _status(c, t3) == "done"
     # The operator moves it back: the old #done is not applied again.
     c.post(f"/api/tasks/{t3}/update", json={"status": "doing", "actor": "operator"})
@@ -246,3 +248,128 @@ def test_done_closes_the_task_the_operator_started_with_now(env) -> None:
     assert [(t["id"], t["result"]) for t in got["tasks"]] == [(tid, "moved")]
     assert (got["tasks"][0]["stretch"]["start"], got["tasks"][0]["stretch"]["end"]) == (2, 4)
     assert _status(c, tid) == "done" and _status(c, t1) == "doing"
+
+
+@pytest.mark.parametrize("template", [
+    "#done: ({a}); {b} и {c}",
+    "#done\n{a},\n{b} and {c}",
+    "#done {a}/{b}, {c}",
+    "сделал ({a}, {b}; {c}). #done",
+])
+def test_done_closes_an_adjacent_chain_in_either_direction(env, template: str) -> None:
+    c, root, ids = env
+    _chat(root, [template.format(**dict(zip("abc", ids)))])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in got["tasks"]] == ids
+    assert [_status(c, tid) for tid in ids] == ["done"] * 3
+
+
+def test_done_stops_at_the_first_word_and_offers_a_copyable_command(env) -> None:
+    c, root, (a, b, third) = env
+    turns = [f"#done {a} because {b} depends on {third}"]
+    _chat(root, turns)
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in got["tasks"]] == [a]
+    assert [(t["id"], t["reason"]) for t in got["doubt"]] == [(b, "mentioned"), (third, "mentioned")]
+    assert got["confirmation"] == f"#done {b} {third}"
+    _chat(root, turns + ["да"])
+    c.get(f"/api/done-tags?agent_id={AGENT}")
+    assert [_status(c, tid) for tid in (a, b, third)] == ["done", "doing", "doing"]
+    _chat(root, turns + ["да", got["confirmation"]])
+    closed = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in closed["tasks"]] == [b, third]
+
+
+def test_a_pasted_report_does_not_close_its_five_cards(env) -> None:
+    c, root, ids = env
+    for index in range(2):
+        response = c.post("/api/tasks", json={
+            "created_date": "2609-01", "created_time": "09:04", "project": "alpha",
+            "agent_id": "operator", "title": f"Pasted task {index}", "status": "doing",
+        })
+        ids.append(response.json()["metadata"]["id"])
+    lines = ["голого #done во вставке было достаточно. Вот список:"]
+    lines.extend(f"Задача {tid} попала в отчёт." for tid in ids)
+    _chat(root, [f"Work on {ids[0]}", "\n".join(lines)])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert got["tasks"] == []
+    assert [t["id"] for t in got["doubt"]] == ids
+    assert got["confirmation"] == "#done " + " ".join(ids)
+    assert [_status(c, tid) for tid in ids] == ["doing"] * 5
+
+
+def test_dns_paste_leaves_the_other_project_in_doubt(env) -> None:
+    c, root, (local, _, _) = env
+    (root / "projects" / "writing-tracker").mkdir()
+    c.app.state.store.rebuild()
+    response = c.post("/api/tasks", json={
+        "created_date": "2609-01", "created_time": "09:00", "project": "writing-tracker",
+        "agent_id": "operator", "title": "DNS for www", "status": "doing",
+    })
+    other = response.json()["metadata"]["id"]
+    _chat(root, [f"Work on {local}", f"Compare with {other}",
+                 f"При #done не пишем план.\nЗавёл задачу {local}, она в doing.\n"
+                 f"После #done сервер пишет: похоже на {other} www DNS."])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in got["tasks"]] == [local]
+    assert [(t["id"], t["reason"]) for t in got["doubt"]] == [(other, "other_project")]
+    assert got["confirmation"] == f"#done {other}"
+    assert _status(c, other) == "doing"
+
+
+def test_bare_done_closes_only_the_latest_local_task_and_lists_earlier_ones(env) -> None:
+    c, root, (a, b, third) = env
+    _chat(root, [f"Previously {a}", f"Compare {b} and {third}", "#done"])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in got["tasks"]] == [third]
+    assert [(t["id"], t["reason"]) for t in got["doubt"]] == [(a, "history"), (b, "history")]
+    assert got["confirmation"] == f"#done {a} {b}"
+
+
+def test_the_hook_looks_up_its_captured_turn_on_the_matching_server(env) -> None:
+    c, root, (a, b, _) = env
+    first = f"#done {a} because {b} is still open"
+    _chat(root, [first])
+    wrong = c.get("/api/done-tags/capture", params={
+        "agent_id": AGENT, "capture_root": str(root / "elsewhere"), "capture_turn": 1,
+    })
+    assert wrong.status_code == 409
+    assert _status(c, a) == "doing" and _status(c, b) == "doing"
+    right = c.get("/api/done-tags/capture", params={"agent_id": AGENT, "capture_root": str(root), "capture_turn": 1})
+    assert right.is_success
+    assert [t["id"] for t in right.json()["tasks"]] == [a]
+    assert right.json()["confirmation"] == f"#done {b}"
+    _chat(root, [first, f"#done {b}"])
+    latest = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [t["id"] for t in latest["tasks"]] == [b]
+    earlier = c.get("/api/done-tags/capture", params={"agent_id": AGENT, "capture_root": str(root), "capture_turn": 1}).json()
+    assert [t["id"] for t in earlier["tasks"]] == [a]
+    assert "doubt" not in earlier and "confirmation" not in earlier
+
+
+def test_bare_done_excludes_finished_and_archived_tasks_from_history(env) -> None:
+    c, root, (finished, archived, target) = env
+    assert c.post(f"/api/tasks/{finished}/update", json={"status": "done", "actor": "operator"}).is_success
+    assert c.post(f"/api/tasks/{archived}/archive", json={}).is_success
+    _chat(root, [f"Review {finished} and {archived}", f"Work on {target}", "#done"])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [(t["id"], t["result"]) for t in got["tasks"]] == [(target, "moved")]
+    assert "doubt" not in got and "confirmation" not in got
+
+
+@pytest.mark.parametrize("command", ["#done", "#done {target}"])
+def test_done_ignores_incoming_agent_messages_when_selecting_tasks(env, command: str) -> None:
+    c, root, (target, first, second) = env
+    incoming = (
+        '<sp-message from="cc-coordinator" id="msg_test">\n'
+        f"Check progress on {first} and {second}.\n</sp-message>"
+    )
+    _chat_both(root, [
+        (f"Work on {target}", f"Related work includes {first}."),
+        (incoming, "Received"),
+        (command.format(target=target), "ok"),
+    ])
+    got = c.get(f"/api/done-tags?agent_id={AGENT}").json()
+    assert [(t["id"], t["result"]) for t in got["tasks"]] == [(target, "moved")]
+    assert "doubt" not in got and "confirmation" not in got
+    assert _status(c, first) == _status(c, second) == "doing"

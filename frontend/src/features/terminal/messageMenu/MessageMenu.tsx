@@ -56,6 +56,8 @@ import { foldSaid, messageRange, spansOf, type Span } from '../fold'
 import { foldViewOf } from '../reader'
 import { firstLine, marksOf, refOf, useChatRecord, useKept, useMessageActions, useTask, type CarryLevel, type MessageMarks } from './data'
 
+const MARKER_POSITION_POLL_MS = 500
+
 const COLUMNS = ['todo', 'doing', 'done'] as const
 
 type Open =
@@ -618,7 +620,7 @@ function BlockMarks({ terms, agentId, record }: { terms: React.RefObject<Set<Ter
       setShown({ host, term, items })
     }
     tick()
-    const id = window.setInterval(tick, 500)
+    const id = window.setInterval(tick, MARKER_POSITION_POLL_MS)
     // The reader made again (a message collapsed or expanded): the marks move with their text now, not at the next read.
     window.addEventListener('sp-reader-swap', tick)
     return () => { window.clearInterval(id); window.removeEventListener('sp-reader-swap', tick) }

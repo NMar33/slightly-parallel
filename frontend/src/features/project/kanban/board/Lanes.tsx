@@ -9,8 +9,8 @@ import { Button } from '../../../../components/primitives'
 import { LABEL } from '../../../promptlib/taskstyle'
 import { STRIP_TONES, bulkPayload, foldStacks, isToday, laneOf } from '../model'
 import type { SortMode } from '../model'
-import { TaskCard, StackWrap, TodayShadow } from './Card'
-import { BatchTools, SortMenu } from './controls'
+import { TaskCard, StackCard, TodayCard } from './Card'
+import { BatchTools, ColumnActions } from './controls'
 import { KanbanColumnDropZone, TaskDropSlot } from './drag'
 import { FoldCell, FoldHeader } from './folds'
 import { ARCHIVE, EMPTY_ROWS } from './model'
@@ -170,9 +170,9 @@ export function LanesGrid(props: LanesGridProps) {
   const {
     gridRef, columns, openStrips, showArchiveCol, showArchived, tasksByStatus, toggleStrip,
     handleDrop, copyMode, sorts, setSort, setAddingStatus, archivedN, toggleArchived, todayTasks,
-    byLaneCol, handleDropToday, toggleToday, linkProps, multi, axes, onCardToday, onCardEdit,
-    onCardRelease, showDesc, today, selection, toggleSelect, tasks, openStacks, toggleStack,
-    mentions, noteCounts, evidenceCounts, statusSince, archivedTasks, linksLayer, lanes,
+    byLaneCol, handleDropToday, linkProps, multi, axes, onCardToday, onCardEdit,
+    onCardRelease, showDesc, today, selection, toggleSelect, tasks,
+    archivedTasks, linksLayer, lanes,
     collapsedLanes, toggleLane, renameLane, deleteLane, moveLaneBefore, allCollapsed, collapseAll,
     addingLane, setAddingLane, laneDraft, setLaneDraft, commitAddLane, setAddingAssignee,
   } = props
@@ -229,17 +229,12 @@ export function LanesGrid(props: LanesGridProps) {
               dragPayload={bulkPayload(col.key)}
             />
           )}
-          <span className="ml-auto inline-flex items-center gap-2">
-            <SortMenu mode={(sorts[col.key] ?? 'manual') as SortMode} onPick={(m) => setSort(col.key, m)} />
-            <button
-              type="button"
-              onClick={() => setAddingStatus(col.key)}
-              className="text-11 text-brand hover:text-brand-hover font-mono"
-              aria-label={`Add task to ${col.label}`}
-            >
-              +
-            </button>
-          </span>
+          <ColumnActions
+            label={col.label}
+            mode={(sorts[col.key] ?? 'manual') as SortMode}
+            onSort={(mode) => setSort(col.key, mode)}
+            onAdd={() => setAddingStatus(col.key)}
+          />
         </KanbanColumnDropZone>
         )
       ))}
@@ -265,9 +260,7 @@ export function LanesGrid(props: LanesGridProps) {
                   <BatchTools items={items} label={`today · ${col.label}`} dragPayload={bulkPayload(col.key, undefined, true)} />
                 )}
                 {items.map((task) => (
-                  <TodayShadow key={task.id} onDrop={() => void toggleToday(task)}>
-                    <TaskCard task={task} {...linkProps(task, true)} compact showDesc={false} copyMode={copyMode} showProject={multi} axes={axes} today onToggleToday={onCardToday} onEdit={onCardEdit} onRelease={onCardRelease} />
-                  </TodayShadow>
+                  <TodayCard key={task.id} task={task} grid={props} />
                 ))}
               </KanbanColumnDropZone>
             )
@@ -360,37 +353,12 @@ export function LanesGrid(props: LanesGridProps) {
                     +
                   </button>
                 </div>
-                {foldStacks(items, tasks).map(({ task, behind, ordinal, total }) => (
+                {foldStacks(items, tasks).map((item) => (
                   <TaskDropSlot
-                    key={task.id}
-                    onDropTask={(id) => handleDrop(id, col.key, lane, task.id)}
+                    key={item.task.id}
+                    onDropTask={(id) => handleDrop(id, col.key, lane, item.task.id)}
                   >
-                    <StackWrap
-                      stack={{ behind, ordinal, total }}
-                      open={openStacks.has(task.stack_id || '')}
-                      onToggle={() => toggleStack(task.stack_id || '')}
-                      renderBehind={(t) => (
-                        <TaskCard key={t.id} task={t} {...linkProps(t)} compact showDesc={showDesc} copyMode={copyMode} showProject={multi} axes={axes} today={isToday(t, today)} onToggleToday={onCardToday} selectedIndex={selection.indexOf(t.id) + 1 || null} onSelect={toggleSelect} onEdit={onCardEdit} onRelease={onCardRelease} />
-                      )}
-                    >
-                    <TaskCard
-                      task={task}
-                      today={isToday(task, today)}
-                      onToggleToday={onCardToday}
-                      selectedIndex={selection.indexOf(task.id) + 1 || null}
-                      onSelect={toggleSelect}
-                      compact
-                      showDesc={showDesc}
-                      copyMode={copyMode}
-                      showProject={multi}
-                      mention={mentions[task.id]}
-                      notesN={noteCounts[task.id]} evidenceN={evidenceCounts[task.id]}
-                      agedSince={statusSince[task.id]}
-                      axes={axes}
-                    {...linkProps(task)}
-                      onEdit={onCardEdit} onRelease={onCardRelease}
-                    />
-                    </StackWrap>
+                    <StackCard item={item} grid={props} compact />
                   </TaskDropSlot>
                 ))}
               </KanbanColumnDropZone>

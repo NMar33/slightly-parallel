@@ -12,6 +12,8 @@ import { DRAG_TYPE } from '../kept/tags'
 import { monthLong, monthShort } from '../../lib/months'
 import { t } from '../../i18n/scope/shell'
 
+const VISION_QUOTE_PREVIEW_CHARS = 360
+
 /**
  * What the visions, rules and problems pages share when they read a kind of
  * kept entry as chapters: how the entries are grouped, the contents list
@@ -222,7 +224,7 @@ export function Changes({ from, to, a, b }: { from: string; to: string; a: numbe
 /** The words the entry came from, verbatim: the operator's message, or the problem's. */
 export function Words({ text, label = t('Your words') }: { text: string; label?: string }) {
   const [all, setAll] = useState(false)
-  const limit = 360
+  const limit = VISION_QUOTE_PREVIEW_CHARS
   const long = text.length > limit
   return (
     <div className="rounded-input border border-border-subtle px-12 py-8 flex flex-col gap-4">

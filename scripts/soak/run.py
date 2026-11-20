@@ -37,6 +37,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+HEALTH_REQUEST_TIMEOUT_S = 3
+SERVER_START_POLL_S = 0.5
+SERVER_EXIT_TIMEOUT_S = 60
+API_REQUEST_TIMEOUT_S = 60
+PROJECT_SETUP_TIMEOUT_S = 60
+SAMPLE_REQUEST_TIMEOUT_S = 60
+SAMPLE_INTERVAL_S = 5
+
 REPO = Path(__file__).resolve().parents[2]
 BACKEND = REPO / "backend"
 PY = BACKEND / (".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python")
@@ -83,11 +91,11 @@ class Soak:
         for _ in range(240):
             try:
                 req = urllib.request.Request(self.url + "/api/health", headers={"Sec-Fetch-Site": "same-origin"})
-                with urllib.request.urlopen(req, timeout=3) as r:
+                with urllib.request.urlopen(req, timeout=HEALTH_REQUEST_TIMEOUT_S) as r:
                     self.cookie = (r.headers.get("Set-Cookie") or "").split(";", 1)[0] or self.cookie
                 return
             except OSError:
-                time.sleep(0.5)
+                time.sleep(SERVER_START_POLL_S)
         raise RuntimeError("the server did not start")
 
     def halt(self, kill: bool = False) -> None:
@@ -95,13 +103,13 @@ class Soak:
             return
         self.proc.kill() if kill else self.proc.terminate()
         try:
-            self.proc.wait(60)
+            self.proc.wait(SERVER_EXIT_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait()
         self.proc = None
 
-    def post(self, path: str, body: dict, timeout: float = 60) -> dict:
+    def post(self, path: str, body: dict, timeout: float = API_REQUEST_TIMEOUT_S) -> dict:
         req = urllib.request.Request(self.url + path, data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json", "Cookie": self.cookie})
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -134,7 +142,7 @@ class Soak:
                     ok = all(subprocess.run(
                         [str(PY), str(HOOK), "--project", project, "--data-root", str(self.data)],
                         input=json.dumps({"session_id": session, "cwd": str(folder), **payload}),
-                        capture_output=True, text=True, encoding="utf-8", timeout=60).returncode == 0
+                        capture_output=True, text=True, encoding="utf-8", timeout=PROJECT_SETUP_TIMEOUT_S).returncode == 0
                         for payload in ({"hook_event_name": "UserPromptSubmit", "prompt": text},
                                         {"hook_event_name": "Stop", "last_assistant_message": f"answer {i}"}))
                     if ok:
@@ -148,7 +156,7 @@ class Soak:
             for path in READS:
                 t0 = time.perf_counter()
                 try:
-                    with urllib.request.urlopen(self.url + path, timeout=60) as r:
+                    with urllib.request.urlopen(self.url + path, timeout=SAMPLE_REQUEST_TIMEOUT_S) as r:
                         r.read()
                     with self.lock:
                         self.reads.append((time.perf_counter() - t0) * 1000)
@@ -157,7 +165,7 @@ class Soak:
                         self.errors.append(f"{time.strftime('%H:%M')} {path} → {exc.code}")
                 except OSError:
                     pass
-            self.stop.wait(5)
+            self.stop.wait(SAMPLE_INTERVAL_S)
 
     # ------------------------------------------------------------ measure
 

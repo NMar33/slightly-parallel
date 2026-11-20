@@ -27,6 +27,7 @@ import { useDayBookEntries } from '../daybook/shared'
 import { Who } from '../parts'
 import { DayMap } from './DayMap'
 import { bulletsOf, needsOf, sectionsOf, type SectionKind } from './sections'
+import { useReadingWindow } from '../../chats/focus/readingWindow'
 import { t, tn } from '../../../i18n/scope/system'
 import { letter, isTypingTarget } from '../../../lib/typing'
 
@@ -276,7 +277,6 @@ function FocusLook(p: LookProps) {
   const [range, setRange] = useState<[number, number]>([0, 1])
   const shownDays = all ? days.slice(range[0], range[1]) : cur ? [cur] : []
   const pending = useRef<string | null>(null)
-  const anchor = useRef<{ height: number; top: number } | null>(null)
 
   const scroller = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLElement>(null)
@@ -331,41 +331,19 @@ function FocusLook(p: LookProps) {
     }
   }, [cur, all, curIdx, days.length, prefs.scope])
 
+  const { topEdge, bottomEdge, restoreAnchor } = useReadingWindow({
+    scroller, range, setRange, count: days.length, active: all && typeof IntersectionObserver !== 'undefined', shown: shownDays.length,
+  })
   useLayoutEffect(() => {
     const root = scroller.current
     if (pending.current != null) {
       const d = pending.current
       pending.current = null
       root?.querySelector<HTMLElement>(`[data-day-head="${d}"]`)?.scrollIntoView?.({ block: 'start' })
-    } else if (anchor.current && root) {
-      // Days drawn above: keep the text under the eye where it was.
-      root.scrollTop = anchor.current.top + (root.scrollHeight - anchor.current.height)
-      anchor.current = null
+    } else {
+      restoreAnchor(root)
     }
-  }, [range])
-  const more = useCallback((side: 'up' | 'down') => {
-    const root = scroller.current
-    if (side === 'up') {
-      if (range[0] <= 0) return
-      if (root) anchor.current = { height: root.scrollHeight, top: root.scrollTop }
-      setRange(([a, b]) => [Math.max(0, a - 3), b])
-    } else if (range[1] < days.length) {
-      setRange(([a, b]) => [a, Math.min(days.length, b + 3)])
-    }
-  }, [range, days.length])
-  const topEdge = useRef<HTMLDivElement>(null)
-  const bottomEdge = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const root = scroller.current
-    if (!root || !all || typeof IntersectionObserver === 'undefined') return
-    const io = new IntersectionObserver((es) => {
-      for (const e of es) if (e.isIntersecting) more(e.target === topEdge.current ? 'up' : 'down')
-    }, { root, rootMargin: '1200px 0px' })
-    if (topEdge.current) io.observe(topEdge.current)
-    if (bottomEdge.current) io.observe(bottomEdge.current)
-    return () => io.disconnect()
-  }, [all, more, shownDays.length])
-
+  }, [range, restoreAnchor])
   // The section in view: the last one whose top has passed the reading
   // line near the top. A section just moved to by key holds for a moment,
   // so a smooth scroll on its way there does not pick the ones it passes.

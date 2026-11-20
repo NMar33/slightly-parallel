@@ -17,6 +17,8 @@ import { postIgnore, SETUP_INFO_KEY, TOOL_NAMES, type ToolKey } from '../setup/d
 import { ImportSessions } from './ImportSessions'
 import { t, tn, locale } from '../../i18n/scope/system'
 
+const CAPTURE_HEALTH_REFETCH_MS = 60_000
+
 interface CaptureHealth {
   ok: boolean
   missed: Array<{ project: string; session: string; agent_id: string; prompt_at: number; captured_at: number | null; why: string }>
@@ -33,7 +35,7 @@ function useCaptureHealth() {
   return useQuery({
     queryKey: ['capture', 'health'],
     queryFn: ({ signal }) => getJson<CaptureHealth>('/api/capture/health', signal),
-    refetchInterval: 60_000,
+    refetchInterval: CAPTURE_HEALTH_REFETCH_MS,
     staleTime: 30_000,
   })
 }

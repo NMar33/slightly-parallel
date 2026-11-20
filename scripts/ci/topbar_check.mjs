@@ -11,6 +11,10 @@ import path from 'node:path'
 const require = createRequire(path.resolve('frontend/package.json'))
 const { chromium } = require('playwright')
 
+const TOPBAR_TEXT_TIMEOUT_MS = 5000
+const TOPBAR_POLL_INTERVAL_MS = 1000
+const TOPBAR_POLL_ATTEMPTS = 90
+
 const base = `http://127.0.0.1:${process.env.SP_PORT || 8123}`
 const out = path.resolve('.sp/ci')
 mkdirSync(out, { recursive: true })
@@ -21,10 +25,10 @@ await page.goto(base + '/')
 const bar = page.locator('header a[href="/monitor"]').first()
 const wanted = [/CPU\s*\d+%/, /MEM\s*\d+%/, /PING\s*\d+\s*ms/]
 let text = ''
-for (let i = 0; i < 90; i++) {
-  text = ((await bar.textContent({ timeout: 5000 }).catch(() => '')) || '').replace(/\s+/g, ' ')
+for (let i = 0; i < TOPBAR_POLL_ATTEMPTS; i++) {
+  text = ((await bar.textContent({ timeout: TOPBAR_TEXT_TIMEOUT_MS }).catch(() => '')) || '').replace(/\s+/g, ' ')
   if (wanted.every((re) => re.test(text))) break
-  await page.waitForTimeout(1000)
+  await page.waitForTimeout(TOPBAR_POLL_INTERVAL_MS)
 }
 await page.locator('header').first().screenshot({ path: path.join(out, 'topbar.png') })
 await browser.close()

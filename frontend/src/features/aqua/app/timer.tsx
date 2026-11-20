@@ -10,6 +10,9 @@ import { post } from './bridge'
 import { t } from '../../../i18n/scope/aqua'
 import type { WindowPreferences } from './WindowSettings'
 
+const RUNNING_TIMER_REFETCH_MS = 30_000
+const TIMER_TOTALS_REFETCH_MS = 60_000
+
 export type ChipState = 'counting' | 'paused' | 'away' | 'off'
 
 /** What the timer says about `project` now. Away first (a notice waits on
@@ -44,17 +47,17 @@ export function TimerGroup({ project, prefs, session }: { project: string; prefs
   const running = useQuery({
     queryKey: ['time-running'],
     queryFn: ({ signal }) => getJson<{ running: TimeEntry[] }>('/api/time/running', signal),
-    refetchInterval: 30_000, retry: false,
+    refetchInterval: RUNNING_TIMER_REFETCH_MS, retry: false,
   })
   const mine = useQuery({
     queryKey: ['time-summary', project, projectTimer],
     queryFn: ({ signal }) => getJson<Summary>(`/api/time/summary?project=${encodeURIComponent(project)}${projectTimer === 'agents' ? '&agent_work=true' : ''}`, signal),
-    refetchInterval: 60_000, retry: false, enabled: !!project && projectTimer !== 'off',
+    refetchInterval: TIMER_TOTALS_REFETCH_MS, retry: false, enabled: !!project && projectTimer !== 'off',
   })
   const all = useQuery({
     queryKey: ['time-summary-all', totalTimer],
     queryFn: ({ signal }) => getJson<Summary>(totalTimer === 'agents' ? '/api/time/summary?agent_work=true' : '/api/time/summary', signal),
-    refetchInterval: 60_000, retry: false, enabled: totalTimer !== 'off',
+    refetchInterval: TIMER_TOTALS_REFETCH_MS, retry: false, enabled: totalTimer !== 'off',
   })
   const auto = useTimeAuto()
   const state = chipState(project, running.data?.running ?? [], auto.data)

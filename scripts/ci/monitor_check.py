@@ -18,11 +18,13 @@ import sys
 import time
 import urllib.request
 
+MONITOR_REQUEST_TIMEOUT_S = 30
+
 BASE = f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}"
 
 
 def get(path: str) -> dict:
-    with urllib.request.urlopen(BASE + path, timeout=30) as r:
+    with urllib.request.urlopen(BASE + path, timeout=MONITOR_REQUEST_TIMEOUT_S) as r:
         return json.loads(r.read().decode("utf-8"))
 
 

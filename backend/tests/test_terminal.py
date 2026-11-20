@@ -353,7 +353,8 @@ def test_a_pane_keeps_the_history_it_was_born_with_and_comes_back_to_the_bottom(
 
     # Output enough to scroll, climb into it, and come back.
     termlib.type_into(root, termlib.get(root, sid), "seq 1 200", enter=True)
-    time.sleep(0.6)
+    screen = _wait_screen(root, sid, "\n200\n")
+    assert "\n200\n" in screen, screen
     termlib.tmux(root, "copy-mode", "-t", termlib.PREFIX + sid)
     termlib.tmux(root, "send-keys", "-X", "-t", termlib.PREFIX + sid, "-N", "30", "scroll-up")
     assert termlib.pane_pos(root, sid)["scroll"] > 0

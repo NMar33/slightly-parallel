@@ -28,6 +28,8 @@ import { ServerSection } from './ServerSection'
 import { TerminalSection } from './TerminalSection'
 import { t, tn } from '../../i18n/scope/system'
 
+const RECENT_EVENT_LIMIT = 40
+
 const RANGE_WORDS: Record<Range, string> = {
   '15m': t('15 min'), '1h': t('1 hour'), '6h': t('6 hours'), '24h': t('24 hours'), '7d': t('7 days'), '30d': t('30 days'), '90d': t('90 days'), '1y': t('1 year'),
 }
@@ -165,7 +167,7 @@ function Console() {
   const [cursor, setCursor] = useCursor()
   const [open, setOpen] = useState<number | null>(null)
   const [settings, setSettings] = useState(false)
-  const recent = useMonitorEvents({ days: 7, limit: 40 }).data
+  const recent = useMonitorEvents({ days: 7, limit: RECENT_EVENT_LIMIT }).data
   const seen = useSeenAll()
   const measures = measuresFor(series)
   const going = now?.open ?? []

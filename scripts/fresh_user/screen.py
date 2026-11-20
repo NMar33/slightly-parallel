@@ -17,6 +17,10 @@ from pathlib import Path
 
 from common import WINDOWS
 
+SCREEN_POLL_INTERVAL_S = 0.3
+KEY_PRESS_SETTLE_S = 0.5
+CODEX_PROMPT_TIMEOUT_S = 30
+
 _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|[\x00-\x08\x0e-\x1f]")
 DOWN, ENTER = "\x1b[B", "\r"
 ROWS, COLS = 45, 160
@@ -100,13 +104,13 @@ class Screen:
             self.read()
             if want in re.sub(r"\s", "", self.text):
                 return True
-            time.sleep(0.3)
+            time.sleep(SCREEN_POLL_INTERVAL_S)
         return False
 
     def send(self, keys: str) -> None:
         self.text = ""  # what comes after this key
         self._write(keys)
-        time.sleep(0.5)
+        time.sleep(KEY_PRESS_SETTLE_S)
 
     def _write(self, keys: str) -> None:
         if WINDOWS:
@@ -147,7 +151,7 @@ def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 
             return False, screen.text[-600:]
         screen.send(DOWN)            # "Trust all and continue", the second choice
         screen.send(ENTER)
-        screen.wait_for("Ask Codex", 30)
+        screen.wait_for("Ask Codex", CODEX_PROMPT_TIMEOUT_S)
     finally:
         screen.close()
     try:

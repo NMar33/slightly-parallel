@@ -57,6 +57,8 @@ from .deps import foreign_origin, get_store, not_found, operator_only, to_int
 
 log = logging.getLogger("sp.terminal")
 
+PLAIN_SHELL_COMMAND_DELAY_S = 0.4
+
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
 
@@ -466,7 +468,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             return
 
         async def type_later() -> None:
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(PLAIN_SHELL_COMMAND_DELAY_S)
             typed = termlib.typed_form(pending, termlib.plain_shell()[0])
             await run_in_threadpool(session.write, (typed + ("\r" if enter else "")).encode())
         # Held on the session: a task nothing references can be collected before it runs.

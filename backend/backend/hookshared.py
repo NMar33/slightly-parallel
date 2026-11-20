@@ -25,6 +25,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+PROCESS_LOOKUP_TIMEOUT_S = 2
+WINDOWS_REPLACE_MAX_ATTEMPTS = 40
+WINDOWS_REPLACE_RETRY_DELAY_S = 0.025
+HOOK_LOCK_TIMEOUT_S = 2.0
+HOOK_LOCK_POLL_INTERVAL_S = 0.01
+PROCESS_ANCESTOR_LIMIT = 12
+
 try:  # pragma: no cover — non-Unix platforms
     import fcntl
 except ImportError:  # pragma: no cover
@@ -456,14 +463,14 @@ def replace_file(src: Any, dst: Any) -> None:
     if os.name != "nt":
         os.replace(src, dst)
         return
-    for attempt in range(40):  # pragma: no cover — Windows only
+    for attempt in range(WINDOWS_REPLACE_MAX_ATTEMPTS):  # pragma: no cover — Windows only
         try:
             os.replace(src, dst)
             return
         except PermissionError:
-            if attempt == 39:
+            if attempt == WINDOWS_REPLACE_MAX_ATTEMPTS - 1:
                 raise
-            time.sleep(0.025)
+            time.sleep(WINDOWS_REPLACE_RETRY_DELAY_S)
 
 
 def try_lock(fh: Any) -> bool:
@@ -502,7 +509,7 @@ def unlock(fh: Any) -> None:
 
 
 @contextmanager
-def locked(path: Any, timeout_s: float = 2.0):
+def locked(path: Any, timeout_s: float = HOOK_LOCK_TIMEOUT_S):
     """Hold the lock beside ``path`` (``<name>.lock``, file_safety.lock_path's
     spelling) for a read-then-write. A hook must never hang the session it
     observes: after ``timeout_s`` the block runs without the lock."""
@@ -511,7 +518,7 @@ def locked(path: Any, timeout_s: float = 2.0):
         deadline = time.monotonic() + timeout_s
         held = try_lock(lock)
         while not held and time.monotonic() < deadline:
-            time.sleep(0.01)
+            time.sleep(HOOK_LOCK_POLL_INTERVAL_S)
             held = try_lock(lock)
         try:
             yield
@@ -531,7 +538,7 @@ def _append_bytes(p: Path, text: str) -> None:
         fh.write(text.encode("utf-8"))
 
 
-def append_locked(path: Any, text: str, timeout_s: float = 2.0) -> None:
+def append_locked(path: Any, text: str, timeout_s: float = HOOK_LOCK_TIMEOUT_S) -> None:
     """Append ``text`` to ``path`` under the lock beside it, so a server
     rewriting the file meanwhile does not drop the line (see ``locked``)."""
     p = Path(path)
@@ -612,7 +619,7 @@ def _ps_parents() -> dict[int, int]:
     import subprocess
     try:
         got = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=2)
+                             encoding="utf-8", errors="replace", timeout=PROCESS_LOOKUP_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError):
         return {}
     table: dict[int, int] = {}
@@ -659,7 +666,7 @@ def _win_parents() -> dict[int, int]:
     return table
 
 
-def ancestors(limit: int = 12) -> list[int]:
+def ancestors(limit: int = PROCESS_ANCESTOR_LIMIT) -> list[int]:
     """This process's parents, nearest first. The tool that runs a chat is a
     parent of both its capture hook and its MCP server, so the two can
     recognise each other by it. Linux reads /proc; Windows the kernel's
@@ -702,7 +709,7 @@ def process_started(pid: int) -> float | None:
             return boot + ticks / os.sysconf("SC_CLK_TCK")
         import subprocess
         got = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=2, env={**os.environ, "LC_ALL": "C"})
+                             encoding="utf-8", errors="replace", timeout=PROCESS_LOOKUP_TIMEOUT_S, env={**os.environ, "LC_ALL": "C"})
         text = " ".join(got.stdout.split())
         return datetime.strptime(text, "%a %b %d %H:%M:%S %Y").timestamp() if text else None
     except (OSError, ValueError, IndexError, StopIteration, Exception):  # noqa: BLE001 — unknown is an answer
@@ -930,7 +937,7 @@ def process_args(pid: int) -> list[str]:
                 return [a.decode("utf-8", "replace") for a in f.read().split(b"\0") if a]
         import subprocess
         got = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=2)
+                             encoding="utf-8", errors="replace", timeout=PROCESS_LOOKUP_TIMEOUT_S)
         return got.stdout.split()
     except (OSError, ValueError, Exception):  # noqa: BLE001 — unknown is no helper
         return []

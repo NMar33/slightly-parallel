@@ -6,26 +6,8 @@
  * terminal beside it (T).
  */
 
-import type { ReactNode } from 'react'
+import { MapFocus, type ChatFocusProps } from './Map'
 
-import type { Row } from '../data'
-import { MapFocus } from './Map'
-
-interface FocusProps {
-  session: Row
-  /** The chats the page lists, newest first — [ and ] walk them. */
-  sessions: Row[]
-  /** Every chat of the project: the map filters it itself. */
-  pool?: Row[]
-  /** The agent the page has picked. */
-  agent?: string
-  onPick: (id: string) => void
-  onClose: () => void
-  onOpenTask?: (id: string) => void
-  /** The ★ on a turn, drawn by the host. */
-  star?: (turn: number, text: string) => ReactNode
-}
-
-export function ChatFocus(props: FocusProps) {
+export function ChatFocus(props: ChatFocusProps) {
   return <MapFocus {...props} />
 }

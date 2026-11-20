@@ -31,6 +31,9 @@ import { THEMES, themeById } from './theme'
 
 import { t } from '../../i18n/scope/views'
 import { toast } from '../../components/primitives'
+
+const EXPORT_SAVED_NOTICE_DURATION_MS = 5000
+
 type Tab = 'film' | 'brand' | 'export'
 
 /** Output width as a multiple of the shape's design width. */
@@ -213,7 +216,7 @@ export default function Studio({
       download(blob, `${(b.title || project).replace(/\s+/g, '-')}-${aspect.name.replace(':', 'x')}.gif`)
       setBusyEnded(true)
       setBusy(t('Saved · {mb} MB', { mb: (blob.size / 1048576).toFixed(1) }))
-      setTimeout(() => setBusy(''), 5000)
+      setTimeout(() => setBusy(''), EXPORT_SAVED_NOTICE_DURATION_MS)
     } catch (e) {
       setBusyEnded(true)
       setBusy(t('Could not save the GIF: {error}', { error: String(e) }))
@@ -232,7 +235,7 @@ export default function Studio({
       download(blob, `${(b.title || project).replace(/\s+/g, '-')}-${aspect.name.replace(':', 'x')}.${format}`)
       setBusyEnded(true)
       setBusy(t('Saved · {mb} MB', { mb: (blob.size / 1048576).toFixed(1) }))
-      setTimeout(() => setBusy(''), 5000)
+      setTimeout(() => setBusy(''), EXPORT_SAVED_NOTICE_DURATION_MS)
     } catch (e) {
       setBusyEnded(true)
       setBusy(t('Could not save the video: {error}', { error: e instanceof Error ? e.message : String(e) }))

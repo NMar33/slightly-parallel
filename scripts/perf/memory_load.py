@@ -27,6 +27,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+HEALTH_REQUEST_TIMEOUT_S = 2
+SERVER_START_POLL_S = 0.5
+LOAD_REQUEST_TIMEOUT_S = 120
+SERVER_EXIT_TIMEOUT_S = 30
+
 ROOT = Path(__file__).resolve().parents[2]
 PORT = 8131
 ROUNDS = 6
@@ -57,10 +62,10 @@ def main() -> int:
     try:
         for _ in range(120):
             try:
-                urllib.request.urlopen(base + "/api/health", timeout=2)
+                urllib.request.urlopen(base + "/api/health", timeout=HEALTH_REQUEST_TIMEOUT_S)
                 break
             except OSError:
-                time.sleep(0.5)
+                time.sleep(SERVER_START_POLL_S)
         paths = [p for p, ops in json.load(urllib.request.urlopen(base + "/openapi.json"))["paths"].items()
                  if "get" in ops and "{" not in p and not any(s in p for s in SKIP)]
         times: list[float] = []
@@ -68,7 +73,7 @@ def main() -> int:
         def hit(path: str) -> None:
             t = time.perf_counter()
             try:
-                urllib.request.urlopen(f"{base}{path}?project=merkhet", timeout=120).read()
+                urllib.request.urlopen(f"{base}{path}?project=merkhet", timeout=LOAD_REQUEST_TIMEOUT_S).read()
             except OSError:
                 pass
             times.append(time.perf_counter() - t)
@@ -84,7 +89,7 @@ def main() -> int:
               f"p95 {times[int(len(times) * 0.95)] * 1000:.0f} ms")
     finally:
         proc.terminate()
-        proc.wait(timeout=30)
+        proc.wait(timeout=SERVER_EXIT_TIMEOUT_S)
         shutil.rmtree(work, ignore_errors=True)
     return 0
 

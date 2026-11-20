@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -111,6 +112,14 @@ class Session:
 _TASK_ID_RE = re.compile(r"\b((?:tk|dc)_[a-z0-9][a-z0-9_-]{2,40})(?:\.(\d{1,3}))?\b")
 
 
+def task_ids(text: str, *, include_documents: bool = False) -> list[str]:
+    """Return unique IDs in mention order, without their optional turn suffix."""
+    return list(dict.fromkeys(
+        match[1] for match in _TASK_ID_RE.finditer(text)
+        if include_documents or match[1].startswith("tk_")
+    ))
+
+
 def _mentions_of(session_id: str, project: str, agent_id: str, block: list[Turn]) -> list[dict]:
     out: list[dict] = []
     for t in block:
@@ -176,7 +185,12 @@ IMPORTANT_TAG_RE = re.compile(
 # ``#done`` closes a task: the one it names, else the last task named since
 # the previous #done in the chat (donelib.py).
 DONE_TAG_RE = re.compile(r"(?<![\w#])#done(?![\w-])", re.IGNORECASE)
-_DONE_TARGETS_RE = re.compile(r"(?:[ \t,]+tk_[a-z0-9][a-z0-9_-]{2,40}\b)+")
+_DONE_RIGHT_SEP = r"[\s,;:/()\[\]{}]"
+_DONE_LEFT_SEP = r"[^\w#]"
+_DONE_RIGHT_EDGE = re.compile(rf"{_DONE_RIGHT_SEP}+")
+_DONE_LEFT_EDGE = re.compile(rf"{_DONE_LEFT_SEP}+")
+_DONE_RIGHT_JOIN = re.compile(rf"{_DONE_RIGHT_SEP}+(?:(?:and|и){_DONE_RIGHT_SEP}+)?", re.IGNORECASE)
+_DONE_LEFT_JOIN = re.compile(rf"{_DONE_LEFT_SEP}+(?:(?:and|и){_DONE_LEFT_SEP}+)?", re.IGNORECASE)
 # ``#task`` writes a card for later, ``#now`` one the chat starts on; either
 # may name the board lane in braces: ``#now {ui} fix the login timeout``.
 # ``#now-todo`` (``-next``, ``-backlog``, ``-review``, ``-parked``, ``-done``,
@@ -455,10 +469,7 @@ def _importants_of(
         kinds = {(m.group(1) or "all").lower() for m in IMPORTANT_TAG_RE.finditer(command_text(text))}
         if not kinds:
             continue
-        named = []
-        for m in _TASK_ID_RE.finditer(text):
-            if m.group(1).startswith("tk_") and m.group(1) not in named:
-                named.append(m.group(1))
+        named = task_ids(text)
         body = IMPORTANT_TAG_RE.sub("", plain_text(text)).strip()
         head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         for kind in sorted(kinds):
@@ -496,6 +507,26 @@ def _message_marks_of(
     return out
 
 
+def _direct_done_tasks(command: str, tags: list[re.Match[str]]) -> list[str]:
+    ids = [match for match in _TASK_ID_RE.finditer(command) if match.group(1).startswith("tk_")]
+    starts = [match.start() for match in ids]
+    direct: set[int] = set()
+    for tag in tags:
+        left = bisect_left(starts, tag.start()) - 1
+        edge, gap = tag.start(), _DONE_LEFT_EDGE
+        while left >= 0 and gap.fullmatch(command[ids[left].end():edge]):
+            direct.add(left)
+            edge, gap = ids[left].start(), _DONE_LEFT_JOIN
+            left -= 1
+        right = bisect_left(starts, tag.end())
+        edge, gap = tag.end(), _DONE_RIGHT_EDGE
+        while right < len(ids) and gap.fullmatch(command[edge:ids[right].start()]):
+            direct.add(right)
+            edge, gap = ids[right].end(), _DONE_RIGHT_JOIN
+            right += 1
+    return list(dict.fromkeys(ids[index].group(1) for index in sorted(direct)))
+
+
 def _dones_of(
     session_id: str, project: str, agent_id: str, block: list[Turn]
 ) -> list[dict]:
@@ -509,16 +540,8 @@ def _dones_of(
         tags = list(DONE_TAG_RE.finditer(command))
         if not tags:
             continue
-        named: list[str] = []
-        for m in _TASK_ID_RE.finditer(text):
-            if m.group(1).startswith("tk_") and m.group(1) not in named:
-                named.append(m.group(1))
-        # Only IDs next to a live tag can name a task in another project.
-        direct = dict.fromkeys(
-            task.group(1) for tag in tags
-            if (targets := _DONE_TARGETS_RE.match(command, tag.end()))
-            for task in _TASK_ID_RE.finditer(targets.group())
-        )
+        named = task_ids(text)
+        direct = _direct_done_tasks(command, tags)
         body = DONE_TAG_RE.sub("", plain_text(text)).strip()
         head = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
         out.append({
@@ -630,7 +653,10 @@ def parse_chat(chat_path: Path) -> tuple[list[Turn], int]:
 _PASTE_TAG = re.compile(r"</?pasted_content[^>]*>")
 
 
-def _clip(text: str, limit: int = 140) -> str:
+DEFAULT_EXCERPT_CHARS = 140
+
+
+def _clip(text: str, limit: int = DEFAULT_EXCERPT_CHARS) -> str:
     text = " ".join(_PASTE_TAG.sub(" ", text).split())
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 

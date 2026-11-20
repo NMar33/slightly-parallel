@@ -13,6 +13,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+OPERATOR_COOKIE_TIMEOUT_S = 10
+API_REQUEST_TIMEOUT_S = 30
+DOWNLOAD_TIMEOUT_S = 120
+START_PROBE_TIMEOUT_S = 3
+
 REPO = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
 #: A key a new user has in their environment, as many do: the server's
@@ -109,12 +114,12 @@ def _operator_cookie(url: str) -> str:
     base = "/".join(url.split("/")[:3])
     if base not in _COOKIES:
         req = urllib.request.Request(base + "/api/health", headers={"Sec-Fetch-Site": "same-origin"})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=OPERATOR_COOKIE_TIMEOUT_S) as r:
             _COOKIES[base] = (r.headers.get("Set-Cookie") or "").split(";", 1)[0]
     return _COOKIES[base]
 
 
-def http(url: str, body: dict | None = None, timeout: float = 30) -> Any:
+def http(url: str, body: dict | None = None, timeout: float = API_REQUEST_TIMEOUT_S) -> Any:
     data = json.dumps(body).encode() if body is not None else None
     # The cookie on every request, a read too: the run stands in for the
     # person at the browser, and the terminal's state is handed only to
@@ -129,7 +134,7 @@ def http(url: str, body: dict | None = None, timeout: float = 30) -> Any:
         return raw.decode("utf-8", "replace")
 
 
-def fetch_bytes(url: str, timeout: float = 120) -> bytes:
+def fetch_bytes(url: str, timeout: float = DOWNLOAD_TIMEOUT_S) -> bytes:
     """A file the page downloads (a backup), as it comes."""
     req = urllib.request.Request(url, headers={"Cookie": _operator_cookie(url)})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -146,7 +151,7 @@ def wait_for(space: Space, path: str, seconds: float, alive=lambda: True) -> boo
         if not alive():
             return False
         try:
-            http(space.url + path, timeout=3)
+            http(space.url + path, timeout=START_PROBE_TIMEOUT_S)
             return True
         except (urllib.error.URLError, OSError, ValueError):
             time.sleep(1)

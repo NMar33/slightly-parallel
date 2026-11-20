@@ -1,6 +1,9 @@
 'use strict'
 /** What the window works out without Electron: sizes, addresses, growth. */
 
+const { host: defaultHost, port: defaultPort } = require('../backend/backend/server_defaults.json')
+const DEFAULT_SERVER_URL = `http://${defaultHost}:${defaultPort}`
+
 const MIN_W = 420
 const MIN_H = 240
 
@@ -45,7 +48,7 @@ function num(v, lo, hi, dflt = 0) {
  *  Electron's launcher moves switches ahead of plain words, so a value is
  *  read from `--name=value`; `--name value` is read too when it survives. */
 function parseArgs(argv, env = {}) {
-  const out = { url: env.SP_URL || 'http://127.0.0.1:8123', path: '/term', size: '1000x640', check: false, inspect: false }
+  const out = { url: env.SP_URL || DEFAULT_SERVER_URL, path: '/term', size: '1000x640', check: false, inspect: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--check') out.check = true

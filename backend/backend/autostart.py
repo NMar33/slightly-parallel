@@ -32,6 +32,8 @@ NAME = "Slightly Parallel"
 SLUG = "slightly-parallel"
 LABEL = "dev.slightly-parallel.server"
 KINDS = ("autostart", "shortcut")
+DESKTOP_TRUST_TIMEOUT_S = 10
+WINDOWS_SHORTCUT_TIMEOUT_S = 30
 
 
 def platform_key(plat: str | None = None) -> str:
@@ -135,7 +137,7 @@ def _trust(path: Path) -> None:
     gio = shutil.which("gio")
     if gio:
         subprocess.run([gio, "set", str(path), "metadata::trusted", "true"],
-                       capture_output=True, timeout=10, check=False)
+                       capture_output=True, timeout=DESKTOP_TRUST_TIMEOUT_S, check=False)
 
 
 def _launch_agent(root: Path, python: str) -> bytes:
@@ -210,7 +212,7 @@ def _powershell(script: str) -> str:
     script = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; " + script
     done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                           capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=30, check=False)
+                          timeout=WINDOWS_SHORTCUT_TIMEOUT_S, check=False)
     if done.returncode != 0:
         raise OSError(done.stderr.strip() or "PowerShell refused")
     return done.stdout.strip().splitlines()[-1]

@@ -17,6 +17,8 @@ import { ARTIFACTS_GUIDE } from '../features/visions/guides'
 import { PageGuide } from '../features/visions/parts'
 import { t } from '../i18n/scope/pages'
 
+const NEW_ARTIFACT_SCROLL_DELAY_MS = 300
+
 /**
  * Artifacts — the product page, on the real record.
  *
@@ -115,7 +117,7 @@ export default function ArtifactsPage() {
 
           <div className="flex flex-col gap-24 min-w-0">
             {adding && (
-              <AddFolder projects={projects} onDone={(id) => { setHash({ add: '', q: '' }); setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 300) }}
+              <AddFolder projects={projects} onDone={(id) => { setHash({ add: '', q: '' }); setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), NEW_ARTIFACT_SCROLL_DELAY_MS) }}
                 onCancel={() => setHash({ add: '' })} />
             )}
             {artifacts.length === 0 && !adding && (

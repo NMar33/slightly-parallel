@@ -17,6 +17,9 @@ import { drawFilm, type Stage } from './scene'
 import { encodeVideo, type Format } from '../tour/video'
 
 import { t } from '../../i18n/scope/views'
+
+const EXPORT_URL_REVOKE_DELAY_MS = 4000
+
 export type Progress = (done: number, total: number, stage: string) => void
 
 function surface(width: number, height: number) {
@@ -82,7 +85,7 @@ export function download(blob: Blob, name: string) {
   document.body.append(a)
   a.click()
   a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 4000)
+  setTimeout(() => URL.revokeObjectURL(url), EXPORT_URL_REVOKE_DELAY_MS)
 }
 
 /**

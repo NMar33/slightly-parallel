@@ -122,7 +122,7 @@ silenced, and the notice names only that one.
 | `#artifact <what>` | Write the folder under the project's artifacts/, then make its record with artifact_write (Artifact, section 4) |
 | `#help` | Answer the operator with the list of commands and what each does for them (the skill sp-help holds it) |
 | `#mute` | No command in the message runs, `###` ones too: every tag in it is plain text. Do nothing for its tags |
-| `#done` | MCP tool task_done: the server has moved the task; say what moved, then your task_report line; next tasks only when the work is unfinished without them (the skill finish-a-task) |
+| `#done` | MCP tool task_done: say what moved and show doubtful IDs with their confirmation line, then your task_report line; next tasks only when the work is unfinished without them (the skill finish-a-task) |
 | `#entrypoint` | Nothing is made until the operator chooses the topic: entrypoint_ask {id, name}, show its `show` exactly as given; on their answer entrypoint_answer {number, name?}; then write the record (What, Where, How, State, Next), the ways in, one stop, shots of the ways that are up, the tasks' topic |
 | `#undo <what was the mistake>` | MCP tool undo_find, list the candidates by number, then undo_propose with the operator's numbers and show its confirm text (the skill undo-a-mistake) |
 | `#undo-yes` | The operator confirmed: MCP tool undo_apply. The server archives only on this reply right after your proposal |
@@ -450,7 +450,7 @@ install skills.
 
 **Help** (`#help`). Answer the operator with the list of commands, what each does for them and where they see the result. The skill `sp-help` holds the list; give it as it is, in the operator's language, and add nothing that is not in it.
 
-**Done** (`#done`). The operator closes a task from the chat: the server moves it to done and gives it its stretch of the chat. Call `task_done`, say what moved, then your one-line `task_report`. Offer next tasks (`task_done {proposals}`, then `next_tasks`) only when the work is unfinished without them. The skill `finish-a-task` holds the steps.
+**Done** (`#done`). The operator closes a task from the chat: the server moves it to done and gives it its stretch of the chat. Call `task_done`, say what moved, and pass on any doubtful IDs with their confirmation line. Add your one-line `task_report` to each task that moved. Offer next tasks (`task_done {proposals}`, then `next_tasks`) only when the work is unfinished without them. The skill `finish-a-task` holds the steps.
 
 **Entry point — `#entrypoint`.** The outside of a project: a topic the
 operator opens and comes back to ("the films and the launch", "the site's

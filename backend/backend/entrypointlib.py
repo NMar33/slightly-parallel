@@ -1501,7 +1501,10 @@ def briefing(store: ViewStore, row: dict[str, Any], cx: dict[str, Any]) -> str:
 SIMILAR_MIN = 0.35
 
 
-def similar(store: ViewStore, project: str, text: str, *, limit: int = 3) -> list[dict[str, Any]]:
+DEFAULT_SIMILAR_ENTRYPOINTS = 3
+
+
+def similar(store: ViewStore, project: str, text: str, *, limit: int = DEFAULT_SIMILAR_ENTRYPOINTS) -> list[dict[str, Any]]:
     """The project's topics most like ``text`` (a name and why), by word
     overlap weighted by rarity (similarlib): each {id, name, state, score}."""
     from . import similarlib

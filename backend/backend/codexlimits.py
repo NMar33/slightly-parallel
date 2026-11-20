@@ -53,6 +53,11 @@ ACCOUNT_FILE = "codex-account.json"
 POLL_FILE = "codex-poll.json"
 SOURCE = "app-server"
 READ_TIMEOUT_S = 15.0
+
+TASKKILL_TIMEOUT_S = 5
+PROCESS_EXIT_TIMEOUT_S = 5
+OUTPUT_READER_JOIN_TIMEOUT_S = 2
+FIRST_POLL_DELAY_S = 5
 WAKE_S = 60
 #: After the machine wakes, the network needs a moment: no poll for this long.
 SETTLE_S = 120
@@ -107,7 +112,7 @@ def _stop(proc: subprocess.Popen[str]) -> None:
     it), and ending only the wrapper leaves the real one running."""
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=5,
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=TASKKILL_TIMEOUT_S,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -118,7 +123,7 @@ def _stop(proc: subprocess.Popen[str]) -> None:
     except OSError:
         pass
     try:
-        proc.wait(timeout=5)
+        proc.wait(timeout=PROCESS_EXIT_TIMEOUT_S)
     except (subprocess.TimeoutExpired, OSError):
         pass
 
@@ -172,7 +177,7 @@ def _rpc(exe: str, timeout: float) -> dict[int, Any]:
         pass  # the process ended first: the answers say what came
     finished = done.wait(timeout)
     _stop(proc)
-    reader.join(timeout=2)
+    reader.join(timeout=OUTPUT_READER_JOIN_TIMEOUT_S)
     for pipe in (proc.stdin, proc.stdout):
         # The reader may still be in stdout, if something holds it open: then it stays.
         if pipe is not None and (pipe is proc.stdin or not reader.is_alive()):
@@ -445,7 +450,7 @@ class Poller:
 
     def _run(self) -> None:
         # The first look comes a few seconds after the start, not at it.
-        if self._stop.wait(5):
+        if self._stop.wait(FIRST_POLL_DELAY_S):
             return
         while not self._stop.is_set():
             self.tick()

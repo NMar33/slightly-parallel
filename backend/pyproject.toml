@@ -78,3 +78,6 @@ reportOptionalMemberAccess = "none"
 reportOptionalSubscript = "none"
 reportOptionalIterable = "none"
 reportOptionalOperand = "none"
+
+[tool.setuptools.package-data]
+backend = ["server_defaults.json"]

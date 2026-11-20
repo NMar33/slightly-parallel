@@ -20,12 +20,14 @@ import {
 import { Spark } from './charts'
 import { t, locale } from '../../i18n/scope/system'
 
+const MONITOR_CLOCK_INTERVAL_MS = 10_000
+
 type Look = 'numbers' | 'sparks' | 'dot'
 
 function useClock(): string {
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 10_000)
+    const t = setInterval(() => setNow(new Date()), MONITOR_CLOCK_INTERVAL_MS)
     return () => clearInterval(t)
   }, [])
   return now.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })

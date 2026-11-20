@@ -118,3 +118,16 @@ cover all of the input?
 9. What did a refused request write?
 10. Is the same thing spelled the same way by everyone who names it?
 11. What does it look like on each frame, and did the recording cover all of the input?
+## Refactoring budgets
+
+CI runs `python3 scripts/ci/refactoring_budget.py` using Python's AST and
+the TypeScript parser pinned by the frontend lockfile. It counts hard-coded
+timings, retry counts and limits in recognized policy positions, plus exact
+six-line windows shared by different files in each source area. Tests,
+design experiments and fixtures are outside these counts. The budget is
+in `scripts/ci/refactoring_budget.json`.
+
+After removing an occurrence, run `python3 scripts/ci/refactoring_budget.py --record`
+and commit the lower counts with the change. CI compares the checked-in
+counts to the base revision and rejects increases. The counts depend on
+the detector's scope and do not measure semantic duplication.

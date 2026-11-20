@@ -43,6 +43,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+TOOL_COMMAND_TIMEOUT_S = 120
+CONNECT_TIMEOUT_S = 3
+OFFLINE_STATUS_SETTLE_S = 2
+TOUR_COMMAND_TIMEOUT_S = 300
+
 ROOT = Path(__file__).resolve().parents[2]
 BASE = f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}"
 SYSTEM = sys.platform
@@ -58,7 +63,7 @@ MONITOR_SECONDS = 120
 
 
 def run(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    done = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    done = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TOOL_COMMAND_TIMEOUT_S)
     print(f"$ {' '.join(args)}" + (f"\n{(done.stdout + done.stderr).strip()}" if (done.stdout + done.stderr).strip() else ""), flush=True)
     if check and done.returncode != 0:
         raise SystemExit(f"failed: {' '.join(args)}")
@@ -147,7 +152,7 @@ def network_on() -> None:
 
 def reaches(host: str, port: int) -> bool:
     try:
-        with socket.create_connection((host, port), timeout=3):
+        with socket.create_connection((host, port), timeout=CONNECT_TIMEOUT_S):
             return True
     except OSError:
         return False
@@ -203,7 +208,7 @@ def checks() -> list[str]:
         sample = now.get("sample") or {}
         if sample.get("ping_ok") is False and any(e.get("key") == "net.down" for e in now.get("open") or []):
             break
-        time.sleep(2)
+        time.sleep(OFFLINE_STATUS_SETTLE_S)
     sample = now.get("sample") or {}
     down = [e for e in now.get("open") or [] if e.get("key") == "net.down"]
     check("Monitor reports no connection: the ping fails", sample.get("ping_ok") is False, (sample.get("ping_host"), sample.get("ping_ok")))
@@ -216,7 +221,7 @@ def checks() -> list[str]:
         return failed
     t = time.time()
     done = subprocess.run([node, str(ROOT / "scripts" / "ci" / "offline_pages.mjs")], cwd=ROOT, capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=300)
+                          text=True, encoding="utf-8", errors="replace", timeout=TOUR_COMMAND_TIMEOUT_S)
     print((done.stdout + done.stderr).strip(), flush=True)
     check(f"in a browser the pages open, ask no other host, and Monitor says No connection ({time.time() - t:.0f} s)",
           done.returncode == 0)

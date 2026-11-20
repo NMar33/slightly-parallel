@@ -43,6 +43,11 @@ from .sysmon_detect import Detectors, Signal
 
 log = logging.getLogger("sp.sysmon")
 
+SQLITE_BUSY_TIMEOUT_S = 5
+NETWORK_PROBE_TIMEOUT_S = 2.0
+DISABLED_MONITOR_WAIT_S = 5
+SETTINGS_REFRESH_INTERVAL_S = 5
+
 FOLDER = "monitor"
 DB_NAME = "monitor.sqlite"
 TIERS = {0: 0, 1: 60, 2: 900}          # tier → bucket seconds (0 = every sample)
@@ -147,7 +152,7 @@ def _add_columns(con: sqlite3.Connection) -> None:
 def connect(data_root: Path) -> sqlite3.Connection:
     p = db_path(data_root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(p), timeout=5, check_same_thread=False)
+    con = sqlite3.connect(str(p), timeout=SQLITE_BUSY_TIMEOUT_S, check_same_thread=False)
     con.row_factory = sqlite3.Row
     # The schema and the journal mode once per file and process, not per
     # request: /api/monitor/now is asked every few seconds by every tab.
@@ -347,7 +352,7 @@ class Reader:
         return out
 
     @staticmethod
-    def ping(host: str, timeout: float = 2.0) -> tuple[bool, float]:
+    def ping(host: str, timeout: float = NETWORK_PROBE_TIMEOUT_S) -> tuple[bool, float]:
         """Open a TCP connection and time it. No ICMP: that needs root."""
         name, _, port = host.rpartition(":")
         if not name:
@@ -464,13 +469,13 @@ class Monitor:
         cfg_at = 0.0
         while not self._stop.is_set():
             now = time.time()
-            if now - cfg_at > 5:
+            if now - cfg_at > SETTINGS_REFRESH_INTERVAL_S:
                 self.cfg = settings(self.data_root)
                 self.detect.cfg = self.cfg
                 cfg_at = now
             if not self.cfg.get("monitor.enabled", True):
                 self._last_ts = None
-                self._stop.wait(5)
+                self._stop.wait(DISABLED_MONITOR_WAIT_S)
                 continue
             try:
                 self.tick(now)

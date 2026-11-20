@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 RING_SIZE = 4000
+DEFAULT_TAIL_ENTRIES = 300
 FILE_BYTES = 5 * 1024 * 1024
 FILE_KEEP = 3
 # A request over this is named slow in the log; the rebuild has its own bar.
@@ -81,7 +82,7 @@ class RingHandler(logging.Handler):
         except Exception:  # noqa: BLE001 — a log line must never raise
             pass
 
-    def tail(self, limit: int = 300, min_level: str = "INFO") -> list[dict[str, Any]]:
+    def tail(self, limit: int = DEFAULT_TAIL_ENTRIES, min_level: str = "INFO") -> list[dict[str, Any]]:
         floor = logging.getLevelName(min_level) if isinstance(min_level, str) else min_level
         floor = floor if isinstance(floor, int) else logging.INFO
         with self._lock_:

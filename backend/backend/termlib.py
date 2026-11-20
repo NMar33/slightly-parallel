@@ -241,6 +241,12 @@ def tmux_argv(data_root: Path, *args: str) -> list[str]:
 #: kill-session), wait 5 s.
 READ_TIMEOUT = 2.0
 WRITE_TIMEOUT = 5.0
+TMUX_START_ATTEMPTS = 4
+TMUX_START_RETRY_STEP_S = 0.05
+SHELL_PROMPT_TIMEOUT_S = 4.0
+SHELL_PROMPT_POLL_INTERVAL_S = 0.15
+CODEX_HELP_TIMEOUT_S = 2
+FOREGROUND_PS_TIMEOUT_S = 2
 
 
 class TmuxError(RuntimeError):
@@ -285,7 +291,7 @@ def tmux_read(data_root: Path, *args: str, timeout: float | None = None) -> subp
 SERVER_GOING = ("server exited unexpectedly", "lost server")
 
 
-def tmux_starting(data_root: Path, *args: str, tries: int = 4) -> subprocess.CompletedProcess:
+def tmux_starting(data_root: Path, *args: str, tries: int = TMUX_START_ATTEMPTS) -> subprocess.CompletedProcess:
     """A command that starts tmux's server when none runs (new-session).
     Right after the last terminal closes, the old server may still take the
     connection and then quit: the command is lost, not refused. It is sent
@@ -298,7 +304,7 @@ def tmux_starting(data_root: Path, *args: str, tries: int = 4) -> subprocess.Com
         if i == tries - 1 or not any(s in (got.stderr or "") for s in SERVER_GOING):
             break
         log.info("tmux's server was going away as a terminal opened: sent again (%s)", (got.stderr or "").strip())
-        time.sleep(0.05 * (i + 1))
+        time.sleep(TMUX_START_RETRY_STEP_S * (i + 1))
     raise subprocess.CalledProcessError(got.returncode, got.args, got.stdout, got.stderr)
 
 
@@ -641,7 +647,7 @@ def ansi_quote(text: str) -> str:
 def _codex_has_no_daemon(exe: str) -> bool:
     try:
         got = subprocess.run([exe, "--help"], capture_output=True, text=True, encoding="utf-8",
-                             errors="replace", timeout=2, check=False)
+                             errors="replace", timeout=CODEX_HELP_TIMEOUT_S, check=False)
     except (OSError, subprocess.SubprocessError):
         return False
     return got.returncode == 0 and bool(re.search(r"^\s+--no-daemon\b", got.stdout, re.MULTILINE))
@@ -856,7 +862,7 @@ def capture(data_root: Path, sid: str, from_abs: int | None = None, to_abs: int 
     return {"text": "\n".join(lines), "lines": len(lines), "truncated": truncated}
 
 
-def wait_for_prompt(data_root: Path, sid: str, timeout: float = 4.0) -> None:
+def wait_for_prompt(data_root: Path, sid: str, timeout: float = SHELL_PROMPT_TIMEOUT_S) -> None:
     """Until the shell has printed its prompt and gone quiet (a login shell can
     print a page first) — typed sooner, the command lands before the prompt."""
     end = time.time() + timeout
@@ -866,7 +872,7 @@ def wait_for_prompt(data_root: Path, sid: str, timeout: float = 4.0) -> None:
         if got and got == last and got.splitlines()[-1].rstrip().endswith(("$", "#", "%", ">", "❯")):
             return
         last = got
-        time.sleep(0.15)
+        time.sleep(SHELL_PROMPT_POLL_INTERVAL_S)
 
 
 def type_into(data_root: Path, row: dict[str, Any], text: str, *, enter: bool, delay: float = 0.0) -> bool:
@@ -1302,7 +1308,7 @@ def foreground_of_fd(fd: int) -> str:
         pass
     try:
         out = subprocess.run(["ps", "-o", "comm=", "-p", str(pgid)], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=2).stdout.strip()
+                             encoding="utf-8", errors="replace", timeout=FOREGROUND_PS_TIMEOUT_S).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
     return os.path.basename(out)

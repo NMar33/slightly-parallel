@@ -11,6 +11,8 @@ import { getJson } from '../../lib/getJson'
 import { useDayStart } from '../../lib/clock'
 import { formatYYMMDD, parseYYMMDD } from '../../utils/dateUtils'
 
+const YEAR_SESSIONS_REFETCH_MS = 60_000
+
 export interface YearSession {
   id: string
   project: string
@@ -176,7 +178,7 @@ export function useYear() {
     queryKey: ['overview', 'year', from],
     queryFn: ({ signal }) => getJson<{ sessions: YearSession[] }>(`/api/sessions?limit=${YEAR_LIMIT}&from_date=${from}`, signal),
     staleTime: 30_000,
-    refetchInterval: 60_000,
+    refetchInterval: YEAR_SESSIONS_REFETCH_MS,
     // At midnight `from` moves a day: keep showing the old year until the new one arrives.
     placeholderData: keepPreviousData,
   })

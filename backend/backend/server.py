@@ -125,6 +125,8 @@ def _configure_logging() -> None:
 _configure_logging()
 log = logging.getLogger("sp.server")
 
+MIN_GZIP_BODY_BYTES = 2048
+
 
 # ---------------------------------------------------------------------------
 # App factory (used by uvicorn AND by tests)
@@ -223,7 +225,7 @@ def _start_watchers(root: Path, store: ViewStore) -> list[Watcher]:
     two or three rebuilds — and the debounce coalesces the rest.
     """
     (root / "snapshots").mkdir(parents=True, exist_ok=True)
-    watchers = [Watcher(root, on_change=store.rebuild, delay_ms=200, recursive=True)]
+    watchers = [Watcher(root, on_change=store.rebuild, recursive=True)]
     for w in watchers:
         w.start()
     return watchers
@@ -1029,7 +1031,7 @@ def create_app(
     # The whole-history chat view is 3.6 MB of text in one answer and the
     # sessions list 170 KB; both go down to a fifth. Small answers are left
     # as they are.
-    app.add_middleware(GZipMiddleware, minimum_size=2048)
+    app.add_middleware(GZipMiddleware, minimum_size=MIN_GZIP_BODY_BYTES)
     # Added last, so it is asked first.
     app.add_middleware(OwnPagesOnly, app_ref=app)
 

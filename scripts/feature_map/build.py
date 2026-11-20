@@ -71,6 +71,8 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+MAP_RENDER_TIMEOUT_S = 300
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 OUT = REPO / "notes" / "feature-map" / "out"
@@ -782,7 +784,7 @@ def render_pngs(htmls: list[tuple[Path, str]], stamp: str) -> list[dict]:
     shutil.copy(HERE / "render.mjs", script)
     try:
         args = ["node", str(script)] + [f"{h}::{OUT / prefix}" for h, prefix in htmls]
-        res = subprocess.run(args, cwd=FRONTEND, capture_output=True, text=True, timeout=300)
+        res = subprocess.run(args, cwd=FRONTEND, capture_output=True, text=True, timeout=MAP_RENDER_TIMEOUT_S)
         if res.returncode != 0:
             raise RuntimeError(res.stderr[-2000:])
         shots = json.loads(res.stdout.strip().splitlines()[-1])

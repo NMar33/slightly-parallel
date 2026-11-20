@@ -25,6 +25,22 @@ from pathlib import Path
 
 from common import PLANTED_KEY, REPO, WINDOWS, Report, Space, eventually, fetch_bytes, get, http, rows, wait_for
 
+COMMAND_TIMEOUT_S = 600
+SERVER_RETRY_DELAY_S = 3
+SERVER_EXIT_TIMEOUT_S = 15
+BROWSER_TEST_TIMEOUT_S = 1200
+CAPTURE_HOOK_TIMEOUT_S = 60
+CODEX_HOOK_CHECK_TIMEOUT_S = 60
+BACKUP_ACTION_TIMEOUT_S = 300
+FRESH_START_TIMEOUT_S = 900
+VITE_PROBE_TIMEOUT_S = 3
+DIAGNOSTIC_COMMAND_TIMEOUT_S = 90
+WINDOW_PROBE_TIMEOUT_S = 60
+DEV_DEPENDENCY_INSTALL_TIMEOUT_S = 900
+DEMO_BUILD_TIMEOUT_S = 1800
+DEMO_STRETCH_TIMEOUT_S = 900
+DEMO_PAGE_REQUEST_TIMEOUT_S = 60
+
 FRONTEND = REPO / "frontend"
 #: npx is npx.cmd on Windows, which a program list does not find by its bare name.
 NPX = shutil.which("npx") or "npx"
@@ -46,7 +62,7 @@ def venv_python(clone: Path) -> Path:
     return clone / "backend" / ".venv" / ("Scripts/python.exe" if WINDOWS else "bin/python")
 
 
-def sh(args: list[str], cwd: Path, env: dict[str, str] | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
+def sh(args: list[str], cwd: Path, env: dict[str, str] | None = None, timeout: int = COMMAND_TIMEOUT_S) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
@@ -147,7 +163,7 @@ def install(space: Space, report: Report, source: Path, boot_seconds: int) -> su
         state = get(space, "/api/example")
         if not state.get("building"):
             break
-        time.sleep(3)
+        time.sleep(SERVER_RETRY_DELAY_S)
     report.notes["example_seconds"] = round(time.time() - t0)
     report.add(s, f"the example project is played ({report.notes['example_seconds']} s)",
                state.get("present") is True and not state.get("error"), json.dumps(state)[:300])
@@ -175,13 +191,13 @@ def stop(proc: subprocess.Popen | None) -> None:
         # No process groups to signal: end the tree under the started process.
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
         try:
-            proc.wait(timeout=15)
+            proc.wait(timeout=SERVER_EXIT_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             pass
         return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
-        proc.wait(timeout=15)
+        proc.wait(timeout=SERVER_EXIT_TIMEOUT_S)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         try:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -197,7 +213,7 @@ def playwright(space: Space, report: Report, stage: str, name: str, args: list[s
     if not (FRONTEND / "node_modules" / "@playwright").is_dir():
         return report.add(stage, name, False, "Playwright is not installed here: cd frontend && npm install && npx playwright install chromium")
     env = {**os.environ, "SP_E2E_URL": space.url, **(extra or {})}
-    p = sh([NPX, "playwright", "test", *args, "--reporter=line"], FRONTEND, env, timeout=1200)
+    p = sh([NPX, "playwright", "test", *args, "--reporter=line"], FRONTEND, env, timeout=BROWSER_TEST_TIMEOUT_S)
     out = (p.stdout + p.stderr).strip()
     spec = next((a for a in reversed(args) if a.endswith(".ts")), "run").split("/")[-1].removesuffix(".spec.ts")
     (space.root / f"playwright-{stage.replace(':', '-')}-{spec}.log").write_text(out, encoding="utf-8")
@@ -285,7 +301,7 @@ def fire_hook(space: Space, event: dict, days_ago: int = 0, folder: Path | None 
         env["PYTHONPATH"] = str(Path(__file__).resolve().parent / "shifted")
         env["FRESH_SHIFT_SECONDS"] = str(-86400 * days_ago)
     return subprocess.run(hook_command(space, folder), shell=True, cwd=folder or space.sample, env=env,
-                          input=json.dumps(event), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+                          input=json.dumps(event), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=CAPTURE_HOOK_TIMEOUT_S)
 
 
 YESTERDAY_SESSION = "0a1b2c3d-0000-4000-8000-000000000002"
@@ -314,7 +330,7 @@ def mcp_call(space: Space, messages: list[dict]) -> list[dict]:
     env = {**space.env(), **entry.get("env", {})}
     text = "".join(json.dumps(m) + "\n" for m in messages)
     p = subprocess.run([entry["command"], *entry["args"]], cwd=space.sample, env=env, input=text,
-                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=CODEX_HOOK_CHECK_TIMEOUT_S)
     out = [json.loads(line) for line in p.stdout.splitlines() if line.strip().startswith("{")]
     if not out and p.stderr:
         raise RuntimeError(p.stderr.strip()[-400:])
@@ -503,7 +519,7 @@ def backup_restore(space: Space, report: Report, code: str) -> None:
                bool(before["projects"]) and bool(before["chats"]) and bool(before["tasks"]),
                f"{len(before['projects'])} projects, {len(before['chats'])} chats, {len(before['tasks'])} tasks")
     try:
-        taken = http(space.url + "/api/backup/run", {"label": "fresh user"}, timeout=300)
+        taken = http(space.url + "/api/backup/run", {"label": "fresh user"}, timeout=BACKUP_ACTION_TIMEOUT_S)
         name = str(taken["archive"]["name"])
     except Exception as exc:
         report.add(s, "Back up now makes an archive", False, str(exc)[:300])
@@ -521,7 +537,7 @@ def backup_restore(space: Space, report: Report, code: str) -> None:
     report.add(s, f"the archive downloads ({len(archive) // 1024} KB)", len(archive) > 1024)
     try:
         http(space.url + "/api/setup/data-root", {"path": str(fresh)})
-        done = http(space.url + f"/api/backup/{urllib.parse.quote(name)}/restore", {"confirm": name}, timeout=300)
+        done = http(space.url + f"/api/backup/{urllib.parse.quote(name)}/restore", {"confirm": name}, timeout=BACKUP_ACTION_TIMEOUT_S)
         report.add(s, "it restores into the new data folder", bool(done.get("restored")), json.dumps(done.get("restored"))[:300])
         health = get(space, "/api/health")
         report.add(s, "the server reads the new folder", health.get("data_root") == str(fresh), str(health.get("data_root")))
@@ -676,7 +692,7 @@ def background(space: Space, report: Report, proc: subprocess.Popen | None) -> N
     stop(proc)
     time.sleep(1)
     env = space.env()
-    up = sh(sp_sh("up"), space.clone, env, timeout=900)
+    up = sh(sp_sh("up"), space.clone, env, timeout=FRESH_START_TIMEOUT_S)
     report.add(s, "sp up starts it and says healthy", up.returncode == 0 and "healthy" in up.stdout, (up.stdout + up.stderr)[-400:])
     status = sh(sp_sh("status"), space.clone, env)
     report.add(s, "sp status says running and healthy", status.returncode == 0 and "running" in status.stdout and "healthy" in status.stdout, status.stdout[-300:])
@@ -703,7 +719,7 @@ def dev(space: Space, report: Report, code: str) -> None:
         page = ""
         for _ in range(60):
             try:
-                page = str(http(f"http://127.0.0.1:{vite}/", timeout=3))
+                page = str(http(f"http://127.0.0.1:{vite}/", timeout=VITE_PROBE_TIMEOUT_S))
                 break
             except Exception:
                 time.sleep(1)
@@ -754,7 +770,7 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
     def launcher(extra: dict[str, str], *args: str) -> tuple[int, str, float]:
         start_at = time.time()
         try:
-            p = sh(run_sh(*args), space.clone, {**env, **extra}, timeout=90)
+            p = sh(run_sh(*args), space.clone, {**env, **extra}, timeout=DIAGNOSTIC_COMMAND_TIMEOUT_S)
             return p.returncode, (p.stdout + p.stderr).strip(), time.time() - start_at
         except subprocess.TimeoutExpired as exc:
             return -1, f"still running after 90 s: {str(exc.stdout or '')[-200:]}", 90.0
@@ -867,7 +883,7 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
                         "lens": "decision", "fields": {"decision": "Заметки остаются в одном файле.", "why": "Проверка записи.", "weight": "minor"}}}},
                 ])
                 p = subprocess.run([entry["command"], *entry["args"]], cwd=odd_project, env={**env, **entry.get("env", {})}, input=text,
-                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=WINDOW_PROBE_TIMEOUT_S)
                 wrote = '"isError": false' in p.stdout or '"isError":false' in p.stdout
                 detail = (p.stdout + p.stderr)[-300:]
             except Exception as exc:
@@ -894,11 +910,11 @@ def volume(space: Space, report: Report, tasks_n: int = 400, turns_n: int = 1500
     py = venv_python(space.clone)
     target = space.root / "month"
     # The demo builder is a developer's tool: it needs the development packages.
-    dev = sh([str(py), "-m", "pip", "install", "-q", "-r", str(space.clone / "backend" / "requirements-dev.txt")], space.clone, env, timeout=900)
+    dev = sh([str(py), "-m", "pip", "install", "-q", "-r", str(space.clone / "backend" / "requirements-dev.txt")], space.clone, env, timeout=DEV_DEPENDENCY_INSTALL_TIMEOUT_S)
     if not report.add(s, "the development packages install in the fresh environment", dev.returncode == 0, (dev.stdout + dev.stderr)[-400:]):
         return
     start_at = time.time()
-    built = sh([str(py), str(space.clone / "scripts" / "demo" / "build_demo.py"), str(target), "--force"], space.clone, env, timeout=1800)
+    built = sh([str(py), str(space.clone / "scripts" / "demo" / "build_demo.py"), str(target), "--force"], space.clone, env, timeout=DEMO_BUILD_TIMEOUT_S)
     if not report.add(s, f"a month of work is built ({round(time.time() - start_at)} s)", built.returncode == 0, (built.stdout + built.stderr)[-400:]):
         return
     data = target / "data"
@@ -915,7 +931,7 @@ def volume(space: Space, report: Report, tasks_n: int = 400, turns_n: int = 1500
         "                  f'Step {i}: the order list has a new column. ' + 'explanation ' * 120)\n"
     )
     wrote = sh([str(py), "-c", writer, str(space.clone / "scripts" / "hooks"), str(data), long_session,
-                str(target / "repos" / "shopfront"), str(turns_n)], space.clone, env, timeout=900)
+                str(target / "repos" / "shopfront"), str(turns_n)], space.clone, env, timeout=DEMO_STRETCH_TIMEOUT_S)
     chat = data / "projects" / "shopfront" / "chats" / f"cc-{long_session[:8]}" / "chat.md"
     size = chat.stat().st_size if chat.is_file() else 0
     report.add(s, f"a chat of {turns_n} turns is captured ({size // 1024} KB)", wrote.returncode == 0 and size > 500_000, (wrote.stderr or wrote.stdout)[-400:])
@@ -969,7 +985,7 @@ def volume(space: Space, report: Report, tasks_n: int = 400, turns_n: int = 1500
             for _ in range(3):
                 t0 = time.time()
                 try:
-                    http(big.url + path, timeout=60)
+                    http(big.url + path, timeout=DEMO_PAGE_REQUEST_TIMEOUT_S)
                 except Exception as exc:
                     failed = str(exc)
                 best = min(best, time.time() - t0)

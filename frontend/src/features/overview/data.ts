@@ -11,6 +11,8 @@ import { getJson } from '../../lib/getJson'
 import { useDayStart } from '../../lib/clock'
 import { formatYYMMDD, stampMs } from '../../utils/dateUtils'
 
+const OVERVIEW_QUEUE_LIMIT = 50
+
 export const DAYS = 30
 
 export interface Standup {
@@ -33,13 +35,13 @@ export function lastDays(now = new Date(), n = DAYS): string[] {
 export function useOverviewData(fetcher: (signal?: AbortSignal) => Promise<SnapshotResponse> = api.snapshot) {
   const snapshot = useQuery({ queryKey: qk.snapshot(), queryFn: ({ signal }) => fetcher(signal), staleTime: 4_000 })
   const problems = useQuery({
-    queryKey: qk.lensList('problems', { status: 'open', limit: 50 }),
-    queryFn: ({ signal }) => lensApi.list('problems', 'problems', { status: 'open', limit: 50 }, signal),
+    queryKey: qk.lensList('problems', { status: 'open', limit: OVERVIEW_QUEUE_LIMIT }),
+    queryFn: ({ signal }) => lensApi.list('problems', 'problems', { status: 'open', limit: OVERVIEW_QUEUE_LIMIT }, signal),
     staleTime: 4_000,
   })
   const review = useQuery({
-    queryKey: qk.lensList('tasks', { status: 'review', limit: 50 }),
-    queryFn: ({ signal }) => lensApi.list('tasks', 'tasks', { status: 'review', limit: 50 }, signal),
+    queryKey: qk.lensList('tasks', { status: 'review', limit: OVERVIEW_QUEUE_LIMIT }),
+    queryFn: ({ signal }) => lensApi.list('tasks', 'tasks', { status: 'review', limit: OVERVIEW_QUEUE_LIMIT }, signal),
     staleTime: 4_000,
   })
   const standups = useQuery({

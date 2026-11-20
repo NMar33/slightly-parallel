@@ -34,6 +34,13 @@ import time
 import zipfile
 from pathlib import Path
 
+TASKKILL_TIMEOUT_S = 60
+DEFAULT_STAGE_TIMEOUT_S = 900
+STOP_WAIT_TIMEOUT_S = 60
+CHILDREN_QUERY_TIMEOUT_S = 60
+BROWSER_DEPENDENCY_INSTALL_TIMEOUT_S = 1200
+FRESH_USER_STAGE_TIMEOUT_S = 5400
+
 REPO = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
 STAMP = time.strftime("%y%m%d-%H%M")
@@ -47,14 +54,14 @@ def kill_tree(proc: subprocess.Popen) -> None:
     """The step and everything it started: a server, a browser, an agent."""
     try:
         if WINDOWS:
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=60)
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=TASKKILL_TIMEOUT_S)
         else:
             os.killpg(proc.pid, 9)
     except (OSError, subprocess.SubprocessError):
         proc.kill()
 
 
-def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = 900, env: dict | None = None) -> bool:
+def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = DEFAULT_STAGE_TIMEOUT_S, env: dict | None = None) -> bool:
     """One step: its output to OUT/<name>.log, its result to OUT/steps.json.
     Past its time the whole process tree goes, and the log keeps what came."""
     print(f"\n== {name}: {' '.join(argv)}", flush=True)
@@ -69,7 +76,7 @@ def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = 900, env: d
                 ok = proc.wait(timeout) == 0
             except subprocess.TimeoutExpired:
                 kill_tree(proc)
-                proc.wait(60)
+                proc.wait(STOP_WAIT_TIMEOUT_S)
                 fh.write(f"\n[run.py] stopped after {timeout} s\n")
         except OSError as exc:
             fh.write(f"\n[run.py] {type(exc).__name__}: {exc}\n")
@@ -83,7 +90,7 @@ def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = 900, env: d
 def version(argv: list[str]) -> str:
     try:
         out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=60, shell=WINDOWS)
+                             timeout=CHILDREN_QUERY_TIMEOUT_S, shell=WINDOWS)
         return (out.stdout or out.stderr).strip().splitlines()[0] if (out.stdout or out.stderr).strip() else "?"
     except (OSError, subprocess.TimeoutExpired):
         return "not found"
@@ -173,11 +180,11 @@ def main() -> int:
     print(f"Slightly Parallel on this machine - everything goes to {OUT}", flush=True)
     (OUT / "versions.json").write_text(json.dumps(versions(), indent=1), encoding="utf-8")
 
-    run("browser", ["npm", "ci"], cwd=REPO / "frontend", timeout=1200)
+    run("browser", ["npm", "ci"], cwd=REPO / "frontend", timeout=BROWSER_DEPENDENCY_INSTALL_TIMEOUT_S)
     run("browser-chromium", ["npx", "playwright", "install", *([] if WINDOWS or sys.platform == "darwin" else ["--with-deps"]), "chromium"],
         cwd=REPO / "frontend")
     run("fresh-user", [py, "scripts/fresh_user/run.py", "--tools", args.tools, "--scenario", "site",
-                       "--model", args.model, "--keep"], timeout=5400)
+                       "--model", args.model, "--keep"], timeout=FRESH_USER_STAGE_TIMEOUT_S)
     fresh_root = None
     try:
         notes = json.loads((REPO / ".sp" / "fresh-user" / "report.json").read_text(encoding="utf-8")).get("notes", {})

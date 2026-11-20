@@ -35,6 +35,7 @@ from . import __version__
 # This process's parents: the capture hook reads them the same way, and the
 # two find each other by the tool process they share (hookshared.py).
 from .hookshared import ancestors
+from .server_address import loopback_url
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_INFO = {"name": "slightly-parallel", "version": __version__}
@@ -143,6 +144,8 @@ TOOLS: dict[str, str] = {
 # sent the calls to the proxy, which cannot reach 127.0.0.1 here.
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
+API_REQUEST_TIMEOUT_S = 30
+
 
 class ApiError(RuntimeError):
     """An HTTP call that failed, carrying the server's own explanation."""
@@ -164,7 +167,7 @@ class Api:
             headers={"Content-Type": "application/json", VIA_HEADER: VIA_VALUE},
         )
         try:
-            with _DIRECT.open(req, timeout=30) as resp:
+            with _DIRECT.open(req, timeout=API_REQUEST_TIMEOUT_S) as resp:
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             try:
@@ -1773,7 +1776,7 @@ def _utf8_pipes() -> None:
 
 def main() -> int:
     _utf8_pipes()
-    base = os.environ.get("SP_API", "http://127.0.0.1:8123")
+    base = os.environ.get("SP_API", loopback_url())
     api = Api(base)
     # A server that is not up yet is no error here: the first call waits for it.
     tr = Translator(api, os.getcwd())

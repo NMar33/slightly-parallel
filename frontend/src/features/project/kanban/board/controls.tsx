@@ -12,7 +12,7 @@ import { useEvidenceAsk } from './evidenceAsk'
 import { t, tn } from '../../../../i18n/scope/project'
 
 /** Column-header ⇅: pick the view order; the ✓ names what is in charge. */
-export function SortMenu({
+function SortMenu({
   mode, onPick,
 }: {
   mode: SortMode
@@ -52,6 +52,27 @@ export function SortMenu({
           ))}
         </div>
       )}
+    </span>
+  )
+}
+
+export function ColumnActions({ label, mode, onSort, onAdd }: {
+  label: string
+  mode: SortMode
+  onSort: (mode: SortMode) => void
+  onAdd: () => void
+}) {
+  return (
+    <span className="ml-auto inline-flex items-center gap-2">
+      <SortMenu mode={mode} onPick={onSort} />
+      <button
+        type="button"
+        onClick={onAdd}
+        className="text-11 text-brand hover:text-brand-hover font-mono"
+        aria-label={`Add task to ${label}`}
+      >
+        +
+      </button>
     </span>
   )
 }

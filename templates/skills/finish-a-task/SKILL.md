@@ -1,15 +1,18 @@
 ---
 name: finish-a-task
-description: "The operator typed #done: the server has moved the task to done and given it its stretch of the chat. Say what moved, then add your one-line report and any evidence. Use when the [slightly-parallel] #done notice appears."
+description: "Report what the operator's #done closed, show doubtful tasks with the supplied confirmation line, and add a report and evidence to each task that moved. Use when the [slightly-parallel] #done notice appears."
 ---
 
 `#done` is the operator's verdict. The server has already applied it: you
 never change a task's status. Your part is the account.
 
 1. Call `task_done`. It answers `tasks` (each: `id`, `title`, `result`,
-   `stretch` with `start`, `end`, `turns`, `minutes`) or `unnamed`.
-   - `unnamed`: no task was named in this chat since the last `#done`.
-     Ask the operator which task is done; they answer `#done tk_…`. Stop.
+   `stretch` with `start`, `end`, `turns`, `minutes`), `doubt` when IDs
+   need confirmation, and `confirmation` with the ready command.
+   - For each doubtful ID, show its reason. Give the ready line verbatim
+     for the operator to copy and send. A plain yes has no effect.
+   - With `unnamed` and no doubtful IDs, ask which task is done. The
+     operator answers with `#done tk_…`.
    - `result: already` or `archived`: say so in one line; nothing moved.
 2. Say in one line what moved: `tk_… "title" moved to done — turns
    12–31, 1h 20m.`

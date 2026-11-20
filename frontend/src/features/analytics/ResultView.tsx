@@ -10,7 +10,8 @@
  * columns lets you pick which one it draws. One series, one colour.
  */
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useElementWidth } from '../../hooks/useElementWidth'
 
 import { Segmented } from '../../components/Segmented'
 import { isNumeric, isTime, type Result } from './data'
@@ -44,19 +45,7 @@ const fmt = (v: unknown): string => {
   return /^\d{4}-\d{2}-\d{2}T00:00$/.test(s) ? s.slice(0, 10) : s.replace('T', ' ')
 }
 
-function useWidth() {
-  const ref = useRef<HTMLDivElement>(null)
-  const [w, setW] = useState(640)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const ro = new ResizeObserver(() => setW(el.clientWidth))
-    ro.observe(el)
-    setW(el.clientWidth)
-    return () => ro.disconnect()
-  }, [])
-  return [ref, w] as const
-}
+const RESULT_CHART_INITIAL_WIDTH_PX = 640
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const order = (vals: string[]) => (vals.every((v) => WEEK.includes(v))
@@ -99,7 +88,7 @@ function FragmentRow({ label, children }: { label: string; children: React.React
 }
 
 function TimeChart({ r, y, line: forceLine }: { r: Result; y: number; line?: boolean }) {
-  const [ref, W] = useWidth()
+  const [ref, W] = useElementWidth<HTMLDivElement>(RESULT_CHART_INITIAL_WIDTH_PX)
   const [hover, setHover] = useState<number | null>(null)
   const H = 200, L = 44, B = 22, T = 8
   const pts = r.rows.map((row) => ({ t: Date.parse(String(row[0])), v: Number(row[y] ?? 0), row })).filter((p) => Number.isFinite(p.t)).sort((a, b) => a.t - b.t)

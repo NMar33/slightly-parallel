@@ -28,6 +28,9 @@ import { ColumnsButton, TaskTable, useTablePrefs } from './Table'
 
 
 import { t } from '../../i18n/scope/views'
+
+const FILTER_SUGGESTIONS_BLUR_DELAY_MS = 120
+
 /* ---------------------------------------------------------------- frame */
 
 interface Ctx {
@@ -322,7 +325,7 @@ function QueryLook(c: Ctx & { builder?: boolean }) {
                 // Runs as you type, once what is typed reads cleanly.
                 if (!parseQuery(e.target.value).unknown.length) run(e.target.value)
               }}
-              onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 120)}
+              onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), FILTER_SUGGESTIONS_BLUR_DELAY_MS)}
               onKeyDown={(e) => {
                 if (sugg.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); setSel((s) => (s + (e.key === 'ArrowDown' ? 1 : sugg.length - 1)) % sugg.length) }
                 else if (sugg.length && e.key === 'Tab') { e.preventDefault(); pick(sugg[sel]!) }

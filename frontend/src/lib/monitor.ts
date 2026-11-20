@@ -14,6 +14,9 @@ import { getJson, postJson } from './getJson'
 import { SETTINGS_QUERY_KEY, saveSettings, useSettingsValues } from './settings'
 import { dayMonth } from './months'
 
+const MONITOR_EVENTS_REFETCH_MS = 30_000
+const MONITOR_STORAGE_REFETCH_MS = 60_000
+
 interface Disk { mount: string; used: number; total: number }
 
 export interface Sample {
@@ -155,7 +158,7 @@ export function useMonitorEvents(params: { days?: number; severity?: string; q?:
     queryKey: ['monitor', 'events', qs.toString()],
     queryFn: ({ signal }) => getJson<{ events: MonitorEvent[]; total: number; days?: Record<string, { n: number; worst: Severity }>; watched?: string[] }>(
       `/api/monitor/events?${qs}`, signal),
-    refetchInterval: 30_000,
+    refetchInterval: MONITOR_EVENTS_REFETCH_MS,
     placeholderData: (prev) => prev,
   })
 }
@@ -185,7 +188,7 @@ export function useMonitorStorage() {
     queryKey: ['monitor', 'storage'],
     queryFn: ({ signal }) => getJson<{ file: string; bytes: number; tiers: Record<string, { rows: number; oldest: number }>; events: { rows: number; oldest: number | null } }>(
       '/api/monitor/storage', signal),
-    refetchInterval: 60_000,
+    refetchInterval: MONITOR_STORAGE_REFETCH_MS,
   })
 }
 

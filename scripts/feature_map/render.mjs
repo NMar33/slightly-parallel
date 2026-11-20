@@ -5,17 +5,20 @@
 import { chromium } from 'playwright'
 import { pathToFileURL } from 'node:url'
 
+const LOAD_SHEET_TIMEOUT_MS = 60000
+const DRAW_SHEET_TIMEOUT_MS = 30000
+
 const browser = await chromium.launch()
 const shots = []
 try {
   const page = await browser.newPage({ viewport: { width: 1560, height: 1200 }, deviceScaleFactor: 2 })
   for (const arg of process.argv.slice(2)) {
     const [html, prefix] = arg.split('::')
-    await page.goto(pathToFileURL(html).href, { waitUntil: 'networkidle', timeout: 60000 })
+    await page.goto(pathToFileURL(html).href, { waitUntil: 'networkidle', timeout: LOAD_SHEET_TIMEOUT_MS })
     await page.evaluate(() => document.fonts.ready)
     const w = await page.evaluate(() => document.body.scrollWidth)
     await page.setViewportSize({ width: Math.max(1560, w), height: 1200 })
-    await page.waitForFunction(() => window.__drawn !== false, null, { timeout: 30000 })
+    await page.waitForFunction(() => window.__drawn !== false, null, { timeout: DRAW_SHEET_TIMEOUT_MS })
     const ids = await page.$$eval('section.sheet', (els) => els.map((el) => el.id))
     for (const id of ids) {
       const el = await page.$(`#${id}`)

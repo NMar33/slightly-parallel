@@ -38,32 +38,19 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Iterable
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "backend"))
+from backend.data_root import home_data_root, named_data_root, read_data_root_env  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Defaults + constants
 # ---------------------------------------------------------------------------
 
-def _env_file_root() -> str:
-    """SP_DATA_ROOT from the repository's .env, as sp.py reads it: without
-    it the doctor checked the demo fixtures and called the install healthy."""
-    env = Path(__file__).resolve().parents[1] / ".env"
-    try:
-        lines = env.read_text(encoding="utf-8-sig").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return ""
-    for raw in lines:
-        line = raw.strip().removeprefix("export ").strip()
-        key, _, value = line.partition("=")
-        if key.strip() in ("SP_DATA_ROOT", "SCAN_DATA_ROOT") and value.strip():
-            return value.strip().strip("'\"")
-    return ""
 
-
-_HOME_ROOT = Path.home() / ".slightly-parallel"
+_HOME_ROOT = home_data_root()
 DEFAULT_AGENTS_ROOT = Path(
-    os.environ.get("SP_DATA_ROOT")
-    or os.environ.get("SCAN_DATA_ROOT")
-    or os.environ.get("DATA_ROOT")
-    or _env_file_root()
+    named_data_root(os.environ)
+    or read_data_root_env(REPO_ROOT / ".env")
     or (_HOME_ROOT if _HOME_ROOT.is_dir() else Path(__file__).resolve().parents[1] / "fixtures")
 ).expanduser()
 # The repository this script sits in — it used to be hard-coded to a sibling

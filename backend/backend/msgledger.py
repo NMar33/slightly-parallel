@@ -52,6 +52,8 @@ except ImportError:  # loaded by path (the capture hook): no package
     _spec.loader.exec_module(_shared)  # type: ignore[union-attr]
 
 LEDGER = "messages.csv"
+
+MESSAGE_LEDGER_LOCK_TIMEOUT_S = 3.0
 COLUMNS: tuple[str, ...] = (
     "id", "project", "from_agent", "to_agent", "text", "sent_at", "reply_to",
     "delivered_at", "delivered_via", "landed_at", "landed_turn", "read_at",
@@ -146,7 +148,7 @@ def _write_rows(path: Path, rows: list[dict[str, str]]) -> None:
 def editing(data_root: Any) -> Iterator[list[dict[str, str]]]:
     """The rows under the ledger's lock; written back when the block changed them."""
     path = ledger_path(data_root)
-    with _shared.locked(path, timeout_s=3.0):
+    with _shared.locked(path, timeout_s=MESSAGE_LEDGER_LOCK_TIMEOUT_S):
         # Read strictly: a ledger that cannot be read is never written over
         # with what little was read of it.
         try:

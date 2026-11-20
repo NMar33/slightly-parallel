@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { getJson } from '../../lib/getJson'
 import { t, locale } from '../../i18n/scope/system'
 
+const BACKUP_PROOF_REFETCH_MS = 300_000
+
 /**
  * The last trial restore (backend backup.trial): an archive unpacked into a
  * temporary folder and read as the dashboard would. After every automatic
@@ -16,7 +18,7 @@ function useBackupProof() {
   return useQuery({
     queryKey: PROOF_KEY,
     queryFn: ({ signal }) => getJson<{ checked: Proof | null }>('/api/backup/checked', signal),
-    refetchInterval: 300_000,
+    refetchInterval: BACKUP_PROOF_REFETCH_MS,
   })
 }
 

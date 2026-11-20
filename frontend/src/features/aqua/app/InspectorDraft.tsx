@@ -8,6 +8,8 @@ import { TaskAddModal } from '../../project/kanban/TaskWindow'
 import { saveNativeDraft } from './bridge'
 import { useInspectorDraft } from './inspectorDraftStore'
 
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 4000
+
 export { useInspectorDraft } from './inspectorDraftStore'
 
 export function InspectorDraft({ project, draft }: { project: string; draft: ReturnType<typeof useInspectorDraft> }) {
@@ -45,7 +47,7 @@ export function InspectorDraft({ project, draft }: { project: string; draft: Ret
         document.body.append(link)
         link.click()
         link.remove()
-        setTimeout(() => URL.revokeObjectURL(url), 4000)
+        setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_REVOKE_DELAY_MS)
       }
     } catch {
       toast.error(t('Could not save the Markdown file.'))

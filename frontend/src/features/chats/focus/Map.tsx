@@ -5,6 +5,7 @@
  * or all of them read as one, and the agent's terminal beside it (T).
  */
 
+import { centerReadingMapAt, dragReadingMap, navigateReadingMap, readingMapOffset, readingMapViewport } from '../../../components/readingMap'
 import { IconButton } from '../../../components/primitives'
 import { persistPref, readPref } from '../../../lib/uiPrefs'
 import { STATE_WORD, terminalOfAgent, useTerminalActions, useTerminalStatus, useTerminals } from '../../../lib/terminal'
@@ -24,9 +25,10 @@ import {
   Answer, Column, EdgeHandle, FocusSettings, Frame, WorkMark, YourMessage, firstLine, readFocusPrefs, storeFocusPrefs, words, type FocusPrefs, useFocusKeys,
 } from './shared'
 
+import { useReadingWindow } from './readingWindow'
 import { t } from '../../../i18n/scope/views'
 import { letter, isTypingTarget } from '../../../lib/typing'
-interface Props {
+export interface ChatFocusProps {
   session: Row
   sessions: Row[]
   /** Every chat of the project, for the map's own filter; `sessions` if absent. */
@@ -108,13 +110,12 @@ function Minimap({ scroller, turns, at, goTo, chats = false, version = 0 }: {
       const you = el.querySelector<HTMLElement>('[data-you]')
       // Measured against the scroller, whatever the element's offset parent is.
       const r = el.getBoundingClientRect(), base = root.getBoundingClientRect()
-      const top = r.top - base.top + root.scrollTop
-      out.push({ top: top / total, height: r.height / total, you: (you?.getBoundingClientRect().height ?? 0) / total, gi: Number(el.dataset.turnIndex) })
+      out.push({ top: readingMapOffset(r.top, base.top, root, total), height: r.height / total, you: (you?.getBoundingClientRect().height ?? 0) / total, gi: Number(el.dataset.turnIndex) })
     })
     setBlocks(out)
     const base = root.getBoundingClientRect()
-    setHeads(chats ? [...root.querySelectorAll<HTMLElement>('[data-chat-head]')].map((el) => (el.getBoundingClientRect().top - base.top + root.scrollTop) / total) : [])
-    setView({ top: root.scrollTop / total, height: root.clientHeight / total, total })
+    setHeads(chats ? [...root.querySelectorAll<HTMLElement>('[data-chat-head]')].map((el) => readingMapOffset(el.getBoundingClientRect().top, base.top, root, total)) : [])
+    setView(readingMapViewport(root, total))
   }, [scroller, chats])
   useLayoutEffect(() => {
     const root = scroller.current
@@ -125,10 +126,7 @@ function Minimap({ scroller, turns, at, goTo, chats = false, version = 0 }: {
     root.querySelectorAll('[data-turn-index]').forEach((el) => ro.observe(el))
     // A scroll moves only the shaded view: measuring every turn on every
     // scroll frame thrashed the layout in "all".
-    const onScroll = () => {
-      const total = Math.max(1, root.scrollHeight)
-      setView({ top: root.scrollTop / total, height: root.clientHeight / total, total })
-    }
+    const onScroll = () => setView(readingMapViewport(root))
     root.addEventListener('scroll', onScroll, { passive: true })
     return () => { ro.disconnect(); root.removeEventListener('scroll', onScroll) }
   }, [scroller, measure, turns, version])
@@ -136,31 +134,15 @@ function Minimap({ scroller, turns, at, goTo, chats = false, version = 0 }: {
     const r = box.current?.getBoundingClientRect()
     const root = scroller.current
     if (!r || !root) return
-    const f = (clientY - r.top) / r.height
-    root.scrollTop = f * root.scrollHeight - root.clientHeight / 2
+    centerReadingMapAt(root, r, clientY)
   }
-  const drag = (e: React.PointerEvent) => {
-    e.preventDefault()
-    scrollTo(e.clientY)
-    const move = (ev: PointerEvent) => scrollTo(ev.clientY)
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
+  const drag = (e: React.PointerEvent) => dragReadingMap(e, scrollTo)
   // One keyboard path over the same DOM: the map takes focus, the arrows
   // walk the turns (the walked one previews, like a hover), Enter jumps.
-  const keys = (e: React.KeyboardEvent) => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter' && e.key !== ' ') return
-    if (!blocks.length) return
-    e.preventDefault()
-    const cur = hover ?? blocks.findIndex((b) => b.gi === at)
-    if (e.key === 'ArrowDown') setHover(Math.min(blocks.length - 1, cur + 1))
-    else if (e.key === 'ArrowUp') setHover(Math.max(0, cur <= 0 ? 0 : cur - 1))
-    else {
-      const b = blocks[cur >= 0 ? cur : 0]
-      if (b) goTo(b.gi)
-    }
-  }
+  const keys = (event: React.KeyboardEvent) => navigateReadingMap(
+    event, blocks.length, () => hover ?? blocks.findIndex((block) => block.gi === at), setHover,
+    (index) => { const block = blocks[index]; if (block) goTo(block.gi) },
+  )
   return (
     <div className="relative shrink-0 w-[88px] border-l border-border-subtle bg-surface">
       <div ref={box} className="absolute inset-x-8 top-8 bottom-8 cursor-pointer" onPointerDown={drag}
@@ -193,7 +175,7 @@ function Minimap({ scroller, turns, at, goTo, chats = false, version = 0 }: {
 
 interface Item { chat: Row; turn: SessionTurn; gi: number; first: boolean }
 
-function MapLook(p: Props) {
+function MapLook(p: ChatFocusProps) {
   const [prefs, setPrefs] = useState<FocusPrefs>(readFocusPrefs)
   const set = (x: Partial<FocusPrefs>) => { const next = { ...prefs, ...x }; setPrefs(next); storeFocusPrefs(next) }
   const [gear, setGear] = useState(false)
@@ -227,7 +209,6 @@ function MapLook(p: Props) {
   const [range, setRange] = useState<[number, number]>([0, 1])
   const shown = useMemo(() => items.filter((x) => x.ci >= range[0] && x.ci < range[1]), [items, range])
   const pending = useRef<number | null>(null)
-  const anchor = useRef<{ height: number; top: number } | null>(null)
   const turns = useMemo(() => items.map((x) => x.turn), [items])
 
   const scroller = useRef<HTMLDivElement>(null)
@@ -245,40 +226,19 @@ function MapLook(p: Props) {
     }
     scroller.current?.querySelector<HTMLElement>(`[data-turn-index="${c}"]`)?.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' })
   }, [items, range, chats.length])
+  const { topEdge, bottomEdge, restoreAnchor } = useReadingWindow({
+    scroller, range, setRange, count: chats.length, active: all, shown: shown.length,
+  })
   useLayoutEffect(() => {
     const root = scroller.current
     if (pending.current != null) {
       const c = pending.current
       pending.current = null
       root?.querySelector<HTMLElement>(`[data-turn-index="${c}"]`)?.scrollIntoView({ block: 'start' })
-    } else if (anchor.current && root) {
-      // Chats drawn above: keep the text under the eye where it was.
-      root.scrollTop = anchor.current.top + (root.scrollHeight - anchor.current.height)
-      anchor.current = null
+    } else {
+      restoreAnchor(root)
     }
-  }, [range])
-  const more = useCallback((side: 'up' | 'down') => {
-    const root = scroller.current
-    if (side === 'up') {
-      if (range[0] <= 0) return
-      if (root) anchor.current = { height: root.scrollHeight, top: root.scrollTop }
-      setRange(([a, b]) => [Math.max(0, a - 3), b])
-    } else if (range[1] < chats.length) {
-      setRange(([a, b]) => [a, Math.min(chats.length, b + 3)])
-    }
-  }, [range, chats.length])
-  const topEdge = useRef<HTMLDivElement>(null)
-  const bottomEdge = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const root = scroller.current
-    if (!root || !all) return
-    const io = new IntersectionObserver((es) => {
-      for (const e of es) if (e.isIntersecting) more(e.target === topEdge.current ? 'up' : 'down')
-    }, { root, rootMargin: '1200px 0px' })
-    if (topEdge.current) io.observe(topEdge.current)
-    if (bottomEdge.current) io.observe(bottomEdge.current)
-    return () => io.disconnect()
-  }, [all, more, shown.length])
+  }, [range, restoreAnchor])
   const here = items[at]?.chat ?? p.session
 
   // Opening "all" lands on the chat that was open; opening one chat, at its top.
@@ -466,6 +426,6 @@ function AgentTerminal({ agentId, label }: { agentId: string; label: string }) {
 
 /* ---------------------------------------------------------------- router */
 
-export function MapFocus(props: Props) {
+export function MapFocus(props: ChatFocusProps) {
   return <MapLook {...props} />
 }

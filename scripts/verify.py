@@ -22,6 +22,10 @@ import tempfile
 from threading import Event, Lock
 import time
 
+WINDOWS_QUEUE_POLL_S = 0.5
+TASKKILL_TIMEOUT_S = 5
+PROCESS_EXIT_TIMEOUT_S = 5
+
 REPO = Path(__file__).resolve().parents[1]
 WINDOWS = os.name == "nt"
 LOCK = Path(tempfile.gettempdir()) / "slightly-parallel-terminal-verify.lock"
@@ -62,7 +66,7 @@ def machine_queue(path: Path = LOCK):
                 except OSError as error:
                     if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
                         raise
-                    time.sleep(0.5)
+                    time.sleep(WINDOWS_QUEUE_POLL_S)
         else:
             import fcntl
 
@@ -107,14 +111,14 @@ def terminal_args() -> list[str]:
 def stop_process(child: subprocess.Popen) -> None:
     if WINDOWS:
         try:
-            subprocess.run(["taskkill", "/pid", str(child.pid), "/t", "/f"], check=False, timeout=5)
+            subprocess.run(["taskkill", "/pid", str(child.pid), "/t", "/f"], check=False, timeout=TASKKILL_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             if child.poll() is None:
                 child.kill()
     else:
         try:
             os.killpg(child.pid, signal.SIGTERM)
-            child.wait(timeout=5)
+            child.wait(timeout=PROCESS_EXIT_TIMEOUT_S)
         except (ProcessLookupError, subprocess.TimeoutExpired):
             pass
         # The parent can already be gone while its descendants still run.
@@ -122,7 +126,7 @@ def stop_process(child: subprocess.Popen) -> None:
             os.killpg(child.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-    child.wait(timeout=5)
+    child.wait(timeout=PROCESS_EXIT_TIMEOUT_S)
 
 
 def run_step(command: list[str], cwd: Path, log: Path, env: dict[str, str], timeout: int, cancelled: Event) -> int:

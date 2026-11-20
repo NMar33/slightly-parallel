@@ -23,6 +23,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+CHECKUP_CLI_TIMEOUT_S = 180
+CHECKUP_API_TIMEOUT_S = 60
+SEARCH_REQUEST_TIMEOUT_S = 60
+
 BASE = f"http://127.0.0.1:{os.environ.get('SP_PORT') or 8123}"
 SECTIONS = ("## Machine", "## Server now", "## Memory and machine, last 24 hours", "## Server log",
             "## Capture hook errors", "## Data", "## Tool transcripts", "## Settings",
@@ -33,7 +37,7 @@ SENTINEL = "sp-ci-sentinel-7f3a91"
 
 def sp(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, "sp.py", *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=180)
+                          encoding="utf-8", errors="replace", timeout=CHECKUP_CLI_TIMEOUT_S)
 
 
 def up() -> list[str]:
@@ -45,7 +49,7 @@ def up() -> list[str]:
             failed.append(name)
 
     folder = tempfile.mkdtemp(prefix="sp-checkup-")
-    with urllib.request.urlopen(f"{BASE}/api/checkup?{urllib.parse.urlencode({'cwd': folder})}", timeout=60) as r:
+    with urllib.request.urlopen(f"{BASE}/api/checkup?{urllib.parse.urlencode({'cwd': folder})}", timeout=CHECKUP_API_TIMEOUT_S) as r:
         got = json.loads(r.read().decode("utf-8"))
     by = {f["id"]: f for f in got["findings"]}
     print("verdict:", got["verdict"])
@@ -66,7 +70,7 @@ def up() -> list[str]:
     check("sp.py check prints the checks", "Data is readable and writable" in out.stdout, out.stdout[-300:])
 
     try:
-        urllib.request.urlopen(f"{BASE}/api/search?q={SENTINEL}", timeout=60).read()
+        urllib.request.urlopen(f"{BASE}/api/search?q={SENTINEL}", timeout=SEARCH_REQUEST_TIMEOUT_S).read()
     except OSError:
         pass
     before = set(Path(".").glob("slightly-parallel-report-*.md"))

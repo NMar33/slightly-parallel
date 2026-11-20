@@ -8,6 +8,7 @@
  */
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
+import { centerReadingMapAt, dragReadingMap, navigateReadingMap, readingMapOffset, readingMapViewport } from '../../../components/readingMap'
 import { MAP_TONE, type SectionKind } from './sections'
 import { t } from '../../../i18n/scope/system'
 
@@ -37,13 +38,13 @@ export function DayMap({ scroller, at, goTo, version = 0 }: {
       const lead = el.querySelector<HTMLElement>('[data-lead]')
       out.push({
         key: el.dataset.secKey ?? '', kind: (el.dataset.sec ?? 'more') as SectionKind, label: el.dataset.label ?? '',
-        top: (r.top - base.top + root.scrollTop) / total, height: r.height / total,
+        top: readingMapOffset(r.top, base.top, root, total), height: r.height / total,
         lead: lead ? (lead.getBoundingClientRect().bottom - r.top) / total : 0,
       })
     })
     setBlocks(out)
-    setHeads([...root.querySelectorAll<HTMLElement>('[data-day-head]')].map((el) => (el.getBoundingClientRect().top - base.top + root.scrollTop) / total))
-    setView({ top: root.scrollTop / total, height: root.clientHeight / total })
+    setHeads([...root.querySelectorAll<HTMLElement>('[data-day-head]')].map((el) => readingMapOffset(el.getBoundingClientRect().top, base.top, root, total)))
+    setView(readingMapViewport(root, total))
   }, [scroller])
   useLayoutEffect(() => {
     const root = scroller.current
@@ -52,10 +53,7 @@ export function DayMap({ scroller, at, goTo, version = 0 }: {
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
     ro?.observe(root)
     root.querySelectorAll('[data-sec-key]').forEach((el) => ro?.observe(el))
-    const onScroll = () => {
-      const total = Math.max(1, root.scrollHeight)
-      setView({ top: root.scrollTop / total, height: root.clientHeight / total })
-    }
+    const onScroll = () => setView(readingMapViewport(root))
     root.addEventListener('scroll', onScroll, { passive: true })
     return () => { ro?.disconnect(); root.removeEventListener('scroll', onScroll) }
   }, [scroller, measure, version])
@@ -63,28 +61,13 @@ export function DayMap({ scroller, at, goTo, version = 0 }: {
     const r = box.current?.getBoundingClientRect()
     const root = scroller.current
     if (!r || !root || !r.height) return
-    root.scrollTop = ((clientY - r.top) / r.height) * root.scrollHeight - root.clientHeight / 2
+    centerReadingMapAt(root, r, clientY)
   }
-  const drag = (e: React.PointerEvent) => {
-    e.preventDefault()
-    scrollTo(e.clientY)
-    const move = (ev: PointerEvent) => scrollTo(ev.clientY)
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
-  const keys = (e: React.KeyboardEvent) => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter' && e.key !== ' ') return
-    if (!blocks.length) return
-    e.preventDefault()
-    const cur = hover ?? blocks.findIndex((b) => b.key === at)
-    if (e.key === 'ArrowDown') setHover(Math.min(blocks.length - 1, cur + 1))
-    else if (e.key === 'ArrowUp') setHover(Math.max(0, cur - 1))
-    else {
-      const b = blocks[cur >= 0 ? cur : 0]
-      if (b) goTo(b.key)
-    }
-  }
+  const drag = (e: React.PointerEvent) => dragReadingMap(e, scrollTo)
+  const keys = (event: React.KeyboardEvent) => navigateReadingMap(
+    event, blocks.length, () => hover ?? blocks.findIndex((block) => block.key === at), setHover,
+    (index) => { const block = blocks[index]; if (block) goTo(block.key) },
+  )
   const shown = hover != null ? blocks[hover] : undefined
   return (
     <div className="relative shrink-0 w-[88px] border-l border-border-subtle bg-surface">

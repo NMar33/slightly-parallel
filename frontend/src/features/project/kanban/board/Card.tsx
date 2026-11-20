@@ -14,8 +14,9 @@ import { mentionWho } from '../../mentions'
 import { type Turn } from '../../../tasks/turns'
 import { ReleaseButton } from '../ReleasePrompt'
 import { CopyButton } from '../parts'
-import { DEFAULT_MODAL_PREFS, SELECTION, ageBucket, isQuickWin, normalizeStatus, taskText } from '../model'
-import type { Axis, Glow, LinkInfo, MentionSummary, TaskRow } from '../model'
+import { DEFAULT_MODAL_PREFS, SELECTION, ageBucket, isQuickWin, isToday, normalizeStatus, taskText } from '../model'
+import type { Axis, Folded, Glow, LinkInfo, MentionSummary, TaskRow } from '../model'
+import type { GridProps } from './types'
 import { useEvidenceAsk } from './evidenceAsk'
 import { useCoreTaskIndex } from '../../../architecture/cores/data'
 import { TypeDot } from '../../../architecture/cores/parts'
@@ -319,7 +320,7 @@ export const TaskCard = memo(function TaskCard({
  * the card say there is more; the chip says how far along the queue is and
  * opens it in place.
  */
-export function StackWrap({
+function StackWrap({
   stack, open, onToggle, renderBehind, children,
 }: {
   stack: { behind: TaskRow[]; ordinal: number; total: number }
@@ -363,18 +364,58 @@ export function StackWrap({
   )
 }
 
+type StackCardGrid = Pick<GridProps,
+  'openStacks' | 'toggleStack' | 'linkProps' | 'showDesc' | 'copyMode' | 'multi' | 'axes' | 'today'
+  | 'onCardToday' | 'selection' | 'toggleSelect' | 'onCardEdit' | 'onCardRelease'
+  | 'mentions' | 'noteCounts' | 'evidenceCounts' | 'statusSince'>
+
+export function StackCard({ item, grid, compact }: { item: Folded; grid: StackCardGrid; compact?: boolean }) {
+  const { task, behind, ordinal, total } = item
+  const {
+    openStacks, toggleStack, linkProps, showDesc, copyMode, multi, axes, today, onCardToday,
+    selection, toggleSelect, onCardEdit, onCardRelease, mentions, noteCounts, evidenceCounts, statusSince,
+  } = grid
+  const stackId = task.stack_id || ''
+  return (
+    <StackWrap
+      stack={{ behind, ordinal, total }}
+      open={openStacks.has(stackId)}
+      onToggle={() => toggleStack(stackId)}
+      renderBehind={(tail) => (
+        <TaskCard key={tail.id} task={tail} {...linkProps(tail)} compact showDesc={showDesc}
+          copyMode={copyMode} showProject={multi} axes={axes} today={isToday(tail, today)} onToggleToday={onCardToday}
+          selectedIndex={selection.indexOf(tail.id) + 1 || null} onSelect={toggleSelect} onEdit={onCardEdit} onRelease={onCardRelease}
+        />
+      )}
+    >
+      <TaskCard task={task} today={isToday(task, today)} onToggleToday={onCardToday}
+        selectedIndex={selection.indexOf(task.id) + 1 || null} onSelect={toggleSelect}
+        compact={compact} showDesc={showDesc} copyMode={copyMode} showProject={multi}
+        mention={mentions[task.id]} notesN={noteCounts[task.id]} evidenceN={evidenceCounts[task.id]}
+        agedSince={statusSince[task.id]} axes={axes} {...linkProps(task)} onEdit={onCardEdit} onRelease={onCardRelease}
+      />
+    </StackWrap>
+  )
+}
+
+type TodayCardGrid = Pick<GridProps,
+  'toggleToday' | 'linkProps' | 'copyMode' | 'multi' | 'axes' | 'onCardToday' | 'onCardEdit' | 'onCardRelease'>
+
 /**
  * A card seen a second time in the Today lane — the same task, not a copy.
  * The × drops it from today; the card itself behaves exactly as it does in
  * its home column (drag moves both, click opens, ctrl-click unplans).
  */
-export function TodayShadow({ children, onDrop }: { children: ReactNode; onDrop: () => void }) {
+export function TodayCard({ task, grid }: { task: TaskRow; grid: TodayCardGrid }) {
+  const { toggleToday, linkProps, copyMode, multi, axes, onCardToday, onCardEdit, onCardRelease } = grid
   return (
     <div className="relative group">
-      {children}
+      <TaskCard task={task} {...linkProps(task, true)} compact showDesc={false} copyMode={copyMode}
+        showProject={multi} axes={axes} today onToggleToday={onCardToday} onEdit={onCardEdit} onRelease={onCardRelease}
+      />
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); onDrop() }}
+        onClick={(e) => { e.stopPropagation(); void toggleToday(task) }}
         aria-label={t('Remove from today')}
         title={t('Remove from today')}
         className="absolute -top-4 -right-4 h-16 w-16 rounded-pill bg-surface border border-border-default text-10 text-tertiary hover:text-status-red hover:border-status-red opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center justify-center"

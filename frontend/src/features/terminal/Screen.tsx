@@ -47,6 +47,12 @@ import { InputMarker } from './operatorInput'
 import { enableTextSelection, hasTextSelectionAnchor, transferTextSelection } from './textSelection'
 import { useProgramClipboard } from './programClipboard'
 
+const SELECTION_FLASH_DURATION_MS = 350
+const MOUSE_MODE_POLL_INTERVAL_MS = 200
+const COPY_MODE_POLL_INTERVAL_MS = 400
+const COPY_MODE_INITIAL_POLL_DELAY_MS = 120
+const SCROLLBACK_FRESH_LINES_POLL_MS = 1000
+
 /** tmux: the history is taken ahead once the terminal has rested this long (no output) under the pointer, at most once per AHEAD_EVERY_MS. */
 const AHEAD_REST_MS = 700
 const AHEAD_EVERY_MS = 5000
@@ -305,7 +311,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       void copyText(text, tn(text ? text.split('\n').length : 0, 'Copied {n} line', 'Copied {n} lines'))
     }
     setFlash({ a: lo, b: hi })
-    setTimeout(() => { setFlash(null); setRange(false); setDot(null) }, 350)
+    setTimeout(() => { setFlash(null); setRange(false); setDot(null) }, SELECTION_FLASH_DURATION_MS)
   }, [backend, sid])
 
   const copyWhole = useCallback(async (mode: 'screen' | 'last') => {
@@ -443,7 +449,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       if (scr && t && t.rows > 0) setCellH(scr.clientHeight / t.rows)
     }
     tick()
-    const id = window.setInterval(tick, 200)
+    const id = window.setInterval(tick, MOUSE_MODE_POLL_INTERVAL_MS)
     return () => { dead = true; window.clearInterval(id) }
   }, [range, readPos])
 
@@ -473,10 +479,10 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         setBehind({ up, fresh: up ? Math.max(0, p.history - mark.current) : 0 })
         if (!up) { watching.current = false; return }
       } catch { watching.current = false; return }
-      window.setTimeout(() => void tick(), 400)
+      window.setTimeout(() => void tick(), COPY_MODE_POLL_INTERVAL_MS)
     }
     // A wheel lands before tmux moves: look once it has.
-    window.setTimeout(() => void tick(), 120)
+    window.setTimeout(() => void tick(), COPY_MODE_INITIAL_POLL_DELAY_MS)
   }, [backend, readPos])
 
   // The reader is a snapshot: while it is open, count what the pane printed since.
@@ -491,7 +497,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       if (backend !== 'tmux') { const b = termRef.current?.buffer.normal; if (b) setBehind({ up: true, fresh: Math.max(0, b.baseY - r.history) }); return }
       void getJson<PanePos>(`/api/terminal/sessions/${encodeURIComponent(sid)}/pos`)
         .then((p) => { if (!dead) setBehind({ up: true, fresh: Math.max(0, p.history - r.history) }) }, () => undefined)
-    }, 1000)
+    }, SCROLLBACK_FRESH_LINES_POLL_MS)
     return () => { dead = true; window.clearInterval(id); setBehind({ up: false, fresh: 0 }) }
   }, [reading, sid, backend])
 

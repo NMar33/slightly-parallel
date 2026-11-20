@@ -50,6 +50,8 @@ from .db import ViewStore
 from .file_safety import atomic_write
 
 log = logging.getLogger("sp.timeauto")
+
+TIMER_FILE_READ_RETRY_DELAY_S = 0.05
 #: Tries of a timer file that is there but cannot be read (Windows holds a
 #: file another program has open; an antivirus scan lasts a moment).
 READ_TRIES = 4
@@ -125,7 +127,7 @@ class AutoTimer:
             except (OSError, ValueError) as exc:
                 last = exc
                 if attempt + 1 < READ_TRIES:
-                    time.sleep(0.05)
+                    time.sleep(TIMER_FILE_READ_RETRY_DELAY_S)
         raise DamagedFile(f"the timer's {name} cannot be read ({last}); nothing was changed")
 
     def _load(self) -> None:
