@@ -12,10 +12,11 @@ test('saved resource thresholds, gray mode and visibility reach the open termina
   await page.reload()
   await ready(page)
   const meter = page.getByRole('button', { name: 'System resources' })
-  const strip = meter.locator('[data-resource-strip]')
+  const bars = meter.locator('[data-resource-bar]')
   await expect(meter).toBeVisible()
-  await expect(strip).toHaveCount(1)
-  const paint = () => strip.evaluate((bar) => getComputedStyle(bar).backgroundColor)
+  await expect(bars).toHaveCount(4)
+  await expect(meter.locator('svg')).toHaveCount(4)
+  const paint = () => bars.evaluateAll((fills) => fills.map((bar) => getComputedStyle(bar).backgroundColor))
   const [green, yellow, red, gray] = await meter.evaluate((element) => {
     const probe = document.createElement('span')
     element.append(probe)
@@ -27,8 +28,9 @@ test('saved resource thresholds, gray mode and visibility reach the open termina
     } finally { probe.remove() }
   })
   expect(new Set([green, yellow, red, gray]).size).toBe(4)
-  await expect.poll(paint).toBe(red)
-  const redWidth = (await strip.boundingBox())!.width
+  await expect.poll(paint).toEqual([green, yellow, red, red])
+  const heights = await bars.evaluateAll((fills) => fills.map((bar) => (bar as HTMLElement).style.height))
+  expect(heights).toEqual(['67.5%', '75%', '90%', '100%'])
   await meter.hover()
   await expect(page.getByText('68 °C')).toBeVisible()
   await expect(page.getByText('Network', { exact: true })).toBeVisible()
@@ -62,15 +64,14 @@ test('saved resource thresholds, gray mode and visibility reach the open termina
     await yellowAt.fill('50')
     await redAt.fill('95')
     await save()
-    await expect.poll(paint).toBe(yellow)
-    expect((await strip.boundingBox())!.width).toBeLessThan(redWidth)
+    await expect.poll(paint).toEqual([yellow, yellow, yellow, red])
     await warning.uncheck()
     await save()
-    await expect.poll(paint).toBe(green)
+    await expect.poll(paint).toEqual([green, green, green, red])
 
     await colorful.uncheck()
     await save()
-    await expect.poll(paint).toBe(gray)
+    await expect.poll(paint).toEqual([gray, gray, gray, gray])
     await visibility.uncheck()
     await save()
     await expect(meter).toHaveCount(0)
@@ -85,7 +86,7 @@ test('saved resource thresholds, gray mode and visibility reach the open termina
     await save()
     await expect(meter).toBeVisible()
     await page.reload()
-    await expect.poll(paint).toBe(gray)
+    await expect.poll(paint).toEqual([gray, gray, gray, gray])
   } finally {
     await server.api.post('/api/settings', { data: { values: {
       'terminal.resource_meter': true, 'terminal.resource_color': true,

@@ -1181,8 +1181,24 @@ def tmux_panes(data_root: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _codex_in_pane(root: Path, agent: str, tid: str, panes: dict[str, dict[str, Any]]) -> bool:
+    """A Codex chat runs in this terminal: the processes above its hook
+    include the pane's shell (msgdeliver.occupant_why, the proof messages
+    are typed by). A Codex chat's ``terminal`` is only a claim: Codex 0.170
+    runs every chat's hooks in one app-server daemon, which keeps the
+    SP_TERMINAL of the terminal it was started from, so every Codex chat
+    named that one (tk_49aa81aa). No pane, or no proof: no link."""
+    from . import msgdeliver  # it imports this module
+    try:
+        pane_pid = int((panes.get(tid) or {}).get("pid") or 0)
+    except ValueError:
+        return False
+    return bool(pane_pid) and msgdeliver.occupant_why(root, agent, pane_pid) == ""
+
+
 def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
-    """terminal id → the agent the capture hook saw started in it (newest wins)."""
+    """terminal id → the agent the capture hook saw started in it (newest
+    wins); a Codex chat only when it is proven to run in it (_codex_in_pane)."""
     global _link_cache
     root = Path(data_root)
     now = time.monotonic()
@@ -1190,6 +1206,7 @@ def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
     if cached_root == root and now - cached_at < 3:
         return cached_links
     out: dict[str, dict[str, Any]] = {}
+    panes: dict[str, dict[str, Any]] | None = None
     for meta_path in root.glob("projects/*/chats/*/meta.json"):
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -1198,10 +1215,16 @@ def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
         tid = str(meta.get("terminal") or "")
         if not tid:
             continue
+        agent = str(meta.get("agent_id") or meta_path.parent.name)
+        if meta.get("tool") == "codex" or agent.startswith("codex-"):
+            if panes is None:
+                panes = tmux_panes(root)
+            if not _codex_in_pane(root, agent, tid, panes):
+                continue
         prev = out.get(tid)
         if prev and str(prev.get("last_active") or "") >= str(meta.get("last_active") or ""):
             continue
-        out[tid] = {"agent_id": meta.get("agent_id") or meta_path.parent.name, "project": meta.get("project") or "",
+        out[tid] = {"agent_id": agent, "project": meta.get("project") or "",
                     "last_active": meta.get("last_active") or "",
                     "last_stop": (meta.get("last_stop") or {}).get("at") or ""}
     _link_cache = (root, now, out)

@@ -90,10 +90,11 @@ test.describe('smart timer', () => {
     expect((await auto()).working.find((w) => w.project === PROJECT)?.entry_id).toBe(entryId)
 
     // The timers live above the tabs; a click opens the Timer page in the browser.
-    const chip = page.locator('[data-window-title] [data-timer]')
+    const chip = page.locator('[data-window-title] [data-timer-kind="project"]')
     await expect(chip).toHaveAttribute('data-timer', 'counting', { timeout: 40_000 })
-    await expect(chip).toContainText(`${PROJECT} `)
-    await expect(chip).toContainText('today')
+    await expect(chip).toHaveText(/^\d+:\d{2}$/)
+    await expect(chip).toHaveAccessibleName(new RegExp(PROJECT))
+    await expect(page.locator('[data-timer-group] [data-timer-kind="total"]')).toHaveText(/^Σ\d+:\d{2}$/)
     await chip.click()
     await expect.poll(() => linksOut(win.app)).toContain(`${server.url}/time`)
     await expect(page.locator('[data-window-tabs] [data-timer]')).toHaveCount(0)

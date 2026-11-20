@@ -280,11 +280,12 @@
 .aq-btn.icon { width: 24px; padding: 0; }
 .aq-btn.line { border-color: var(--aq-line); }
 
-[data-window-actions] [data-timer] { max-width: 170px; }
-[data-window-actions][data-narrow] [data-timer] { max-width: 88px; }
+[data-timer-group] [data-timer] { height: 22px; }
 [data-window-title][data-compact] .aq-btn { height: 16px; }
+[data-window-title][data-compact] [data-resource-bars] { row-gap: 0; }
+[data-window-title][data-compact] [data-resource-bars] svg { width: 8px; height: 8px; }
+[data-window-title][data-compact] button:has(> [data-resource-bars]) { height: 16px; }
 [data-window-title][data-compact] [data-health-label] { line-height: 16px !important; }
-[data-window-title][data-compact] [data-timer-layout] { font-size: 8px; }
 [data-window-tabs][data-compact] [data-plus="a"],
 [data-window-tabs][data-compact] .aq-btn { max-height: var(--aq-tab-height); }
 [data-window-tabs][data-compact] [data-alt="b"] > :nth-child(2) { display: none; }

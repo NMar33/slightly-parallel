@@ -340,7 +340,7 @@ describe('SP Aqua at /term', () => {
     expect(sent).toContainEqual({ op: 'grow', left: -236, right: 0 })
     fireEvent.click(screen.getByRole('button', { name: 'Close the window' }))
     expect(sent).toContainEqual({ op: 'close' })
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle fullscreen' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Enter fullscreen' }))
     expect(sent).toContainEqual({ op: 'fullscreen' })
     expect(sent.some((m) => (m as { op: string }).op === 'title')).toBe(true)
   })
@@ -519,44 +519,74 @@ describe('SP Aqua at /term', () => {
     expect(screen.queryByRole('button', { name: /\+1/ })).toBeNull()
   })
 
-  it('stacks today’s project and total timers in the title row and opens the Timer page on click', async () => {
-    const a = row({ label: 'api-limits', project: 'harbor' })
-    const b = row({ label: 'tide', project: 'harbor' })
-    world = { sessions: [a, b], time: { running: [], project: { harbor: 80 }, total: 185, working: ['harbor'] } }
+  it('changes the fullscreen control when the native window enters and leaves fullscreen', async () => {
+    world = { sessions: [row({ label: 'api-limits' })] }
+    const sent: unknown[] = []
+    let receive: ((value: boolean) => void) | undefined
+    ;(window as unknown as { spWindow: unknown }).spWindow = {
+      postMessage: (message: unknown) => sent.push(message),
+      observeFullscreen: (listener: (value: boolean) => void) => { receive = listener; return () => { receive = undefined } },
+    }
+    page()
+    const enter = await screen.findByRole('button', { name: 'Enter fullscreen' })
+    const enterIcon = enter.querySelector('svg')?.innerHTML
+    expect(enterIcon).toBeTruthy()
+    fireEvent.click(enter)
+    expect(sent).toContainEqual({ op: 'fullscreen' })
+    expect(screen.getByRole('button', { name: 'Enter fullscreen' })).toBe(enter)
+    act(() => receive?.(true))
+    const exit = screen.getByRole('button', { name: 'Exit fullscreen' })
+    expect(exit.querySelector('svg')?.innerHTML).not.toBe(enterIcon)
+    act(() => receive?.(false))
+    expect(screen.getByRole('button', { name: 'Enter fullscreen' }).querySelector('svg')?.innerHTML).toBe(enterIcon)
+  })
+
+  it('uses the session timer as the model for the project and day timers in the title row', async () => {
+    world = { sessions: [row({ label: 'api-limits' })], time: { running: [], project: { harbor: 80 }, total: 185, working: ['harbor'] } }
     const sent: unknown[] = []
     ;(window as unknown as { spWindow: unknown }).spWindow = { postMessage: (m: unknown) => sent.push(m) }
     page()
-    const chip = await screen.findByRole('button', { name: /^Timer: counting\. harbor 1h 20m · today 3h 05m\./ })
-    expect(chip.closest('[data-window-title]')).toBeTruthy()
-    expect(chip.closest('[data-window-tabs]')).toBeNull()
-    expect(chip.querySelector('[data-timer-layout]')?.getAttribute('data-timer-layout')).toBe('stacked')
-    expect(chip.dataset.timer).toBe('counting')
-    fireEvent.click(chip)
+    const project = await screen.findByRole('button', { name: /Project timer.*harbor.*1:20/ })
+    const day = await screen.findByRole('button', { name: /Total timer.*3:05/ })
+    const group = project.closest('[data-timer-group]')!
+    expect(group.closest('[data-window-title]')).toBeTruthy()
+    expect(Array.from(group.children, (item) => item.getAttribute('data-timer-kind'))).toEqual(['session', 'project', 'total'])
+    expect(project.textContent).toBe('1:20')
+    expect(project.querySelector('[data-project-timer-dot]')).toBeTruthy()
+    expect(day.textContent).toBe('Σ3:05')
+    expect(project.dataset.timer).toBe('counting')
+    fireEvent.click(project)
     expect(sent).toContainEqual({ op: 'open', url: `${window.location.origin}/time` })
   })
 
-  it('draws no timer when the server has no time routes', async () => {
+  it('draws no project or day timer when the server has no time routes', async () => {
     world = { sessions: [row({ label: 'api-limits' })] }
     page()
     await screen.findAllByRole('tab')
-    expect(screen.queryByRole('button', { name: /^Timer:/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^(Project|Total) timer/ })).toBeNull()
   })
 
-  it('changes timer sources, hides the selected timer and switches to an inline layout', async () => {
+  it('persists timer order, visibility and work-time sources', async () => {
     world = { sessions: [row({ label: 'api-limits' })], time: { running: [], project: { harbor: 5 }, total: 12, totalAgent: 45 } }
-    page()
-    await screen.findByRole('button', { name: /^Timer:.*today 12m/ })
+    const view = page()
+    await screen.findByRole('button', { name: /Total timer.*0:12/ })
     fireEvent.click(screen.getByRole('button', { name: 'Window settings' }))
     const settings = screen.getByRole('complementary', { name: 'Window settings' })
     fireEvent.click(within(settings).getByText('Timers'))
+    fireEvent.click(within(settings).getByRole('button', { name: 'Move Total timer up' }))
+    fireEvent.click(within(settings).getByRole('button', { name: 'Move Total timer up' }))
+    const group = screen.getByRole('button', { name: /Total timer.*0:12/ }).closest('[data-timer-group]')!
+    expect(Array.from(group.children, (item) => item.getAttribute('data-timer-kind'))).toEqual(['total', 'session', 'project'])
     fireEvent.change(within(settings).getByLabelText('Project timer'), { target: { value: 'off' } })
     fireEvent.change(within(settings).getByLabelText('Total timer'), { target: { value: 'agents' } })
-    fireEvent.click(within(settings).getByRole('checkbox', { name: 'Stack timers' }))
-    const chip = await screen.findByRole('button', { name: /^Timer:.*today · agents 45m/ })
-    expect(chip.querySelector('[data-timer-layout]')?.getAttribute('data-timer-layout')).toBe('inline')
-    expect(chip.querySelectorAll('[data-timer-source]')).toHaveLength(1)
-    fireEvent.change(within(settings).getByLabelText('Total timer'), { target: { value: 'off' } })
-    expect(screen.queryByRole('button', { name: /^Timer:/ })).toBeNull()
+    fireEvent.click(within(settings).getByRole('checkbox', { name: 'Session timer' }))
+    const day = await screen.findByRole('button', { name: /Total timer.*0:45.*Agent work time/ })
+    expect(day.closest('[data-timer-group]')?.children).toHaveLength(1)
+    view.unmount()
+    page()
+    const restored = await screen.findByRole('button', { name: /Total timer.*0:45.*Agent work time/ })
+    expect(restored.closest('[data-timer-group]')?.children).toHaveLength(1)
+    expect(JSON.parse(localStorage.getItem('sp-aqua-window-layout')!).timerOrder).toEqual(['total', 'session', 'project'])
   })
 
   it('shows sleep and wake only when the server knows sleep', async () => {

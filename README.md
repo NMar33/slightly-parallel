@@ -19,7 +19,7 @@ The project on film, in a minute or in six: [Slightly Parallel in a minute](http
 - [Three principles](#three-principles)
 - [Limits](#limits)
 - [In detail](#in-detail): [Chats](#chats) · [The board](#the-board) · [Standups](#standups) · [The commands](#the-commands) · [Skills](#skills) · [Artifacts](#artifacts) · [Entry points](#entry-points)
-- [In development](#in-development)
+- [Work in progress (unreleased)](#work-in-progress-unreleased)
 - [FAQ / Problems](#faq--problems)
 - [What it needs and where the data is](#what-it-needs-and-where-the-data-is)
 - [More](#more)
@@ -132,7 +132,7 @@ This is the project's diary, written without you.
 
 ### The commands
 
-Type a command anywhere in your message. When quoting commands, add **`#mute`** to keep them from running. With three hashes, as in `###now-todo`, only that command runs in that message.
+Type a command anywhere in your message.
 
 ![The commands](docs/media/readme/commands.svg)
 
@@ -150,12 +150,6 @@ Type a command anywhere in your message. When quoting commands, add **`#mute`** 
 
 **`#important`** — marks the message, its agent and the task it names; `#important-message`, `-agent`, `-task` mark one of them. The Important page collects them.
 
-**`#pin`** — saves a message on the Pins page. **`#fork-later`** saves it there with the command to start a separate chat from it.
-
-**`#carry`** — gives the agent your message and its reply again when the chat history is shortened. **`#carry-brief`** keeps a summary instead.
-
-**`#publish`** — saves a card about what shipped. Give it the text to keep, or a topic for the agent to write about. The agent adds links to the work.
-
 **`#prompt`** — keeps the message as a prompt to send again, with versions A and B, a rating, and the chats it was sent in.
 
 **`#task`** and **`#now`** — two commands for tasks. Both are typed in the chat, anywhere in the message; the difference is when the work is done.
@@ -164,27 +158,19 @@ Type a command anywhere in your message. When quoting commands, add **`#mute`** 
 
 ![#task in the chat, then the card in the From agents column](docs/media/readme/task.gif)
 
-`#now` is the task being done now. `#now fix the login timeout`. The card's text is your message, as you wrote it; the agent only gives it a title. The card goes into Doing, in the Now lane, marked with today, and only then does the work start. Everything that follows in the chat, the decisions, the evidence, the commits, is tied to that card. `#done` closes it: the server moves the card to done and counts its stretch of the chat. Too lazy to open the board: you do not have to.
+`#now` starts a task in Doing, marks it for today and links it to the chat. For example, `#now fix the login timeout`. Type `#done` to close it.
 
 ![#now in the chat, then the card in Doing, planned for today](docs/media/readme/now.gif)
 
-`#now-todo` files the message in To do instead, and the chat goes on with what it was doing. `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and `#now-done` file it in those columns. `#now-doing` starts it in Doing, like `#now`.
-
 The lane goes in braces right after the tag: `#now {ui} fix the login timeout`, `#task {Kanban Board} cards do not sort`. The server reads the lane from the message, not the agent, so there is nothing to guess. A lane that is not on the board is refused with the list of those that are; the agent asks in one line. New lanes are made on the board. Without braces `#task` lands in `unassigned`, `#now` in Now (the name is a setting).
 
-**`#entrypoint`** — records where to find a topic’s files and how to open its pages and programs, along with where work stopped and what comes next. Give the exact topic name to update its record from any chat in the project, or describe the topic and choose from the matches.
+**`#entrypoint`** — saves where to find the files for a topic, how to run it and where work stopped.
 
 **If a tag made an entry by mistake** (a pasted text that mentions `#vision`, a `#rule` typed by accident): **type `#undo` and say what was the mistake. The agent lists the entries by number; you answer with the numbers, then confirm with `#undo-yes`. Nothing is archived without `#undo-yes`, and nothing is deleted.**
-
-**`#sp`** — is it working. The agent checks this chat and folder: messages recorded, MCP, hooks, skills, data, backups, the server's memory. It says what works and what is a concern, and what it could not check. `#sp the messages are not recorded` looks into that too. It changes nothing without your yes; `python sp.py check` does the same from a terminal, also when the server is down.
 
 **`#evidence`** — attaches the proof you asked for to the task. **`#standup`** writes yesterday’s standup.
 
 **`#architecture`** — updates the project’s architecture record. Use **`#page`** for the written overview or **`#map`** for the parts of the program and their connections.
-
-**`#core-new`** — tracks part of the project, such as the terminal. **`#core-note`** adds a note, **`#core`** links the message and current task, and **`#core-off`** hides it after you confirm.
-
-**`#usage`** — shows token use and plan limits. **`#usage-on`** and **`#usage-off`** switch the count after each reply on or off. **`#usage-warnings-on`** and **`#usage-warnings-off`** control warnings in Claude Code. **`#usage-price`** updates the prices used to calculate API costs.
 
 **`#help`** — the list of commands, in the chat.
 
@@ -202,7 +188,7 @@ An example. Claude Code started writing the help texts and descriptions in my ow
 
 ### Entry points
 
-One card per topic, kept from `#entrypoint`. A topic has a state (active, paused, dead), its ways in, screenshots of each way in over time, and a feed of where it stopped: the agent adds a line at `#done` for the task's topic, and you can add one by hand. What is next is the topic's open tasks. When the page opens it checks each way in's port on this computer and shows the start command of one that is down; it starts nothing itself. Below the card are the chats that worked on the topic, with the command to resume each, and its done tasks, decisions, commits and spend. Copy to agent copies the whole topic as a briefing for a new chat. The topics are a list beside the card or shelves of tiles.
+Open a topic to see what it is, where its files are, how to run it and where work stopped.
 
 ### Your hours
 
@@ -212,22 +198,51 @@ The Timer page keeps your own time, per project and per block of work (a sprint,
 
 ### Monitor
 
-The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. To report it, take one file: **download report** on that page, or `python sp.py report`, which works when the server does not start. It holds the machine, the server's memory over a day, warnings and errors, and the size of the data; no chat text and no values from `.env`; read it before sending it. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
+The Monitor page shows this computer's load: CPU, memory, disk, the connection, the heaviest programs, and what was unusual in the last seven days. Under it, the server's own state: whether every chat is being recorded, the backups, the slowest requests, and the log. When something is wrong with Slightly Parallel itself, this is where it says so. What is recorded and where: [docs/monitoring.md](docs/monitoring.md).
 
 ![The Monitor page: the computer's load, then the server's state and log](docs/media/readme/monitor.gif)
 
-## In development
+## Work in progress (unreleased)
 
-- Run `./sp.sh window` (Windows: `sp window`) to open the desktop terminal. The first launch needs Node 20+ and npm.
-- Tabs are grouped by project and show each chat’s title and recent activity. Alt+W takes you to a chat waiting for your answer.
-- Move a chat into its own window. Open windows and tabs can be restored after a restart.
-- Right-click a message to pin or copy it, make a task from it, or start a separate chat. Collapse long replies to one line or scroll back while output is still arriving.
-- Click a task ID or commit hash in the terminal to inspect it. Copy a shell command with the button beside it.
-- Choose from 12 terminal colour schemes in **Settings › Terminal**. The project timer in the window lets you pause for a break.
-- **Monitor › Terminal** shows scroll stalls, errors and lost connections. Download a report with timings and counts. Typed and pasted text stays out of the log.
-- A coordinator can send a question to another agent’s chat and get the reply in its own chat.
-- When you turn a message into a task, its chat’s agent titles the card. Agents can edit their own cards and comment on other cards.
-- Open a task’s notes from its card to review screenshots, tick off steps or leave a comment.
+### Pages and project views
+
+- **Architecture › Cores** tracks a part of the program, such as the terminal. See its files, tasks, commits and notes, follow changes on a timeline or locate it on the program map.
+- **Entry points** lets you browse topics as a list or as tiles. Open one to see its links, screenshots, open tasks and previous chats, or copy a briefing for another agent.
+- **Notes** collects agents’ plans, reports and reviews. Open a note from its task, enlarge a screenshot, tick off a step or leave a comment.
+- Open **Pins** to find saved messages across projects. Search your pins, find messages saved for the agent to reread, or copy the command to start a separate chat.
+- **Publish** turns cards about shipped work into a document. Edit the text, attach the tasks, files or images behind it, and keep earlier versions.
+- **Usage** shows tokens by chat, task, tool and model, estimated API costs, plan limits and time agents spent waiting for tools.
+- Use **Project tabs** to show or hide sections, including Standups, Scans, Visions, Entry points, Problems and Rules.
+- **Internals** shows how many commits name their task, by project and agent, over the last seven days.
+
+### Chats, tasks and commands
+
+- **`#pin`** saves a message for later. **`#fork-later`** also keeps the command to start another chat from it.
+- **`#carry`** gives the agent your message and its reply again after the chat history is shortened. **`#carry-brief`** keeps a summary.
+- **`#core-new`** starts tracking part of the program. **`#core-note`** adds a note, **`#core`** links the message and its task, and **`#core-off`** hides that part.
+- **`#entrypoint`** now lets you describe a topic and choose from matches. Type its exact name in another chat to update the same record.
+- **`#publish`** makes a card from your text or asks the agent to draft one about a topic you name.
+- **`#now`** keeps your message as the task description and lets the agent title it. **`#now-doing`** does the same.
+- **`#now-todo`**, **`#now-next`**, **`#now-backlog`**, **`#now-review`**, **`#now-parked`** and **`#now-done`** file your message directly in the named column.
+- After **`#done`**, an agent can suggest follow-up tasks. Choose which ones to add by number.
+- **`#mute`** lets you quote commands without running them. Use three hashes, as in **`###now-todo`**, to run just that command in a message.
+- **`#usage`** shows token use and plan limits. **`#usage-on`** and **`#usage-off`** show or hide the count after each reply.
+- **`#usage-warnings-on`** and **`#usage-warnings-off`** control warnings in Claude Code. **`#usage-price`** refreshes the API prices used for estimates.
+- **`#sp`** checks whether your chat is being recorded and whether hooks, storage and backups are working. From a shell, run `python sp.py check`.
+- **Agents** can exchange messages between chats. Helper chats appear under the agent that started them when the parent is known.
+- **Task cards** show the chat from the first task mention through `#done`. The agent titles cards created from the terminal’s message menu. Agents can edit their own cards and comment on others.
+
+### Desktop terminal and diagnostics
+
+- Open the terminal with `./sp.sh window` (Windows: `sp window`). First launch needs Node 20+ and npm. Linux is tested first. On Windows the terminal uses PowerShell without tmux.
+- Group tabs by project, split the view or move a chat into its own window. Windows and tabs can reopen after a restart.
+- Tabs show the chat title and recent activity. Alt+W takes you to a chat waiting for your answer.
+- Right-click a message to pin or copy it, make a task, or branch into another chat. Collapse long replies or scroll back while output arrives.
+- Click a task ID or commit hash to inspect it. Copy a shell command with the button beside it.
+- Add a task’s ID and description to the project’s Markdown draft, or turn selected draft text into a task.
+- Window settings let you choose from 12 colour schemes, adjust the title and tab rows, and control clipboard access. The title bar can show project time, total time and system load.
+- **Monitor › Terminal** shows scroll stalls, errors and lost connections. Download a report of timings and counts without typed or pasted text.
+- **Monitor › Server** offers a diagnostic report. If the server cannot start, create it from the shell with `python sp.py report`.
 
 ## FAQ / Problems
 

@@ -1,17 +1,10 @@
-/**
- * The timers in the terminal window title row:
- * today's time on the project of the tab in front, today's time in all,
- * and whether the timer counts, is paused or saw you away. One quiet line;
- * a click opens the Timer page in the browser.
- *
- * Drawn only when the server has the time routes (a 404 hides it).
- */
-
 import { useQuery } from '@tanstack/react-query'
 
 import { getJson } from '../../../lib/getJson'
 import { useTimeAuto, type TimeAuto } from '../../../lib/timer'
-import { hMin } from '../../../utils/format'
+import type { ReactNode } from 'react'
+import { projectColor } from '../../../utils/projectColor'
+import { clockOf } from './health/healthModel'
 import type { TimeEntry } from '../../project/timeEntry'
 import { post } from './bridge'
 import { t } from '../../../i18n/scope/aqua'
@@ -37,11 +30,6 @@ const WORD: Record<ChipState, string> = {
   off: t('timer off'),
 }
 
-/** The chip's words: "harbor 1h 20m · today 3h 05m". */
-export function chipText(project: string, projectMin: number, totalMin: number): string {
-  return t('{project} {time} · today {total}', { project, time: hMin(projectMin, '0m'), total: hMin(totalMin, '0m') })
-}
-
 /** The Timer page, in the browser: through the window's bridge, or a new tab. */
 export function openTimerPage() {
   const url = `${window.location.origin}/time`
@@ -50,10 +38,8 @@ export function openTimerPage() {
 
 type Summary = { today_min: number; today_agent_min?: number }
 
-type TimerPrefs = Pick<WindowPreferences, 'projectTimer' | 'totalTimer' | 'stackedTimers'>
-
-export function TimerChip({ project, prefs }: { project: string; prefs: TimerPrefs }) {
-  const { projectTimer, totalTimer, stackedTimers } = prefs
+export function TimerGroup({ project, prefs, session }: { project: string; prefs: WindowPreferences; session?: ReactNode }) {
+  const { projectTimer, totalTimer, showSessionTimer, timerOrder } = prefs
   // This window has no freshness stamp: the reads poll, slowly.
   const running = useQuery({
     queryKey: ['time-running'],
@@ -71,32 +57,37 @@ export function TimerChip({ project, prefs }: { project: string; prefs: TimerPre
     refetchInterval: 60_000, retry: false, enabled: totalTimer !== 'off',
   })
   const auto = useTimeAuto()
-  const rows = [
-    { key: 'project', source: projectTimer, label: project, data: mine.data },
-    { key: 'total', source: totalTimer, label: t('today'), data: all.data },
-  ].filter((row) => row.source !== 'off' && !!row.label && !!row.data)
-  if (!running.data || !rows.length) return null
-
-  const state = chipState(project, running.data.running, auto.data)
-  const minutesOf = ({ source, data }: typeof rows[number]) => {
-    const minutes = source === 'agents' ? data?.today_agent_min : data?.today_min
-    return minutes === undefined ? '—' : hMin(minutes, '0m')
+  const state = chipState(project, running.data?.running ?? [], auto.data)
+  const rows = {
+    project: { source: projectTimer, data: project ? mine.data : undefined },
+    total: { source: totalTimer, data: all.data },
   }
-  const nameOf = ({ source, label }: typeof rows[number]) => source === 'agents' ? t('{name} · agents', { name: label }) : label
-  const text = projectTimer === 'operator' && totalTimer === 'operator' && mine.data && all.data
-    ? chipText(project, mine.data.today_min, all.data.today_min) : rows.map((row) => `${nameOf(row)} ${minutesOf(row)}`).join(' · ')
-  const said = `${t('Timer')}: ${WORD[state]}. ${text}. ${t('Click to open the Timer page.')}`
-  const tone = state === 'counting' ? 'var(--brand)' : state === 'off' ? 'var(--aq-ink3, var(--text-tertiary))' : 'var(--status-amber)'
+  const enabled = timerOrder.filter((kind) => kind === 'session'
+    ? showSessionTimer && session
+    : rows[kind].source !== 'off' && rows[kind].data)
+  if (!enabled.length) return null
+
   return (
-    <button type="button" data-nodrag data-timer={state} onClick={openTimerPage} title={said} aria-label={said}
-      className="min-w-0 px-4 inline-flex items-center gap-4 rounded-[5px] text-10 font-mono tabular-nums whitespace-nowrap hover:bg-[var(--aq-hover)]"
-      style={{ color: 'var(--aq-ink2)' }}>
-      <span aria-hidden className={`w-[6px] h-[6px] rounded-full shrink-0 ${state === 'counting' ? 'animate-pulse' : ''}`}
-        style={state === 'off' ? { border: `1px solid ${tone}` } : { background: tone }} />
-      {state !== 'counting' && state !== 'off' && <span style={{ color: tone }}>{WORD[state]}</span>}
-      <span data-timer-layout={stackedTimers ? 'stacked' : 'inline'} className={`min-w-0 leading-[1] ${stackedTimers ? 'grid' : 'flex gap-6'}`}>
-        {rows.map((row) => <span key={row.key} data-timer-source={row.source} className="flex min-w-0 gap-4"><span className="truncate">{nameOf(row)}</span>{' '}<span className="shrink-0">{minutesOf(row)}</span></span>)}
-      </span>
-    </button>
+    <span data-timer-group className="ml-4 inline-flex shrink-0 items-center gap-2">
+      {enabled.map((kind) => {
+        if (kind === 'session') return <span key={kind} data-timer-kind={kind} className="inline-flex">{session}</span>
+        const { source, data } = rows[kind]
+        const minutes = source === 'agents' ? data?.today_agent_min : data?.today_min
+        const time = minutes === undefined ? '—' : clockOf(minutes)
+        const label = kind === 'project' ? `${t('Project timer')} · ${project}` : t('Total timer')
+        const sourceLabel = source === 'agents' ? t('Agent work time') : t('My work time')
+        const title = `${label} · ${time} · ${sourceLabel} · ${WORD[state]}. ${t('Click to open the Timer page.')}`
+        return (
+          <button key={kind} type="button" data-nodrag data-timer-kind={kind} data-timer={state} data-timer-source={source}
+            onClick={openTimerPage} title={title} aria-label={title}
+            className="aq-btn shrink-0 !px-4 !text-11 !leading-[1] font-mono tabular-nums whitespace-nowrap text-tertiary">
+            {kind === 'project'
+              ? <span aria-hidden data-project-timer-dot className="size-[6px] rounded-full shrink-0" style={{ backgroundColor: projectColor(project) }} />
+              : <span aria-hidden>Σ</span>}
+            {time}
+          </button>
+        )
+      })}
+    </span>
   )
 }

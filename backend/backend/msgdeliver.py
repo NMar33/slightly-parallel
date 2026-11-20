@@ -172,8 +172,9 @@ def terminal_of(data_root: Path, agent_id: str) -> str:
     """The terminal the chat's hook last said it started in (its id), ''
     when none. Only a claim: several chats can name one terminal (a reused
     one, a shared Codex daemon), and the page's link (termlib.agent_links)
-    gives it to the one active last, wherever that one runs. Who is in the
-    pane now is checked against the processes (occupant_why)."""
+    gives it to the one active last (a Codex chat only when occupant_why
+    proves it there). Who is in the pane now is checked against the
+    processes (occupant_why)."""
     meta = chat_meta(data_root, agent_id) or {}
     return str(meta.get("terminal") or "")
 

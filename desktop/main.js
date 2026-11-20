@@ -212,6 +212,11 @@ function openWindow(url, width, height, show = true, at = null) {
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) sidebarGrowth.delete(win)
   })
+  const notifyFullscreen = () => {
+    if (!wc.isDestroyed() && sameSite(args.url, wc.getURL())) wc.send('sp-fullscreen-changed', win.isFullScreen())
+  }
+  win.on('enter-full-screen', notifyFullscreen)
+  win.on('leave-full-screen', notifyFullscreen)
   win.on('closed', () => stopDrag(win))
   if (show) win.once('ready-to-show', () => win.show())
   win.loadURL(url)
@@ -312,6 +317,9 @@ ipcMain.handle('sp-restore-offer', async (event) => {
   const n = await decided
   return askingToRestore && mainWin && event.sender === mainWin.webContents ? Math.min(n, pending.length) : 0
 })
+
+ipcMain.handle('sp-fullscreen', (event) =>
+  sameSite(args.url, event.sender.getURL()) && (BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false))
 
 // Read only: what the window's processes use, for the page's terminal log.
 ipcMain.handle('sp-metrics', (event) => {

@@ -92,9 +92,10 @@ def folder(store: ViewStore, cwd: str) -> tuple[dict[str, Any], str, str]:
     return finding("folder", "setup", OK, f"Folder belongs to project {code}"), code, folders[code]
 
 
-#: How a chat was found that counts as knowing it: by its own tool process,
+#: How a chat was found that counts as knowing it: by its own tool process
+#: or its Codex thread,
 #: or named by the caller. A shared terminal or the folder's newest chat is a guess.
-SURE = ("process", "given")
+SURE = ("process", "thread", "given")
 
 
 def this_chat(store: ViewStore, agent_id: str, now: float, identity: str = "given") -> dict[str, Any]:
@@ -286,7 +287,7 @@ def server(now: float) -> list[dict[str, Any]]:
 
 
 def mcp(via_mcp: bool, identity: str = "given") -> dict[str, Any]:
-    if via_mcp and identity == "process":
+    if via_mcp and identity in ("process", "thread"):
         return finding("mcp", "agent", OK, "MCP answers from this chat", "this check came through it")
     if via_mcp:
         return finding("mcp", "agent", OK, "MCP answers this caller", "which chat it serves could not be told")

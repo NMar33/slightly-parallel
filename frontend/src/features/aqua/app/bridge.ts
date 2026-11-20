@@ -10,6 +10,7 @@ type Handler = {
   postMessage: (msg: unknown) => void
   restoreOffer?: () => Promise<number>
   saveDraft?: (name: string, text: string) => Promise<boolean>
+  observeFullscreen?: (receive: (value: boolean) => void) => () => void
 }
 
 export type BridgeOp =
@@ -33,6 +34,10 @@ function handler(): Handler | null {
 
 /** Inside the app's own window. */
 export const isNative = () => handler() !== null
+
+export function observeFullscreen(receive: (value: boolean) => void) {
+  return handler()?.observeFullscreen?.(receive)
+}
 
 /** Tell the window; false when there is no window to tell. */
 export function post(msg: BridgeOp): boolean {

@@ -38,4 +38,18 @@ function saveDraft(name, text) {
   return ipcRenderer.invoke('sp-save-draft', name, text)
 }
 
-contextBridge.exposeInMainWorld('spWindow', { postMessage, metrics, restoreOffer, saveDraft })
+function observeFullscreen(receive) {
+  let current = true
+  let changed = false
+  const listener = (_event, value) => { changed = true; receive(value === true) }
+  ipcRenderer.on('sp-fullscreen-changed', listener)
+  void ipcRenderer.invoke('sp-fullscreen').then((value) => {
+    if (current && !changed) receive(value === true)
+  }).catch(() => {})
+  return () => {
+    current = false
+    ipcRenderer.removeListener('sp-fullscreen-changed', listener)
+  }
+}
+
+contextBridge.exposeInMainWorld('spWindow', { postMessage, metrics, restoreOffer, saveDraft, observeFullscreen })

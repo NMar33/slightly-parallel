@@ -22,7 +22,7 @@
  * - the smart timer: the tab in front is the project being worked on while
  *   the window is in front with input (useWorkBeats, source "window"); the
  *   strip's right end says today's time on its project and in all, and
- *   whether the timer counts (TimerChip; a click opens the Timer page).
+ *   whether the timer counts (TimerGroup; a click opens the Timer page).
  *
  * `?detached=<id>` is a window of one chat; `?ws=<project or group>` a
  * window of one workspace.
@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ChevronUp, LayoutGrid, Maximize, Menu, Minus, PanelLeft, PanelRight, Plus, RotateCcw, Settings, SquareTerminal, Sun, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, LayoutGrid, Maximize, Menu, Minimize, Minus, PanelLeft, PanelRight, Plus, RotateCcw, Settings, SquareTerminal, Sun, X } from 'lucide-react'
 import { smoothOn } from '../../terminal/smoothScroll'
 
 import '../design/aqua.css'
@@ -40,7 +40,7 @@ import { PYWINPTY, useTerminalActions, useTerminalStatus } from '../../../lib/te
 import type { MsgMark } from '../../../lib/pins'
 import { useMsgMarkActions } from '../../../lib/pins'
 import { sendTyping, useAquaActions, useGroups, useRestoreNeeded, useSessions, type RestoreResult } from './api'
-import { isNative, openWindow, post } from './bridge'
+import { isNative, observeFullscreen, openWindow, post } from './bridge'
 import {
   LW, RW, chordOf, deriveWorkspaces, lastTabIn, rememberTab, detachUrl, fitSidebarWidths, foldTabs, groupWs, isAsleep, nextWaiting, parseView, placeSide, projectWs,
   cycleLevel, moveTab, orderedTabs, resolveWs, roleOf, seatBoth, shownOf, stepIn, stepOut, tabSections, tilesOf, widths, wsIdOf,
@@ -53,7 +53,7 @@ import { RestoreOffer } from './restoreOffer'
 import { ResourceMeter } from './ResourceMeter'
 import { TypingBatcher } from './typing'
 import { useWorkBeats } from '../../time/beats'
-import { TimerChip } from './timer'
+import { TimerGroup } from './timer'
 import { useWindowScheme } from './scheme'
 import { useWindowPreferences, WindowSettings } from './WindowSettings'
 import { HealthLayer, HealthTint, HealthTitle, useHealthEdge, useHealthRuntime } from './health'
@@ -192,6 +192,9 @@ function AquaWindow({ status }: { status: Status }) {
   const vp = useViewport()
   // The colour scheme (Settings › Terminal › Colour scheme) on the window's tokens.
   const scheme = useWindowScheme()
+  const [fullscreen, setFullscreen] = useState(false)
+  useEffect(() => observeFullscreen(setFullscreen), [])
+  const fullscreenLabel = fullscreen ? t('Exit fullscreen') : t('Enter fullscreen')
   const layout = useWindowPreferences()
   // The tab strip (tk_a9306fb1): titles the programs set, the chats' facts, Alt held.
   const tabInfo = useTabInfo()
@@ -970,8 +973,7 @@ function AquaWindow({ status }: { status: Status }) {
               <span className="truncate text-center text-13 pointer-events-none" data-window-name>{title}</span>
               <span className="flex min-w-0 items-center justify-end gap-2" data-window-actions data-narrow={headerWidth < 480 || undefined}>
                 <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Fold the title row (alt+T)')} title={t('Fold the title row (alt+T)')} onClick={() => { setFolded(true); refocus() }}><ChevronUp size={14} /></button>
-                {health && <HealthTitle folded={false} />}
-                <TimerChip project={active?.project ?? ''} prefs={layout.prefs} />
+                <TimerGroup project={active?.project ?? ''} prefs={layout.prefs} session={health ? <HealthTitle folded={false} /> : undefined} />
                 {kind !== 'chat' && (
                   <button type="button" data-nodrag className="aq-btn shrink-0" aria-pressed={level !== 'chat'} onClick={cycle}
                     title={t('Workspaces: the chat, its workspace, every workspace (Ctrl+Shift+↑)')} aria-label={t('Workspaces')}>
@@ -981,7 +983,7 @@ function AquaWindow({ status }: { status: Status }) {
                 )}
                 {native && <>
                   <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Minimise')} title={t('Minimise')} onClick={() => post({ op: 'minimize' })}><Minus size={13} /></button>
-                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Toggle fullscreen')} title={t('Toggle fullscreen')} onClick={() => post({ op: 'fullscreen' })}><Maximize size={13} /></button>
+                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={fullscreenLabel} title={fullscreenLabel} onClick={() => post({ op: 'fullscreen' })}>{fullscreen ? <Minimize size={13} /> : <Maximize size={13} />}</button>
                   <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Close the window')} title={t('Close the window')} onClick={() => post({ op: 'close' })}><X size={13} /></button>
                 </>}
               </span>
@@ -994,7 +996,7 @@ function AquaWindow({ status }: { status: Status }) {
             <button type="button" data-nodrag className="absolute inset-0 w-full cursor-pointer hover:bg-[var(--aq-hover)]" aria-label={t('Unfold the title row (alt+T)')} title={t('Unfold the title row (alt+T)')}
               onClick={() => { unfoldedAt.current = Date.now(); setFolded(false); refocus() }} />
           )}
-          {folded && health && <span className="absolute z-[2]" style={{ right: headerRight + 40, top: 0 }}><HealthTitle folded /></span>}
+          {folded && health && layout.prefs.showSessionTimer && <span className="absolute z-[2]" style={{ right: headerRight + 40, top: 0 }}><HealthTitle folded /></span>}
           {kind !== 'chat' && !folded && toggleBtn('right')}
         </div>
         <div className="relative flex min-h-0 flex-1" style={{ background: 'var(--aq-panel)' }}>

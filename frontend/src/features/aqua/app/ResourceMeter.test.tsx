@@ -37,23 +37,24 @@ it('colors the fill at both thresholds and syncs saved settings with an open ter
   render(<QueryClientProvider client={client}><TerminalWindow /></QueryClientProvider>)
 
   const button = await screen.findByRole('button', { name: 'System resources' })
-  const fill = button.querySelectorAll<HTMLElement>('[data-resource-strip]')
-  expect(fill).toHaveLength(1)
-  const bar = fill[0]!
-  expect(bar.style.backgroundColor).toBe(red)
-  const redWidth = parseFloat(bar.style.width)
+  const bars = [...button.querySelectorAll<HTMLElement>('[data-resource-bar]')]
+  const colors = () => bars.map((bar) => bar.style.backgroundColor)
+  const heights = () => bars.map((bar) => bar.style.height)
+  expect(button.querySelectorAll('svg')).toHaveLength(4)
+  expect(colors()).toEqual([green, yellow, red, red])
+  expect(heights()).toEqual(['67.5%', '75%', '90%', '100%'])
   fireEvent.mouseEnter(button)
   expect(screen.getByText('68 °C')).toBeTruthy()
 
   await act(() => saveSettings({ 'terminal.resource_yellow': 50, 'terminal.resource_red': 95 }))
-  await waitFor(() => expect(bar.style.backgroundColor).toBe(yellow))
-  expect(parseFloat(bar.style.width)).toBeLessThan(redWidth)
+  await waitFor(() => expect(colors()).toEqual([yellow, yellow, yellow, red]))
   await act(() => saveSettings({ 'terminal.resource_yellow_enabled': false }))
-  await waitFor(() => expect(bar.style.backgroundColor).toBe(green))
-  const greenWidth = bar.style.width
-  await act(() => saveSettings({ 'terminal.resource_color': false }))
-  await waitFor(() => expect(bar.style.backgroundColor).toBe(gray))
-  expect(bar.style.width).toBe(greenWidth)
+  await waitFor(() => expect(colors()).toEqual([green, green, green, red]))
+  await act(() => saveSettings({ 'terminal.resource_red_enabled': false, 'terminal.resource_green_enabled': false }))
+  await waitFor(() => expect(colors()).toEqual([gray, gray, gray, gray]))
+  await act(() => saveSettings({ 'terminal.resource_color': false, 'terminal.resource_red_enabled': true, 'terminal.resource_green_enabled': true }))
+  await waitFor(() => expect(colors()).toEqual([gray, gray, gray, gray]))
+  expect(heights()).toEqual(['67.5%', '75%', '90%', '100%'])
   await act(() => saveSettings({ 'terminal.resource_meter': false }))
   await waitFor(() => expect(screen.queryByRole('button', { name: 'System resources' })).toBeNull())
   await act(() => saveSettings({ 'terminal.resource_meter': true }))
@@ -67,7 +68,7 @@ it('keeps absent signals empty and hides the meter when the system monitor is of
   client.setQueryData(['monitor', 'now'], { enabled: true, sample: { cpu: 0 }, spark: [] })
   const { unmount } = render(<QueryClientProvider client={client}><ResourceMeter /></QueryClientProvider>)
   const button = screen.getByRole('button', { name: 'System resources' })
-  expect(button.querySelector<HTMLElement>('[data-resource-strip]')?.style.backgroundColor).toBe(green)
+  expect([...button.querySelectorAll<HTMLElement>('[data-resource-bar]')].map((bar) => bar.style.backgroundColor)).toEqual([gray, green, gray, gray])
   unmount()
 
   client.setQueryData(['monitor', 'now'], { enabled: false })
@@ -75,21 +76,15 @@ it('keeps absent signals empty and hides the meter when the system monitor is of
   expect(screen.queryByRole('button', { name: 'System resources' })).toBeNull()
 })
 
-it('keeps ordinary transfers green regardless of recent peaks and scales temperature separately', async () => {
+it('keeps network height relative to the recent peak and shows missing sensors empty', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
   const monitor = ['monitor', 'now']
   const mib = 1024 ** 2
-  const sample = { net_rx: 2 * mib, net_tx: 3 * mib, temp_c: 67.5 }
-  client.setQueryData(monitor, { enabled: true, sample, spark: [{ net_rx: mib }] })
+  const sample = { net_rx: 2 * mib, net_tx: 3 * mib }
+  client.setQueryData(monitor, { enabled: true, sample, spark: [{ net_rx: 10 * mib }] })
   render(<QueryClientProvider client={client}><ResourceMeter /></QueryClientProvider>)
-  const bar = screen.getByRole('button', { name: 'System resources' }).querySelector<HTMLElement>('[data-resource-strip]')!
-  expect(bar.style.backgroundColor).toBe(green)
-  const greenWidth = parseFloat(bar.style.width)
-  act(() => client.setQueryData(monitor, { enabled: true, sample, spark: [{ net_rx: 190 * mib }] }))
-  await waitFor(() => expect(bar.style.backgroundColor).toBe(green))
-  act(() => client.setQueryData(monitor, { enabled: true, sample: { net_rx: 70 * mib, net_tx: 7 * mib }, spark: [] }))
-  await waitFor(() => expect(bar.style.backgroundColor).toBe(yellow))
-  expect(parseFloat(bar.style.width)).toBeGreaterThan(greenWidth)
-  act(() => client.setQueryData(monitor, { enabled: true, sample: { temp_c: 95 }, spark: [] }))
-  await waitFor(() => expect(bar.style.backgroundColor).toBe(red))
+  const bars = screen.getByRole('button', { name: 'System resources' }).querySelectorAll<HTMLElement>('[data-resource-bar]')
+  expect([...bars].map((bar) => bar.style.height)).toEqual(['0%', '0%', '0%', '50%'])
+  act(() => client.setQueryData(monitor, { enabled: true, sample, spark: [{ net_rx: 20 * mib }] }))
+  await waitFor(() => expect(bars[3]?.style.height).toBe('25%'))
 })

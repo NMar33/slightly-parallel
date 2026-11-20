@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { chipState, chipText } from './timer'
+import { chipState } from './timer'
 import type { TimeEntry } from '../../project/timeEntry'
 
 const e = (over: Partial<TimeEntry>): TimeEntry => ({ id: 'tm_1', project: 'harbor', started_at: '2026-11-18T10:00:00+11:00', ...over })
@@ -21,8 +21,4 @@ describe('the timer in the terminal window', () => {
     expect(chipState('harbor', [e({})], auto([], ['harbor']))).toBe('away')
   })
 
-  it('says the project\'s time and the day\'s, with 0m for none', () => {
-    expect(chipText('harbor', 80, 185)).toBe('harbor 1h 20m · today 3h 05m')
-    expect(chipText('harbor', 0, 0)).toBe('harbor 0m · today 0m')
-  })
 })

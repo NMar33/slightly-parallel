@@ -1138,9 +1138,14 @@ class TurnCapture:
             if head:
                 updates["base_head"] = head
         # SP_TERMINAL: the Slightly Parallel terminal this tool was started in (the
-        # terminal sets it), so the page can tie the agent to its terminal.
+        # terminal sets it), so the page can tie the agent to its terminal. Not
+        # under Codex's shared daemon: it keeps the SP_TERMINAL of the terminal
+        # it was started from, for every Codex chat (tk_49aa81aa).
+        terminal = os.environ.get("SP_TERMINAL", "")
+        if terminal and tool == "codex" and shared.codex_daemon_above():
+            terminal = ""
         for key, val in (("tool", tool), ("session_ref", session_id), ("cwd", cwd),
-                         ("terminal", os.environ.get("SP_TERMINAL", ""))):
+                         ("terminal", terminal)):
             v = str(val or "").strip()
             if v and meta.get(key) != v:
                 updates[key] = v

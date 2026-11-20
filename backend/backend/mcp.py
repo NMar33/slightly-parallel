@@ -45,6 +45,34 @@ VIA_VALUE = "mcp"
 SCHEMA_RETRY_S = 20.0
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# Codex (0.170) runs the MCP servers of every chat inside one shared
+# app-server daemon: the processes above this server are the daemon's, the
+# same for every Codex chat, and say nothing of which chat calls. Each
+# tools/call names its own thread in ``_meta`` instead (threadId, sessionId,
+# x-codex-turn-metadata.thread_id): that thread is the caller. A Codex call
+# without it is refused, never given the newest Codex chat.
+CODEX_CLIENTS = ("codex-mcp-client",)
+CODEX_UNKNOWN = (
+    "cannot tell which Codex chat is calling: the call carries no thread id "
+    "(Codex sends it in the tool call's _meta since 0.170). Nothing was written "
+    "or read as this chat; update Codex, or tell the user."
+)
+_THREAD_RE = re.compile(r"[0-9A-Za-z-]{8,80}")
+
+
+def codex_thread(params: Any) -> str:
+    """The Codex thread a tools/call comes from, from its ``_meta``; "" when
+    it names none (another client, an older Codex)."""
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    if not isinstance(meta, dict):
+        return ""
+    turn = meta.get("x-codex-turn-metadata")
+    for v in (meta.get("threadId"), turn.get("thread_id") if isinstance(turn, dict) else None,
+              meta.get("sessionId")):
+        if isinstance(v, str) and _THREAD_RE.fullmatch(v):
+            return v
+    return ""
+
 # Every tool, in one line each. The one list: the server's refusal, the
 # schema (`tools`), the Info page and the docs all read this, and a test
 # holds it equal to what tool_defs() really serves.
@@ -194,6 +222,10 @@ class Translator:
         self.schema: dict | None = None
         self.lenses: dict[str, dict] = {}
         self.vocab: dict = {}
+        # The MCP client (initialize's clientInfo.name) and the Codex thread
+        # of the call being answered (codex_thread): set per request by handle().
+        self.client = ""
+        self.thread = ""
         try:
             self._load_schema()
         except ApiError:
@@ -241,6 +273,11 @@ class Translator:
     def identity(self) -> dict:
         """Fresh on every write: the breadcrumb may change under us."""
         q = urllib.parse.quote(self.cwd, safe="")
+        if self.thread:
+            # Codex: the call's own thread names the chat, not the processes.
+            return self.api.get(f"/api/whoami?cwd={q}&thread={urllib.parse.quote(self.thread, safe='')}")
+        if self.client in CODEX_CLIENTS:
+            raise ApiError(CODEX_UNKNOWN)
         # The processes above this server: two chats in one folder are told
         # apart by the tool process each one's hook and MCP server share.
         pids = ",".join(str(p) for p in ancestors())
@@ -1663,7 +1700,12 @@ def handle(tr: Translator, msg: dict) -> dict | None:
     if msg_id is None:
         return None  # notifications (initialized, cancelled) need no answer
 
+    # Only a tools/call names its Codex thread; nothing carries over to the next request.
+    tr.thread = codex_thread(params) if method == "tools/call" else ""
+
     if method == "initialize":
+        info = params.get("clientInfo") if isinstance(params, dict) else None
+        tr.client = str(info.get("name") or "") if isinstance(info, dict) else ""
         client_version = str(params.get("protocolVersion") or PROTOCOL_VERSION)
         return _result(msg_id, {
             # Echo the client's version when it is one we can serve; the

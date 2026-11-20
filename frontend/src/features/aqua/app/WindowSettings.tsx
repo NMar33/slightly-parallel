@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { ArrowDown, ArrowUp, X } from 'lucide-react'
 
 import { t } from '../../../i18n/scope/aqua'
 import { saveSettings, SETTINGS_QUERY_KEY, useSettingsValues } from '../../../lib/settings'
@@ -10,28 +10,37 @@ import { StripSettingsRows } from './tabs/Tab'
 const SCALES = [1, 1.5, 2] as const
 type Scale = typeof SCALES[number]
 export type TimerSource = 'operator' | 'agents' | 'off'
+const TIMER_ORDER = ['session', 'project', 'total'] as const
+type TimerKind = typeof TIMER_ORDER[number]
+
 export type WindowPreferences = {
   titleScale: Scale
   tabsScale: Scale
   projectTimer: TimerSource
   totalTimer: TimerSource
-  stackedTimers: boolean
+  showSessionTimer: boolean
+  timerOrder: readonly TimerKind[]
 }
 
 const KEY = 'sp-aqua-window-layout'
-const defaults: WindowPreferences = { titleScale: 1, tabsScale: 1, projectTimer: 'operator', totalTimer: 'operator', stackedTimers: true }
+const defaults: WindowPreferences = { titleScale: 1, tabsScale: 1, projectTimer: 'operator', totalTimer: 'operator', showSessionTimer: true, timerOrder: TIMER_ORDER }
 const isScale = (value: unknown): value is Scale => SCALES.some((scale) => scale === value)
 const isSource = (value: unknown): value is TimerSource => value === 'operator' || value === 'agents' || value === 'off'
 
 function readPreferences(): WindowPreferences {
   try {
     const stored = JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {}
+    const order = Array.isArray(stored.timerOrder)
+      ? TIMER_ORDER.filter((kind) => stored.timerOrder.includes(kind))
+        .sort((a, b) => stored.timerOrder.indexOf(a) - stored.timerOrder.indexOf(b))
+      : []
     return {
       titleScale: isScale(stored.titleScale) ? stored.titleScale : defaults.titleScale,
       tabsScale: isScale(stored.tabsScale) ? stored.tabsScale : defaults.tabsScale,
       projectTimer: isSource(stored.projectTimer) ? stored.projectTimer : defaults.projectTimer,
       totalTimer: isSource(stored.totalTimer) ? stored.totalTimer : defaults.totalTimer,
-      stackedTimers: typeof stored.stackedTimers === 'boolean' ? stored.stackedTimers : defaults.stackedTimers,
+      showSessionTimer: stored.showSessionTimer !== false,
+      timerOrder: order.length === TIMER_ORDER.length ? order : TIMER_ORDER,
     }
   } catch { return defaults }
 }
@@ -145,12 +154,39 @@ function ClipboardSetting() {
   )
 }
 
+function TimerSettings({ prefs, update }: ReturnType<typeof useWindowPreferences>) {
+  const names = { session: t('Session timer'), project: t('Project timer'), total: t('Total timer') }
+  const sources = [['operator', t('My work time')], ['agents', t('Agent work time')], ['off', t('off')]] as const
+  const move = (from: number, to: number) => {
+    const timerOrder = [...prefs.timerOrder]
+    ;[timerOrder[from], timerOrder[to]] = [timerOrder[to]!, timerOrder[from]!]
+    update({ timerOrder })
+  }
+  return (
+    <ol className="grid gap-8 m-0 p-0 list-none">
+      {prefs.timerOrder.map((kind, index) => (
+        <li key={kind} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+          {kind === 'session'
+            ? <label className="flex items-center gap-6"><input type="checkbox" checked={prefs.showSessionTimer} onChange={(event) => update({ showSessionTimer: event.target.checked })} />{names.session}</label>
+            : <Choice label={names[kind]} value={kind === 'project' ? prefs.projectTimer : prefs.totalTimer} options={sources}
+                onChange={(source) => update(kind === 'project' ? { projectTimer: source } : { totalTimer: source })} />}
+          <span className="flex gap-2">
+            <button type="button" className="aq-btn icon disabled:opacity-40" disabled={index === 0}
+              aria-label={t('Move {name} up', { name: names[kind] })} onClick={() => move(index, index - 1)}><ArrowUp size={12} /></button>
+            <button type="button" className="aq-btn icon disabled:opacity-40" disabled={index === prefs.timerOrder.length - 1}
+              aria-label={t('Move {name} down', { name: names[kind] })} onClick={() => move(index, index + 1)}><ArrowDown size={12} /></button>
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 export function WindowSettings({ prefs, update, instant, setInstant, mode, setMode, keys, onClose, native }: ReturnType<typeof useWindowPreferences> & {
   instant: boolean; setInstant: (value: boolean) => void; mode: 'outward' | 'inward'; setMode: (mode: 'outward' | 'inward') => void
   keys: ReactNode; onClose: () => void; native: boolean
 }) {
   const sizes = [[1, t('Default')], [1.5, '⅔'], [2, '½']] as const
-  const sources = [['operator', t('My work time')], ['agents', t('Agent work time')], ['off', t('off')]] as const
   return (
     <div className="flex h-full min-h-0 flex-col text-12" data-nodrag>
       <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border-subtle px-10 py-4">
@@ -174,9 +210,7 @@ export function WindowSettings({ prefs, update, instant, setInstant, mode, setMo
         <Section label={t('Clipboard')}><ClipboardSetting /></Section>
         <Section label={t('Status strip on the tabs')}><StripSettingsRows /></Section>
         <Section label={t('Timers')}>
-          <Choice label={t('Project timer')} value={prefs.projectTimer} options={sources} onChange={(projectTimer) => update({ projectTimer })} />
-          <Choice label={t('Total timer')} value={prefs.totalTimer} options={sources} onChange={(totalTimer) => update({ totalTimer })} />
-          <label className="flex items-center gap-6"><input type="checkbox" checked={prefs.stackedTimers} onChange={(event) => update({ stackedTimers: event.target.checked })} />{t('Stack timers')}</label>
+          <TimerSettings prefs={prefs} update={update} />
         </Section>
       </div>
     </div>

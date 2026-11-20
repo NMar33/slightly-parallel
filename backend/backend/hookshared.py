@@ -936,6 +936,21 @@ def process_args(pid: int) -> list[str]:
         return []
 
 
+def codex_daemon_above(pids: list[int] | None = None, args_of: Any = None) -> bool:
+    """This hook runs under Codex's shared app-server daemon (``codex
+    app-server … --managed-daemon``, Codex 0.170): the daemon runs the hooks
+    of every Codex chat and keeps the environment of the terminal it was
+    started from, so its SP_TERMINAL names no chat's terminal. ``pids``: the
+    hook's ancestors (read when not given)."""
+    read = args_of or process_args
+    for pid in ancestors() if pids is None else pids:
+        argv = read(pid)
+        name = os.path.basename(str(argv[0]).replace("\\", "/")).lower() if argv else ""
+        if name.startswith("codex") and "app-server" in argv[1:] and "--managed-daemon" in argv[1:]:
+            return True
+    return False
+
+
 #: Cursor's CLI is ``cursor-agent`` (also linked as ``agent``), a Node
 #: program under ``~/.local/share/cursor-agent``; ``-p`` / ``--print`` is its
 #: non-interactive mode, the one a script or another agent runs.

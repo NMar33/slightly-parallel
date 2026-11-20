@@ -15,13 +15,14 @@ to stamp on entries — agents stop carrying identity by hand.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from ..db import ViewStore
-from ..hookshared import process_started
+from ..hookshared import process_started, session_key
 from .deps import etag_for, get_store, json_response, maybe_304
 from ..entities import ENTITIES
 from ..tasklib import AGENT_TAGS
@@ -210,6 +211,7 @@ def _crumb_by_process(folder: Path, pids: str, everywhere: bool = False) -> tupl
     if not chain or not folder.is_dir():
         return None, ""
     best: tuple[tuple[bool, int, float], dict, bool] | None = None
+    matches: list[tuple[dict, list[int]]] = []
     started: dict[int, float | None] = {}
 
     def reused(pid: int, crumb: dict) -> bool:
@@ -229,6 +231,7 @@ def _crumb_by_process(folder: Path, pids: str, everywhere: bool = False) -> tupl
         near = next((i for i, pid in enumerate(chain) if pid in theirs and not reused(pid, crumb)), None)
         if near is None:
             continue
+        matches.append((crumb, [p for p in theirs if not reused(p, crumb)]))
         own = near <= OWN_TOOL_DEPTH and theirs.index(chain[near]) <= OWN_TOOL_DEPTH
         # A chat's own tool wins over a guess through a shared terminal,
         # whatever the distances; then the nearest, then the newest.
@@ -237,13 +240,52 @@ def _crumb_by_process(folder: Path, pids: str, everywhere: bool = False) -> tupl
             best = (key, crumb, own)
     if best is None:
         return None, ""
+    agent = str(best[1].get("agent_id") or "")
+    if agent.startswith("codex-"):
+        # Codex's shared app-server daemon is above the hook and the MCP
+        # server of every Codex chat: a process two Codex chats share names
+        # neither (a Codex that sends no thread id, an MCP server started
+        # before the fix).
+        pid = chain[best[0][1]]
+        rivals = {str(c.get("agent_id") or "") for c, mine in matches if pid in mine}
+        if len({a for a in rivals if a.startswith("codex-")}) > 1:
+            return None, "ambiguous"
     return best[1], "process" if best[2] else "shared-parent"
+
+
+def _crumb_by_thread(data_root: Path, thread: str) -> dict | None:
+    """The Codex chat whose thread is ``thread``: its own breadcrumb (the
+    hook names it by the thread), else its chat folder, which a subagent's
+    thread has without a breadcrumb. None when no captured chat has it."""
+    crumb: dict | None = None
+    for file in (data_root / SESSIONS_DIR).glob(f"*/{thread}.json"):
+        try:
+            got = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(got, dict) and str(got.get("agent_id") or "").startswith("codex-") and (
+                crumb is None or float(got.get("at") or 0) > float(crumb.get("at") or 0)):
+            crumb = got
+    if crumb is not None:
+        return crumb
+    agent = f"codex-{session_key('codex', thread)}"
+    for meta_path in sorted(data_root.glob(f"projects/*/chats/{agent}/meta.json")):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            at = meta_path.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict) and str(meta.get("session_ref") or "").lower() == thread.lower():
+            return {"agent_id": agent, "project": meta.get("project") or meta_path.parents[2].name,
+                    "session_id": thread, "at": at}
+    return None
 
 
 @router.get("/api/whoami")
 def whoami(
     cwd: str = Query(..., description="the client's working directory"),
     pids: str = Query("", description="the client's parent processes, nearest first"),
+    thread: str = Query("", description="the Codex thread the call came from (its _meta)"),
     store: ViewStore = Depends(get_store),
 ) -> dict:
     """Identity for the session running in ``cwd``.
@@ -254,10 +296,27 @@ def whoami(
     it shares — the nearest one, so two chats in one folder each get their
     own. With no match the newest chat in the folder answers. 404 means no
     captured session runs there.
+
+    Codex runs every chat under one app-server daemon, so processes cannot
+    tell its chats apart: its MCP calls name their ``thread``, which is the
+    chat. A process that several Codex chats share answers 409, never the
+    newest of them.
     """
+    if thread:
+        # A Codex call names its own thread: that chat, or none — never a
+        # guess by folder or by the daemon's processes.
+        crumb = _crumb_by_thread(store.data_root, thread) if re.fullmatch(r"[0-9A-Za-z-]{8,80}", thread) else None
+        if crumb is None:
+            raise HTTPException(status_code=404, detail=(
+                f"cannot tell which Codex chat is calling: thread {thread[:80]} has no captured "
+                "chat (its first message not recorded yet, or capture not set up here). "
+                "Tell the user, and write nothing as an agent."))
+        return _identity(crumb, "thread")
     crumb, source = None, ""
     for path in dict.fromkeys((breadcrumb_path(store.data_root, cwd), _raw_breadcrumb_path(store.data_root, cwd))):
         crumb, source = _crumb_by_process(path.with_suffix(""), pids)
+        if source == "ambiguous":
+            break
         if crumb is None:
             try:
                 crumb, source = json.loads(path.read_text(encoding="utf-8")), "folder"
@@ -265,14 +324,20 @@ def whoami(
                 crumb = None
         if crumb is not None:
             break
-    if crumb is None:
+    if crumb is None and source != "ambiguous":
         # Nothing for this folder: the chat may run in another spelling of it
         # or in a subfolder (a chat started there, or a cd). Its own tool
         # process, shared with this client, still names it; a guess through a
         # shared terminal does not.
         crumb, source = _crumb_by_process(store.data_root / SESSIONS_DIR, pids, everywhere=True)
-        if source != "process":
+        if source not in ("process", "ambiguous"):
             crumb = None
+    if source == "ambiguous":
+        raise HTTPException(status_code=409, detail=(
+            "cannot tell which Codex chat is calling: its processes are the shared Codex "
+            "app-server's, which several Codex chats run under, and the call named no thread. "
+            "Nothing was written or read as this chat; restart Codex (its MCP servers) or "
+            "update it, or tell the user."))
     if crumb is None:
         raise HTTPException(
             status_code=404,
@@ -283,13 +348,18 @@ def whoami(
                 "set up or failing here. Tell the user, and write nothing as an agent."
             ),
         )
+    return _identity(crumb, source)
+
+
+def _identity(crumb: dict, source: str) -> dict:
     age_min = round((time.time() - float(crumb.get("at") or 0)) / 60)
     return {
         "agent_id": str(crumb.get("agent_id") or ""),
         "project": str(crumb.get("project") or ""),
         "session_id": str(crumb.get("session_id") or ""),
         "age_min": age_min,
-        # How the chat was found: its own tool process (sure), a shared
-        # terminal or shell (a guess), or the newest chat in the folder (a guess).
+        # How the chat was found: its Codex thread or its own tool process
+        # (sure), a shared terminal or shell (a guess), or the newest chat in
+        # the folder (a guess).
         "identity_source": source,
     }

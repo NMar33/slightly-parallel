@@ -7,6 +7,22 @@ import { test, expect, HEADLESS, HIDDEN, ELECTRON, echoCalc, launchArgs, launchE
  */
 
 test.describe('window', () => {
+  test('the fullscreen button follows the native window state', async ({ win }) => {
+    test.skip(HEADLESS, 'fullscreen needs a display')
+    const { app, page } = win
+    await ready(page)
+    const enter = page.getByRole('button', { name: 'Enter fullscreen' })
+    const exit = page.getByRole('button', { name: 'Exit fullscreen' })
+    const fullscreen = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen())
+    await enter.click()
+    await expect.poll(fullscreen).toBe(true)
+    await expect(exit).toBeVisible()
+    // A native exit, such as one triggered by the window manager, updates the same control.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setFullScreen(false))
+    await expect.poll(fullscreen).toBe(false)
+    await expect(enter).toBeVisible()
+  })
+
   test('opens frameless on /term with the bridge and GPU compositing', async ({ bare }) => {
     const { app, page } = bare
     expect(new URL(page.url()).pathname).toBe('/term')
