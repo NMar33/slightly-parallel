@@ -9,6 +9,9 @@ import sys
 import threading
 import time
 
+from anyio import to_thread
+from anyio._backends._asyncio import WorkerThread
+
 from backend import conpty, termlib
 from backend.routers import terminal
 from backend.server import app as backend_app
@@ -47,8 +50,57 @@ for owner, names in ((conpty.ConPty, ("__init__", "kill", "release")),
         _trace(owner, name)
 
 
+def _worker_ticket(item):
+    if item is None:
+        return ""
+    context, func, _, future, _ = item
+    ticket = context.get(_request_id, 0)
+    name = getattr(func, "__qualname__", type(func).__name__)
+    return f"request {ticket} future {id(future)} {name}" if ticket else ""
+
+
+_worker_init = WorkerThread.__init__
+_worker_report = WorkerThread._report_result
+_worker_stop = WorkerThread.stop
+
+
+def _trace_worker_init(self, *args):
+    _worker_init(self, *args)
+    put, get = self.queue.put, self.queue.get
+
+    def traced_put(item, *args, **kwargs):
+        if label := _worker_ticket(item):
+            _log(f"worker {self.ident} queue {label} root {id(self.root_task)} done={self.root_task.done()}")
+        return put(item, *args, **kwargs)
+
+    def traced_get(*args, **kwargs):
+        item = get(*args, **kwargs)
+        if label := _worker_ticket(item):
+            _log(f"worker {self.ident} take {label}")
+        return item
+
+    self.queue.put = traced_put
+    self.queue.get = traced_get
+
+
+def _trace_worker_report(self, future, result, exc):
+    _log(f"worker {self.ident} report future {id(future)} done={future.done()}")
+    return _worker_report(self, future, result, exc)
+
+
+def _trace_worker_stop(self, root=None):
+    _log(f"worker {self.ident} stop task {id(root)} root {id(self.root_task)} done={self.root_task.done()}")
+    return _worker_stop(self, root)
+
+
+WorkerThread.__init__ = _trace_worker_init
+WorkerThread._report_result = _trace_worker_report
+WorkerThread.stop = _trace_worker_stop
+
+
 async def _show_waiters(ticket):
     await asyncio.sleep(7)
+    _log(f"{ticket} limiter {to_thread.current_default_thread_limiter().statistics()}")
     for task in asyncio.all_tasks():
         if task is asyncio.current_task() or task.get_context().get(_request_id, 0) != ticket:
             continue
