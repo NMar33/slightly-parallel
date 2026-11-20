@@ -57,6 +57,9 @@ const ROOT = dataRoot()
 const PYTHON = process.platform === 'win32'
   ? path.join(REPO, 'backend', '.venv', 'Scripts', 'python.exe')
   : path.join(REPO, 'backend', '.venv', 'bin', 'python')
+const loop = process.platform === 'win32' && process.env.SP_E2E_SELECTOR_LOOP === '1'
+  ? ' --loop tests.e2e_desktop_server:selector_loop'
+  : ''
 process.env.SP_DESKTOP_E2E_URL = `http://127.0.0.1:${PORT}`
 
 export default defineConfig({
@@ -78,7 +81,7 @@ export default defineConfig({
   outputDir: path.join(__dirname, 'test-results'),
   use: { trace: 'retain-on-failure' },
   webServer: {
-    command: `"${PYTHON}" -m uvicorn ${process.platform === 'win32' ? 'tests.e2e_desktop_server:app' : 'backend.server:app'} --host 127.0.0.1 --port ${PORT}`,
+    command: `"${PYTHON}" -m uvicorn ${process.platform === 'win32' ? 'tests.e2e_desktop_server:app' : 'backend.server:app'} --host 127.0.0.1 --port ${PORT}${loop}`,
     cwd: path.join(REPO, 'backend'),
     env: {
       ...process.env as Record<string, string>,

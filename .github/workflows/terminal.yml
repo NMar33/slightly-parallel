@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   window:
-    name: Terminal window (${{ matrix.os }})
+    name: Terminal window (${{ matrix.probe }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -29,12 +29,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: windows-latest
+            probe: py312-proactor
+            python: "3.12"
+            selector: "0"
+          - os: windows-latest
+            probe: py312-selector
+            python: "3.12"
+            selector: "1"
+          - os: windows-latest
+            probe: py313-proactor
+            python: "3.13"
+            selector: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - uses: actions/setup-node@v7
@@ -108,11 +120,12 @@ jobs:
           # The Windows runner draws in software (first run: gpu_compositing
           # disabled_software); macOS's has GPU compositing.
           SP_E2E_NO_GPU: ${{ runner.os == 'Windows' && '1' || '' }}
-        run: npm run e2e
+          SP_E2E_SELECTOR_LOOP: ${{ matrix.selector }}
+        run: npm run e2e -- health.spec.ts tabs.spec.ts --grep 'yellow suggestion passes the wheel|tab groups stay inside|workspace opens on the tab' --repeat-each 10
       - name: Traces and screenshots (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: terminal-window-${{ matrix.os }}
+          name: terminal-window-${{ matrix.probe }}
           path: desktop/e2e/test-results
           if-no-files-found: ignore
