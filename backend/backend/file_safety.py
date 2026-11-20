@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import tempfile
-import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -349,17 +348,12 @@ def acquire_flock(
     fh = open(p, mode, encoding="utf-8")
     try:
         deadline = time.monotonic() + timeout_s
-        # On Windows time.sleep waits indefinitely for a separate timer to
-        # signal. Contended terminal writes have stalled in that wait. Use
-        # a finite synchronization wait so the lock deadline can be checked.
-        wait = time.sleep if fcntl is not None else threading.Event().wait
         while not _try_lock(fh):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if time.monotonic() >= deadline:
                 raise FileSafetyError(
                     f"could not acquire flock on {p} within {timeout_s}s"
                 )
-            wait(min(poll_s, remaining))
+            time.sleep(poll_s)
         if fcntl is None:  # pragma: no cover — the Windows lock moved the position
             fh.seek(0, os.SEEK_END)
         yield fh

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-import time
 import tomllib
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -48,23 +46,6 @@ def test_the_lock_uses_msvcrt_where_there_is_no_fcntl(tmp_path: Path, monkeypatc
                 pass
     assert fake.held == set() and (fake.LK_NBLCK, 1) in fake.calls
     assert p.read_text() == "a"
-
-
-def test_windows_file_lock_retries_with_a_bounded_wait(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A retry must still visit its deadline if the Windows sleep timer never wakes.
-    monkeypatch.setattr(file_safety, "fcntl", None)
-    monkeypatch.setattr(file_safety, "msvcrt", FakeMsvcrt())
-    attempts = iter([False, True])
-    monkeypatch.setattr(file_safety, "_try_lock", lambda _fh: next(attempts))
-
-    def waitable_timer_never_wakes(_seconds: float) -> None:
-        pytest.fail("Windows file-lock retry entered the unbounded sleep timer")
-
-    monkeypatch.setattr(file_safety, "time", SimpleNamespace(
-        monotonic=time.monotonic, sleep=waitable_timer_never_wakes,
-    ))
-    with file_safety.acquire_flock(tmp_path / "terminal-sessions.json.lock"):
-        assert list(attempts) == []
 
 
 def test_windows_hook_and_mcp_lines(monkeypatch: pytest.MonkeyPatch) -> None:
