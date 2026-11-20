@@ -108,7 +108,7 @@ jobs:
           # The Windows runner draws in software (first run: gpu_compositing
           # disabled_software); macOS's has GPU compositing.
           SP_E2E_NO_GPU: ${{ runner.os == 'Windows' && '1' || '' }}
-        run: npm run e2e -- paste.spec.ts inspector.spec.ts --grep 'program clipboard request|context menu pastes|Shift[+]Insert|a project shell can organize' --repeat-each=12
+        run: npm run e2e -- terminal-post-probe.spec.ts
       - name: Traces and screenshots (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
         if: failure()
         uses: actions/upload-artifact@v7
