@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -268,6 +269,30 @@ def _pane_state(root: Path, sid: str, log: Path) -> str:
     text = termlib.tmux(root, "capture-pane", "-p", "-S", "-", "-t", target).stdout
     raw = log.read_bytes() if log.exists() else b""
     return f"{state}\ntext: {text!r}\nbytes: {raw!r}"
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch) -> None:
+    c, root, _ = env
+    _on(c)
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    termlib.wait_for_prompt(root, sid)
+    argv = termlib.attach_argv(root, sid)
+    # Model a slow tmux client that flushes the tty before drawing. If input
+    # arrives early, select wakes immediately and the flush discards it.
+    startup = (
+        "import os, select, sys, termios; "
+        "select.select([0], [], [], 1); "
+        "termios.tcflush(0, termios.TCIFLUSH); "
+        "os.execvp(sys.argv[1], sys.argv[1:])"
+    )
+    monkeypatch.setattr(termlib, "attach_argv", lambda *_: [sys.executable, "-c", startup, *argv])
+    token = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={token}") as ws:
+        # Split the marker so its full form only appears in command output.
+        ws.send_text(json.dumps({"type": "input", "data": "printf '%s%s\\n' sp-early- input\r"}))
+        screen = _wait_screen(root, sid, "sp-early-input")
+        assert "sp-early-input" in screen, screen
 
 
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
