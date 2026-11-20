@@ -37,7 +37,8 @@ for (const path of JSON.parse(fs.readFileSync(0, 'utf8'))) {
       if (position !== undefined && policyValue(node.arguments[position])) count++
     } else if (ts.isPropertyAssignment(node) || ts.isParameter(node) || ts.isVariableDeclaration(node)) {
       const name = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : ''
-      if (!/^[A-Z][A-Z0-9_]+$/.test(name) && policyName.test(name) && policyValue(node.initializer)) count++
+      const namedConstant = /^[A-Z][A-Z0-9_]+$/.test(name) && settingName.test(name)
+      if (!namedConstant && policyName.test(name) && policyValue(node.initializer)) count++
     }
     ts.forEachChild(node, visit)
   }

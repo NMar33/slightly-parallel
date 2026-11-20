@@ -126,7 +126,8 @@ timings, retry counts and limits in recognized policy positions, plus exact
 six-line windows shared by different files in each source area. Recognized
 uses include timer calls, Python `range` arguments and named `getattr`
 fallbacks. A local name such as `X = 7` still counts when used in a policy
-position. Name an extracted setting for its units or the kind of limit
+position. Declarations such as `TIMEOUT = 7` count as well, regardless of
+where the value is used. Name an extracted setting for its units or the kind of limit
 it represents, such as `SHUTDOWN_TIMEOUT_S` or `MAX_RETRIES`.
 Shipped design routes count alongside the other source files. The source
 scan excludes tests and fixture directories.

@@ -11,6 +11,8 @@ python_count = runpy.run_path(str(GUARD))["python_count"]
 
 @pytest.mark.parametrize("source", [
     "X = 7\nsubprocess.run(command, timeout=X)",
+    "TIMEOUT = 7\nstart(TIMEOUT)",
+    "TIMEOUT: int = 7\nstart(TIMEOUT)",
     "threading.Timer(9, callback)",
     'getattr(settings, "port", 8123)',
     "range(40)",

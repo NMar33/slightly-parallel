@@ -15,7 +15,7 @@ BASELINE = Path("scripts/ci/refactoring_budget.json")
 AREAS = ("backend", "scripts", "frontend/src", "desktop")
 SOURCE_SUFFIXES = {".py", ".js", ".cjs", ".mjs", ".ts", ".tsx"}
 EXCLUDED = {"test", "tests", "e2e", "__tests__", "fixtures"}
-DETECTOR_VERSION = 2
+DETECTOR_VERSION = 3
 POLICY_NAME = re.compile(
     r"(?:^|_)(?:timeout|delay|interval|retries|tries|limit|threshold|port|size)(?:_|$)", re.IGNORECASE,
 )
@@ -53,6 +53,12 @@ def number(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and type(node.value) in (int, float) and node.value not in (0, 1)
 
 
+def unnamed_setting_target(target: ast.AST) -> bool:
+    if not isinstance(target, ast.Name) or not POLICY_NAME.search(target.id):
+        return False
+    return not (target.id.isupper() and SETTING_NAME.search(target.id))
+
+
 def python_count(path: str, source: str) -> int:
     nodes = list(ast.walk(ast.parse(source, filename=path)))
     unnamed: set[str] = set()
@@ -88,11 +94,9 @@ def python_count(path: str, source: str) -> int:
                     key = node.args[1]
                     if isinstance(key, ast.Constant) and isinstance(key.value, str) and POLICY_NAME.search(key.value):
                         yield node.args[2]
-            elif isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and not t.id.isupper() and POLICY_NAME.search(t.id) for t in node.targets
-            ) or (
-                isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-                and not node.target.id.isupper() and POLICY_NAME.search(node.target.id)
+            elif (
+                isinstance(node, ast.Assign) and any(unnamed_setting_target(t) for t in node.targets)
+                or isinstance(node, ast.AnnAssign) and unnamed_setting_target(node.target)
             ):
                 yield node.value
 
