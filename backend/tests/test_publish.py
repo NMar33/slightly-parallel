@@ -163,7 +163,7 @@ def test_the_hook_names_the_chats_card_of_the_last_hour(tmp_path: Path, monkeypa
     k = second["kept"][0]
     assert k["near"] == {"id": first, "minutes": 20}
     notice = mod.format_signals(second)
-    assert f'merge: "{k['id']}"' in notice and first in notice
+    assert f'merge: "{k["id"]}"' in notice and first in notice
     cap.complete_turn("kept")
     clock["t"] += 2 * 3600                                  # past the hour: a new card, no hint
     assert "near" not in cap.open_turn("#publish another story")["kept"][0]

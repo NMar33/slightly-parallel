@@ -45,6 +45,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent
 
@@ -77,7 +78,7 @@ def say(msg: str) -> None:
     print(f"[sp] {msg}", flush=True)
 
 
-def fail(msg: str) -> None:
+def fail(msg: str) -> NoReturn:
     print(f"[sp] ERROR: {msg}", file=sys.stderr, flush=True)
     sys.exit(1)
 

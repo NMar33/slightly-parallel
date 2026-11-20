@@ -1,31 +1,11 @@
 .te-lab {
-  --te-background: #11151a;
-  --te-surface: #191e25;
-  --te-chrome: #202731;
-  --te-terminal: #101419;
-  --te-border: #343e4a;
-  --te-muted: #a6b2bf;
-  --te-text: #e7edf3;
-  --te-accent: #91d5bf;
-  --te-alarm: #ffc478;
+  /* Its colours: styles/terminal-palettes.css. */
   position: fixed;
   inset: 0;
   z-index: 300;
   overflow: auto;
   background: var(--te-background);
   color: var(--te-text);
-}
-
-.te-lab[data-theme-preview="light"] {
-  --te-background: #edf0f2;
-  --te-surface: #fafbfc;
-  --te-chrome: #e3e9ee;
-  --te-terminal: #f3f6f7;
-  --te-border: #acb9c4;
-  --te-muted: #4a5d6c;
-  --te-text: #192630;
-  --te-accent: #09604c;
-  --te-alarm: #934a06;
 }
 
 .te-header, .te-main { max-width: 1140px; margin-inline: auto; padding-inline: clamp(16px, 4vw, 50px); }

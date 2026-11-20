@@ -359,7 +359,7 @@ function diffColor(line: string): string | undefined {
   if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ')) return 'var(--aq-term-dim)'
   if (line.startsWith('@@')) return 'var(--ansi-6, var(--aq-term-link))'
   if (line.startsWith('+')) return 'var(--aq-term-ok, var(--ansi-2))'
-  if (line.startsWith('-')) return 'var(--ansi-1, #e06c75)'
+  if (line.startsWith('-')) return 'var(--ansi-1, var(--status-red-ink))'
   return undefined
 }
 
@@ -394,7 +394,7 @@ export function CommitCard(p: CardProps) {
                 <div key={f.path} className="flex gap-8 whitespace-nowrap">
                   <span className="truncate" style={FG} title={f.path}>{f.path}</span>
                   <span className="ml-auto" style={{ color: 'var(--aq-term-ok, var(--ansi-2))' }}>+{f.add}</span>
-                  <span style={{ color: 'var(--ansi-1, #e06c75)' }}>−{f.del}</span>
+                  <span style={{ color: 'var(--ansi-1, var(--status-red-ink))' }}>−{f.del}</span>
                 </div>
               ))}
             </div>

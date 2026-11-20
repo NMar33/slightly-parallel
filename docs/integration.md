@@ -56,7 +56,7 @@ built-in skills: `make-a-scan`, `keep-the-architecture-page`,
 `map-the-program`, `update-the-architecture`, `daily-standup`,
 `log-a-decision`, `write-a-task`, `task-evidence`, `make-an-artifact`,
 `finish-a-task`, `undo-a-mistake`, `keep-a-core`, `sp-help`, `sp-checkup`,
-`update-usage-prices`.
+`update-usage-prices`, `write-a-note`.
 Slightly Parallel installs them into `~/.claude/skills` and `~/.agents/skills`, once, for all projects.
 
 The hooks also record the tokens of every reply (`usage.jsonl` beside each

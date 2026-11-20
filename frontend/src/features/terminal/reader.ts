@@ -21,6 +21,7 @@
 import type { IBufferCell, IBufferLine, Terminal } from 'xterm'
 import type { SearchAddon } from 'xterm-addon-search'
 import { postJson } from '../../lib/getJson'
+import { THEME } from './palette'
 import { attachSmoothLayer, disposeTerminal, type SmoothLayer } from './scrollLayer'
 import { keepSelectionLocal } from './explicitClipboard'
 import { FoldMap, foldLines, foldsOf, stripAnsi, tmuxRows, type Fold, type SrcRow } from './fold'
@@ -77,7 +78,7 @@ export async function buildReader(make: Make, host: HTMLElement, live: Terminal,
   Object.assign(el.style, {
     position: 'absolute', left: '0', top: '0', right: '0', bottom: '0', zIndex: '5',
     paddingLeft: cs.paddingLeft, paddingTop: cs.paddingTop, paddingRight: cs.paddingRight,
-    background: (live.options.theme?.background as string) || '#000', visibility: 'hidden',
+    background: (live.options.theme?.background as string) || THEME.background, visibility: 'hidden',
   })
   host.appendChild(el)
   const cols = got.cols > 0 ? got.cols : live.cols

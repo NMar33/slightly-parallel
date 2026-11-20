@@ -23,7 +23,7 @@ from __future__ import annotations
 import html
 import re
 
-from sysmap import all_commands, counter, fmt, rounded_path
+from sysmap import all_commands, fmt, rounded_path
 
 O, S, A, X = "#eb6834", "#14a06f", "#2a78d6", "#8d8b85"
 TINT = {O: "#fdeee6", S: "#e3f4ec", A: "#e7f0fb", X: "#efeeea"}
@@ -236,7 +236,6 @@ FILEDOC = """<svg viewBox="0 0 40 48" width="28" height="34"><path d="M6 3 H26 L
 # ---------------------------------------------------------------------------
 
 def render(model: dict) -> str:
-    get = counter(model)
     T = model["counts"]["typed"]["d30"]
     items, at = layout()
     rows = {it[1]["id"]: it[1] for it in items if it[0] == "row"}
@@ -269,7 +268,7 @@ def render(model: dict) -> str:
     # ---- hook -------------------------------------------------------------
     el.append(box(HX0, TOP, HX1 - HX0, bottom - TOP + 20, "hook", f"""<div class="hh">{HOOK}<b>хук</b></div>
 <div class="hs">записывает каждое сообщение, узнаёт тег</div>"""))
-    for kind, r, y in items:
+    for kind, _r, y in items:
         if kind == "row":
             el.append(f'<i class="cap" style="left:{(HX0 + HX1) / 2}px;top:{y}px"></i>')
             svg.arrow([((HX0 + HX1) / 2 + 9, y), (SX0 - 4, y)], S, width=2.4)
@@ -292,7 +291,7 @@ def render(model: dict) -> str:
     # ---- task (centre) ----------------------------------------------------
     card_y0 = at["card"] - 34
     card_y1 = at["core"] + 34
-    el.append(box(CX0, card_y0, CX1 - CX0, card_y1 - card_y0, "task", f"""
+    el.append(box(CX0, card_y0, CX1 - CX0, card_y1 - card_y0, "task", """
 <div class="tk"><span class="tkk">задача · shopfront</span><span class="tkid">tk_…</span></div>
 <div class="tt">частичные возвраты</div>
 <div class="st"><span>агент</span><span>к работе</span><span class="on">в работе</span><span class="dn">готово</span></div>"""))
@@ -385,7 +384,7 @@ def render(model: dict) -> str:
               ("релиз", "ветка release · main на GitHub", X)]
     sw = (rx1 - rx0 - 60 - 3 * 50) / 4
     sy0 = ry0 + 120
-    for k, (t, s, c) in enumerate(stages):
+    for k, (t, s, _c) in enumerate(stages):
         sx = rx0 + 30 + k * (sw + 50)
         extra = ""
         if t == "GitHub Actions":

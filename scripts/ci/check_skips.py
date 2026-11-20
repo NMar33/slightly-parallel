@@ -38,6 +38,12 @@ ALLOWED: list[tuple[str, set[str]]] = [
     (r"restore needs tarfile's data filter", ALL),
     (r"the real CLI runs in its own CI job", ALL),   # tests/test_real_cli.py, job real-cli   # Python before 3.12
     (r"the real Codex runs in its own CI job", ALL),   # tests/test_real_codex.py, job real-cli
+    # Probes of the real stores in this user's home (test_injected_prompts.py,
+    # test_queued_messages.py): they read the newest transcript the installed
+    # Claude Code, Codex or OpenCode wrote, to catch a format change the
+    # fixture tests cannot. A CI runner has no such history; they run on the
+    # developer's machine, where the tools are used every day.
+    (r"no (Claude Code transcript|Codex rollout|OpenCode store) on this machine", ALL),
 ]
 
 

@@ -284,7 +284,7 @@ def render_metro(model: dict, lay: dict) -> str:
 
     st_pts = [tuple(s["at"]) for s in st.values()]
     chev = []
-    for lid, ln in M["lines"].items():
+    for ln in M["lines"].values():
         pts = [xy(p) for p in ln["pts"]]
         w = ln.get("width", 11)
         d = rounded_path(pts, ln.get("radius", 60), ln.get("closed", False))
@@ -301,7 +301,7 @@ def render_metro(model: dict, lay: dict) -> str:
     svg += chev
 
     off = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0), "ne": (.7, -.7), "nw": (-.7, -.7), "se": (.7, .7), "sw": (-.7, .7)}
-    for sid, s in st.items():
+    for s in st.values():
         x, y = s["at"]
         hub = s.get("hub")
         if hub:
@@ -452,7 +452,7 @@ def render_flow(model: dict, lay: dict) -> str:
             inner += '<div class="chain">' + '<span class="ar">→</span>'.join(parts) + f'</div><div class="cn">{html.escape(S.get("chain_note", ""))}</div>'
         html_.append(f'<div class="{cls}" style="--c:{col};left:{x}px;top:{y}px;width:{w}px;height:{h}px"><div class="h">{badge(S["who"], 28)}{html.escape(S["name"])}</div><div class="hs">{html.escape(S.get("sub", ""))}</div>{inner}</div>')
 
-    for pid, P in F["parts"].items():
+    for P in F["parts"].values():
         x, y, w, h = P["box"]
         html_.append(f'<div class="part" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px"><div class="h">{html.escape(P["name"])}</div>{items(P["items"])}</div>')
 
@@ -535,7 +535,8 @@ def render_flow(model: dict, lay: dict) -> str:
             out.append('<div class="g">служебные</div><div class="chips"><span class="chip">###тег</span></div>')
             html_.append(f'<div class="cat" style="left:{pts[0][0] + 22}px;top:{pts[0][1] + 36}px"><div class="g" style="color:var(--ink2)">команды в сообщении · число — за 30 дней</div>{"".join(out)}</div>')
 
-    body = (f'<div class="map" style="height:{H}px"><svg width="{W - 144}" height="{H}" viewBox="0 0 {W - 144} {H}"><defs>{defs}</defs>{"".join(svg)}</svg>{"".join(html_)}<svg width="{W - 144}" height="{H}" viewBox="0 0 {W - 144} {H}" style="pointer-events:none"><defs>{defs.replace('id="ar-', 'id="ov-')}</defs>{"".join(over).replace("url(#ar-", "url(#ov-")}</svg>{"".join(late)}</div>')
+    defs_over = defs.replace('id="ar-', 'id="ov-')
+    body = (f'<div class="map" style="height:{H}px"><svg width="{W - 144}" height="{H}" viewBox="0 0 {W - 144} {H}"><defs>{defs}</defs>{"".join(svg)}</svg>{"".join(html_)}<svg width="{W - 144}" height="{H}" viewBox="0 0 {W - 144} {H}" style="pointer-events:none"><defs>{defs_over}</defs>{"".join(over).replace("url(#ar-", "url(#ov-")}</svg>{"".join(late)}</div>')
     key = f"""<div class="key"><div class="kh">кто действует — цвет потока и значок</div>{who_key()}
 <div class="kh">потоки</div>
 <div class="kr"><svg width="54" height="16"><path d="M2,8 L40,8" stroke="#1f1e1c" stroke-width="9"/><path d="M38,1 L52,8 L38,15z" fill="#1f1e1c"/></svg><span><b>Сплошной</b> — передаёт</span></div>

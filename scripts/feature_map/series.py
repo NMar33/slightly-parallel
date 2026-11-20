@@ -424,7 +424,7 @@ def sheet1(model: dict, L: dict) -> str:
         (G3, G4, "3", "Подсистемы (cores)", "сплошная рамка — core проекта; пунктир — не оформлено как core"),
         (G4, G5, "4", "Хранилище и CI", "data root (CSV, DuckDB), git и CI, AGENTS.md и скиллы"),
     ]
-    for y0, y1, n, name, sub in labels:
+    for y0, _y1, n, name, sub in labels:
         el.append(f'<div class="lay" style="left:40px;top:{y0 + 34}px;width:250px"><span class="ln">{n}</span>'
                   f'<b>{esc(name)}</b><span>{esc(sub)}</span></div>')
     el.append(f'<div class="altname" style="left:40px;top:{G3 + 250}px;width:250px">название уровня:<br>«Подсистемы» · «Модули» · «Cores (ядра)»</div>')
@@ -516,7 +516,7 @@ def sheet1(model: dict, L: dict) -> str:
     pw = sw - 20
     el.append(f'<div class="shh" style="left:{SH_X0}px;top:{G1 + 24}px;width:{W1 - 40 - SH_X0}px"><b>Обработка команд: шаги</b> · столбец — команда, номер — порядок шага</div>')
     band_top = {1: G1 + 130, 2: G2 + 40, 3: G3 + 50, 4: G4 + 50}
-    for i, (cid, label, stops) in enumerate(SHAFTS):
+    for i, (_cid, label, stops) in enumerate(SHAFTS):
         cx = SH_X0 + sw * i + sw / 2
         per = {1: [], 2: [], 3: [], 4: []}
         for k2, (band, w, text) in enumerate(stops, 1):
@@ -614,7 +614,7 @@ def extra(sid: str, L: dict) -> str:
 <div class="board">{cc}</div>
 <div class="flowline"><span>{who('o')} <b>#now</b> — начало работы</span><span>→ коммиты с Task: tk_…</span><span>→ {who('o')} <b>#done</b> — участок чата к задаче</span><span>→ {who('a')} отчёт · {who('a')} <b>#evidence</b></span></div></div>"""
     if sid == "s3":
-        return f"""<div class="cmd xtra"><div class="ch"><span class="cn plain">Правила и скиллы → агенты</span></div>
+        return """<div class="cmd xtra"><div class="ch"><span class="cn plain">Правила и скиллы → агенты</span></div>
 <div class="does">Правила и скиллы попадают в инструкции всех агентов во всех проектах.</div>
 <div class="loopd">
 <div class="ln1"><span class="nd o">#vision</span><i>→</i><span class="nd o">#rule</span><i>→</i><span class="nd s">AGENTS.md всех проектов</span></div>

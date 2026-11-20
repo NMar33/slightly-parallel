@@ -291,7 +291,7 @@ def test_a_brief_marked_by_hand_is_asked_for_at_the_next_prompt(env, tmp_path: P
     c.app.state.store.rebuild()
     assert c.post("/api/carries", json={"chat_agent": AGENT, "turn": 1, "level": "brief"}).status_code == 201
     out = _hook(root, {**base, "hook_event_name": "UserPromptSubmit", "prompt": "next"})
-    assert f'#carry-brief — the operator marked 1 message' in out.stdout and f'"{AGENT}#1"' in out.stdout
+    assert '#carry-brief — the operator marked 1 message' in out.stdout and f'"{AGENT}#1"' in out.stdout
     # The tag in the message itself: one notice, naming this turn.
     out = _hook(root, {**base, "hook_event_name": "UserPromptSubmit", "prompt": "and this #carry-brief"})
     assert out.stdout.count("#carry-brief —") == 1 and f'"{AGENT}#3"' in out.stdout

@@ -145,7 +145,6 @@ def fields_html(card: dict) -> str:
 
 def counts_line(card: dict) -> str:
     t = card["typed"]
-    rc = card.get("record_counts")
     s = f"30 дн: <b>{t['d30']}</b> · всего {t['total']}"
     return s
 
@@ -233,7 +232,7 @@ def flow(model: dict) -> str:
     agent_rows = sum(l["by"]["a"] for l in c["ledgers"])
     sidebar = sum(1 for p in model["pages"] if p["in_sidebar"])
     boxes = [
-        ("o", "Сообщение", f"Оператор пишет в чат. Тег в любом месте — команда.",
+        ("o", "Сообщение", "Оператор пишет в чат. Тег в любом месте — команда.",
          f"{ty['messages']['with_command30']} из {ty['messages']['d30']} сообщений за 30 дн с командой"),
         ("s", "Хук", "Записывает сообщение и ответ в лог чата, узнаёт тег, даёт агенту подсказку.",
          f"{len(model['hook']['commands']) + len(model['hook']['kept_tags'])} тегов в таблице хука"),
@@ -316,7 +315,6 @@ def numbers_sheet(model: dict, n: int, total: int) -> str:
     kh30 = sum(l["kept_from_helper"] for l in c["ledgers"])
     arch = sum(l["archived"] for l in c["ledgers"] if l["key"] in ("visions", "rules", "problems", "entrypoints", "publish", "prompts", "skills", "artifacts"))
     arch_h = sum(l["archived_from_helper"] for l in c["ledgers"])
-    kept30 = sum(l["by30"]["o"] for l in c["ledgers"] if l["key"] in ("visions", "rules", "problems", "entrypoints", "publish", "prompts", "skills", "artifacts"))
     scans30 = lmap.get("scans", {}).get("d30", 0)
     typed_scan = ty["d30"].get("scan", 0)
     srv = tk["server_wrote_card"]

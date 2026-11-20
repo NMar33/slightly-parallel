@@ -17,6 +17,7 @@ ALLOW=(
   'frontend/src/features/timelapse/scene.ts'
   'frontend/src/features/terminal/palette.ts'
   'frontend/src/features/terminal/schemes.ts'
+  'frontend/src/features/aqua/design/round3/lab2/schemes.ts'  # the same schemes in the design lab; contrast() reads the hex
   'frontend/src/features/tour/scene.ts'
   'frontend/src/features/tour/yard.ts'
   'frontend/src/components/Brand.tsx'

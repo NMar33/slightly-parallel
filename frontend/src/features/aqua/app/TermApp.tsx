@@ -372,6 +372,7 @@ function AquaWindow({ status }: { status: Status }) {
   const termW = native ? nativeFrameW - lw - rw : Math.max(360, Math.min(1000, vp.w - 2 * MARGIN))
   // Inward panels resize the terminal inside a stationary window. Its title
   // controls stay attached to the window edges while its body gets narrower.
+  // The frame follows the CSS viewport before React receives a native resize.
   const fixedSidebarControls = native && sidebarMode === 'inward'
   const headerLeft = fixedSidebarControls ? 0 : lw
   const headerRight = fixedSidebarControls ? 0 : rw
@@ -949,7 +950,7 @@ function AquaWindow({ status }: { status: Status }) {
   const frame = (
     <div data-aqua-frame className={`absolute flex flex-col ${native ? '' : 'r2-win'}`} role="dialog" aria-label={`${t('Window')}: ${kind === 'main' ? 'SP Aqua' : title}`}
       data-folded={folded || undefined} data-sidebar-mode={native ? sidebarMode : undefined}
-      style={native ? { left: 0, top: 0, width: lw + termW + rw, height: frameH } : { left: termX - lw, top: MARGIN, height: frameH }}>
+      style={native ? { left: 0, top: 0, width: fixedSidebarControls ? '100%' : lw + termW + rw, height: frameH } : { left: termX - lw, top: MARGIN, height: frameH }}>
       {/* A fixed border inside the title row would inherit its native drag region. */}
       {health && native && healthEdge && <span aria-hidden data-health-edge className="fixed inset-0 pointer-events-none z-[1]" style={{ boxShadow: `inset 0 0 0 1px ${healthEdge}` }} />}
       <div className={`flex flex-col h-full ${native ? 'overflow-clip' : 'overflow-hidden rounded-[8px]'}`} style={native ? undefined : {

@@ -4,6 +4,7 @@ import { currentLang, loadDictionaries, setLang, watchLanguage } from './i18n'
 import './styles/tokens.css'
 import './styles/index.css'
 import './styles/skins.css'
+import './styles/terminal-palettes.css'
 
 const rootEl = document.getElementById('root')
 if (!rootEl) {

@@ -185,3 +185,38 @@ test('window settings replace the left sidebar and resize the two rows independe
     await expectClickTarget(button, await center(button))
   }
 })
+
+test('the title row can fold immediately after the native window narrows', async ({ win }) => {
+  const { app, page } = win
+  await page.addInitScript(() => {
+    window.addEventListener('resize', (event) => {
+      if (document.documentElement.hasAttribute('data-e2e-defer-resize')) event.stopImmediatePropagation()
+    }, true)
+  })
+  await page.reload()
+  await ready(page)
+  await fullSize(app, page)
+  await chooseMode(page, 'inward')
+  const frame = page.locator('[data-aqua-frame]')
+  const wide = await page.evaluate(() => innerWidth)
+  expect(wide).toBeGreaterThan(420)
+  await expect(frame).toHaveCSS('width', `${wide}px`)
+
+  // Reproduce the interval between the compositor resize and the renderer
+  // receiving it. The next pointer click can land during that interval.
+  await page.evaluate(() => document.documentElement.setAttribute('data-e2e-defer-resize', ''))
+  try {
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(420, 320) })
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(420)
+    const fold = page.getByRole('button', { name: /Fold the title row/ })
+    const point = await center(fold)
+    await expectClickTarget(fold, point)
+    await page.mouse.click(point.x, point.y)
+    await expect(frame).toHaveAttribute('data-folded', 'true')
+  } finally {
+    await page.evaluate(() => {
+      document.documentElement.removeAttribute('data-e2e-defer-resize')
+      window.dispatchEvent(new Event('resize'))
+    })
+  }
+})
