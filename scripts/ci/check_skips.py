@@ -23,7 +23,9 @@ ALLOWED: list[tuple[str, set[str]]] = [
     (r"a Unix pty", {WIN}),                      # the Windows pty: tests/test_conpty.py
     (r"ConPTY is Windows only", {LINUX, MAC}),
     (r"a symlink needs privileges on Windows", {WIN}),
-    (r"tmux is not (installed|on this machine)", {WIN}),
+    (r"tmux is not (installed|on this machine)|no tmux on Windows", {WIN}),
+    (r"requires Unix sockets", {WIN}),           # direct Codex delivery uses a Unix socket
+    (r"a bash script, run on Linux and macOS", {WIN}),  # the operator's release script
     (r"Windows refuses to replace a file the archiver holds open", {WIN}),
     (r"needs a file its owner cannot read|read-only by permissions|permissions do not stop this user|root reads every file", {WIN}),
     (r"Linux entries are written on Linux", {WIN}),
