@@ -106,23 +106,19 @@ def terminal_args() -> list[str]:
 
 def stop_process(child: subprocess.Popen) -> None:
     if WINDOWS:
-        try:
-            subprocess.run(["taskkill", "/pid", str(child.pid), "/t", "/f"], check=False, timeout=5)
-        except subprocess.TimeoutExpired:
-            if child.poll() is None:
-                child.kill()
+        subprocess.run(["taskkill", "/pid", str(child.pid), "/t", "/f"], check=False)
     else:
         try:
             os.killpg(child.pid, signal.SIGTERM)
             child.wait(timeout=5)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            pass
-        # The parent can already be gone while its descendants still run.
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         except ProcessLookupError:
             pass
-    child.wait(timeout=5)
+    child.wait()
 
 
 def run_step(command: list[str], cwd: Path, log: Path, env: dict[str, str], timeout: int, cancelled: Event) -> int:
@@ -303,33 +299,8 @@ def verify(sha: str, report_dir: Path, profile: str, jobs: int, queued_at: float
             git("worktree", "remove", "--force", str(snapshot))
 
 
-def queue_command(command: list[str]) -> int:
-    print("Waiting for the machine test queue", flush=True)
-    try:
-        with machine_queue(LOCK):
-            executable = shutil.which(command[0]) or command[0]
-            child = subprocess.Popen(
-                [executable, *command[1:]], start_new_session=not WINDOWS,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0,
-            )
-            try:
-                code = child.wait()
-            except KeyboardInterrupt:
-                stop_process(child)
-                raise
-    except KeyboardInterrupt:
-        return 130
-    return code if code >= 0 else 128 - code
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, epilog="To queue another command, use %(prog)s queue -- COMMAND [ARG ...].",
-    )
-    if sys.argv[1:2] == ["queue"]:
-        if sys.argv[2:3] != ["--"] or len(sys.argv) < 4:
-            parser.error("queue requires -- followed by a command")
-        return queue_command(sys.argv[3:])
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("profile", choices=["fast", "waves"])
     parser.add_argument("--ref", default="HEAD", help="commit to snapshot before waiting for the queue")
     parser.add_argument("--jobs", type=int, choices=[1, 2], default=1, help="run one or two groups at once for the waves pilot")
