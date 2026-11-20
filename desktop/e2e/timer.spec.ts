@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { test, expect, KEEP_PLAIN, PROJECT, ROOT, linksOut, ready, typeLine } from './fixtures'
+import { test, expect, KEEP_PLAIN, PROJECT, ROOT, fullSize, linksOut, ready, typeLine } from './fixtures'
 
 /**
  * The window and the smart timer: working in a tab counts on that tab's
@@ -101,4 +101,31 @@ test.describe('smart timer', () => {
 
     await api.post('/api/time/auto/mode', { data: { project: PROJECT, mode: 'remind' } })
   })
+})
+
+test('the terminal title timers keep their chosen order and sources after reloading the window', async ({ win }) => {
+  const { page, app } = win
+  await fullSize(app, page)
+  await ready(page)
+  const group = page.locator('[data-timer-group]')
+  const kinds = () => group.locator('[data-timer-kind]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-timer-kind')))
+  await expect.poll(kinds).toEqual(['session', 'project', 'total'])
+  await expect(group.locator('[data-timer-kind="project"]')).toHaveText(/^\d+:\d{2}$/)
+  await expect(group.locator('[data-timer-kind="total"]')).toHaveText(/^Σ\d+:\d{2}$/)
+  await page.getByRole('button', { name: 'Window settings' }).click()
+  const settings = page.getByRole('complementary', { name: 'Window settings' })
+  await settings.getByText('Timers', { exact: true }).click()
+  const move = settings.getByRole('button', { name: 'Move Total timer up' })
+  await move.click()
+  await move.click()
+  await expect.poll(kinds).toEqual(['total', 'session', 'project'])
+  await settings.getByRole('combobox', { name: 'Project timer', exact: true }).selectOption('agents')
+  await settings.getByRole('combobox', { name: 'Total timer', exact: true }).selectOption('agents')
+  await settings.getByRole('checkbox', { name: 'Session timer' }).uncheck()
+  await expect.poll(kinds).toEqual(['total', 'project'])
+  await settings.getByRole('button', { name: 'Close window settings' }).click()
+  for (const kind of ['total', 'project']) await expect(group.locator(`[data-timer-kind="${kind}"]`)).toHaveAttribute('data-timer-source', 'agents')
+  await page.reload()
+  await expect.poll(kinds).toEqual(['total', 'project'])
+  for (const kind of ['total', 'project']) await expect(group.locator(`[data-timer-kind="${kind}"]`)).toHaveAttribute('data-timer-source', 'agents')
 })

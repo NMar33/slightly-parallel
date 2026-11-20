@@ -12,8 +12,10 @@ import json
 import os
 import queue
 import re
+import shutil
 import threading
 import time
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -93,6 +95,7 @@ def con(tmp_path: Path):
 def test_pywinpty_is_installed_and_the_terminal_is_on() -> None:
     from backend import conpty
     from backend.routers import terminal
+    assert version("pywinpty") == "3.1.0"
     assert conpty.available(), conpty.MISSING
     assert terminal.SUPPORTED
 
@@ -109,6 +112,29 @@ def test_a_shell_starts_in_its_folder_with_its_environment_and_takes_input(con, 
     assert f"where-{tmp_path.name}" in _CODES.sub("", out.until(f"where-{tmp_path.name}")), out.text[-2000:]
     con.write((_echo(family, "calc-", "6*7") + "\r").encode())
     assert "calc-42" in _CODES.sub("", out.until("calc-42")), out.text[-2000:]
+
+
+def test_conpty_opens_the_exact_executable_when_its_path_has_spaces(tmp_path: Path) -> None:
+    from backend import conpty
+
+    folder = tmp_path / "shell with spaces"
+    folder.mkdir()
+    exe = folder / "command.exe"
+    shutil.copyfile(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe", exe)
+    # If the command line starts with an unquoted path, Windows may try this
+    # shorter name. It must launch precisely the binary we supplied.
+    (tmp_path / "shell.exe").write_bytes(b"not an executable")
+    terminal = conpty.ConPty([str(exe), "/D", "/K"], str(tmp_path), 100, 30, dict(os.environ))
+    output = Reader(terminal)
+    try:
+        terminal.write(b"set n=42\recho conpty-%n%\r")
+        assert "conpty-42" in _CODES.sub("", output.until("conpty-42")), output.text[-2000:]
+    finally:
+        terminal.kill()
+        try:
+            assert output.ended()
+        finally:
+            terminal.release()
 
 
 def test_output_is_utf8(con) -> None:

@@ -67,7 +67,7 @@ interface TermStatus {
 }
 
 /** How to install the Windows terminal's one package into the backend's environment. */
-export const PYWINPTY = 'backend\\.venv\\Scripts\\python -m pip install pywinpty'
+export const PYWINPTY = 'backend\\.venv\\Scripts\\python -m pip install pywinpty==3.1.0'
 
 export const STATE_WORD: Record<TermState, string> = {
   shell: t('a prompt'), working: t('working'), waiting: t('your turn'), running: t('running'), ended: t('ended'),

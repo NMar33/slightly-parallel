@@ -67,6 +67,17 @@ def test_windows_file_lock_retries_with_a_bounded_wait(tmp_path: Path, monkeypat
         assert list(attempts) == []
 
 
+def test_all_windows_install_paths_pin_the_safe_conpty_version() -> None:
+    backend = Path(__file__).resolve().parents[1]
+    expected = 'pywinpty==3.1.0 ; sys_platform == "win32"'
+    for filename in ("requirements.lock", "requirements.txt"):
+        requirements = (backend / filename).read_text(encoding="utf-8").splitlines()
+        assert [line for line in requirements if line.startswith("pywinpty")] == [expected]
+
+    config = tomllib.loads((backend / "pyproject.toml").read_text(encoding="utf-8"))
+    assert [req for req in config["project"]["dependencies"] if req.startswith("pywinpty")] == [expected]
+
+
 def test_windows_hook_and_mcp_lines(monkeypatch: pytest.MonkeyPatch) -> None:
     # Not os.name: on Python 3.11 a Path made while os.name says "nt" is a WindowsPath, which POSIX cannot make.
     monkeypatch.setattr(setup, "_windows", lambda: True)

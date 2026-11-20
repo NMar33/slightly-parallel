@@ -4,7 +4,7 @@ Codex runs a project's hooks only once the user has trusted the folder and
 the hooks, on its interactive screen. The test does that step the same way:
 it starts `codex` in a pseudo-terminal, waits for each question and presses
 the key. Linux and macOS use the standard library's pty; Windows uses its
-pseudo-console through pywinpty (pip install pywinpty).
+pseudo-console through pywinpty (pip install pywinpty==3.1.0).
 """
 
 from __future__ import annotations

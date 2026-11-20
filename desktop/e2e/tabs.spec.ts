@@ -26,6 +26,19 @@ const pwdLine = (dir: string) => {
 
 const strip = (page: import('@playwright/test').Page) => page.getByRole('tablist', { name: 'Chats' })
 
+/** Check the registered shell and return its stable tab ID. PowerShell can
+ * replace the startup label with an OSC title before the first assertion. */
+async function openProjectShellWithKey(page: import('@playwright/test').Page, key: string) {
+  const [response] = await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/terminal/sessions') && r.request().method() === 'POST'),
+    page.keyboard.press(key),
+  ])
+  expect(response.status()).toBe(201)
+  const opened = await response.json() as { session: { id: string } }
+  expect(opened).toMatchObject({ existing: false, session: { project: PROJECT, label: PROJECT, role: 'shell' } })
+  return sessionTab(strip(page), opened.session.id)
+}
+
 test.describe('tab strip', () => {
   test('a program that sets the terminal title (OSC 2) names the tab', async ({ win, shell }) => {
     test.skip(WINDOWS, 'sh printf')
@@ -164,10 +177,10 @@ test.describe('tab strip', () => {
     await page.getByRole('button', { name: 'Choose what to open' }).click()
     await expect(menu).toBeVisible()
     // 1: a plain terminal (the agents' rows would start a real Claude Code in the sandbox)
-    await page.keyboard.press('1')
+    const fresh = await openProjectShellWithKey(page, '1')
     await expect(menu).toHaveCount(0)
     await expect(strip(page).getByRole('tab')).toHaveCount(2)
-    await expect(strip(page).getByRole('tab', { name: new RegExp(`^${PROJECT} `) })).toHaveAttribute('aria-selected', 'true')
+    await expect(fresh).toHaveAttribute('aria-selected', 'true')
     await expect.poll(async () => (await sessions(server.api)).filter((s) => s.id !== shell.id).length).toBe(1)
   })
 
@@ -191,8 +204,7 @@ test.describe('tab strip', () => {
     await expect(keys).toHaveCount(0)
     await expect(input).toBeFocused()
 
-    await page.keyboard.press('ControlOrMeta+Shift+KeyT')
-    const fresh = strip(page).getByRole('tab', { name: new RegExp(`^${PROJECT} `) })
+    const fresh = await openProjectShellWithKey(page, 'ControlOrMeta+Shift+KeyT')
     await expect(fresh).toHaveAttribute('aria-selected', 'true')
     await expect.poll(async () => (await sessions(server.api)).filter((s) => s.id !== shell.id).length).toBe(1)
     await ready(page)

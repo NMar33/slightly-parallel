@@ -5,7 +5,7 @@ the whole Windows path, kept in one place: a shell started in a pseudo
 console, its output read on a worker thread, typed input, a resize, its
 exit, and closing it with every process under it.
 
-pywinpty (``winpty.PTY``, pywinpty 3.x; installed on Windows only, see
+pywinpty (``winpty.PTY``, pywinpty 3.1.0; installed on Windows only, see
 requirements.txt) is used at its low level:
 
 - ``PTY(cols, rows, backend)`` makes the pseudo console; sizes are 16-bit
@@ -50,7 +50,7 @@ log = logging.getLogger("sp.terminal")
 
 #: What the page says when the package is missing (routers/terminal.py, 501).
 MISSING = ("The terminal on Windows needs the pywinpty package. Install it into Slightly Parallel's "
-           "environment (backend\\.venv\\Scripts\\python -m pip install pywinpty), then restart.")
+           "environment (backend\\.venv\\Scripts\\python -m pip install pywinpty==3.1.0), then restart.")
 
 _winpty: Any = None
 
@@ -123,14 +123,19 @@ class ConPty:
         # at once leave the host unknown rather than guessed.
         children = _children()
         before = {proc.pid for proc in children} if children is not None else None
+        exe = argv[0]
+        appname = exe
         try:
             pty = winpty.PTY(cols, rows, backend=winpty.Backend.ConPTY)
+            # The pinned ConPTY uses appname as the first command-line token.
+            # Quote it so Windows cannot select a shorter executable path.
+            if getattr(winpty, "__version__", "") == "3.1.0":
+                appname = subprocess.list2cmdline([exe])
         except self._error:
             # Windows before 10 1809 has no ConPTY: pywinpty's own choice (winpty).
             pty = winpty.PTY(cols, rows)
-        exe = argv[0]
         cmdline = subprocess.list2cmdline(argv[1:]) if len(argv) > 1 else None
-        if not pty.spawn(exe, cmdline=cmdline, cwd=cwd or None, env=env_block(env)):
+        if not pty.spawn(appname, cmdline=cmdline, cwd=cwd or None, env=env_block(env)):
             raise OSError(f"the shell did not start: {exe}")
         self._pty: Any = pty
         self.pid: int = int(pty.pid or 0)

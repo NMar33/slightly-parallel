@@ -22,6 +22,11 @@ The resources `sp://contract`, `sp://schema`, `sp://rules`
 and `sp://health` hold this file, the write schema, the active rules
 and the server's state.
 
+In the Slightly Parallel source repository, run heavy local pytest, Vitest
+and Playwright commands through `python3 scripts/verify.py queue -- COMMAND`
+(use the path to `verify.py` from your working directory). The `fast` and
+`waves` profiles already take the same machine-wide lock.
+
 ## 1. Capture and signals
 
 Your conversation is captured automatically — each user message and your

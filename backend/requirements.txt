@@ -11,5 +11,6 @@ watchdog>=5.0,<7
 pydantic>=2.9,<3
 PyYAML>=6.0,<7
 psutil>=6.0,<8
-# The terminal on Windows: a ConPTY (backend/conpty.py). Windows only.
-pywinpty>=3.0,<4 ; sys_platform == "win32"
+# Windows ConPTY. Newer releases can steal Windows wake-ups during teardown.
+# https://github.com/andfoy/winpty-rs/issues/152
+pywinpty==3.1.0 ; sys_platform == "win32"
