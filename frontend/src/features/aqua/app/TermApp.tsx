@@ -271,7 +271,8 @@ function AquaWindow({ status }: { status: Status }) {
   }, [ready, kind, activeId, activeWs])
   // The tabs last in front, newest first: their terminals stay mounted (KEEP_SCREENS).
   const [recent, setRecent] = useState<string[]>([])
-  useEffect(() => {
+  // Record the active tab before the strip can receive another click.
+  useLayoutEffect(() => {
     if (!activeId) return
     setRecent((r) => r[0] === activeId ? r : [activeId, ...r.filter((x) => x !== activeId)].slice(0, KEEP_SCREENS))
   }, [activeId])

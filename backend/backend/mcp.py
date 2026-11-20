@@ -31,12 +31,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 # This process's parents: the capture hook reads them the same way, and the
 # two find each other by the tool process they share (hookshared.py).
 from .hookshared import ancestors
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "slightly-parallel", "version": "1.2.0"}
+SERVER_INFO = {"name": "slightly-parallel", "version": __version__}
 VIA_HEADER = "X-SP-Via"
 VIA_VALUE = "mcp"
 # How long a call waits for the server to come up before it fails: the

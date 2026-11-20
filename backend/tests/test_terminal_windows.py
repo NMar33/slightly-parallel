@@ -25,7 +25,9 @@ from types import SimpleNamespace
 
 import psutil
 import pytest
+from anyio import move_on_after
 from fastapi.testclient import TestClient
+from starlette.testclient import WebSocketTestSession
 
 from backend import conpty, termlib
 from backend.routers import terminal
@@ -369,12 +371,18 @@ def plain(tmp_path: Path, monkeypatch):
         yield c, root, work
 
 
-def _until(ws, want: bytes, timeout: float = 8.0) -> bytes:
-    seen = b""
-    end = time.time() + timeout
-    while want not in seen and time.time() < end:
-        seen += ws.receive_bytes()
-    return seen
+def _until(ws: WebSocketTestSession, want: bytes, timeout: float = 8.0) -> bytes:
+    async def read() -> bytes:
+        seen = bytearray()
+        # The deadline must cover a receive on a quiet socket as well.
+        with move_on_after(timeout):
+            while want not in seen:
+                message = await ws._send_rx.receive()
+                ws._raise_on_close(message)
+                seen.extend(message["bytes"])
+        return bytes(seen)
+
+    return ws.portal.call(read)
 
 
 def _row(c, sid: str) -> dict:
@@ -500,16 +508,23 @@ def test_a_plain_terminal_sleeps_and_wakes_running_its_command_again(plain) -> N
 
 
 @pytest.mark.skipif(os.name == "nt", reason="a Unix pty (the Windows one: tests/test_conpty.py)")
-def test_a_plain_terminal_runs_from_the_moment_it_opens_with_no_view(plain) -> None:
+def test_a_plain_terminal_runs_from_the_moment_it_opens_with_no_view(plain, monkeypatch) -> None:
     """Every terminal on Windows. Opened through the API (as the window's
     suite does, as Start on a task does), a plain terminal's shell starts at
     once and runs its command with nobody looking: before, it listed as
     `ended` until a view attached, and the window showed its "ended" card
     instead of the screen. Woken, the same."""
     c, _, work = plain
+    # The first view must replay the program's output even if the shell
+    # never echoes its input. Keep the echo off to exercise that case.
+    shell = work / "bash"
+    shell.write_text("#!/bin/sh\nstty -echo\nexec /bin/sh -i\n", encoding="utf-8")
+    shell.chmod(0o755)
+    monkeypatch.setenv("SHELL", str(shell))
     tok = c.get("/api/terminal/state").json()["token"]
     s = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "role": "server",
-                                              "command": "echo ran-$((6*7)) > ran.txt", "label": "web"}).json()["session"]
+                                              "command": "echo booted-$((6*7)); echo ran-$((6*7)) > ran.txt",
+                                              "label": "web"}).json()["session"]
     assert s["backend"] == "plain"
     assert _row(c, s["id"])["state"] != "ended"
     end = time.time() + 8
@@ -519,7 +534,7 @@ def test_a_plain_terminal_runs_from_the_moment_it_opens_with_no_view(plain) -> N
     assert _row(c, s["id"])["typed"] is True
     # The first view gets what was printed before it came, and the shell is the same one.
     with c.websocket_connect(f"/ws/terminal/{s['id']}?token={tok}") as ws:
-        assert b"ran-$((6*7))" in _until(ws, b"ran-$((6*7))")
+        assert b"booted-42" in _until(ws, b"booted-42")
         ws.send_text(json.dumps({"type": "input", "data": "echo seen-$((3+4))\r"}))
         assert b"seen-7" in _until(ws, b"seen-7")
     # Asleep, then woken with no view: the server's command runs again at once.

@@ -147,7 +147,7 @@ def _run_hook(root: Path, tool: str, session: str, prompt: str) -> str:
         args += ["--tool", "codex"]
     proc = subprocess.run(args, input=json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": session,
                                                   "prompt": prompt}),
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, encoding="utf-8", timeout=60)
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
 
@@ -230,7 +230,9 @@ def test_a_pasted_marker_of_a_message_never_typed_stays_the_operators_text(root:
     ("claude-code", "w0rker01-0000-0000-0000-000000000000", WORKER),
     ("codex", "00000000-0000-7000-8000-00000c0dex01", CODEX),
 ])
-def test_stop_wakes_once_without_running_tags(root, tool, session, agent):
+def test_stop_wakes_once_without_running_tags(root, tool, session, agent, monkeypatch):
+    # The hook's JSON uses UTF-8 even when the parent defaults to a Windows code page.
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp1252")
     _run_hook(root, tool, session, "ordinary operator input")
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="#done")
     def stop(active):
@@ -238,11 +240,12 @@ def test_stop_wakes_once_without_running_tags(root, tool, session, agent):
                        last_assistant_message="finished")
         proc = subprocess.run([sys.executable, str(_HOOKS / "claude-code-capture.py"), "--project", "alpha",
                                "--data-root", str(root), "--tool", tool], input=json.dumps(payload),
-                              capture_output=True, text=True, check=True, timeout=30)
+                              capture_output=True, encoding="utf-8", check=True, timeout=30)
         return json.loads(proc.stdout or "{}")
     result = stop(False)
     assert result["decision"] == "block" and row["id"] in result["reason"]
     assert "#done" not in result["reason"]
+    assert ascii(result["reason"]) == ascii(msgledger.wake_text(row))
     _run_hook(root, tool, session, result["reason"])
     errors = root / ".capture" / "errors.jsonl"
     assert _turns(root, agent)[-1].user_summary.startswith("<sp-message"), (

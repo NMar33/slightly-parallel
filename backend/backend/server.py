@@ -46,7 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from . import app_settings, backup as backup_engine, logbook
+from . import __version__, app_settings, backup as backup_engine, logbook
 from .csvio import DamagedFile
 from .config import Settings, lan_refusal
 from .db import FIXTURES, ViewStore
@@ -852,7 +852,7 @@ def create_app(
 
     app = FastAPI(
         title="Slightly Parallel API",
-        version="1.0.0",
+        version=__version__,
         description=(
             "Read-mostly projection of an agents filesystem. The filesystem "
             "is the source of truth; DuckDB views are a disposable cache."

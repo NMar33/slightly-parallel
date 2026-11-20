@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { flushSync } from 'react-dom'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -159,6 +160,29 @@ describe('SP Aqua at /term', () => {
     expect(screen.queryByTestId('screen')).toBeNull()
     expect(screen.getByText(/dusty is asleep/)).toBeTruthy()
     expect(screen.getByText(/dusty is asleep/).closest('.aqua-screen')).toBeTruthy()
+  })
+
+  it('keeps the first terminal when the second tab is clicked as soon as the first one appears', async () => {
+    const a = row({ label: 'calendar-overlap' })
+    const b = row({ label: 'api-limits' })
+    world = { sessions: [a, b] }
+    const observer = new MutationObserver(() => {
+      if (screen.queryByTestId('screen')?.getAttribute('data-sid') !== a.id) return
+      const next = screen.queryByRole('tab', { name: /api-limits/ })
+      if (!next) return
+      observer.disconnect()
+      // Commit the click before queued passive state updates can mask a remount.
+      flushSync(() => next.click())
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    try {
+      page()
+      await waitFor(() => expect(screen.getByTestId('screen')).toHaveAttribute('data-sid', b.id))
+      expect(screen.queryByTestId('kept')).toHaveAttribute('data-sid', a.id)
+      expect(made).toEqual({ [a.id]: 1, [b.id]: 1 })
+    } finally {
+      observer.disconnect()
+    }
   })
 
   it('opens first on the workspace of a chat waiting on you, else of the newest terminal', async () => {

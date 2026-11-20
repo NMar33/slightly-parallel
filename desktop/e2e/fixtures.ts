@@ -145,15 +145,18 @@ export const test = base.extend<{ shell: Shell; win: Win; bare: Win }, { server:
       },
     })
     expect(reg.ok(), await reg.text()).toBeTruthy()
-    await use({ url: URL_, api, dir })
-    await closeAll(api)
-    await api.dispose()
+    try {
+      await use({ url: URL_, api, dir })
+      await closeAll(api)
+    } finally {
+      await api.dispose()
+    }
   }, { scope: 'worker' }],
 
   shell: async ({ server }, use) => {
     test.skip(!TERMINAL, 'no terminal on this system')
-    await closeAll(server.api)
-    const s = await openShell(server.api, 'e2e-shell')
+    await test.step('Close terminals from the preceding test', () => closeAll(server.api), { timeout: 25_000 })
+    const s = await test.step('Open a fresh shell', () => openShell(server.api, 'e2e-shell'), { timeout: 25_000 })
     // SP_E2E_KEEP=plain (playwright.config.ts) took: no tmux under the run.
     if (KEEP_PLAIN || WINDOWS) expect(s.backend, 'a plain terminal').toBe('plain')
     await use(s)
@@ -192,8 +195,9 @@ export async function sessions(api: APIRequestContext): Promise<Row[]> {
 }
 
 export async function closeAll(api: APIRequestContext) {
-  for (const s of await sessions(api).catch(() => [] as Row[])) {
-    await api.post(`/api/terminal/sessions/${s.id}/close`, { data: { actor: 'operator' } }).catch(() => {})
+  for (const s of await sessions(api)) {
+    const response = await api.post(`/api/terminal/sessions/${s.id}/close`, { data: { actor: 'operator' } })
+    expect(response.ok(), `closing terminal ${s.id}: ${response.status()} ${await response.text()}`).toBeTruthy()
   }
 }
 

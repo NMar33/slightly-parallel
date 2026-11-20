@@ -12,10 +12,13 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from pathlib import Path
+from urllib.request import urlopen
 
 import pytest
 import uvicorn
+from packaging.version import Version
 
 from backend.routers.schema_api import breadcrumb_path
 from backend.server import create_app
@@ -110,6 +113,15 @@ def test_the_whole_conversation(mcp) -> None:
     })
     assert init["result"]["serverInfo"]["name"] == "slightly-parallel"
     assert init["result"]["protocolVersion"] == "2025-06-18"
+    version = init["result"]["serverInfo"]["version"]
+    with urlopen(f"{base}/openapi.json", timeout=5) as response:
+        assert json.load(response)["info"]["version"] == version
+    backend = tomllib.loads((REPO / "backend" / "pyproject.toml").read_text(encoding="utf-8"))
+    assert Version(backend["project"]["version"]) == Version(version)
+    for folder in ("frontend", "desktop"):
+        package = json.loads((REPO / folder / "package.json").read_text(encoding="utf-8"))
+        lock = json.loads((REPO / folder / "package-lock.json").read_text(encoding="utf-8"))
+        assert package["version"] == lock["version"] == lock["packages"][""]["version"] == version
 
     # tools/list → generated from the live schema, enums inlined
     tools = {t["name"]: t for t in client.request("tools/list")["result"]["tools"]}

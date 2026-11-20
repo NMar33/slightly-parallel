@@ -76,6 +76,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   // Traces and screenshots of a failed test stay after the copy is gone.
   outputDir: path.join(__dirname, 'test-results'),
+  use: { trace: 'retain-on-failure' },
   webServer: {
     command: `"${PYTHON}" -m uvicorn backend.server:app --host 127.0.0.1 --port ${PORT}`,
     cwd: path.join(REPO, 'backend'),
