@@ -166,23 +166,23 @@ def test_a_restore_that_fails_in_the_swap_puts_everything_back(roots, monkeypatc
     (data / "new.csv").write_text("x\n", encoding="utf-8")
     before = _tree(data)
 
-    real, arrived = backup.shutil.move, []
+    real_rename, arrived = Path.rename, []
 
-    def move(src: str, dst: str):
+    def rename(src: Path, dst: Path) -> Path:
         # The second piece of the restored tree does not arrive: the disk is full.
-        if "sp-restore-" in src and str(dst).startswith(str(data)):
+        if dst.parent == data and any(part.startswith("sp-restore-") for part in src.parts):
             arrived.append(src)
             if len(arrived) == 2:
                 raise OSError("No space left on device")
-        return real(src, dst)
+        return real_rename(src, dst)
 
-    monkeypatch.setattr(backup.shutil, "move", move)
+    monkeypatch.setattr(Path, "rename", rename)
     with pytest.raises(backup.BackupError, match="as it was before"):
         backup.restore(dest, archive.name, data)
     assert _tree(data) == before                       # not emptied, not half of each
     assert any(p.name.startswith("sp-restore-") for p in dest.iterdir())   # the restored copy is kept
 
-    monkeypatch.setattr(backup.shutil, "move", real)
+    monkeypatch.setattr(Path, "rename", real_rename)
     backup.restore(dest, archive.name, data)           # and the same restore then works
     assert (data / "tasks.csv").read_text(encoding="utf-8").endswith("Ship it\n") and not (data / "new.csv").exists()
 

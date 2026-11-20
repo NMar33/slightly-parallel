@@ -51,16 +51,15 @@ def test_a_write_in_the_gap_fails_the_restore_and_leaves_the_data_as_it_was(root
     (data / "tasks.csv").write_text("id,title\ntk_1,Ship it\ntk_2,Later\n", encoding="utf-8")
     before = _snapshot(data)
 
-    real_move = backup.shutil.move
+    real_rename = Path.rename
     planted: list[str] = []
 
-    def move(src: str, dst: str):
-        src_p = Path(src)
-        if not planted and "sp-restore-" in src and Path(dst).parent == data:
+    def rename(src: Path, dst: Path) -> Path:
+        if not planted and dst.parent == data and any(part.startswith("sp-restore-") for part in src.parts):
             # The first piece of the archive moves in; a hook writes the
             # others' names into the emptied data root before they follow.
-            for other in src_p.parent.iterdir():
-                if other.name == src_p.name:
+            for other in src.parent.iterdir():
+                if other.name == src.name:
                     continue
                 if other.is_dir():
                     (data / other.name).mkdir()
@@ -68,9 +67,9 @@ def test_a_write_in_the_gap_fails_the_restore_and_leaves_the_data_as_it_was(root
                 else:
                     (data / other.name).write_text("written in the gap\n", encoding="utf-8")
                 planted.append(other.name)
-        return real_move(src, dst)
+        return real_rename(src, dst)
 
-    monkeypatch.setattr(backup.shutil, "move", move)
+    monkeypatch.setattr(Path, "rename", rename)
     with pytest.raises(backup.BackupError) as err:
         backup.restore(dest, archive.name, data)
     assert planted
