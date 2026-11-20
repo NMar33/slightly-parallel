@@ -104,7 +104,17 @@ test.describe('windows after a restart', () => {
     await expect.poll(() => savedIn(userData).map((w) => w.url)).toEqual([chatUrl, wsUrl])
 
     // Sizes (and, where a window may place itself, places) the operator gave them.
-    const want = { [chatUrl]: { width: 733, height: 455, x: 140, y: 120 }, [wsUrl]: { width: 811, height: 522, x: 420, y: 260 } }
+    // Keep the fixtures wholly on the display. macOS can accept a rectangle
+    // via setBounds but clamp that same rectangle when it opens a new window.
+    const area = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea)
+    const placement = (width: number, height: number, x: number, y: number) => {
+      if (FITS) {
+        width = Math.min(width, area.width)
+        height = Math.min(height, area.height)
+      }
+      return { width, height, x: area.x + Math.min(x, Math.max(0, area.width - width)), y: area.y + Math.min(y, Math.max(0, area.height - height)) }
+    }
+    const want = { [chatUrl]: placement(733, 455, 140, 120), [wsUrl]: placement(811, 522, 420, 260) }
     await app.evaluate(({ BrowserWindow }, { want, place }) => {
       for (const w of BrowserWindow.getAllWindows()) {
         const b = want[w.webContents.getURL()]
@@ -115,10 +125,12 @@ test.describe('windows after a restart', () => {
     await expect.poll(async () => {
       const live = (await shown(app)).slice(1)
       const saved = savedIn(userData)
-      return saved.length === 2 && live.length === 2 && saved.every((w, i) => near(sizeOf(w), sizeOf(want[w.url]))
-        && near(sizeOf(w), live[i].size) && w.url === live[i].url)
-    }, { message: 'the sizes given, saved' }).toBe(true)
-    const placed = Object.fromEntries((await shown(app)).slice(1).map((w) => [w.url, w.pos]))
+      return saved.length === 2 && live.length === 2 && saved.every((w, i) => {
+        const bounds = want[w.url]
+        return bounds && near(sizeOf(w), sizeOf(bounds)) && near(sizeOf(w), live[i].size) && w.url === live[i].url
+          && (!FITS || WAYLAND || (w.x === bounds.x && w.y === bounds.y && near(live[i].pos, [bounds.x, bounds.y])))
+      })
+    }, { message: 'the requested window geometry is live and saved' }).toBe(true)
 
     await quit(app)
     const kept = savedIn(userData)
@@ -136,7 +148,9 @@ test.describe('windows after a restart', () => {
     expect(back.map((w) => w.url)).toEqual([again.page.url(), chatUrl, wsUrl])
     expect(new URL(back[0].url).search).toBe('')
     if (FITS) for (const [i, w] of back.slice(1).entries()) expect(near(w.size, sizeOf(kept[i])), `${w.url} ${w.size}`).toBe(true)
-    if (FITS && !WAYLAND) expect(back.slice(1).map((w) => w.pos)).toEqual([placed[chatUrl], placed[wsUrl]])
+    if (FITS && !WAYLAND) {
+      await expect.poll(async () => (await shown(again.app)).slice(1).map((w) => w.pos)).toEqual(Object.values(want).map(({ x, y }) => [x, y]))
+    }
     // The chat's window is its terminal again.
     await ready(await pageAt(again.app, chatUrl))
 

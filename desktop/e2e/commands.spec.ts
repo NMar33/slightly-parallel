@@ -89,8 +89,9 @@ const REPLY = [
 ].join('\n')
 
 test.describe('commands in a reply', () => {
+  test.skip(WINDOWS, 'the printed conversation and commands require a Unix shell')
+
   test('the copy icon, the right-click items, a paste that arrives once and does not run; a file name is no command', async ({ win, shell, server }) => {
-    test.skip(WINDOWS, 'the capture CLI and the printed conversation are written for a Unix shell')
     const { app, page } = win
     await ready(page)
     // The reply is drawn for a terminal taller than headless's 420×240 window.
@@ -209,7 +210,6 @@ test.describe('commands in a reply', () => {
   })
 
   test('a shell: a `$ ` row is a command, its icon copies it; a right click offers the command\'s items', async ({ win }) => {
-    test.skip(WINDOWS, 'the printed lines are written for a Unix shell')
     const { app, page } = win
     await ready(page)
     await typeLine(page, `printf '%s\\n' '$ ls -la /tmp' 'not a command here'`)
