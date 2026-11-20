@@ -23,7 +23,7 @@
  * the list or the shelves; a link to one unfolds it.
  */
 
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { Archive, ChevronRight, DoorOpen, LayoutGrid, PanelLeft, Pencil, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
@@ -112,7 +112,7 @@ export function EntryPointsDesk({ project }: { project?: string } = {}) {
     setPick(fromTopic); setOpen(fromTopic)
   }, [fromTopic])
   const linkedArchived = !!fromTopic && !!topics.find((tp) => tp.id === fromTopic)?.archived_at
-  useEffect(() => { if (linkedArchived) setShowArchived(true) }, [linkedArchived])
+  useLayoutEffect(() => { if (linkedArchived) setShowArchived(true) }, [linkedArchived])
   useEffect(() => {
     if (fromTopic && desk.data) document.querySelector(`[data-topic="${fromTopic}"]`)?.scrollIntoView?.({ block: 'nearest' })
   }, [fromTopic, desk.data, showArchived])

@@ -196,10 +196,23 @@ describe('Entry points, the desk on the real routes', () => {
   it('a link with the topic (search) opens it, an archived one unfolded', async () => {
     const GONE: Topic = { ...THIN, id: 'ep_gone', name: 'Cut-up texts', archived_at: '2026-11-10T09:00:00' }
     serve({ topics: [FILMS, GONE], projects: ['merkhet', '2604-writing-tracker'] })
-    mount('/entrypoints?topic=ep_gone')
-    const card = await screen.findByTestId('ep-card')
-    expect(within(card).getByRole('heading', { name: 'Cut-up texts' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Archived · 1/ }).getAttribute('aria-expanded')).toBe('true')
+    const archived = () => screen.getByRole('button', { name: /Archived · 1/ })
+    let firstExpansion: string | null | undefined
+    const observer = new MutationObserver(() => {
+      const card = screen.queryByTestId('ep-card')
+      if (!card || !within(card).queryByRole('heading', { name: 'Cut-up texts' })) return
+      firstExpansion = archived().getAttribute('aria-expanded')
+      observer.disconnect()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    try {
+      mount('/entrypoints?topic=ep_gone')
+      expect(within(await screen.findByTestId('ep-card')).getByRole('heading', { name: 'Cut-up texts' })).toBeTruthy()
+      expect(firstExpansion).toBe('true')
+      expect(archived()).toHaveAttribute('aria-expanded', 'true')
+    } finally {
+      observer.disconnect()
+    }
   })
 
   it('an old link with the topic after # opens it too', async () => {

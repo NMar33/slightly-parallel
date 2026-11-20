@@ -78,7 +78,7 @@ export default defineConfig({
   outputDir: path.join(__dirname, 'test-results'),
   use: { trace: 'retain-on-failure' },
   webServer: {
-    command: `"${PYTHON}" -m uvicorn backend.server:app --host 127.0.0.1 --port ${PORT}`,
+    command: `"${PYTHON}" -m uvicorn ${process.platform === 'win32' ? 'tests.e2e_desktop_server:app' : 'backend.server:app'} --host 127.0.0.1 --port ${PORT}`,
     cwd: path.join(REPO, 'backend'),
     env: {
       ...process.env as Record<string, string>,
