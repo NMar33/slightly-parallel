@@ -451,44 +451,48 @@ test.describe('paste', () => {
     })
   })
 
-  test('a middle click pastes once, also right after a copy in the terminal', async ({ win, shell }) => {
+  test.describe(() => {
     test.skip(!LINUX, 'the middle-click paste (the primary selection) is Linux only')
     test.skip(HEADLESS, 'Chromium\'s headless Ozone has no primary selection: a middle click pastes nothing there')
-    const { app, page } = win
-    await ready(page)
-    const text = echoCalc('middle-', '40+2')
-    // Seed the clipboard, primary selection and tmux buffer with the same
-    // text. A middle click must paste one copy from the primary selection.
-    await toClipboard(app, text, 'selection')
-    await toClipboard(app, text)
-    if (shell.backend === 'tmux') {
-      for (const s of tmuxSockets(process.env.SP_DESKTOP_E2E_TMUX!)) execFileSync('tmux', ['-S', s, 'set-buffer', text], { stdio: 'ignore' })
-    }
-    await recordInput(page)
-    const m = await middle(page)
-    await page.mouse.click(m.x, m.y, { button: 'middle' })
-    await sentOnce(page, text)
-    await input(page).focus()
-    await page.keyboard.press('Enter')
-    await ranOnce(page, 'middle-42', 9)
+    test('a middle click pastes once, also right after a copy in the terminal', async ({ win, shell }) => {
+      const { app, page } = win
+      await ready(page)
+      const text = echoCalc('middle-', '40+2')
+      // Seed the clipboard, primary selection and tmux buffer with the same
+      // text. A middle click must paste one copy from the primary selection.
+      await toClipboard(app, text, 'selection')
+      await toClipboard(app, text)
+      if (shell.backend === 'tmux') {
+        for (const s of tmuxSockets(process.env.SP_DESKTOP_E2E_TMUX!)) execFileSync('tmux', ['-S', s, 'set-buffer', text], { stdio: 'ignore' })
+      }
+      await recordInput(page)
+      const m = await middle(page)
+      await page.mouse.click(m.x, m.y, { button: 'middle' })
+      await sentOnce(page, text)
+      await input(page).focus()
+      await page.keyboard.press('Enter')
+      await ranOnce(page, 'middle-42', 9)
+    })
   })
 
-  test('Ctrl+V on Linux is ^V for the shell, not a paste', async ({ win }) => {
+  test.describe(() => {
     test.skip(!LINUX, 'Linux only: on Windows Ctrl+V pastes, on macOS Cmd+V does (the tests above)')
-    const { app, page } = win
-    await ready(page)
-    await toClipboard(app, echoCalc('never-', '1+1'))
-    await recordInput(page)
-    await input(page).focus()
-    await page.keyboard.press('Control+KeyV')
-    await expect.poll(() => sent(page)).toContain('\x16')
-    await page.waitForTimeout(400)
-    expect(bare(await sent(page))).toBe('\x16')
-    // ^V quotes the next key: a Ctrl+U clears the line, then a typed command runs.
-    await page.keyboard.press('Control+KeyU')
-    await page.keyboard.press('Control+KeyU')
-    await typeLine(page, echoCalc('typed-v-', '2+2'))
-    await expectLine(page, 'typed-v-4')
+    test('Ctrl+V on Linux is ^V for the shell, not a paste', async ({ win }) => {
+      const { app, page } = win
+      await ready(page)
+      await toClipboard(app, echoCalc('never-', '1+1'))
+      await recordInput(page)
+      await input(page).focus()
+      await page.keyboard.press('Control+KeyV')
+      await expect.poll(() => sent(page)).toContain('\x16')
+      await page.waitForTimeout(400)
+      expect(bare(await sent(page))).toBe('\x16')
+      // ^V quotes the next key: a Ctrl+U clears the line, then a typed command runs.
+      await page.keyboard.press('Control+KeyU')
+      await page.keyboard.press('Control+KeyU')
+      await typeLine(page, echoCalc('typed-v-', '2+2'))
+      await expectLine(page, 'typed-v-4')
+    })
   })
 
   test('three lines paste once, in order', async ({ win, server }) => {
