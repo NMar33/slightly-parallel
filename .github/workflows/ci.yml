@@ -11,6 +11,9 @@ jobs:
   backend:
     name: Backend (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    # The suite takes about 10 minutes; a hung test ends the job here, not at
+    # GitHub's 6 hours (pytest's faulthandler_timeout prints its stack first).
+    timeout-minutes: 45
     strategy:
       # Slightly Parallel runs on a laptop — Linux, macOS or Windows. Every system is
       # tested; one failing does not hide the others.

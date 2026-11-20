@@ -8,6 +8,7 @@ license = { text = "MIT" }
 dependencies = [
     "fastapi>=0.132,<1",
     "uvicorn[standard]>=0.32,<1",
+    "websockets>=15,<18",
     "duckdb>=1.2,<2",
     "watchdog>=5.0,<7",
     "pydantic>=2.9,<3",
@@ -30,6 +31,10 @@ testpaths = ["tests"]
 # Test files run side by side (pytest-xdist): every test builds its own data
 # root in a temp folder. 467 s one at a time, ~60 s on six workers.
 addopts = "-q -n auto --dist loadfile"
+# A test still running after 5 minutes prints every thread's stack (the
+# whole suite takes about 8): a hang on a CI runner then names its test
+# instead of running until the job's 6-hour limit.
+faulthandler_timeout = 300
 # Warnings are shown, not hidden (CI passed -p no:warnings before); a
 # deprecation raised by our own code fails the run.
 filterwarnings = [

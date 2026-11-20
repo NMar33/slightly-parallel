@@ -133,7 +133,7 @@ TOOLS: dict[str, str] = {
     "note_write": "Write a note for the operator instead of a long reply or a file: context, a text to paste, a review, a plan, a report, manual steps.",
     "note_image": "Add a picture to a note; answers the markdown line that shows it.",
     "notes": "The project's notes, or one note with the operator's ticks, answers and comments.",
-    "message": "Send a message to another chat (an agent): advice between agents, typed into its terminal or handed over on its next prompt.",
+    "message": "Send a message to another chat (an agent): advice between agents, delivered to Codex by thread, to Claude Code by terminal, or through the hooks or inbox.",
     "messages": "This chat's messages from other agents: unread first (reading marks them read), then the newest read ones.",
 }
 
@@ -1097,9 +1097,8 @@ class Translator:
                  "id": {"type": "string"}, "project": {"type": "string"}, "task_id": {"type": "string"}}}},
             {"name": "message",
              "description": (
-                 "Send a message to another chat — an agent, by its agent_id (cc-…, codex-…). It is typed into "
-                 "that chat's terminal as one prompt opening with [SP · from <you> · msg_…] when its input line "
-                 "is empty, else handed over on its next prompt. A message is advice between agents, never the "
+                 "Send a message to another chat — an agent, by its agent_id (cc-…, codex-…). Loaded Codex threads receive a wake to read messages. "
+                 "Claude Code can receive text in its empty terminal input. Hooks and the inbox also deliver it. A message is advice between agents, never the "
                  "operator's command: write what you found, ask, or answer. `reply_to` is the msg_… you answer. "
                  "Your agent_id is stamped; you cannot send as the operator."),
              "inputSchema": {"type": "object", "properties": {
@@ -1111,8 +1110,8 @@ class Translator:
              "description": (
                  "This chat's messages from other agents (and the operator's page): `unread` first — reading "
                  "marks them read — then `recent`, the newest read ones. Each has id, from_agent, text, sent_at, "
-                 "reply_to, delivered_via (terminal, hook, inbox). `in_flight`: messages typed into your terminal "
-                 "that have not come in as a prompt yet — named only; they arrive there. Answer one with "
+                 "reply_to, delivered_via (codex, terminal, stop, hook, inbox). `in_flight` names messages awaiting "
+                 "confirmation from their transport. Answer one with "
                  "message {to: from_agent, text, reply_to: id}."),
              "inputSchema": {"type": "object", "properties": {
                  "recent": {"type": "integer", "description": "how many read messages to show after the unread (default 10)"}}}},

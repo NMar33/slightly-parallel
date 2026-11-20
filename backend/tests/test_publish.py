@@ -389,7 +389,7 @@ def test_a_file_is_copied_onto_the_card(client: TestClient, data_root: Path, tmp
     make_chat(data_root, "ALPHA", AGENT, [("2026-11-04T10:30:00", "#publish The load test report.", "kept")])
     report = tmp_path / "elsewhere" / "load-test.txt"
     report.parent.mkdir()
-    report.write_text("p95 180 ms at 400 rps\n", encoding="utf-8")
+    report.write_bytes(b"p95 180 ms at 400 rps\n")             # as bytes: Windows would write \r\n
     shot = tmp_path / "elsewhere" / "chart.png"
     import base64
     shot.write_bytes(base64.b64decode(PNG))

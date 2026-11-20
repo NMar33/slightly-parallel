@@ -162,10 +162,13 @@ def test_git_never_runs_what_a_repository_names(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("shell", ["/bin/sh", "/usr/bin/dash", "/usr/bin/fish", "/usr/bin/nu"])
-def test_a_command_typed_into_another_shell_stays_one_command(shell: str) -> None:
-    """A task's text is inside the command; a quote in it must not end it."""
+def test_a_command_typed_into_another_shell_stays_one_command(shell: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A task's text is inside the command; a quote in it must not end it.
+    The macOS and Linux rule, checked on every system: on Windows typed_form
+    hands a command over as built, for the shell it was quoted for."""
+    monkeypatch.setattr(termlib, "WINDOWS", False)
     task = {"id": "tk_1", "title": "it's '; touch /tmp/x; ' done", "description": "a\\'b `c` $(d)"}
-    command = termlib.start_command("claude-code", task)
+    command = termlib.start_command("claude-code", task, family="bash")
     typed = termlib.typed_form(command, shell)
     assert typed.startswith("bash -lc ")
     words = shlex.split(typed)

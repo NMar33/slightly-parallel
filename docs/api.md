@@ -507,18 +507,22 @@ skill and the contract have one source. Built-in skills: `make-a-scan`,
 
 One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
 `from_agent` (an agent id, or `operator`), `to_agent`, `text`, `sent_at`,
-`reply_to`, `delivered_at`, `delivered_via` (`terminal`, `hook`, `inbox`),
+`reply_to`, `delivered_at`, `delivered_via` (`codex`, `terminal`, `stop`, `hook`, `inbox`),
 `landed_at` and `landed_turn` (the prompt the marker came in as),
 `read_at`. Each message is taken once, by the first way that reaches it.
 
 - `POST /api/messages` — `{to, text, reply_to?}`; an agent's through the MCP
   tool `message` (`agent_id` stamped), the operator's from the page (no
   agent). 404 for an unknown chat or `reply_to`, 422 for an empty text, one
-  over 8,000 characters or one to itself. Typed at once into the chat's live
-  terminal in Slightly Parallel's tmux as `[SP · from <sender> · msg_…] text`
-  when its input line is empty (Claude Code, Codex); otherwise it waits:
-  tried again every 3 s for a day, and handed over by the capture hook as a
-  notice on the chat's next prompt. Answers `{message, delivered_via,
+  over 8,000 characters or one to itself. For Codex, the server matches the captured full thread UUID against
+  the threads loaded on the local app-server under the server user's
+  `CODEX_HOME` (default `~/.codex`). It sends a marker asking the chat to
+  read its inbox with `turn/start` or, during a turn, `turn/steer`. The
+  ledger reserves the wake before sending. An uncertain send is checked in
+  thread history before another path may hand over the text. Claude Code
+  still receives the marked text in its verified, empty terminal input.
+  Waiting messages can be read in the inbox, handed over on the next
+  operator prompt, or announced once at Stop for either client. Answers `{message, delivered_via,
   typed, waiting}`.
 - `POST /api/messages/inbox` — `{agent_id}` (the MCP tool `messages`): the
   chat's `unread` messages, marked read now, then its `recent` read ones
@@ -534,6 +538,20 @@ acts. A marker the ledger does not know is the operator's text.
 
 ## Notes
 
+Notes are written by agents through the MCP tools and read back by them;
+the marks, comments and the archive are the operator's.
+
+- `GET /api/notes/list?project=&task=` — one line per note (the MCP `notes`
+  tool).
+- `GET /api/notes/images/{image_id}/file` — a picture of a note.
+- `POST /api/notes/write` — writes a note, or a new version of one: `{agent_id,
+  project, title?, kind, text, task_id?, entrypoint_id?, replaces?, id?, base?,
+  images?}`. MCP `note_write`.
+- `POST /api/notes/{note_id}/images` — adds a picture: `{agent_id,
+  data_base64, caption?}`. MCP `note_image`.
+- `POST /api/notes/{note_id}/marks` — the operator's tick, answer or copy on
+  an item: `{item, kind: tick|answer|copy, value}`.
+- `POST /api/notes/{note_id}/archive` — `{archived: bool}`, the operator's.
 - `GET /api/notes/feed` and `GET /api/notes/{note_id}/full` include a
   `comments` array for the notes returned. `GET /api/notes/{note_id}/agent`
   includes the same comments for the MCP `notes` tool.
@@ -543,6 +561,28 @@ acts. A marker the ledger does not know is the operator's text.
   item text appears in multiple sections. Keep the same `request_id` when
   retrying a submission. The returned `comment` records the original label,
   section and note version.
+
+## Pins, carried messages and forks for later
+
+Three lists of marked messages, one route set each (`pins`, `carries`,
+`forks`). A mark is the operator's: typed as `#pin`, `#carry`,
+`#carry-brief` or `#fork-later` in a chat, or set here by hand.
+
+- `GET /api/pins` · `GET /api/carries` · `GET /api/forks` — the marks of that
+  list in force (`?project=&agent_id=&q=&full=1`), after adopting any new tag.
+- `POST /api/pins` · `POST /api/carries` · `POST /api/forks` — marks a message:
+  `{chat_agent, turn, side?, project?, session_id?, excerpt?}`; a carry also
+  takes `level`: `carry` or `brief`. 201.
+- `POST /api/pins/remove` · `POST /api/carries/remove` ·
+  `POST /api/forks/remove` — takes the mark off: `{target}`
+  (`<agent_id>#<turn>` or `<agent_id>#<turn>/reply`).
+- `POST /api/forks/state` — a fork's state: `{target, state}`, where state is
+  `""` (waiting), `started` or `dropped`. 404 when the message has no
+  fork-later mark.
+- `POST /api/carries/brief` — the brief of a `#carry-brief` message: `{target,
+  text, agent_id}`. An agent's write, through the MCP tool `carry_brief`, for
+  a message of its own chat only (403 for another chat's, a branch's parent
+  included).
 
 ## Artifacts
 
@@ -1736,7 +1776,7 @@ An older data root loads without conversion.
 
 ---
 
-Checked against /openapi.json on 2026-11-01: 304 routes, 0 missing, 0 stale.
-Re-run it with `backend/.venv/bin/python scripts/check_api_doc.py`. The 304
+Checked against /openapi.json on 2026-11-20: 391 routes, 0 missing, 0 stale.
+Re-run it with `backend/.venv/bin/python scripts/check_api_doc.py`. The 391
 is route shapes: `/api/tasks/{item_id}` and `/api/tasks/{task_id}` are one
 shape, as are `/api/prompts/{item_id}` and `/api/prompts/{key}`.

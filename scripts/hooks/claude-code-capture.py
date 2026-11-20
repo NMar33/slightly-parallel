@@ -47,7 +47,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture import TurnCapture, _turntimes, format_signals, record_failure, shared, usage_only  # noqa: E402
+from capture import TurnCapture, _turntimes, format_signals, msgs, record_failure, shared, usage_only  # noqa: E402
 
 
 _PREFIX = {"claude-code": "cc", "codex": "codex"}
@@ -881,6 +881,7 @@ def main() -> int:
                               commit_calls=seg.calls.finish(shared.local_iso(datetime.now().astimezone().isoformat()))
                               if transcript_path else None)
             cap.note_chat_title(seg.title)
+            response = {}
             if args.tool == "claude-code":
                 # The line under the reply, then a usage warning on its own
                 # line: Stop's JSON systemMessage is shown to the user (stdout
@@ -895,7 +896,7 @@ def main() -> int:
                 if warned:
                     parts.append(warned[1])
                 if parts:
-                    print(json.dumps({"systemMessage": "\n".join(parts)}, ensure_ascii=False))
+                    response["systemMessage"] = "\n".join(parts)
                 facts = seg.facts
                 if transcript_path and (facts.appended or facts.tools or warned):
                     # The effort of the turn's last reply of the main agent (the
@@ -903,6 +904,12 @@ def main() -> int:
                     effort = next((str(x.get("effort") or "") for x in reversed(seg.usage_lines())
                                    if not x.get("helper") and x.get("effort")), "")
                     cap.record_facts(turn, facts.appended, facts.tools, [warned[0]] if warned else [], effort)
+            if not payload.get("stop_hook_active"):
+                notice = msgs.stop_notice(args.data_root, agent)
+                if notice:
+                    response.update(decision="block", reason=notice)
+            if response:
+                print(json.dumps(response, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001 — capture must never take down the session it observes
         # Exit 0 keeps the session alive; the notice goes where it is shown
         # (stdout on a prompt, stderr on Stop), so the loss is named instead

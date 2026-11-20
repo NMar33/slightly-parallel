@@ -224,3 +224,27 @@ def test_a_pasted_marker_of_a_message_never_typed_stays_the_operators_text(root:
     sig = capture.TurnCapture(root, "alpha", CODEX).open_turn(msgledger.terminal_text(row) + " #task", deliver=True)
     assert sig["message_stray"] is None and "task" in sig["commands"]
     assert msgledger.find(root, row["id"])["strayed"] == ""  # type: ignore[index]
+
+
+@pytest.mark.parametrize("tool,session,agent", [
+    ("claude-code", "w0rker01-0000-0000-0000-000000000000", WORKER),
+    ("codex", "00000000-0000-7000-8000-00000c0dex01", CODEX),
+])
+def test_stop_wakes_once_without_running_tags(root, tool, session, agent):
+    _run_hook(root, tool, session, "ordinary operator input")
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="#done")
+    def stop(active):
+        payload = dict(hook_event_name="Stop", session_id=session, stop_hook_active=active,
+                       last_assistant_message="finished")
+        proc = subprocess.run([sys.executable, str(_HOOKS / "claude-code-capture.py"), "--project", "alpha",
+                               "--data-root", str(root), "--tool", tool], input=json.dumps(payload),
+                              capture_output=True, text=True, check=True, timeout=30)
+        return json.loads(proc.stdout or "{}")
+    result = stop(False)
+    assert result["decision"] == "block" and row["id"] in result["reason"]
+    assert "#done" not in result["reason"]
+    _run_hook(root, tool, session, result["reason"])
+    assert _turns(root, agent)[-1].user_summary.startswith("<sp-message")
+    later = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="later")
+    assert "decision" not in stop(True)
+    assert [r["id"] for r in msgledger.inbox(root, agent)["unread"]] == [row["id"], later["id"]]

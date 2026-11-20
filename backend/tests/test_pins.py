@@ -156,8 +156,11 @@ def test_search_and_filters(env):
     assert len(_items(c, "pin", project="alpha")) == 3 and _items(c, "pin", project="beta") == []
 
 
-def test_a_fork_has_its_command_and_a_state(env):
+def test_a_fork_has_its_command_and_a_state(env, monkeypatch):
     c, root = env
+    # The bash form, on every system (Windows builds for its own shell:
+    # test_fork_command_per_tool and the termlib tests cover those).
+    monkeypatch.setattr(termlib, "command_family", lambda: "bash")
     _chat(root, [("write the export, it's #fork-later work", "ok")], tool="claude-code", session_ref=SID,
           cwd="/home/op/my project")
     c.app.state.store.rebuild()
@@ -171,7 +174,7 @@ def test_a_fork_has_its_command_and_a_state(env):
 
 
 def test_fork_command_per_tool():
-    assert termlib.fork_command("codex", "01a1-x", "/w", "go").startswith(
+    assert termlib.fork_command("codex", "01a1-x", "/w", "go", family="bash").startswith(
         f"cd /w && {termlib.codex_in_terminal()} fork 01a1-x $'go'")
     assert termlib.fork_command("opencode", "x", "/w", "go") == ""
     assert termlib.fork_command("claude-code", "-rm", "/w", "go") == ""

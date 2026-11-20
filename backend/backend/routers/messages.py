@@ -64,17 +64,21 @@ def send(request: Request, body: dict = Body(...)) -> dict[str, Any]:
             project = str(own["project"])
     row = msgledger.add(root, project=project, from_agent=sender, to_agent=to, text=text, reply_to=reply_to)
     try:
-        typed, why = msgdeliver.try_terminal(root, row["id"])
+        typed, why = msgdeliver.try_delivery(root, row["id"])
     except Exception as exc:  # noqa: BLE001 — the message is kept; the next round tries again
         typed, why = False, f"{type(exc).__name__}: {exc}"
     row = msgledger.find(root, row["id"]) or row
+    waiting = ""
+    if not row["delivered_via"]:
+        if row["codex_thread"] and not row["codex_checked"]:
+            waiting = "checking Codex thread history for the earlier send"
+        else:
+            waiting = f"awaiting delivery ({why}); available at Stop, on the next prompt or in the inbox"
     return {
         "message": row,
         "delivered_via": row["delivered_via"],
-        "waiting": "" if row["delivered_via"] else (
-            f"not typed into the terminal ({why}); it is handed over on the chat's next prompt, "
-            "or when its input line is empty"),
-        "typed": typed,
+        "waiting": waiting,
+        "typed": typed and row["delivered_via"] == "terminal",
     }
 
 

@@ -42,7 +42,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import msgledger, termlib
+from . import codexdelivery, msgledger, termlib
 from .hookshared import process_started
 
 log = logging.getLogger("sp.messages")
@@ -318,6 +318,15 @@ def try_terminal(data_root: Path, msg_id: str) -> tuple[bool, str]:
     return True, ""
 
 
+def try_delivery(data_root: Path, msg_id: str) -> tuple[bool, str]:
+    row = msgledger.find(data_root, msg_id)
+    if row and row["to_agent"].startswith("codex-"):
+        if row["delivered_via"]:
+            return False, "already delivered"
+        return codexdelivery.try_delivery(data_root, row, chat_meta(data_root, row["to_agent"]) or {})
+    return try_terminal(data_root, msg_id)
+
+
 _last_seen: dict[str, tuple[float, int, bool]] = {}
 
 
@@ -338,14 +347,12 @@ def retry_waiting(data_root: Path) -> int:
     typed = 0
     for r in rows:
         try:
-            ok, _ = try_terminal(data_root, r["id"])
+            ok, _ = try_delivery(data_root, r["id"])
         except Exception:  # noqa: BLE001 — one message must not stop the round
             log.exception("message %s not typed", r["id"])
             ok = False
         typed += ok
-    try:
-        st = path.stat()
-        _last_seen[key] = (st.st_mtime, st.st_size, len(rows) > typed)
-    except OSError:
-        pass
+    # Cache the snapshot we inspected. A concurrent arrival after waiting()
+    # must be picked up next round, even when all earlier rows were delivered.
+    _last_seen[key] = (st.st_mtime, st.st_size, len(rows) > typed)
     return typed

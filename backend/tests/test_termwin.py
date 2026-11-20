@@ -130,7 +130,10 @@ def test_resumable_leaves_out_held_helpers_and_unresumable(client: TestClient) -
     assert first["name"] == "Old codex chat" and first["tool"] == "codex"
 
 
-def test_branch_command(client: TestClient) -> None:
+def test_branch_command(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The bash form, on every system; the other families are
+    # test_branch_command_quotes_and_refuses_odd_refs's.
+    monkeypatch.setattr(termlib, "command_family", lambda: "bash")
     r = client.get("/api/terminal/branch/cc-one")
     assert r.status_code == 200, r.text
     d = r.json()
