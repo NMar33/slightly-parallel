@@ -44,6 +44,10 @@ ALLOWED: list[tuple[str, set[str]]] = [
     # fixture tests cannot. A CI runner has no such history; they run on the
     # developer's machine, where the tools are used every day.
     (r"no (Claude Code transcript|Codex rollout|OpenCode store) on this machine", ALL),
+    # Two real Codex TUIs in tmux against one app-server (test_codex_message_tui.py):
+    # the Backend jobs install no Codex, and Windows has neither tmux nor the
+    # Unix socket. It runs on the developer's machine with Codex installed.
+    (r"requires Codex with Unix app-server and tmux", ALL),
 ]
 
 

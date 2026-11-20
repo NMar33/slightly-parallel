@@ -209,6 +209,9 @@ def finish(space: Space, report: Report, args: argparse.Namespace, started: floa
     logs.mkdir(parents=True, exist_ok=True)
     for log in space.root.glob("*.log"):
         shutil.copy2(log, logs / log.name)
+    # The upgrade stage's install has a folder of its own.
+    for log in (space.root / "upgrade").glob("*.log"):
+        shutil.copy2(log, logs / f"upgrade-{log.name}")
     report.notes["seconds"] = round(time.time() - started)
     report.notes["folder"] = str(space.root) if args.keep else "removed"
     report.write(OUT / "report.json")

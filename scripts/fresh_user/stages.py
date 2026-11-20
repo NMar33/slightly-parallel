@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -200,8 +201,12 @@ def playwright(space: Space, report: Report, stage: str, name: str, args: list[s
     out = (p.stdout + p.stderr).strip()
     spec = next((a for a in reversed(args) if a.endswith(".ts")), "run").split("/")[-1].removesuffix(".spec.ts")
     (space.root / f"playwright-{stage.replace(':', '-')}-{spec}.log").write_text(out, encoding="utf-8")
-    last = [line for line in out.splitlines() if line.strip()][-12:]
-    return report.add(stage, name, p.returncode == 0, "\n      ".join(last))
+    lines = [line for line in out.splitlines() if line.strip()]
+    # A failure's own error first (the line reporter prints it where it
+    # happened, long before the summary), then the summary.
+    first = next((i for i, line in enumerate(lines) if re.match(r"\s+1\) ", line)), None)
+    shown = (lines[first:first + 30] + ["…"] if first is not None and p.returncode != 0 else []) + lines[-12:]
+    return report.add(stage, name, p.returncode == 0, "\n      ".join(shown))
 
 
 def pages(space: Space, report: Report) -> None:

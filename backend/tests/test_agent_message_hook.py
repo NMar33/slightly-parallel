@@ -244,7 +244,10 @@ def test_stop_wakes_once_without_running_tags(root, tool, session, agent):
     assert result["decision"] == "block" and row["id"] in result["reason"]
     assert "#done" not in result["reason"]
     _run_hook(root, tool, session, result["reason"])
-    assert _turns(root, agent)[-1].user_summary.startswith("<sp-message")
+    errors = root / ".capture" / "errors.jsonl"
+    assert _turns(root, agent)[-1].user_summary.startswith("<sp-message"), (
+        f"reason {result['reason']!r}; ledger row {msgledger.find(root, row['id'])}; "
+        f"hook errors {errors.read_text(encoding='utf-8') if errors.is_file() else 'none'}")
     later = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="later")
     assert "decision" not in stop(True)
     assert [r["id"] for r in msgledger.inbox(root, agent)["unread"]] == [row["id"], later["id"]]
