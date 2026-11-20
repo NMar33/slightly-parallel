@@ -2096,7 +2096,8 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
         )
         lookup = signals.get("done_lookup")
         if name == "done" and lookup:
-            outcome = _read_done_outcome(*lookup, signals["turn_number"])
+            capture_root, agent_id = lookup
+            outcome = _read_done_outcome(capture_root, agent_id, signals["turn_number"])
             if outcome:
                 notes[-1] += "\n" + _done_outcome_notice(outcome)
         lane = signals.get("task_lane")
