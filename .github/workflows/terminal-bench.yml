@@ -16,6 +16,19 @@ on:
   push:
     branches: [ci-bench]
   workflow_dispatch:
+    inputs:
+      output_ladder:
+        description: "Compare output paths and native Windows terminals"
+        type: boolean
+        default: false
+      output_profile:
+        description: "Profile the Windows Console.Out.Write paths with two measured rounds"
+        type: boolean
+        default: false
+      output_content:
+        description: "Compare Get-Content in SP and native Windows terminals with two measured rounds"
+        type: boolean
+        default: false
   schedule:
     - cron: "47 4 * * 1"   # Monday 04:47 UTC
 
@@ -26,8 +39,8 @@ jobs:
   bench:
     name: Bench (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    continue-on-error: true
+    timeout-minutes: ${{ inputs.output_ladder && 100 || 60 }}
+    continue-on-error: ${{ !inputs.output_ladder }}
     strategy:
       fail-fast: false
       matrix:
@@ -66,15 +79,15 @@ jobs:
         working-directory: desktop
         run: npm ci
       - name: "Bench, Linux: an X11 window under Xvfb"
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !inputs.output_ladder
         working-directory: desktop
         run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run bench
       - name: Bench, ${{ runner.os }}
-        if: runner.os != 'Linux'
+        if: runner.os != 'Linux' && !inputs.output_ladder
         working-directory: desktop
         run: npm run bench
       - name: The bench's JSON and table
-        if: always()
+        if: always() && !inputs.output_ladder
         uses: actions/upload-artifact@v7
         with:
           name: bench-${{ matrix.name }}
@@ -82,3 +95,83 @@ jobs:
             desktop/e2e/bench/out/bench-*.json
             desktop/e2e/bench/out/bench-*.md
           if-no-files-found: warn
+
+      - name: Try to install the official Windows Terminal MSIX bundle
+        if: inputs.output_ladder && (!inputs.output_profile || inputs.output_content) && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $release = Invoke-RestMethod https://api.github.com/repos/microsoft/terminal/releases/latest
+            $asset = $release.assets | Where-Object { $_.name -match '^Microsoft[.]WindowsTerminal_.*[.]msixbundle$' } | Select-Object -First 1
+            if (!$asset) { throw 'Stable release has no MSIX bundle' }
+            $bundle = Join-Path $env:RUNNER_TEMP $asset.name
+            Invoke-WebRequest -UseBasicParsing $asset.browser_download_url -OutFile $bundle
+            if ($asset.digest -like 'sha256:*') {
+              if ((Get-FileHash $bundle -Algorithm SHA256).Hash -ne $asset.digest.Substring(7)) {
+                throw 'Windows Terminal bundle checksum did not match'
+              }
+            }
+            Add-AppxPackage -Path $bundle
+            $installed = Get-AppxPackage Microsoft.WindowsTerminal
+            if (!$installed) { throw 'Windows Terminal bundle was not registered' }
+            $aliases = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+            $alias = Join-Path $aliases 'wt.exe'
+            $located = Get-Command wt.exe -ErrorAction SilentlyContinue
+            if (Test-Path $alias) { $terminal = $alias }
+            elseif ($located) { $terminal = $located.Source }
+            else { $terminal = Join-Path $installed.InstallLocation 'WindowsTerminal.exe' }
+            "SP_BENCH_OUTPUT_WT=$terminal" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Windows Terminal $($installed.Version) installed."
+          } catch {
+            $reason = $_.Exception.Message -replace '[\r\n]+', ' '
+            "SP_BENCH_OUTPUT_WT_REASON=$reason" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Windows Terminal unavailable: $reason"
+          }
+      - name: Benchmark output paths on one runner
+        if: inputs.output_ladder
+        working-directory: desktop
+        shell: bash
+        env:
+          SP_E2E_KEEP: plain
+          SP_E2E_NO_BUILD: "1"
+          SP_BENCH_ONLY: output-ladder
+          SP_BENCH_OUTPUT_PROFILE: ${{ inputs.output_content && 'get-content' || (inputs.output_profile && '1' || '') }}
+          SP_BENCH_OUTPUT_PROFILE_PATH: ${{ (inputs.output_profile || inputs.output_content) && format('{0}/desktop/e2e/bench/out/output-profile.ndjson', github.workspace) || '' }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run bench -- -g 'output ladder'
+          else
+            npm run bench -- -g 'output ladder'
+          fi
+      - name: Raw output trials
+        if: always() && inputs.output_ladder
+        uses: actions/upload-artifact@v7
+        with:
+          name: output-trials-${{ matrix.name }}
+          path: |
+            desktop/e2e/bench/out/output-trials.*
+            desktop/e2e/bench/out/output-profile.ndjson
+          if-no-files-found: error
+
+  output-report:
+    if: always() && inputs.output_ladder
+    needs: bench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: output-trials-*
+          path: output-trials
+      - run: python -m pip install matplotlib
+      - run: python desktop/e2e/bench/output_report.py output-trials output-report
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: output-benchmark-report
+          path: output-report/
+          if-no-files-found: error

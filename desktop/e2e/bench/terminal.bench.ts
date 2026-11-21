@@ -9,6 +9,7 @@ import {
   launchArgs, launchEnv, openShell, printFile, ready, typeLine,
 } from '../fixtures'
 import { makeData } from './data'
+import { runOutputLadder } from './output-ladder'
 
 /**
  * The terminal window measured, in the real app (desktop/, Electron) on the
@@ -401,6 +402,12 @@ const FIND_TERM = `(() => {
   }
   return null
 })()`
+
+test('output ladder', async ({ server }) => {
+  test.skip(!ONLY.includes('output-ladder'))
+  test.setTimeout(90 * 60_000)
+  await runOutputLadder(server, () => launch('output ladder'), FIND_TERM)
+})
 
 test('speed', async ({ server }) => {
   test.skip(!ONLY.includes('speed'))

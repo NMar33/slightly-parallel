@@ -71,6 +71,7 @@ _QUERIES = re.compile(rb"\x1b\[[>=?]?[0-9;]*c|\x1b\[[56]n")
 _LEFT_MOUSE = re.compile(rb"\x1b\[<(?:0|4|8|12|16|20|24|28);\d+;\d+[Mm]")
 _REPLAY_BYTES = 65_536
 _BUFFER_BYTES = 131_072
+_WINDOWS_READ_BATCH_BYTES = 32 * 1024
 
 
 # A terminal is a Unix pty on macOS and Linux, a ConPTY on Windows (pywinpty,
@@ -240,7 +241,7 @@ class WinPtySession(PtySession):
         self.closed = False
 
     def read_chunk(self) -> bytes:
-        return self.con.read()
+        return self.con.read(batch_bytes=_WINDOWS_READ_BATCH_BYTES)
 
     def foreground(self) -> str:
         return self.con.foreground()
