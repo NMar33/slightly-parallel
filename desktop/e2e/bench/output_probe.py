@@ -17,7 +17,7 @@ FIRST = b"SP_BENCH_OUTPUT_FIRST"
 LAST = b"SP_BENCH_OUTPUT_LAST"
 CHUNK_BYTES = 64 * 1024
 READ_TIMEOUT_S = 120
-NATIVE_TIMEOUT_S = 100
+NATIVE_TIMEOUT_S = 300
 FILE_POLL_S = 0.1
 WINDOWS = sys.platform == "win32"
 POWER_SHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
@@ -37,10 +37,22 @@ def emit(payload: Path) -> None:
         if kernel.GetConsoleMode(handle, ctypes.byref(mode)) and not kernel.SetConsoleMode(handle, mode.value | 4):
             raise ctypes.WinError(ctypes.get_last_error())
     output = sys.stdout.buffer
-    output.write(FIRST + b"\n")
+
+    def write_all(data: bytes) -> None:
+        remaining = memoryview(data)
+        while remaining:
+            written = output.write(remaining)
+            if not written:
+                raise OSError("the output accepted no bytes")
+            remaining = remaining[written:]
+
+    write_all(FIRST + b"\n")
     with payload.open("rb") as source:
-        shutil.copyfileobj(source, output, CHUNK_BYTES)
-    output.write(LAST + b"\n")
+        # A batch ends at a line so the Windows console's UTF-8 decoder
+        # never receives half of a non-ASCII character at the boundary.
+        while lines := source.readlines(CHUNK_BYTES):
+            write_all(b"".join(lines))
+    write_all(LAST + b"\n")
     output.flush()
 
 

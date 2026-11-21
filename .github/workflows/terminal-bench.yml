@@ -31,7 +31,7 @@ jobs:
   bench:
     name: Bench (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.output_ladder && 100 || 60 }}
     continue-on-error: ${{ !inputs.output_ladder }}
     strategy:
       fail-fast: false

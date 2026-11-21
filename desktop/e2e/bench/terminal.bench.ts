@@ -405,6 +405,7 @@ const FIND_TERM = `(() => {
 
 test('output ladder', async ({ server }) => {
   test.skip(!ONLY.includes('output-ladder'))
+  test.setTimeout(90 * 60_000)
   await runOutputLadder(server, () => launch('output ladder'), FIND_TERM)
 })
 

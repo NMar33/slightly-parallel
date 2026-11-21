@@ -2,15 +2,19 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, ElectronApplication, Page } from '@playwright/test'
 import { ROOT, WINDOWS, closeAll, openShell, ptySize, ready, typeLine } from '../fixtures'
 import { makeData } from './data'
 
 const exec = promisify(execFile)
 const FIRST = 'SP_BENCH_OUTPUT_FIRST'
 const LAST = 'SP_BENCH_OUTPUT_LAST'
-const PROBE_TIMEOUT_MS = 150_000
-const DISPLAY_TIMEOUT_MS = 120_000
+const PROBE_TIMEOUT_MS = 330_000
+const DISPLAY_TIMEOUT_MS = 420_000
+const RESIZE_TIMEOUT_MS = 1800
+const TARGET_COLS = 96
+const TARGET_ROWS = 30
+const RESIZE_ATTEMPTS = 6
 const REPO = path.resolve(__dirname, '../../..')
 const PYTHON = path.join(REPO, 'backend', '.venv', WINDOWS ? 'Scripts/python.exe' : 'bin/python')
 const PROBE = path.join(__dirname, 'output_probe.py')
@@ -35,10 +39,10 @@ type Trial = Timing & {
   cols: number; rows: number; payload_bytes: number; status: 'ok' | 'failed' | 'unavailable'
 }
 type Server = { url: string; api: APIRequestContext }
-type Window = { page: Page; close: () => Promise<void> }
+type Window = { app: ElectronApplication; page: Page; close: () => Promise<void> }
 type Write = (bytes: Uint8Array | string, callback?: () => void) => void
 type Measure = {
-  enter: number; first?: number; last?: number; parsed?: number; visible?: number
+  enter: number; first?: number; last?: number; parsed?: number; visible?: number; streamBytes?: number
   restore: () => void
 }
 type BenchWindow = globalThis.Window & { spOutputBench?: Measure }
@@ -121,7 +125,10 @@ async function armWindow(page: Page, find: string) {
     ;(window as BenchWindow).spOutputBench = state
     let tail = ''
     let raf = 0
+    let bytes = 0
+    let firstEnd = 0
     const decoder = new TextDecoder()
+    const encoder = new TextEncoder()
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Enter' && !state.enter) state.enter = performance.now()
     }
@@ -134,9 +141,17 @@ async function armWindow(page: Page, find: string) {
     term.write = (chunk, callback) => {
       if (!state.enter || state.last !== undefined) return original.call(term, chunk, callback)
       const text = tail + (typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true }))
-      if (state.first === undefined && text.includes(firstMarker)) state.first = performance.now()
-      if (state.first !== undefined && text.includes(lastMarker)) {
+      const base = bytes - encoder.encode(tail).length
+      bytes += typeof chunk === 'string' ? encoder.encode(chunk).length : chunk.length
+      const first = text.indexOf(firstMarker)
+      if (state.first === undefined && first >= 0) {
+        state.first = performance.now()
+        firstEnd = base + encoder.encode(text.slice(0, first + firstMarker.length)).length
+      }
+      const last = text.indexOf(lastMarker)
+      if (state.first !== undefined && last >= 0) {
         state.last = performance.now()
+        state.streamBytes = base + encoder.encode(text.slice(0, last)).length - firstEnd
         return original.call(term, chunk, () => {
           state.parsed = performance.now()
           callback?.()
@@ -164,12 +179,13 @@ async function windowTrial(page: Page, find: string, command: string): Promise<T
     await page.waitForFunction(() => (window as BenchWindow).spOutputBench?.visible,
       null, { timeout: DISPLAY_TIMEOUT_MS, polling: 200 })
     return await page.evaluate(() => {
-      const { enter, first, last, parsed, visible } = (window as BenchWindow).spOutputBench!
+      const { enter, first, last, parsed, visible, streamBytes } = (window as BenchWindow).spOutputBench!
       return {
         first_ms: first! - enter,
         reader_ms: last! - first!, // at the same markers, immediately before xterm.write()
         parsed_ms: parsed! - first!,
         visible_ms: visible! - enter,
+        stream_bytes: streamBytes,
       }
     })
   } finally {
@@ -193,6 +209,35 @@ async function directTrial(page: Page, find: string, bytes: number): Promise<Tim
   }, { find, generator: makeData.toString(), bytes })
 }
 
+async function fitViewport(window: Window, find: string) {
+  const { page, app } = window
+  for (let attempt = 0; attempt < RESIZE_ATTEMPTS; attempt++) {
+    const screen = await page.evaluate((source) => {
+      const term = (0, eval)(source) as { cols: number; rows: number }
+      const { width, height } = document.querySelector('.aqua-screen .xterm-screen')!.getBoundingClientRect()
+      return { cols: term.cols, rows: term.rows, width, height }
+    }, find)
+    if (screen.cols === TARGET_COLS && screen.rows === TARGET_ROWS) {
+      const actual = await ptySize(page)
+      if (actual[1] === TARGET_COLS && actual[0] === TARGET_ROWS) return
+    }
+    const delta = [
+      Math.round((TARGET_COLS - screen.cols) * screen.width / screen.cols),
+      Math.round((TARGET_ROWS - screen.rows) * screen.height / screen.rows),
+    ]
+    await app.evaluate(({ BrowserWindow }, [dx, dy]) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      const [w, h] = window.getContentSize()
+      window.setContentSize(w + dx, h + dy)
+    }, delta)
+    await page.waitForFunction(({ find, cols, rows }) => {
+      const term = (0, eval)(find) as { cols: number; rows: number }
+      return term.cols === cols && term.rows === rows
+    }, { find, cols: TARGET_COLS, rows: TARGET_ROWS }, { timeout: RESIZE_TIMEOUT_MS }).catch(() => {})
+  }
+  throw new Error(`Cannot set the terminal viewport to ${TARGET_COLS}×${TARGET_ROWS}`)
+}
+
 export async function runOutputLadder(server: Server, launch: () => Promise<Window>, find: string) {
   const out = process.env.SP_BENCH_OUT || path.join(__dirname, 'out')
   const bytes = Number(process.env.SP_BENCH_OUTPUT_MB || 20) * 1e6
@@ -210,10 +255,10 @@ export async function runOutputLadder(server: Server, launch: () => Promise<Wind
   const initial = await openShell(api, 'output-ladder-size')
   if (initial.backend !== 'plain') throw new Error('Use SP_E2E_KEEP=plain for matching PTY paths')
   const setup = await launch()
-  let size: [number, number]
+  const size: [number, number] = [TARGET_ROWS, TARGET_COLS]
   try {
     await ready(setup.page)
-    size = await ptySize(setup.page)
+    await fitViewport(setup, find)
   } finally {
     await setup.close()
     await closeAll(api)
@@ -248,8 +293,7 @@ export async function runOutputLadder(server: Server, launch: () => Promise<Wind
       const window = await launch()
       try {
         await ready(window.page)
-        const actual = await ptySize(window.page)
-        if (actual[0] !== rows || actual[1] !== cols) throw new Error(`Viewport changed to ${actual[1]}x${actual[0]}`)
+        await fitViewport(window, find)
         if (kind === 'xterm_direct') return await directTrial(window.page, find, bytes)
         const timing = await windowTrial(window.page, find, command)
         return { ...timing, ...await readMeasure(result, WINDOWS && !useProgram) }
@@ -293,7 +337,12 @@ export async function runOutputLadder(server: Server, launch: () => Promise<Wind
       let record: Trial
       try {
         if (unavailable.has(kind)) record = { ...base, status: 'unavailable', reason: unavailable.get(kind) }
-        else record = { ...base, status: 'ok', ...await one(kind, round) }
+        else {
+          const timing = await one(kind, round)
+          if (timing.reader_ms !== undefined && (timing.stream_bytes ?? 0) < payloadBytes) {
+            record = { ...base, ...timing, status: 'failed', reason: 'Reader received fewer bytes than the input fixture' }
+          } else record = { ...base, ...timing, status: 'ok' }
+        }
       } catch (error) {
         const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0]
         record = { ...base, status: 'failed', reason }
