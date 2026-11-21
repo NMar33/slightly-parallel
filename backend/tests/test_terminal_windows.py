@@ -227,6 +227,11 @@ class FakePTY:
         return self.proc.pid
 
     def read(self, blocking=False):
+        if not blocking:
+            try:
+                return self.out.get_nowait()
+            except queue.Empty:
+                return ""
         while True:
             try:
                 return self.out.get(timeout=0.02)
@@ -292,6 +297,85 @@ def test_a_conpty_reads_writes_resizes_and_ends_with_its_whole_tree() -> None:
             fake.proc.wait()
     con.release()
     assert con.read() == b""
+
+
+def test_windows_session_reads_queued_output_in_fewer_chunks_without_losing_bytes(tmp_path: Path) -> None:
+    session = terminal.WinPtySession("batch", ["cmd.exe"], str(tmp_path), 80, 24, {}, module=FAKE)
+    fake = FakePTY.made[-1]
+    try:
+        assert session.read_chunk() == b"PS C:\\> "  # the prompt is sent even without a second read ready
+        fragments = [f"{i:04d}:✓ \x1b[32mhello\x1b[0m\r\n" for i in range(6000)]
+        for fragment in fragments:
+            fake.out.put_nowait(fragment)
+        fake.proc.kill()
+        fake.proc.wait(timeout=10)
+
+        chunks = list(iter(session.read_chunk, b""))
+        assert b"".join(chunks) == "".join(fragments).encode()
+        assert 1 < len(chunks) < len(fragments) // 100
+        assert all(len(chunk) <= 64 * 1024 for chunk in chunks)
+    finally:
+        session.close()
+
+
+def test_windows_session_coalesces_an_active_burst_and_flushes_after_idle(tmp_path: Path, monkeypatch) -> None:
+    session = terminal.WinPtySession("batch", ["cmd.exe"], str(tmp_path), 80, 24, {}, module=FAKE)
+    fake = FakePTY.made[-1]
+    now = 1.0
+    waits = []
+
+    def yield_to_producer(seconds):
+        waits.append(seconds)
+        fake.out.put_nowait("+line 2")
+        fake.out.put_nowait("+line 3")
+
+    monkeypatch.setattr(conpty, "time", SimpleNamespace(perf_counter=lambda: now, sleep=yield_to_producer))
+    try:
+        assert session.read_chunk() == b"PS C:\\> "
+        assert not waits
+
+        now += 0.001  # another small fragment in the same burst
+        fake.out.put_nowait("line 1")
+        assert session.read_chunk() == b"line 1+line 2+line 3"
+        assert len(waits) == 1
+
+        now += 1.0
+        fake.out.put_nowait("prompt>")
+        assert session.read_chunk() == b"prompt>"
+        assert len(waits) == 1
+    finally:
+        session.close()
+
+
+def test_windows_session_collects_more_fragments_at_bulk_output_rate(tmp_path: Path, monkeypatch) -> None:
+    session = terminal.WinPtySession("batch", ["cmd.exe"], str(tmp_path), 80, 24, {}, module=FAKE)
+    fake = FakePTY.made[-1]
+    now = 1.0
+    waits = []
+
+    def yield_to_producer(seconds):
+        waits.append(seconds)
+        if seconds >= 0.010:
+            fake.out.put_nowait("later fragment")
+
+    monkeypatch.setattr(conpty, "time", SimpleNamespace(perf_counter=lambda: now, sleep=yield_to_producer))
+    try:
+        bulk = "line ✓\r\n" * 500
+        fake.out.put_nowait(bulk)
+        assert session.read_chunk().endswith(bulk.encode())
+        assert not waits
+
+        now += 0.030  # still close to the previous bulk batch
+        fake.out.put_nowait("first fragment+")
+        assert session.read_chunk() == b"first fragment+later fragment"
+        assert len(waits) == 1
+
+        now += 1.0
+        fake.out.put_nowait("prompt>")
+        assert session.read_chunk() == b"prompt>"
+        assert len(waits) == 1
+    finally:
+        session.close()
 
 
 def test_a_conpty_whose_shell_exits_reads_to_the_end() -> None:

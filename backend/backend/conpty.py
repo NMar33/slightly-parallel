@@ -51,6 +51,11 @@ HOST_LOOKUP_ATTEMPTS = 11
 HOST_LOOKUP_POLL_INTERVAL_S = 0.01
 PTY_READ_ERROR_RETRY_DELAY_S = 0.02
 PTY_EMPTY_READ_RETRY_DELAY_S = 0.01
+PTY_OUTPUT_BURST_WINDOW_S = 0.024
+PTY_OUTPUT_BATCH_PAUSE_S = 0.008
+PTY_BULK_BURST_WINDOW_S = 0.048
+PTY_BULK_BATCH_PAUSE_S = 0.024
+PTY_BULK_MIN_BYTES = 2048
 
 #: What the page says when the package is missing (routers/terminal.py, 501).
 MISSING = ("The terminal on Windows needs the pywinpty package. Install it into Slightly Parallel's "
@@ -158,33 +163,69 @@ class ConPty:
         self.host_pid: int = self._host.pid if self._host is not None else 0
         self.closed = False
         self._errors = 0
+        self._output_ended = False
+        self._last_batch_start = float("-inf")
+        self._last_batch_bytes = 0
 
     # ------------------------------------------------------------- output
-    def read(self) -> bytes:
-        """The next output as UTF-8, b"" at the end. Blocks."""
-        while True:
+    def read(self, batch_bytes: int = 0) -> bytes:
+        """Wait for output, then gather queued fragments up to a target size."""
+        batch = bytearray()
+        batch_pause = 0.0
+        while not self._output_ended:
             pty = self._pty
             if pty is None or self.closed:
-                return b""
+                break
             try:
-                text = pty.read(blocking=True)
+                # pywinpty has its own reader thread. An empty nonblocking read
+                # means its queue is empty for now, so return the bytes we have.
+                text = pty.read(blocking=not batch)
             except self._error as exc:
                 if self.closed or "EOF" in str(exc) or not self._alive(pty):
-                    return b""
+                    self._output_ended = True
+                    break
                 self._errors += 1
                 if self._errors > self.MAX_ERRORS:
                     log.warning("terminal: the pseudo console keeps failing to read (%s); ended", exc)
-                    return b""
+                    self._output_ended = True
+                    break
+                if batch:
+                    break
                 time.sleep(PTY_READ_ERROR_RETRY_DELAY_S)
                 continue
             self._errors = 0
             if text:
                 # Lone surrogates (a UTF-8 sequence cut at a read's edge) become "?".
-                return text.encode("utf-8", "replace")
-            # "": pywinpty's reader has stopped. Ended, unless the shell lives on.
+                data = text.encode("utf-8", "replace")
+                if not batch_bytes:
+                    return data
+                if not batch:
+                    started = time.perf_counter()
+                    gap = started - self._last_batch_start
+                    if self._last_batch_bytes >= PTY_BULK_MIN_BYTES and gap < PTY_BULK_BURST_WINDOW_S:
+                        batch_pause = PTY_BULK_BATCH_PAUSE_S
+                    elif gap < PTY_OUTPUT_BURST_WINDOW_S:
+                        batch_pause = PTY_OUTPUT_BATCH_PAUSE_S
+                    self._last_batch_start = started
+                batch.extend(data)
+                if len(batch) >= batch_bytes:
+                    break
+                continue
+            if batch:
+                if batch_pause:
+                    # ConPTY often emits one short fragment at a time. Let its reader
+                    # gather more once per batch during a burst. At idle, send immediately.
+                    time.sleep(batch_pause)
+                    batch_pause = 0.0
+                    continue
+                break
+            # A blocking read returned empty. Ended, unless the shell lives on.
             if self.closed or not self._alive(pty):
-                return b""
+                self._output_ended = True
+                break
             time.sleep(PTY_EMPTY_READ_RETRY_DELAY_S)
+        self._last_batch_bytes = len(batch)
+        return bytes(batch)
 
     # -------------------------------------------------------------- input
     def write(self, data: bytes) -> None:
