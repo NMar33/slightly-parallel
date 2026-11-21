@@ -81,6 +81,7 @@ EXCLUDE_GLOBS: tuple[str, ...] = ("*.lock", "operator.token")
 # this feature exists against, so both lists are reported by the API and
 # shown on the page rather than living only in this file.
 EXCLUDE_DIRS: tuple[str, ...] = ("tour_shots", "monitor", "terminal")
+_RESTORE_WORK_PREFIX = ".sp-restore-"
 
 KINDS = ("auto", "manual")
 
@@ -269,7 +270,7 @@ def check_roots(data_root: Path, backup_root: Path) -> None:
 
 
 def _excluded(rel: Path) -> bool:
-    if rel.parts and rel.parts[0] in EXCLUDE_DIRS:
+    if rel.parts and (rel.parts[0] in EXCLUDE_DIRS or rel.parts[0].startswith(_RESTORE_WORK_PREFIX)):
         return True
     return any(rel.match(g) for g in EXCLUDE_GLOBS)
 
@@ -894,7 +895,13 @@ def _restore(backup_root: Path, name: str, data_root: Path) -> dict[str, Any]:
     archive = find(backup_root, name)
     assert archive is not None and archive.path is not None
 
-    staged = Path(tempfile.mkdtemp(prefix="sp-restore-", dir=str(backup_root)))
+    # A restore only renames live entries. shutil.move can copy, then fail
+    # partway through deleting an open or read-only Windows directory.
+    # Stage on the data volume even if SP_BACKUP_ROOT is on another disk.
+    data_root.mkdir(parents=True, exist_ok=True)
+    work = backup_root if backup_root.stat().st_dev == data_root.stat().st_dev else data_root
+    prefix = _RESTORE_WORK_PREFIX if work == data_root else "sp-"
+    staged = Path(tempfile.mkdtemp(prefix=f"{prefix}restore-", dir=work))
     try:
         _extract(archive.path, staged)
     except BaseException:
@@ -903,8 +910,7 @@ def _restore(backup_root: Path, name: str, data_root: Path) -> dict[str, Any]:
     tops = [p for p in staged.iterdir()]
     source = tops[0] if len(tops) == 1 and tops[0].is_dir() else staged
 
-    data_root.mkdir(parents=True, exist_ok=True)
-    aside = Path(tempfile.mkdtemp(prefix="sp-replaced-", dir=str(backup_root)))
+    aside = Path(tempfile.mkdtemp(prefix=f"{prefix}replaced-", dir=work))
     out: list[str] = []      # what left the data root, in order
     came: list[str] = []     # what arrived in it
     try:
@@ -915,9 +921,11 @@ def _restore(backup_root: Path, name: str, data_root: Path) -> dict[str, Any]:
             # archive taken before the restore does not hold them either.
             if _excluded(Path(child.name)):
                 continue
-            shutil.move(str(child), str(aside / child.name))
+            child.rename(aside / child.name)
             out.append(child.name)
         for child in list(source.iterdir()):
+            if child.name.startswith(_RESTORE_WORK_PREFIX):
+                continue
             here = data_root / child.name
             if here.exists() or here.is_symlink():
                 if _excluded(Path(child.name)):
@@ -928,17 +936,18 @@ def _restore(backup_root: Path, name: str, data_root: Path) -> dict[str, Any]:
                 # or an MCP write in the gap. Skipping it would drop the
                 # archive's copy and still report success.
                 raise BackupError(f"{child.name} was written into the data root while the restore ran")
-            shutil.move(str(child), str(here))
+            child.rename(here)
             came.append(child.name)
     except Exception as exc:
         # Back to how it was: the new pieces out again, the old ones in.
         back = True
         for piece in reversed(came):
             try:
-                shutil.move(str(data_root / piece), str(source / piece))
+                (data_root / piece).rename(source / piece)
             except OSError:
                 back = False
         arrived: Path | None = None
+        saved_arrivals = False
         for piece in reversed(out):
             try:
                 target = data_root / piece
@@ -947,9 +956,10 @@ def _restore(backup_root: Path, name: str, data_root: Path) -> dict[str, Any]:
                     # piece onto it would nest one inside the other; keep
                     # the newcomer beside the archives instead.
                     if arrived is None:
-                        arrived = Path(tempfile.mkdtemp(prefix="sp-arrived-", dir=str(backup_root)))
-                    shutil.move(str(target), str(arrived / piece))
-                shutil.move(str(aside / piece), str(target))
+                        arrived = Path(tempfile.mkdtemp(prefix=f"{prefix}arrived-", dir=work))
+                    target.rename(arrived / piece)
+                    saved_arrivals = True
+                (aside / piece).rename(target)
             except OSError:
                 back = False
         log.error("restore of %s failed in the swap: %s", archive.name, exc)
@@ -962,7 +972,7 @@ def _restore(backup_root: Path, name: str, data_root: Path) -> dict[str, Any]:
             f"could not put {archive.name} in place: {exc}. "
             + ("The data is as it was before." if back
                else f"Not everything could be put back: what was there is in {aside}.")
-            + (f" What was written during the restore is in {arrived}." if arrived else "")
+            + (f" What was written during the restore is in {arrived}." if saved_arrivals else "")
             + f" The restored copy is in {staged}."
         ) from exc
     moved = len(came)

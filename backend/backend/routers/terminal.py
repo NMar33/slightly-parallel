@@ -58,6 +58,7 @@ from .deps import foreign_origin, get_store, not_found, operator_only, to_int
 log = logging.getLogger("sp.terminal")
 
 PLAIN_SHELL_COMMAND_DELAY_S = 0.4
+TMUX_FIRST_OUTPUT_TIMEOUT_S = 10
 
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
@@ -1046,9 +1047,9 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                     pass
         else:
             session.subscribers.add(websocket)
-        if in_tmux:
-            if session.pump_task is None or session.pump_task.done():
-                session.pump_task = asyncio.create_task(_pump(session))
+        tmux_ready = asyncio.Event() if in_tmux else None
+        if tmux_ready is not None:
+            session.pump_task = asyncio.create_task(_pump(session, tmux_ready))
         else:
             _run_plain(session, pending, enter=row.get("launch") == "run")
 
@@ -1062,6 +1063,17 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         # that does not say is read by its bytes.
         async def write(b: bytes, marked: Any = None) -> None:
             nonlocal selection_possible
+            if tmux_ready is not None:
+                # Accepting the socket forks the tmux client, whose tty setup
+                # can flush input before it draws its first screen.
+                if not tmux_ready.is_set():
+                    try:
+                        await asyncio.wait_for(tmux_ready.wait(), TMUX_FIRST_OUTPUT_TIMEOUT_S)
+                    except TimeoutError:
+                        await websocket.close(code=4500, reason="tmux did not draw its terminal")
+                        raise WebSocketDisconnect(code=4500) from None
+                if not session.buffer:
+                    return  # the pump ended before it produced a screen
             typed = marked is True or (marked is not False and not termlib.is_terminal_reply(b))
             if in_tmux:
                 # An ordinary click may go to a mouse-aware app. Ask tmux only
@@ -1138,7 +1150,7 @@ class _TooMany(Exception):
     """Every plain terminal the server may hold is open."""
 
 
-async def _pump(session: PtySession) -> None:
+async def _pump(session: PtySession, ready: asyncio.Event | None = None) -> None:
     """Read a pty until it ends: keep its recent output for the next view,
     send it to every view now, and tell them when the shell has ended."""
     while not session.closed:
@@ -1152,6 +1164,8 @@ async def _pump(session: PtySession) -> None:
             break
         session.last_output = time.time()
         session.buffer.extend(data)
+        if ready is not None:
+            ready.set()
         if len(session.buffer) > _BUFFER_BYTES:
             del session.buffer[: len(session.buffer) - _BUFFER_BYTES]
         for ws in list(session.subscribers):
@@ -1161,6 +1175,8 @@ async def _pump(session: PtySession) -> None:
                     await ws.send_bytes(data)
             except Exception:  # noqa: BLE001 — drop dead subscribers
                 session.subscribers.discard(ws)
+    if ready is not None:
+        ready.set()
     if session.closed:
         session.release()
     # The shell ended (exit, or the tmux session was killed).

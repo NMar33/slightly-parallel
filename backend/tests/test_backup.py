@@ -277,6 +277,89 @@ def test_restore_keeps_the_data_root_directory_itself(roots):
     assert data.stat().st_ino == before
 
 
+def test_restore_does_not_copy_and_delete_when_a_directory_rename_is_denied(roots, monkeypatch):
+    data, dest = roots
+    archive = backup.create(data, dest, kind="manual")
+    project = data / "projects"
+    live = project / "ALPHA" / "log.md"
+    live.write_text("changes after the backup", encoding="utf-8")
+    original_rename = os.rename
+    original_rmtree = backup.shutil.rmtree
+
+    def deny_rename(src, dst, *args, **kwargs):
+        if Path(src) == project:
+            raise PermissionError("simulated Windows sharing denial")
+        return original_rename(src, dst, *args, **kwargs)
+
+    def interrupted_removal(path, *args, **kwargs):
+        if Path(path) == project:
+            # The Windows copy/delete fallback can remove some files before
+            # reaching a read-only Git object and raising PermissionError.
+            live.unlink()
+            raise PermissionError("simulated failure partway through deletion")
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", deny_rename)
+    monkeypatch.setattr(backup.shutil, "rmtree", interrupted_removal)
+    with pytest.raises(backup.BackupError, match="The data is as it was before"):
+        backup.restore(dest, archive.name, data)
+
+    assert live.read_text(encoding="utf-8") == "changes after the backup"
+    assert (data / "tasks.csv").read_text(encoding="utf-8").endswith("Ship it\n")
+
+
+def test_restore_reports_where_originals_remain_if_putting_them_back_is_denied(roots, monkeypatch):
+    data, dest = roots
+    archive = backup.create(data, dest, kind="manual")
+    live = data / "tasks.csv"
+    live.write_text("changes after the backup", encoding="utf-8")
+    original_rename = os.rename
+
+    def deny_putting_back(src, dst, *args, **kwargs):
+        if Path(dst) == live:
+            raise PermissionError("simulated destination sharing denial")
+        return original_rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", deny_putting_back)
+    with pytest.raises(backup.BackupError, match="Not everything could be put back") as exc:
+        backup.restore(dest, archive.name, data)
+
+    [original] = dest.glob("sp-replaced-*/tasks.csv")
+    assert original.read_text(encoding="utf-8") == "changes after the backup"
+    assert str(original.parent) in str(exc.value)
+    assert "The data is as it was before" not in str(exc.value)
+
+
+def test_restore_stages_on_the_data_volume_when_archives_are_on_another(roots, monkeypatch):
+    data, dest = roots
+    archive = backup.create(data, dest, kind="manual")
+    data_device = data.stat().st_dev
+    original_stat = Path.stat
+    original_rename = os.rename
+    moves = []
+
+    def other_volume(path, *args, **kwargs):
+        info = original_stat(path, *args, **kwargs)
+        if path == dest:
+            values = list(info)
+            values[2] = data_device + 1
+            return os.stat_result(values)
+        return info
+
+    def record_move(source, target, *args, **kwargs):
+        moves.append((Path(source), Path(target)))
+        return original_rename(source, target, *args, **kwargs)
+
+    (data / "tasks.csv").write_text("changes after the backup", encoding="utf-8")
+    monkeypatch.setattr(Path, "stat", other_volume)
+    monkeypatch.setattr(os, "rename", record_move)
+    backup.restore(dest, archive.name, data)
+
+    assert (data / "tasks.csv").read_text(encoding="utf-8").endswith("Ship it\n")
+    assert moves and all(source.is_relative_to(data) and target.is_relative_to(data) for source, target in moves)
+    assert not list(data.glob(".sp-restore-*"))
+
+
 def test_restore_leaves_what_no_archive_holds_in_place(roots):
     """The tour's photographs, the machine's monitor and terminals and the
     lock files are not in the archive, nor in the safety archive a restore
