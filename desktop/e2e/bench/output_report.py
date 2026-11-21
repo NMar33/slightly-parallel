@@ -90,7 +90,7 @@ def plot(metrics: dict, out: Path) -> None:
         ax.set_title(name, loc="left")
         ax.set_xlabel("Seconds between first and last marker at the reader")
     fig.suptitle("Coloured terminal output · reader intervals", fontsize=17)
-    fig.text(0.99, 0.01, "Bars: median   ·   Dots: individual measured runs", ha="right", color="#475569")
+    fig.supxlabel("Bars show medians · Dots show individual measured runs", color="#475569")
     fig.savefig(out / "output-ladder.png", dpi=175)
     plt.close(fig)
 
@@ -98,7 +98,7 @@ def plot(metrics: dict, out: Path) -> None:
     bars(ax, metrics["win32"], list(TERMINALS), TERMINALS, "measure_ms")
     ax.set_title("Windows terminals · same PowerShell Get-Content workload", loc="left", fontsize=15)
     ax.set_xlabel("PowerShell Measure-Command, seconds")
-    fig.text(0.99, 0.015, "Bars: median   ·   Dots: individual measured runs", ha="right", color="#475569")
+    fig.supxlabel("Bars show medians · Dots show individual measured runs", color="#475569")
     fig.savefig(out / "output-terminals.png", dpi=175)
     plt.close(fig)
 
