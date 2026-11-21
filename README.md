@@ -185,14 +185,6 @@ Working on Slightly Parallel's own code needs Node 20+: [docs/development.md](do
 
 </details>
 
-
-You can work on the project as usual. SP keeps every chat, puts the work on a board, and makes the agents write down what matters: what changed, what was decided, what the project is for. The aim is a step from vibe coding to leading a team of agents: you know the code, the architecture and the decisions, even when an agent wrote most of it.
-
-
-![Six pages of Slightly Parallel on the example project](docs/media/readme/example-project-tour.gif)
-
-<a id="the-commands"></a>
-
 <details>
 <summary>Chat commands and dashboard pages</summary>
 
