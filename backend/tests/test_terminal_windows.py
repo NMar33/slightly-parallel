@@ -227,6 +227,11 @@ class FakePTY:
         return self.proc.pid
 
     def read(self, blocking=False):
+        if not blocking:
+            try:
+                return self.out.get_nowait()
+            except queue.Empty:
+                return ""
         while True:
             try:
                 return self.out.get(timeout=0.02)
@@ -292,6 +297,25 @@ def test_a_conpty_reads_writes_resizes_and_ends_with_its_whole_tree() -> None:
             fake.proc.wait()
     con.release()
     assert con.read() == b""
+
+
+def test_windows_session_reads_queued_output_in_fewer_chunks_without_losing_bytes(tmp_path: Path) -> None:
+    session = terminal.WinPtySession("batch", ["cmd.exe"], str(tmp_path), 80, 24, {}, module=FAKE)
+    fake = FakePTY.made[-1]
+    try:
+        assert session.read_chunk() == b"PS C:\\> "  # the prompt is sent even without a second read ready
+        fragments = [f"{i:04d}:✓ \x1b[32mhello\x1b[0m\r\n" for i in range(6000)]
+        for fragment in fragments:
+            fake.out.put_nowait(fragment)
+        fake.proc.kill()
+        fake.proc.wait(timeout=10)
+
+        chunks = list(iter(session.read_chunk, b""))
+        assert b"".join(chunks) == "".join(fragments).encode()
+        assert 1 < len(chunks) < len(fragments) // 100
+        assert all(len(chunk) <= 64 * 1024 for chunk in chunks)
+    finally:
+        session.close()
 
 
 def test_a_conpty_whose_shell_exits_reads_to_the_end() -> None:

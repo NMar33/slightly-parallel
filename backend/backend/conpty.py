@@ -158,33 +158,51 @@ class ConPty:
         self.host_pid: int = self._host.pid if self._host is not None else 0
         self.closed = False
         self._errors = 0
+        self._output_ended = False
 
     # ------------------------------------------------------------- output
-    def read(self) -> bytes:
-        """The next output as UTF-8, b"" at the end. Blocks."""
-        while True:
+    def read(self, batch_bytes: int = 0) -> bytes:
+        """Wait for output, then drain immediately available fragments up to a target size."""
+        batch = bytearray()
+        while not self._output_ended:
             pty = self._pty
             if pty is None or self.closed:
-                return b""
+                break
             try:
-                text = pty.read(blocking=True)
+                # pywinpty has its own reader thread. An empty nonblocking read
+                # means its queue is empty for now, so return the bytes we have.
+                text = pty.read(blocking=not batch)
             except self._error as exc:
                 if self.closed or "EOF" in str(exc) or not self._alive(pty):
-                    return b""
+                    self._output_ended = True
+                    break
                 self._errors += 1
                 if self._errors > self.MAX_ERRORS:
                     log.warning("terminal: the pseudo console keeps failing to read (%s); ended", exc)
-                    return b""
+                    self._output_ended = True
+                    break
+                if batch:
+                    break
                 time.sleep(PTY_READ_ERROR_RETRY_DELAY_S)
                 continue
             self._errors = 0
             if text:
                 # Lone surrogates (a UTF-8 sequence cut at a read's edge) become "?".
-                return text.encode("utf-8", "replace")
-            # "": pywinpty's reader has stopped. Ended, unless the shell lives on.
+                data = text.encode("utf-8", "replace")
+                if not batch_bytes:
+                    return data
+                batch.extend(data)
+                if len(batch) >= batch_bytes:
+                    break
+                continue
+            if batch:
+                break
+            # A blocking read returned empty. Ended, unless the shell lives on.
             if self.closed or not self._alive(pty):
-                return b""
+                self._output_ended = True
+                break
             time.sleep(PTY_EMPTY_READ_RETRY_DELAY_S)
+        return bytes(batch)
 
     # -------------------------------------------------------------- input
     def write(self, data: bytes) -> None:
