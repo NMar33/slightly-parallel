@@ -20,6 +20,7 @@ See scripts/fresh_user/README.md.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import tempfile
@@ -44,6 +45,11 @@ OUT = REPO / ".sp" / "fresh-user"
 
 def canary(space: Space, report: Report, args: argparse.Namespace, names: list[str], started: float) -> int:
     """One turn through the installed CLI, Setup integration, and the task board."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        passed = os.environ.get("SP_AGENT_PREFLIGHT_RESULT") == "success"
+        if not report.add("canary", "L0 provider preflight", passed):
+            report.notes["canary layers"] = dict.fromkeys(("L1", "L2", "L3"), "blocked by L0")
+            return finish(space, report, args, started, None)
     proc = None
     try:
         space.data.mkdir(parents=True)

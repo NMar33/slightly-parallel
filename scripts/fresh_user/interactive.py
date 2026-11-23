@@ -183,6 +183,24 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     if not report.add(stage, "the CLI has a login", bool(give_login(tool, home, space, env))):
         return None
 
+    if one_turn and tool.name == "claude-code":
+        # Setup made this scratch project. The full PTY tests exercise the
+        # first-run dialogs, so the one-turn check can start at the composer.
+        profile = space.home / ".claude.json"
+        settings = json.loads(profile.read_text(encoding="utf-8")) if profile.exists() else {}
+        settings.update(theme="dark", hasCompletedOnboarding=True)
+        folder = folder.resolve()
+        projects = settings.setdefault("projects", {})
+        for path in {str(folder), folder.as_posix()}:
+            projects.setdefault(path, {})["hasTrustDialogAccepted"] = True
+        space.home.mkdir(parents=True, exist_ok=True)
+        profile.write_text(json.dumps(settings), encoding="utf-8")
+        # The freshly generated sample has exactly one project MCP server.
+        (space.home / "settings.json").write_text(
+            json.dumps({"enableAllProjectMcpServers": True}), encoding="utf-8",
+        )
+        env["CLAUDE_CONFIG_DIR"] = str(space.home)
+
     marker = uuid4().hex[:12]
     reply = f"sp-reply-{marker}"
     prompt = f"Reply with exactly {reply} on one line. Do not use any tools."

@@ -269,6 +269,10 @@ def test_canary_reports_startup_capture_and_task_verdicts(monkeypatch, tmp_path,
     report = Report()
     result = interactive.smoke(space, report, "calc", tmp_path, tool, "stub", tmp_path, 10, one_turn=True)
     layers = report.notes["interactive:claude-code layers"]
+    profile = json.loads((space.home / ".claude.json").read_text(encoding="utf-8"))
+    assert profile["projects"][str(tmp_path.resolve())]["hasTrustDialogAccepted"] is True
+    settings = json.loads((space.home / "settings.json").read_text(encoding="utf-8"))
+    assert settings["enableAllProjectMcpServers"] is True
     if ready:
         assert result.task == card["id"]
         assert len(inputs) == 1 and inputs[0].startswith("#task ") and not report.failed()
@@ -369,3 +373,21 @@ def test_report_redacts_nested_diagnostic_notes(monkeypatch, tmp_path):
     raw = destination.read_text(encoding="utf-8")
     assert PLANTED_KEY not in raw
     assert json.loads(raw)["notes"]["fixture"] == [{"[redacted]": ["notice [redacted]", 12]}]
+
+
+
+def test_actions_canary_cannot_start_an_agent_without_provider_preflight(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import run
+    from common import Report, Space
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("SP_AGENT_PREFLIGHT_RESULT", "failure")
+    monkeypatch.setattr(run.stages, "make_sample", lambda *_: pytest.fail("the canary started before L0 passed"))
+    monkeypatch.setattr(run, "OUT", tmp_path / "report")
+    space = Space(tmp_path / "test-machine", 8124)
+    args = SimpleNamespace(model="stub", turn_seconds=10, keep=False, agent_runs=1)
+    report = Report()
+    assert run.canary(space, report, args, ["codex"], 0) == 1
+    assert report.notes["canary layers"] == dict.fromkeys(("L1", "L2", "L3"), "blocked by L0")
+    assert [check.name for check in report.failed()] == ["L0 provider preflight"]

@@ -66,9 +66,15 @@ and leave the board unchanged.
 
 `--scenario canary` starts a local server and sends a single task prompt
 through the interactive CLI. It reports startup, chat capture and the board
-write separately, without building the browser UI. This is a manual runner
-using the CLI's login. An Actions run would also need the provider preflight
-and the audited report upload.
+write separately, without building the browser UI. Actions runs it daily with the latest CLIs on
+Linux, after provider preflight, and uploads only audited text. The weekly
+core runs on Linux, macOS and Windows with the latest CLIs. A release uses a
+separate core run with pinned versions and all three systems.
+
+Actions uses Claude Haiku 5.5 and GPT-6 Luna. The job summary shows estimated
+model cost, its limit and a pass or fail. The limit is $0.10 per canary
+job and $1.00 per core or smoke job. Missing prices fail the check.
+The cost check is based on recorded usage after the run.
 
 `--scenario core` extends the same interactive smoke with a file edit,
 `#decision`, `#rule`, the work, `#scan`, `#sp` and `#done`. The release

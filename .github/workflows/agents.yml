@@ -1,20 +1,15 @@
-# A real agent at work, on every system: the fresh-user test with Claude
-# Code, Codex and OpenCode on cheap models, with two interactive turns and
-# one headless helper check. It costs money, so it runs by hand and weekly, never
-# on a push. L0 checks provider access once for the workflow before any agent
-# starts. Select preflight to run only the API probes.
-# It needs ANTHROPIC_API_KEY and OPENAI_API_KEY (Codex and OpenCode).
-# OpenAI uses CODEX_MODEL when set, otherwise gpt-6-luna.
+# Live provider checks: daily one-turn canary, weekly core, and a pinned
+# core run for a release. No live model jobs run on pushes.
 name: Agents
-run-name: Agents (${{ github.event_name == 'schedule' && 'smoke' || inputs.scenario || 'core' }}, ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }})
+run-name: Agents (${{ github.event_name == 'schedule' && (github.event.schedule == '0 5 * * *' && 'canary' || 'core') || inputs.scenario || 'core' }}, ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }})
 
 on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: "core (release), smoke (two turns), full (diagnostics), preflight (API only)"
+        description: "core (release), canary (one turn), smoke (two turns), full (diagnostics), preflight (API only)"
         type: choice
-        options: [smoke, core, full, preflight]
+        options: [smoke, core, full, preflight, canary]
         default: core
       channel:
         description: "Pinned CLI versions for a release, or latest for compatibility"
@@ -28,7 +23,8 @@ on:
         description: "JSON list of systems"
         default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
   schedule:
-    - cron: "0 5 * * 1"
+    - cron: "0 5 * * *"
+    - cron: "0 6 * * 1"
 
 concurrency:
   group: agents-${{ github.ref }}-${{ github.event_name }}
@@ -83,7 +79,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
           OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          CODEX_MODEL: ${{ vars.CODEX_MODEL }}
+          CODEX_MODEL: gpt-6-luna
         run: python scripts/ci/agent_preflight.py --provider ${{ matrix.provider }} --output preflight/${{ matrix.provider }}.json
       - name: Check the L0 report before upload
         id: artifact-audit
@@ -126,13 +122,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The schedule has no inputs: then every system and tool.
-        os: ${{ fromJSON(inputs.systems || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        # The one-turn canary always runs on Linux. Core covers all three systems by default.
+        os: ${{ fromJSON((github.event.schedule == '0 5 * * *' || inputs.scenario == 'canary') && '["ubuntu-latest"]' || inputs.systems || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
         tool: ${{ fromJSON(inputs.tools || '["claude-code", "codex", "opencode"]') }}
     env:
       PYTHONIOENCODING: utf-8
       CHANNEL: ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }}
-      SCENARIO: ${{ github.event_name == 'schedule' && 'smoke' || inputs.scenario || 'core' }}
+      SCENARIO: ${{ github.event_name == 'schedule' && (github.event.schedule == '0 5 * * *' && 'canary' || 'core') || inputs.scenario || 'core' }}
       DISABLE_AUTOUPDATER: "1"
     steps:
       - name: Report a blocked agent run
@@ -169,9 +165,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: The browser the test drives
-        if: steps.key.outputs.ok
+        if: steps.key.outputs.ok && env.SCENARIO != 'canary'
         working-directory: frontend
         run: npm ci && npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
+      - name: Backend dependencies for the one-turn canary
+        if: steps.key.outputs.ok && env.SCENARIO == 'canary'
+        working-directory: backend
+        run: python -m pip install -r requirements.lock
       - name: PTY renderer and Windows ConPTY driver
         if: steps.key.outputs.ok
         run: python -m pip install -r scripts/fresh_user/requirements-pty.txt
@@ -197,7 +197,7 @@ jobs:
         env:
           CLI_PACKAGE: ${{ needs.cli-versions.outputs.opencode }}
         run: npm install -g "$CLI_PACKAGE"
-      - name: An agent from clone to its work on the pages (${{ env.SCENARIO }}, ${{ env.CHANNEL }})
+      - name: ${{ env.SCENARIO == 'canary' && 'One live PTY turn and task (canary)' || format('An agent from clone to its work on the pages ({0}, {1})', env.SCENARIO, env.CHANNEL) }}
         if: steps.key.outputs.ok
         timeout-minutes: 45
         shell: bash
@@ -206,13 +206,15 @@ jobs:
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
           OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
           SP_DIAGNOSTIC_OPENAI_KEY: ${{ matrix.tool == 'codex' && secrets.OPENAI_API_KEY || '' }}
-          CODEX_MODEL: ${{ vars.CODEX_MODEL || 'gpt-6-luna' }}
+          CODEX_MODEL: gpt-6-luna
+          SP_AGENT_PREFLIGHT_RESULT: ${{ needs.preflight.result }}
         run: |
           model=claude-haiku-5-5
           if [ "${{ matrix.tool }}" = "codex" ]; then model="$CODEX_MODEL"; fi
           if [ "${{ matrix.tool }}" = "opencode" ]; then model="openai/$CODEX_MODEL"; fi
           budget=900
           if [ "$SCENARIO" != full ]; then budget=120; fi
+          if [ "$SCENARIO" = canary ]; then budget=45; fi
           python scripts/fresh_user/run.py --tools ${{ matrix.tool }} --scenario "$SCENARIO" \
             --stages install,setup,wiring,agent --turn-seconds "$budget" ${model:+--model "$model"}
       - name: Check the agent report and logs before upload
@@ -232,6 +234,7 @@ jobs:
         shell: bash
         env:
           AUDITED_REPORT: ${{ runner.temp }}/sp-audited-agent/report.json
+          SP_AGENT_COST_LIMIT_USD: ${{ env.SCENARIO == 'canary' && '0.10' || ((env.SCENARIO == 'core' || env.SCENARIO == 'smoke') && '1.00' || '') }}
         run: python scripts/ci/agent_summary.py "$AUDITED_REPORT"
       - name: Keep the audited report and logs
         if: always() && steps.artifact-audit.outcome == 'success'
