@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: "core (interactive release checks), smoke (two turns), full (legacy diagnostics)"
+        description: "core (release), smoke (two turns), full (diagnostics), preflight (API only)"
         type: choice
-        options: [smoke, core, full]
+        options: [smoke, core, full, preflight]
         default: core
       channel:
         description: "Pinned CLI versions for a release, or latest for compatibility"
@@ -34,7 +34,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  anthropic-preflight:
+    if: github.event_name == 'workflow_dispatch' && inputs.scenario == 'preflight'
+    name: L0 Anthropic
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check Anthropic access, authentication and model errors
+        timeout-minutes: 1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/ci/agent_preflight.py --output preflight/anthropic.json
+      - name: Keep the L0 report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: l0-anthropic
+          path: preflight/anthropic.json
+
   agent:
+    if: inputs.scenario != 'preflight'
     name: ${{ matrix.tool }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60

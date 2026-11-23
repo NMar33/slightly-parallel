@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from common import WINDOWS
 SCREEN_POLL_INTERVAL_S = 0.3
 KEY_PRESS_SETTLE_S = 0.5
 CODEX_PROMPT_TIMEOUT_S = 30
+PTY_CLOSE_TIMEOUT_S = 3
 
 _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|[\x00-\x08\x0e-\x1f]")
 DOWN, ENTER = "\x1b[B", "\r"
@@ -124,20 +126,29 @@ class Screen:
     def close(self) -> None:
         if WINDOWS:
             try:
-                self.proc.terminate(force=True)
-            except Exception:  # noqa: BLE001 — gone already
+                subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
+                               capture_output=True, timeout=PTY_CLOSE_TIMEOUT_S)
+            except (OSError, subprocess.TimeoutExpired):
                 pass
             return
         import signal
         try:
-            os.kill(self.pid, signal.SIGTERM)
-            os.waitpid(self.pid, 0)
-        except (ProcessLookupError, ChildProcessError, OSError):
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                os.kill(self.pid, sig)
+                deadline = time.monotonic() + PTY_CLOSE_TIMEOUT_S
+                while not os.waitpid(self.pid, os.WNOHANG)[0]:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(SCREEN_POLL_INTERVAL_S)
+                else:
+                    break
+        except (ChildProcessError, OSError):
             pass
-        try:
-            os.close(self.fd)
-        except OSError:
-            pass
+        finally:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
 
 
 def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 60) -> tuple[bool, str]:

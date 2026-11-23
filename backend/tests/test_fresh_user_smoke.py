@@ -22,7 +22,7 @@ def test_claude_onboarding_reaches_the_prompt(monkeypatch, dialog, keys, action)
     class Screen:
         text = ""
         keys = []
-        frames = deque([dialog, "❯ Try writing a test"])
+        frames = deque([dialog, "❯ Try writing a test\nctrl+g to edit in VS Code"])
 
         def read(self):
             if self.frames:
@@ -36,6 +36,15 @@ def test_claude_onboarding_reaches_the_prompt(monkeypatch, dialog, keys, action)
     assert _ready(screen, tools()["claude-code"], 2, answered)
     assert screen.keys == keys
     assert answered == [f"Claude Code {action}"]
+
+
+def test_claude_menu_cursor_is_not_the_composer(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from agents import tools
+    from interactive import _ready
+
+    screen = SimpleNamespace(text="Settings\n❯ Personal profile\n  Project profile", read=lambda: None)
+    assert not _ready(screen, tools()["claude-code"], 2, [])
 
 
 def test_new_cards_include_a_late_duplicate(monkeypatch) -> None:
@@ -60,9 +69,9 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(mo
     class Screen:
         text = ""
         keys = []
-        frames = deque(["Ask Codex to do anything", "Folder access. Trust this folder?",
+        frames = deque(["› Ask Codex to do anything · ? for shortcuts", "Folder access. Trust this folder? Trust and continue",
                         "› 1. Review hooks 2. Trust all and continue", "1. Review hooks › 2. Trust all and continue",
-                        "Ask Codex to do anything"])
+                        "› Ask Codex to do anything · ? for shortcuts"])
 
         def read(self):
             if self.frames:

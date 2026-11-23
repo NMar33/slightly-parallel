@@ -18,6 +18,14 @@ from screen import DOWN, ENTER, Screen
 POLL_S = 0.2
 UP = "\x1b[A"
 COMPOSER_SETTLE_S = 1.0
+STARTUP_DIALOGS = {
+    "claude-code": (
+        (("choosethetextstyle",), "Claude Code default theme accepted"),
+        (("securitynotes:", "pressentertocontinue"), "Claude Code security notes acknowledged"),
+    ),
+    "codex": ((("trustthisfolder", "trustandcontinue"), "Codex project folder trusted"),),
+    "opencode": (),
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +46,15 @@ def _last_reply(chat: Path, prompt: str) -> str:
     turn = chat.read_text(encoding="utf-8").rsplit("\n## Turn ", 1)[-1]
     user, _, reply = turn.partition("\n**Agent**: ")
     return reply.strip() if f"\n**User**: {prompt}\n" in user + "\n" else ""
+
+
+def _composer(tool: str, text: str, shown: str) -> bool:
+    if tool == "claude-code":
+        return (bool(re.search(r"(?m)(?:^|\r)[ \t]*❯[^\S\r\n]*(?:Try\b|$)", text))
+                and ("ctrl+gtoeditinvscode" in shown or "?forshortcuts" in shown))
+    if tool == "codex":
+        return "›askcodextodoanything" in shown and "forshortcuts" in shown
+    return "askanything" in shown and "tabagents" in shown and "ctrl+pcommands" in shown
 
 
 def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_config: Path | None = None) -> bool:
@@ -78,16 +95,11 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
                 return False
             screen.send(ENTER)
             answered.append("Claude Code project folder trusted")
-        elif tool.name == "claude-code" and "choosethetextstyle" in shown:
+        elif dialog := next((name for signature, name in STARTUP_DIALOGS[tool.name]
+                             if all(word in shown for word in signature)), None):
             screen.send(ENTER)
-            answered.append("Claude Code default theme accepted")
-        elif tool.name == "claude-code" and "securitynotes:" in shown and "pressentertocontinue" in shown:
-            screen.send(ENTER)
-            answered.append("Claude Code security notes acknowledged")
-        elif tool.name == "codex" and "trustthisfolder" in shown:
-            screen.send(ENTER)
-            answered.append("Codex project folder trusted")
-        elif {"claude-code": "❯", "codex": "askcodex", "opencode": "askanything"}[tool.name] in shown:
+            answered.append(dialog)
+        elif _composer(tool.name, screen.text, shown):
             # The composer can draw before a trust modal arrives. For a new
             # Codex home also require the CLI to have persisted hook trust.
             if trusted:
@@ -152,7 +164,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         codex_config = space.home / ".codex" / "config.toml" if tool.name == "codex" else None
         ready = _ready(screen, tool, seconds, answered, codex_config)
         report.notes[f"{stage} onboarding"] = answered
-        if not report.add(stage, "the CLI presents a usable prompt", ready, _screen_tail(screen)):
+        if not report.add(stage, "L1 CLI composer", ready, "L1 unknown screen:\n" + "\n".join(_screen_tail(screen).splitlines()[:3])):
             return None
         type_prompt(prompt)
         chats = space.data / "projects" / code / "chats"
