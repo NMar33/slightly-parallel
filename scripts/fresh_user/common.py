@@ -17,6 +17,8 @@ OPERATOR_COOKIE_TIMEOUT_S = 10
 API_REQUEST_TIMEOUT_S = 30
 DOWNLOAD_TIMEOUT_S = 120
 START_PROBE_TIMEOUT_S = 3
+BOARD_SETTLE_S = 2
+BOARD_POLL_S = 0.2
 
 REPO = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
@@ -91,6 +93,8 @@ class Space:
         # Codex finds its home through the system on Windows, not USERPROFILE:
         # CODEX_HOME is what both the server under test and Codex read.
         env["CODEX_HOME"] = str(self.home / ".codex")
+        # Keep the installed CLI version for the duration of a test run.
+        env["DISABLE_AUTOUPDATER"] = "1"
         env["FRESH_PLANTED_API_KEY"] = PLANTED_KEY
         env.update(HOME=str(self.home), SP_PORT=str(self.port), SHELL="/bin/sh",
                    # git in the sample project and in the clone needs an author
@@ -175,3 +179,16 @@ def eventually(read, seconds: float = 20):
         time.sleep(1)
         got = read()
     return got
+
+
+def new_task_rows(space: Space, code: str, known: set[str], seconds: float = BOARD_SETTLE_S) -> list[dict]:
+    """Collect new cards while the file watcher catches up after the CLI has exited."""
+    deadline = time.monotonic() + seconds
+    seen: dict[str, dict] = {}
+    while True:
+        for row in rows(get(space, f"/api/tasks?project={code}"), "tasks"):
+            if row["id"] not in known:
+                seen[row["id"]] = row
+        if time.monotonic() >= deadline:
+            return list(seen.values())
+        time.sleep(BOARD_POLL_S)

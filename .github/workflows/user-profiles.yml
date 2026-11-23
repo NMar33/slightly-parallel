@@ -1,0 +1,63 @@
+name: User profiles
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci-user-profiles]
+
+permissions:
+  contents: read
+
+jobs:
+  no-node:
+    name: Dashboard without Node (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        if: runner.os != 'Linux'
+        with:
+          python-version: '3.12'
+      - name: Run the shipped dashboard with Node removed from PATH
+        if: runner.os != 'Linux'
+        run: python scripts/fresh_user/profile.py no-node
+      - name: Run the shipped dashboard and native agent CLIs in a container with no Node
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm --volume "$PWD:/candidate:ro" --workdir /candidate python:3.12-slim bash -euo pipefail -c '
+            apt-get update -qq
+            apt-get install -y --no-install-recommends curl git ca-certificates unzip tar
+            export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
+            curl -fsSL https://claude.ai/install.sh | bash -s 2.1.330
+            curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.3
+            codex_asset=codex-x86_64-unknown-linux-musl
+            curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.170.0/$codex_asset.tar.gz" | tar -xz -C /tmp "$codex_asset"
+            install -m 0755 "/tmp/$codex_asset" "$HOME/.local/bin/codex"
+            claude --version
+            codex --version
+            opencode --version
+            ! command -v node
+            python scripts/fresh_user/profile.py no-node
+          '
+
+  windows-profile:
+    name: Windows redirected Cyrillic home (PowerShell)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Redirect the user and temporary folders to Cyrillic paths
+        shell: pwsh
+        run: python scripts/fresh_user/profile.py windows-cyrillic-home
+      - name: Record Windows profile coverage
+        shell: pwsh
+        run: |
+          Add-Content $env:GITHUB_STEP_SUMMARY 'The redirected Cyrillic home passed. A separate Windows local-account trial exited 1 in run 45097517111. Coverage is the redirected home.'

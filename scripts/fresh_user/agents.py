@@ -16,6 +16,8 @@ from pathlib import Path
 
 from common import Space
 
+VERSION_TIMEOUT_S = 15
+
 
 @dataclass
 class Turn:
@@ -44,6 +46,17 @@ class Tool:
 
     def installed(self) -> bool:
         return shutil.which(self.binary) is not None
+
+    def version(self) -> str:
+        cli = shutil.which(self.binary)
+        if not cli:
+            return "not installed"
+        try:
+            result = subprocess.run([cli, "--version"], capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=VERSION_TIMEOUT_S, check=True)
+        except (subprocess.SubprocessError, OSError):
+            return "unavailable"
+        return result.stdout.strip() or result.stderr.strip() or "unavailable"
 
     def command(self, message: str, model: str, space: Space) -> list[str]:
         raise NotImplementedError
