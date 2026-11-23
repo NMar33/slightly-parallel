@@ -34,13 +34,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  anthropic-preflight:
+  preflight:
     if: github.event_name == 'workflow_dispatch' && inputs.scenario == 'preflight'
-    name: L0 Anthropic
+    name: L0 ${{ matrix.provider }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [anthropic, openai]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -48,17 +52,19 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Check Anthropic access, authentication and model errors
+      - name: Check provider access, authentication and model errors
         timeout-minutes: 1
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/ci/agent_preflight.py --output preflight/anthropic.json
+          ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_MODEL: ${{ vars.CODEX_MODEL }}
+        run: python scripts/ci/agent_preflight.py --provider ${{ matrix.provider }} --output preflight/${{ matrix.provider }}.json
       - name: Keep the L0 report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: l0-anthropic
-          path: preflight/anthropic.json
+          name: l0-${{ matrix.provider }}
+          path: preflight/${{ matrix.provider }}.json
 
   agent:
     if: inputs.scenario != 'preflight'

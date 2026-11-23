@@ -22,21 +22,33 @@ def test_preflight_classifies_provider_errors(status, error, expected):
     assert classify(status, error) == expected
 
 
-def test_anthropic_preflight_uses_only_the_authorized_requests(monkeypatch):
+@pytest.mark.parametrize(("provider", "endpoint", "model", "token_field", "limit", "input_fields"), [
+    ("anthropic", "https://api.anthropic.com/v1/messages", "claude-haiku-5-5", "max_tokens", 1,
+     {"messages": [{"role": "user", "content": "ping"}]}),
+    ("openai", "https://api.openai.com/v1/responses", "gpt-6-luna", "max_output_tokens", 16,
+     {"input": "ping", "store": False}),
+])
+def test_preflight_uses_only_the_authorized_requests(monkeypatch, provider, endpoint, model, token_field, limit,
+                                                    input_fields):
     preflight = run_path(str(SCRIPT))["preflight"]
     calls = []
     key = "sensitive-ci-credential"
-    model = "claude-haiku-5-5"
 
     class Opener:
         def open(self, request, *, timeout):
-            assert request.full_url == "https://api.anthropic.com/v1/messages"
+            assert request.full_url == endpoint
             assert request.get_method() == "POST"
             assert 0 < timeout <= 6
             body = json.loads(request.data)
-            assert body == {"model": body["model"], "max_tokens": 1,
-                            "messages": [{"role": "user", "content": "ping"}]}
-            credential = request.get_header("X-api-key")
+            assert body == {"model": body["model"], token_field: limit, **input_fields}
+            if provider == "anthropic":
+                assert request.get_header("Authorization") is None
+                credential = request.get_header("X-api-key")
+            else:
+                assert request.get_header("X-api-key") is None
+                auth = request.get_header("Authorization")
+                assert auth.startswith("Bearer ")
+                credential = auth.removeprefix("Bearer ")
             calls.append((credential, body["model"]))
             if credential != key:
                 status, result = 401, {"error": {"type": "authentication_error", "message": "invalid key"}}
@@ -55,8 +67,9 @@ def test_anthropic_preflight_uses_only_the_authorized_requests(monkeypatch):
         return Opener()
 
     monkeypatch.setitem(preflight.__globals__, "build_opener", build_opener)
-    report = preflight(key, model)
+    report = preflight(key, model, provider=provider)
     assert report["passed"]
+    assert report["provider"] == provider
     assert [check["http"] for check in report["checks"]] == [200, 401, 404]
     assert calls[:2] == [(key, model), ("sp-ci-invalid-key-control", model)]
     assert calls[2][0] == key
@@ -74,6 +87,6 @@ def test_anthropic_preflight_redacts_key_in_error_type_and_message(monkeypatch):
             raise HTTPError(request.full_url, 400, "", {}, io.BytesIO(json.dumps(error).encode()))
 
     monkeypatch.setitem(probe.__globals__, "build_opener", lambda *_: Opener())
-    assert probe(key, "claude-haiku-5-5") == {
+    assert probe(key, "claude-haiku-5-5", provider="anthropic") == {
         "http": 400, "type": "[redacted]", "message": "Credit balance too low for [redacted]", "verdict": "L0-billing",
     }
