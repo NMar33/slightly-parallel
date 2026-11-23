@@ -442,3 +442,49 @@ def test_codex_core_only_confirms_the_exact_expected_mcp_call(
     assert keys == ([ENTER] if allowed else [])
     if allowed:
         assert check() == "" and keys == [ENTER]
+
+
+
+@pytest.mark.parametrize(("in_stderr", "tool", "refused"), [
+    (True, "write_entry", True),
+    (False, "write_entry", False),
+    (True, "read_entry", False),
+])
+def test_codex_helper_requires_the_actual_mcp_failure(monkeypatch, tmp_path, in_stderr, tool, refused):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import json
+    from common import Space
+    from helper_smoke import _mcp_refused
+
+    reason = "this chat is marked a helper chat"
+    failure = f"mcp: slightly-parallel/{tool} (failed)\ncodex\n422: {reason}; the command did nothing"
+    log = "\n--- stderr ---\n" + failure if in_stderr else failure + "\n--- stderr ---\n"
+    space = Space(tmp_path, 1)
+    sessions = space.home / ".codex" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "rollout-session.jsonl").write_text(json.dumps({
+        "type": "response_item",
+        "payload": {"type": "message", "role": "assistant", "content": reason},
+    }), encoding="utf-8")
+    agent = SimpleNamespace(name="codex", session="session", last_log=lambda _: log)
+    assert _mcp_refused(space, agent, reason) is refused
+
+
+
+def test_codex_rule_approval_waits_for_the_new_saved_rule(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import ENTER, RULE_INTERPRETATION, _core_approval
+
+    keys = []
+    current_id = ""
+    screen = SimpleNamespace(send=keys.append, rendered=(
+        '  Allow the slightly-parallel MCP server to run tool "interpret"?\n'
+        '  id: rl_new\n  lens: rule\n'
+        f'  text: {RULE_INTERPRETATION}\n\n  › 1. Allow Run the tool and continue'
+    ))
+    check = _core_approval(screen, "#rule", lambda: current_id)
+    assert not check() and not keys
+    current_id = "rl_old"
+    assert check() == "unexpected Codex MCP approval arguments" and not keys
+    current_id = "rl_new"
+    assert not check() and keys == [ENTER]

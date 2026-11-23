@@ -194,13 +194,17 @@ _MCP_APPROVAL = re.compile(
 )
 
 
-def _core_approval(screen: Screen, step: str) -> Callable[[], str]:
+RULE_INTERPRETATION = "Keep calc.py standalone."
+
+
+def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None) -> Callable[[], str]:
     expected = {
         "#decision": ("write_entry", {
             "lens": "decision",
             "fields": {"decision": scenario.DECISION_TEXT},
         }),
         "#done": ("task_done", {}),
+        "#rule": ("interpret", {"lens": "rule", "text": RULE_INTERPRETATION}),
     }.get(step)
     handled = ""
 
@@ -224,7 +228,13 @@ def _core_approval(screen: Screen, step: str) -> Callable[[], str]:
                 arguments[key] = json.loads(value) if key == "fields" else value
             except ValueError:
                 return "unreadable Codex MCP approval arguments"
-        if arguments != expected[1]:
+        required = expected[1]
+        if step == "#rule":
+            current = rule_id() if rule_id else ""
+            if not current:
+                return ""  # the hook's new rule may not be in the API view yet
+            required = {**required, "id": current}
+        if arguments != required:
             return "unexpected Codex MCP approval arguments"
         handled = match.group()
         screen.send(ENTER)
@@ -362,11 +372,20 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 message = scenario.step_prompt(space, state, step)
                 approval = None
                 if tool.name == "codex":
+                    new_rule = None
+                    if name == "#rule":
+                        before = {row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)}
+                        message += f' Interpret the rule from this turn with the exact text "{RULE_INTERPRETATION}".'
+
+                        def new_rule(before: set[str] = before) -> str:
+                            current = {row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)} - before
+                            return next(iter(current)) if len(current) == 1 else ""
+
                     if name == "#decision":
                         message += ' Use Slightly Parallel write_entry with lens decision and only the decision field.'
                     elif name == "#done":
                         message += " Call Slightly Parallel task_done with no arguments once. Report the result in chat."
-                    approval = _core_approval(screen, name)
+                    approval = _core_approval(screen, name, new_rule)
                 type_prompt(message)
                 error = _wait_for_turn(screen, lambda message=message: bool(_last_reply(chat, message)), seconds,
                                        approval=approval)

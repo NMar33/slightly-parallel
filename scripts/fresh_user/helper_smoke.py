@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -34,7 +35,16 @@ def _mcp_refused(space: Space, tool: Tool, reason: str) -> bool:
                 return state.get("status") == "error" and reason in str(state.get("error"))
             if tool.name == "codex" and row.get("type") == "response_item":
                 payload = row.get("payload", {})
-                return payload.get("type") == "function_call_output" and reason in str(payload.get("output"))
+                if payload.get("type") == "function_call_output" and reason in str(payload.get("output")):
+                    return True
+    if tool.name == "codex":
+        # Newer Codex prints this tool failure in stderr rather than
+        # retaining it as a function_call_output in the rollout.
+        _, separator, stderr = tool.last_log(space).partition("\n--- stderr ---\n")
+        return bool(separator and re.search(
+            r"(?m)^mcp: slightly-parallel/write_entry \(failed\)\r?\n"
+            r"(?:codex\r?\n)?422: " + re.escape(reason) + r"(?:;|\r?$)", stderr,
+        ))
     return False
 
 
