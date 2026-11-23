@@ -182,3 +182,22 @@ def test_only_unix_pty_emulates_color_replies(monkeypatch, windows):
     terminal._write = sent.append
     terminal._answer("\x1b]10;?\x07\x1b]11;?\x07")
     assert len(sent) == (0 if windows else 2)
+
+
+def test_application_cursor_mode_changes_arrow_encoding_even_across_reads(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    terminal = screen.Screen.__new__(screen.Screen)
+    terminal.text = terminal.history = terminal._cursor_tail = ""
+    terminal.application_cursor = False
+    terminal.trace = None
+    sent = []
+    terminal._write = sent.append
+    monkeypatch.setattr(screen.time, "sleep", lambda _: None)
+    terminal._receive("\x1b[?")
+    terminal._receive("1h")
+    terminal.send(screen.DOWN)
+    terminal._receive("\x1b[?1l")
+    terminal.send(screen.DOWN)
+    assert sent == ["\x1bOB", "\x1b[B"]

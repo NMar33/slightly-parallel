@@ -26,6 +26,8 @@ PTY_CLOSE_TIMEOUT_S = 3
 
 _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|[\x00-\x08\x0e-\x1f]")
 DOWN, ENTER = "\x1b[B", "\r"
+_CURSOR_MODE = re.compile(r"\x1b\[\?1([hl])")
+_CURSOR_ARROWS = {"\x1b[A": "\x1bOA", DOWN: "\x1bOB"}
 ROWS, COLS = 45, 160
 SCREEN_HISTORY_CHARS = 1600
 #: What a full-screen program asks its terminal before it draws, and what a
@@ -61,6 +63,9 @@ class Screen:
     def __init__(self, args: list[str], cwd: Path, env: dict[str, str], *, trace: Path | None = None):
         self.text = ""
         self.history = ""
+        self.exited = False
+        self.application_cursor = False
+        self._cursor_tail = ""
         self.trace = TerminalTrace(trace) if trace is not None else None
         self._decode = codecs.getincrementaldecoder("utf-8")(errors="replace")
         if WINDOWS:
@@ -79,6 +84,7 @@ class Screen:
                     try:
                         got = self.proc.read(4096)
                     except Exception:  # noqa: BLE001 — closed: the program ended
+                        self.exited = True
                         return
                     if got:
                         with self._lock:
@@ -110,12 +116,18 @@ class Screen:
             try:
                 got = os.read(self.fd, 65536)
             except OSError:
+                self.exited = True
                 return
             if not got:
+                self.exited = True
                 return
             self._receive(self._decode.decode(got))
 
     def _receive(self, text: str) -> None:
+        controls = self._cursor_tail + text
+        if modes := _CURSOR_MODE.findall(controls):
+            self.application_cursor = modes[-1] == "h"
+        self._cursor_tail = controls[-4:]
         self._answer(text)
         if self.trace is not None:
             self.trace.feed(text)
@@ -154,7 +166,7 @@ class Screen:
         self.save_frame("before input")
         self.history = (self.history + "\n" + self.text.rstrip())[-SCREEN_HISTORY_CHARS:]
         self.text = ""  # what comes after this key
-        self._write(keys)
+        self._write(_CURSOR_ARROWS.get(keys, keys) if self.application_cursor else keys)
         time.sleep(KEY_PRESS_SETTLE_S)
 
     def _write(self, keys: str) -> None:

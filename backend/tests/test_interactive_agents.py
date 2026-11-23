@@ -85,14 +85,19 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             mcp = codex_config.read_text(encoding="utf-8")
             codex_config.write_text('model = "stub-model"\nmodel_provider = "stub"\n'
                                     '[model_providers.stub]\nname = "stub"\nwire_api = "responses"\n'
-                                    f'base_url = "{endpoint}/v1"\n\n{mcp}', encoding="utf-8")
+                                    f'base_url = "{endpoint}/v1"\n\n{mcp}'
+                                    + ('\n[windows]\nsandbox = "unelevated"\n' if os.name == "nt" else ""),
+                                    encoding="utf-8")
             args += ["--no-daemon", "-c", "check_for_update_on_startup=false"]
         elif cli == "claude-code":
             monkeypatch.setenv("ANTHROPIC_API_KEY", "sp-local-model-test-credential")
             give_login(tool, space.home, space, env)
             profile = space.home / ".claude.json"
             values = json.loads(profile.read_text(encoding="utf-8"))
-            values.update(theme="dark", hasCompletedOnboarding=True)
+            project = space.sample.resolve()
+            values.update(theme="dark", hasCompletedOnboarding=True,
+                          projects={path: {"hasTrustDialogAccepted": True}
+                                    for path in {str(project), project.as_posix()}})
             profile.write_text(json.dumps(values), encoding="utf-8")
             (space.home / "settings.json").write_text('{"enableAllProjectMcpServers":true}', encoding="utf-8")
             env.update(CLAUDE_CONFIG_DIR=str(space.home), ANTHROPIC_BASE_URL=endpoint, DISABLE_TELEMETRY="1",

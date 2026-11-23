@@ -42,6 +42,7 @@ STARTUP_FAILURES = (
     (("securitynotes:", "pressentertocontinue"), "Claude Code security notes"),
     (("trustallandcontinue",), "Codex project hooks trust"),
     (("trustthisfolder", "trustandcontinue"), "Codex project folder trust"),
+    (("setupthecodexagentsandbox",), "Codex Windows sandbox setup"),
 )
 
 
@@ -80,6 +81,8 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
     previous_move = ""
     while time.monotonic() < deadline:
         screen.read()
+        if getattr(screen, "exited", False):
+            return False
         frame = getattr(screen, "rendered", "") or screen.text
         shown = re.sub(r"\s+", "", frame.lower())
         trusted = codex_config is None or (codex_config.is_file() and
