@@ -391,3 +391,24 @@ def test_actions_canary_cannot_start_an_agent_without_provider_preflight(monkeyp
     assert run.canary(space, report, args, ["codex"], 0) == 1
     assert report.notes["canary layers"] == dict.fromkeys(("L1", "L2", "L3"), "blocked by L0")
     assert [check.name for check in report.failed()] == ["L0 provider preflight"]
+
+
+
+@pytest.mark.parametrize(("server", "operation", "lens", "title", "choice", "allowed"), [
+    ("slightly-parallel", "write_entry", "task", "sp-expected", "› 1. Allow", True),
+    ("slightly-parallel", "write_entry", "task", "sp-other", "› 1. Allow", False),
+    ("slightly-parallel", "write_entry", "task", "sp-expected", "› 3. Always allow", False),
+    ("slightly-parallel", "task_done", "task", "sp-expected", "› 1. Allow", False),
+    ("slightly-parallel", "write_entry", "decision", "sp-expected", "› 1. Allow", False),
+    ("other", "write_entry", "task", "sp-expected", "› 1. Allow", False),
+])
+def test_codex_only_confirms_the_pending_canary_task(monkeypatch, server, operation, lens, title, choice, allowed):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import ENTER, _approve_task_write
+
+    frame = (f'Allow the {server} MCP server to run tool "{operation}"?\n'
+             f'    fields: {{"title": "{title}", "status": "agent"}}\n'
+             f'    lens: {lens}\n\n    {choice} Run the tool and continue')
+    keys = []
+    assert _approve_task_write(SimpleNamespace(rendered=frame, send=keys.append), "sp-expected") is allowed
+    assert keys == ([ENTER] if allowed else [])

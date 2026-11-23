@@ -966,6 +966,17 @@ def test_a_model_with_no_price_counts_as_unpriced(tmp_path: Path) -> None:
     assert main["cost_new"] == 0 and main["unpriced"] == 35 and main["rebuilt"] == 0
 
 
+
+@pytest.mark.parametrize(("new", "expected"), [(100_000, (10_000, 500, 500)), (300_000, (60_000, 1_000, 750))])
+def test_luna_usage_has_standard_and_long_context_costs(tmp_path: Path, new, expected) -> None:
+    f = tmp_path / "usage.jsonl"
+    _write(f, [{"turn": 1, "at": "2026-11-23T14:00:00", "id": "a", "tool": "opencode", "model": "gpt-6-luna",
+                "new": new, "cache_write": 0, "cache": 50_000, "output": 1_000, "thinking": 0, "helper": ""}])
+    main = usagelib.chat_usage(f)["turns"][1]["main"]
+    assert main["unpriced"] == 0
+    assert (main["cost_new"], main["cost_warm"], main["cost_output"]) == expected
+
+
 def _msg(mid: str, at: str, model: str = "claude-opus-5-5", **kw: Any) -> dict[str, Any]:
     return {"turn": 1, "at": at, "id": mid, "tool": "claude-code", "model": model, "new": 0, "cache_write": 0,
             "cache": 0, "output": 0, "thinking": 0, "helper": "", "ttl": "5m", **kw}

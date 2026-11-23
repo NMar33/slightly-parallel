@@ -171,6 +171,17 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int) -> s
     return verdict
 
 
+def _approve_task_write(screen: Screen, title: str) -> bool:
+    frame = screen.rendered
+    if ('Allow the slightly-parallel MCP server to run tool "write_entry"?' not in frame
+            or not re.search(r"(?m)^\s*› 1\. Allow\b", frame)
+            or not re.search(r'"title"\s*:\s*' + re.escape(json.dumps(title)), frame)
+            or not re.search(r"(?m)^\s*lens:\s*task\s*$", frame)):
+        return False
+    screen.send(ENTER)
+    return True
+
+
 def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, model: str, home: Path,
           seconds: int, *, core: bool = False, one_turn: bool = False) -> SmokeResult | None:
     stage = f"interactive:{tool.name}"
@@ -238,8 +249,16 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         type_prompt(prompt)
         chats = space.data / "projects" / code / "chats"
         captured: list[Path] = []
+        task_write_approved = False
+
+        def approve_task_write() -> None:
+            nonlocal task_write_approved
+            if tool.name == "codex" and not task_write_approved:
+                task_write_approved = _approve_task_write(screen, title)
 
         def find_chat() -> bool:
+            if one_turn:
+                approve_task_write()
             captured[:] = [chat for chat in chats.glob(f"{tool.id_prefix}*/chat.md") if _recorded_turn(chat, prompt, reply)]
             return bool(captured)
 
@@ -267,7 +286,11 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         if not one_turn:
             existing = {row.get("id") for row in cards()}
             type_prompt(task_prompt)
-            error = _wait_for_turn(screen, lambda: bool(_last_reply(chat, task_prompt)), seconds)
+            def find_task_turn() -> bool:
+                approve_task_write()
+                return bool(_last_reply(chat, task_prompt))
+
+            error = _wait_for_turn(screen, find_task_turn, seconds)
             if not report.add(stage, "the operator task turn is captured to completion", not error,
                               f"{error}\n{agent}\n{_screen_tail(screen)}"):
                 return None
