@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   machine:
-    name: Machine (${{ matrix.os }})
+    name: Machine${{ inputs.full && ' full' || '' }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -37,6 +37,7 @@ jobs:
     env:
       SP_LOCAL: "1"
       SP_NONINTERACTIVE: "1"
+      SP_AGENT_CHANNEL: pinned
       SP_ARCHIVE_DIR: ${{ github.workspace }}/.sp/archive
       # Every agent on Linux; on macOS and Windows Claude Code alone, unless full.
       TOOLS: ${{ (inputs.full || matrix.os == 'ubuntu-latest') && 'claude-code,codex,opencode' || 'claude-code' }}

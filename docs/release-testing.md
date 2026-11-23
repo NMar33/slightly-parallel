@@ -11,13 +11,17 @@ the checks still to build, and the limits the release notes must name.
 1. **One candidate.** Freeze the commit; run the whole CI on it
    (`scripts/publish-ci.sh ci-windows "…"`, then
    `gh workflow run ci.yml --ref ci-windows` and
-   `gh workflow run terminal.yml --ref ci-windows`). Every job green on the
-   same commit, no unexplained retry: `scripts/release-ready.sh ci-windows
-   vX.Y.Z` checks CI and the Terminal window for the branch's head commit
-   (the terminal bench does not gate) and prints the merge and tag commands.
-2. **Real agents.** Run `Agents` (`.github/workflows/agents.yml`) by hand:
-   Claude Code, Codex and OpenCode on cheap models, eight messages each,
-   `#sp` among them.
+   `gh workflow run terminal.yml --ref ci-windows`). Dispatch Weekly and
+   Agents on that ref as well, and dispatch Machine with `-f full=true`.
+   `scripts/release-ready.sh ci-windows vX.Y.Z` checks all five workflows
+   for that exact commit, on their first attempt. It checks that the
+   required jobs and steps ran and prints the merge and tag commands.
+   The terminal benchmark is a separate measurement.
+2. **Real agents.** Use the default `smoke` scenario in Agents. Claude
+   Code, Codex and OpenCode each run an interactive chat and a separate
+   headless helper on Linux, macOS and Windows. The tests verify the
+   operator's captured turns and a single board card, then verify capture
+   and an explicit task refusal for the helper.
 3. **By hand on Windows and macOS** — the list below, about half an hour each.
 4. **A late fix** makes a new candidate: CI again, the failing case shown
    fixed, and the stages it touches run again.

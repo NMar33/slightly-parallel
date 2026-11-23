@@ -51,11 +51,17 @@ foreach ($id in $need) {
 }
 Refresh-Path
 cmd /c "py -3.14 -c ""import sys"" >nul 2>nul"; Must "Python 3.14 (py -3.14)"
+py -3.14 -m pip install pywinpty==3.1.0 | Out-Host; Must "ConPTY driver for the interactive agent test"
 git --version | Out-Null; Must "git"
 npm.cmd --version | Out-Null; Must "npm"
 
 Say "Claude Code, Codex and OpenCode"
-npm.cmd install -g --silent @anthropic-ai/claude-code @openai/codex opencode-ai | Out-Host; Must "npm install of the agents"
+$packages = @("@anthropic-ai/claude-code", "@openai/codex", "opencode-ai")
+if ($Local -and $env:SP_AGENT_CHANNEL) {
+  $packages = @(py -3.14 (Join-Path $Dest "scripts/ci/agent_packages.py") $env:SP_AGENT_CHANNEL)
+  Must "select agent versions"
+}
+npm.cmd install -g --silent @packages | Out-Host; Must "npm install of the agents"
 Refresh-Path
 
 if ($Quiet) {
