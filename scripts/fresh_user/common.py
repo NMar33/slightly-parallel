@@ -26,30 +26,65 @@ WINDOWS = os.name == "nt"
 #: A key a new user has in their environment, as many do: the server's
 #: report must never show it (stages.server_report).
 PLANTED_KEY = "sk-proj-freshPlanted7f3a91c0e5b24d68aa"
+# Codex needs this for redaction only. Consume it before any subprocess starts.
+_DIAGNOSTIC_OPENAI_KEY = os.environ.pop("SP_DIAGNOSTIC_OPENAI_KEY", "")
 _DIAGNOSTIC_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _DIAGNOSTIC_KEY = re.compile(
-    r"(?im)\bsk-(?:"
+    r"(?im)(?<![\w-])sk-(?:"
     # A PTY can wrap the prefix, the marker, or the suffix onto another row.
     r"(?:[a-z0-9]+(?:\r?\n[ \t]*[a-z0-9]+)?-)*[ \t]*(?:\r?\n[ \t]*)?"
     r"(?:…+|\.{2,}|\*{2,})[ \t]*[\w-]*"
     r"(?:\r?\n[ \t]*[\w-]+(?=[ \t]*(?:[│║][ \t]*)?$))?"
-    r"|[^\s]+)"
+    r"|(?:ant|proj|svcacct|admin|live|test)-[a-z0-9_-]+|[a-z0-9_-]{16,})"
 )
-_BILLING_ERROR = re.compile(r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota)\b", re.IGNORECASE)
+_NORMALISED_KEY_PREFIX = re.compile(r"(?i)sk-(?:ant-|proj-|svcacct-|admin-|live-|test-|…|\.{2,}|\*{2,})")
+_BILLING_ERROR = re.compile(
+    r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota|billing_hard_limit_reached"
+    r"|quota\s+exceeded\.\s*check\s+your\s+plan\s+and\s+billing\s+details"
+    r"|exceeded\s+your\s+current\s+quota)\b", re.IGNORECASE,
+)
 
 
 def is_provider_billing_failure(text: str) -> bool:
     return bool(_BILLING_ERROR.search(text))
 
 
+def _compact(text: str) -> tuple[str, list[int]]:
+    positions = [i for i, ch in enumerate(text) if not ch.isspace() and not "\u2500" <= ch <= "\u257f"]
+    return "".join(text[i] for i in positions), positions
+
+
+def _known_key_spans(compact: str, positions: list[int], known_key: str) -> list[tuple[int, int]]:
+    keys = {known_key, _DIAGNOSTIC_OPENAI_KEY, os.environ.get("ANTHROPIC_API_KEY", ""),
+            os.environ.get("OPENAI_API_KEY", "")} - {""}
+    spans = []
+    for key in keys | {key[-20:] for key in keys if len(key) >= 20}:
+        start = compact.find(key)
+        while start != -1:
+            spans.append((positions[start], positions[start + len(key) - 1] + 1))
+            start = compact.find(key, start + len(key))
+    return spans
+
+
 def redact_diagnostics(text: str, known_key: str = "") -> str:
     text = _DIAGNOSTIC_ANSI.sub("", text)
-    for key in (known_key, os.environ.get("ANTHROPIC_API_KEY", ""), os.environ.get("OPENAI_API_KEY", "")):
-        if len(key) >= 20:
-            text = text.replace(key, "[redacted]").replace(key[-20:], "[redacted]")
-        elif key:
-            text = text.replace(key, "[redacted]")
-    return _DIAGNOSTIC_KEY.sub("[redacted]", text)
+    compact, positions = _compact(text)
+    spans = _known_key_spans(compact, positions, known_key)
+    spans.extend(match.span() for match in _DIAGNOSTIC_KEY.finditer(text))
+    clean, end = [], 0
+    for start, stop in sorted(spans):
+        if start >= end:
+            clean.extend((text[end:start], "[redacted]"))
+        end = max(end, stop)
+    clean.append(text[end:])
+    return "".join(clean)
+
+
+def contains_diagnostic_key(text: str) -> bool:
+    text = _DIAGNOSTIC_ANSI.sub("", text)
+    compact, positions = _compact(text)
+    return bool(_known_key_spans(compact, positions, "") or _NORMALISED_KEY_PREFIX.search(compact)
+                or _DIAGNOSTIC_KEY.search(text))
 
 
 @dataclass

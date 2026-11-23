@@ -149,3 +149,25 @@ def test_trace_saves_the_complete_rendered_frame_after_terminal_redraw(monkeypat
     assert "  Cloud provider" in saved
     assert "Previous frame" not in saved
     assert "testSecretSuffix5678" not in saved
+
+
+@pytest.mark.parametrize("display", ["full", "partial", "dots", "stars", "ellipsis"])
+def test_trace_hides_the_known_key_at_every_wrap_column(monkeypatch, tmp_path, display):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from screen import COLS, TerminalTrace
+
+    tail = "Q7aZ8wR9sZ1xK2yD3fB4"
+    key = "sk-ant-api03-fakeSecret" + tail
+    forms = {"full": key, "partial": tail, "dots": "sk-ant-api03-..." + tail,
+             "stars": "sk-ant-api03-*** " + tail, "ellipsis": "SK-ANT-… " + tail}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", key)
+    for column in range(COLS):
+        path = tmp_path / "trace.log"
+        trace = TerminalTrace(path)
+        trace.feed("X" * column + forms[display] + " is invalid; keep this text")
+        trace.save("error")
+        saved = path.read_text(encoding="utf-8")
+        compact = "".join(saved.split())
+        assert tail not in compact, (display, column)
+        assert "isinvalid;keepthistext" in compact, (display, column)
+        path.unlink()

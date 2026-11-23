@@ -215,8 +215,17 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 report.add("upgrade", f"no earlier commit to upgrade from: {base or 'the only release tag is HEAD'}", False)
     finally:
-        stages.stop(proc)
-        stages.sh(stages.sp_sh("down"), space.clone, space.env()) if (space.clone / "sp.py").is_file() else None
+        aborted = sys.exc_info()[0] is not None
+        try:
+            stages.stop(proc)
+            if (space.clone / "sp.py").is_file():
+                stages.sh(stages.sp_sh("down"), space.clone, space.env())
+        except BaseException:
+            aborted = True
+            raise
+        finally:
+            if aborted:
+                stages.cleanup(space, args.keep)
     return finish(space, report, args, started, shots)
 
 

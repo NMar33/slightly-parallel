@@ -316,6 +316,18 @@ def give_login(tool: Tool, real_home: Path, space: Space, env: dict[str, str]) -
     for key in tool.login_env:
         if os.environ.get(key):
             env[key] = os.environ[key]
+            if tool.name == "claude-code" and key == "ANTHROPIC_API_KEY":
+                # The CLI stores its approval as a suffix of the supplied key.
+                # Seed only the disposable profile so startup never renders it.
+                config = space.home / ".claude.json"
+                profile = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
+                responses = profile.setdefault("customApiKeyResponses", {})
+                tail = env[key][-20:]
+                responses["approved"] = list(dict.fromkeys([*responses.get("approved", []), tail]))
+                responses["rejected"] = [value for value in responses.get("rejected", []) if value != tail]
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(json.dumps(profile), encoding="utf-8")
+                config.chmod(0o600)
             return f"${key}"
     for rel in tool.login_files:
         src = real_home / rel

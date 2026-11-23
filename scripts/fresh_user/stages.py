@@ -1120,7 +1120,7 @@ def cleanup(space: Space, keep: bool) -> None:
             os.kill(pid, signal.SIGTERM)
         except OSError:
             pass
-    for rel in (".claude/.credentials.json", ".codex/auth.json", ".local/share/opencode/auth.json"):
+    for rel in (".claude/.credentials.json", ".claude.json", ".codex/auth.json", ".local/share/opencode/auth.json"):
         try:
             (space.home / rel).unlink()
         except OSError:

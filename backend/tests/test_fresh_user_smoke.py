@@ -162,3 +162,31 @@ def test_startup_evidence_names_known_dialogs(monkeypatch, menu, name) -> None:
     from interactive import _startup_failure
 
     assert _startup_failure(SimpleNamespace(rendered=menu, text=menu)) == f"L1 {name}:\n{menu}"
+
+
+def test_claude_approves_the_ci_key_in_its_disposable_profile(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from agents import give_login, tools
+    from common import Space
+    import stages
+
+    key = "sk-ant-api03-testOnlyABCDEFGHIJKLMNOPQRST"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", key)
+    space = Space(tmp_path / "scratch", 1)
+    space.home.mkdir(parents=True)
+    config = space.home / ".claude.json"
+    config.write_text(json.dumps({"theme": "dark", "customApiKeyResponses": {
+        "approved": ["old-synthetic-tail"], "rejected": [key[-20:]],
+    }}), encoding="utf-8")
+    env = {}
+    assert give_login(tools()["claude-code"], tmp_path / "real-home", space, env) == "$ANTHROPIC_API_KEY"
+    text = config.read_text(encoding="utf-8")
+    assert key not in text
+    assert json.loads(text) == {"theme": "dark", "customApiKeyResponses": {
+        "approved": ["old-synthetic-tail", key[-20:]], "rejected": [],
+    }}
+    monkeypatch.setattr(stages, "stray", lambda _: [])
+    stages.cleanup(space, keep=True)
+    assert not config.exists() and space.home.exists()

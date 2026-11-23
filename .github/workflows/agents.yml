@@ -84,12 +84,22 @@ jobs:
           OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
           CODEX_MODEL: ${{ vars.CODEX_MODEL }}
         run: python scripts/ci/agent_preflight.py --provider ${{ matrix.provider }} --output preflight/${{ matrix.provider }}.json
-      - name: Keep the L0 report
+      - name: Check the L0 report before upload
+        id: artifact-audit
         if: always()
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-l0
+        run: python scripts/ci/guard_agent_artifacts.py preflight/${{ matrix.provider }}.json "$AUDITED_ARTIFACTS"
+      - name: Keep the L0 report
+        if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: l0-${{ matrix.provider }}
-          path: preflight/${{ matrix.provider }}.json
+          path: ${{ runner.temp }}/sp-audited-l0/
+          if-no-files-found: ignore
 
   agent:
     needs: [preflight, cli-versions]
@@ -176,9 +186,10 @@ jobs:
         timeout-minutes: 45
         shell: bash
         env:
-          # Claude Code and OpenCode take their key from the environment; Codex has its login file.
+          # Codex uses its login file. The test harness uses the key to redact diagnostics.
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
           OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
+          SP_DIAGNOSTIC_OPENAI_KEY: ${{ matrix.tool == 'codex' && secrets.OPENAI_API_KEY || '' }}
           CODEX_MODEL: ${{ vars.CODEX_MODEL || 'gpt-6-luna' }}
         run: |
           model=claude-haiku-5-5
@@ -188,8 +199,17 @@ jobs:
           if [ "$SCENARIO" != full ]; then budget=120; fi
           python scripts/fresh_user/run.py --tools ${{ matrix.tool }} --scenario "$SCENARIO" \
             --stages install,setup,wiring,agent --turn-seconds "$budget" ${model:+--model "$model"}
+      - name: Check the agent report and logs before upload
+        id: artifact-audit
+        if: always() && steps.key.outputs.ok
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.tool != 'claude-code' && secrets.OPENAI_API_KEY || '' }}
+          AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-agent
+        run: python scripts/ci/guard_agent_artifacts.py .sp/fresh-user "$AUDITED_ARTIFACTS"
       - name: The failed checks, with their detail (on failure)
-        if: failure() && steps.key.outputs.ok
+        if: failure() && steps.artifact-audit.outcome == 'success'
         shell: python
         run: |
           import json
@@ -202,12 +222,12 @@ jobs:
                   if not c.get("ok"):
                       print(f"[{c.get('stage')}] {c.get('name')}\n    {c.get('detail', '')[-4000:]}")
       - name: Report CLI version and model cost
-        if: always() && steps.key.outputs.ok
+        if: always() && steps.artifact-audit.outcome == 'success'
         run: python scripts/ci/agent_summary.py
-      - name: Keep the report and the pictures
-        if: always() && steps.key.outputs.ok
+      - name: Keep the audited report and logs
+        if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: agent-${{ matrix.tool }}-${{ matrix.os }}
-          path: .sp/fresh-user/
-          include-hidden-files: true
+          path: ${{ runner.temp }}/sp-audited-agent/
+          if-no-files-found: ignore

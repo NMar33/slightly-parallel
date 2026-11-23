@@ -15,6 +15,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "agent_preflig
     (404, {"type": "not_found_error", "message": "model: some-missing-model"}, "L0-model"),
     (400, {"type": "invalid_request_error", "message": "Credit balance too low"}, "L0-billing"),
     (429, {"type": "insufficient_quota", "message": "Current quota exceeded"}, "L0-billing"),
+    (429, {"message": "Quota exceeded. Check your plan and billing details."}, "L0-billing"),
+    (429, {"message": "You exceeded your current quota, please check your plan and billing details."}, "L0-billing"),
     (429, {"type": "rate_limit_error", "message": "Rate limited"}, "L0-rate"),
     (404, {"type": "not_found_error", "message": "Workspace not found"}, "L0-provider"),
 ])
@@ -127,14 +129,25 @@ def test_api_and_pty_reports_hide_masked_keys_without_the_environment_key(monkey
     assert redact_api(text, "") == expected
 
 
-def test_pty_wait_reports_the_api_credit_error_without_waiting_for_timeout(monkeypatch) -> None:
+@pytest.mark.parametrize("frame", ["Your credit balance is\ntoo low to access the Anthropic API.",
+                                  "Quota exceeded. Check your plan and billing details.",
+                                  "You exceeded your current quota, please check your plan and billing details.",
+                                  "billing_hard_limit_reached"])
+def test_pty_wait_reports_the_api_credit_error_without_waiting_for_timeout(monkeypatch, frame) -> None:
     monkeypatch.syspath_prepend(str(SCRIPT.parents[1] / "fresh_user"))
     import interactive
 
     captured = []
-    frame = "Your credit balance is\ntoo low to access the Anthropic API."
     screen = SimpleNamespace(text="", rendered=frame, read=lambda: None, save_frame=captured.append)
     monkeypatch.setattr(interactive.time, "sleep", lambda _: pytest.fail("billing failure should return immediately"))
     verdict = "L4 provider error (L0-billing)"
     assert interactive._wait_for_turn(screen, lambda: False, 30) == verdict
     assert captured == [verdict]
+
+
+def test_redaction_preserves_json_delimiters(monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPT.parents[1] / "fresh_user"))
+    from common import redact_diagnostics
+
+    payload = '{"error":"sk-proj-fakeVisibleKey-0987654321","status":401}'
+    assert json.loads(redact_diagnostics(payload)) == {"error": "[redacted]", "status": 401}
