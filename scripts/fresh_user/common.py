@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import time
 import urllib.error
@@ -25,6 +26,19 @@ WINDOWS = os.name == "nt"
 #: A key a new user has in their environment, as many do: the server's
 #: report must never show it (stages.server_report).
 PLANTED_KEY = "sk-proj-freshPlanted7f3a91c0e5b24d68aa"
+_DIAGNOSTIC_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_DIAGNOSTIC_KEY = re.compile(r"(?i)\bsk-(?:ant-)?(?:[ \t]*(?:…+|\.{2,}|\*{2,})[ \t]*[\w-]{8,}|[^\s]+)")
+
+
+def redact_diagnostics(text: str) -> str:
+    text = _DIAGNOSTIC_ANSI.sub("", text)
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        key = os.environ.get(name, "")
+        if len(key) >= 20:
+            text = text.replace(key, "[redacted]").replace(key[-20:], "[redacted]")
+        elif key:
+            text = text.replace(key, "[redacted]")
+    return _DIAGNOSTIC_KEY.sub("[redacted]", text)
 
 
 @dataclass
@@ -44,6 +58,7 @@ class Report:
     notes: dict[str, Any] = field(default_factory=dict)
 
     def add(self, stage: str, name: str, ok: bool, detail: str = "", soft: bool = False) -> bool:
+        detail = redact_diagnostics(detail)
         self.checks.append(Check(stage, name, bool(ok), detail, soft))
         mark = "ok  " if ok else ("soft" if soft else "FAIL")
         print(f"  [{mark}] {name}" + (f" — {detail}" if detail and not ok else ""), flush=True)

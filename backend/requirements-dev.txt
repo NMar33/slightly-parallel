@@ -1,4 +1,5 @@
 -r requirements.txt
+-r ../scripts/fresh_user/requirements-pty.txt
 # The test tools, pinned: a new release must not change a CI result on a day
 # no code changed. Raise them on purpose, together.
 pytest==9.1.1

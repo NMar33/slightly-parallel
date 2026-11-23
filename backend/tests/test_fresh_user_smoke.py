@@ -130,3 +130,23 @@ def test_decision_requires_a_new_entry_matching_the_operator_choice(monkeypatch,
     scenario.after_decision(space, report, "core", state)
 
     assert (not report.failed()) is passes
+
+
+def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import _screen_tail
+
+    suffix = "dummyVisibleTail1234"
+    text = f"Claude Code API key sk-ant-… {suffix}\nDo you want to use this API key?"
+    assert _screen_tail(SimpleNamespace(text=text, history="")) == (
+        "Claude Code API key [redacted]\nDo you want to use this API key?"
+    )
+
+
+def test_claude_login_menu_is_named_in_startup_evidence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import _startup_failure
+
+    menu = "Select login method:\n❯ Claude account\n  Anthropic Console\n  Cloud provider"
+    screen = SimpleNamespace(rendered=menu, text=menu)
+    assert _startup_failure(screen) == "L1 Claude Code requires login:\n" + "\n".join(menu.splitlines()[:3])

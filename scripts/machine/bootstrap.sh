@@ -95,4 +95,4 @@ git -C "$DEST" config user.email >/dev/null || git config --global user.email "m
 git -C "$DEST" config user.name >/dev/null || git config --global user.name "Machine Test"
 say "Running everything (about an hour). Leave it be."
 cd "$DEST"
-"$HOME/.local/bin/python3.14" scripts/machine/run.py "$@"
+uv run --no-project --python "$PY" --with-requirements scripts/fresh_user/requirements-pty.txt scripts/machine/run.py "$@"

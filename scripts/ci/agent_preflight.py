@@ -24,7 +24,8 @@ def classify(status: int, error: dict) -> str:
     message = str(error.get("message") or "").lower()
     if status == 401:
         return "L0-auth"
-    if {kind, code} & {"insufficient_quota", "billing_hard_limit_reached"} or "credit balance too low" in message:
+    if ({kind, code} & {"insufficient_quota", "billing_hard_limit_reached"}
+            or re.search(r"\bcredit balance (?:is )?too low\b", message)):
         return "L0-billing"
     if status == 404 and (code == "model_not_found" or "model" in message):
         return "L0-model"

@@ -34,7 +34,7 @@ import stages  # noqa: E402
 from helper_smoke import helper_smoke  # noqa: E402
 from interactive import SmokeResult, smoke  # noqa: E402
 from agents import Codex, tools  # noqa: E402
-from common import REPO, Report, Space, free_port, get, http  # noqa: E402
+from common import REPO, Report, Space, free_port, get, http, redact_diagnostics  # noqa: E402
 
 FREE = ["install", "pages", "setup", "wiring", "backup", "report", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
 PAID = ["agent", "parallel"]
@@ -230,11 +230,11 @@ def finish(space: Space, report: Report, args: argparse.Namespace, started: floa
     logs = OUT / "logs"
     shutil.rmtree(logs, ignore_errors=True)
     logs.mkdir(parents=True, exist_ok=True)
-    for log in space.root.glob("*.log"):
-        shutil.copy2(log, logs / log.name)
-    # The upgrade stage's install has a folder of its own.
-    for log in (space.root / "upgrade").glob("*.log"):
-        shutil.copy2(log, logs / f"upgrade-{log.name}")
+    for directory, prefix in ((space.root, ""), (space.root / "upgrade", "upgrade-")):
+        for log in directory.glob("*.log"):
+            (logs / f"{prefix}{log.name}").write_text(
+                redact_diagnostics(log.read_text(encoding="utf-8", errors="replace")), encoding="utf-8",
+            )
     report.notes["seconds"] = round(time.time() - started)
     report.notes["folder"] = str(space.root) if args.keep else "removed"
     report.write(OUT / "report.json")

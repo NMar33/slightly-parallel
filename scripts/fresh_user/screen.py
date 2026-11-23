@@ -9,6 +9,7 @@ pseudo-console through pywinpty (pip install pywinpty==3.1.0).
 
 from __future__ import annotations
 
+import codecs
 import os
 import re
 import shutil
@@ -16,7 +17,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from common import WINDOWS
+from common import WINDOWS, redact_diagnostics
 
 SCREEN_POLL_INTERVAL_S = 0.3
 KEY_PRESS_SETTLE_S = 0.5
@@ -34,12 +35,34 @@ _REPLIES = {"\x1b[6n": "\x1b[1;1R", "\x1b]10;?": "\x1b]10;rgb:ffff/ffff/ffff\x1b
             "\x1b]11;?": "\x1b]11;rgb:0000/0000/0000\x1b\\", "\x1b[c": "\x1b[?1;2c", "\x1b[?u": "\x1b[?0u"}
 
 
+class TerminalTrace:
+    def __init__(self, path: Path):
+        import pyte
+
+        self.path = path
+        self.frame = pyte.Screen(COLS, ROWS)
+        self.stream = pyte.Stream(self.frame)
+
+    def feed(self, text: str) -> None:
+        self.stream.feed(text)
+
+    @property
+    def rendered(self) -> str:
+        return "\n".join(row.rstrip() for row in self.frame.display).strip("\n")
+
+    def save(self, label: str) -> None:
+        with self.path.open("a", encoding="utf-8") as log:
+            log.write(f"\n--- {label} ---\n{redact_diagnostics(self.rendered)}\n")
+
+
 class Screen:
     """One program on a pseudo-terminal: what it shows so far, and keys to send."""
 
-    def __init__(self, args: list[str], cwd: Path, env: dict[str, str]):
+    def __init__(self, args: list[str], cwd: Path, env: dict[str, str], *, trace: Path | None = None):
         self.text = ""
         self.history = ""
+        self.trace = TerminalTrace(trace) if trace is not None else None
+        self._decode = codecs.getincrementaldecoder("utf-8")(errors="replace")
         if WINDOWS:
             from winpty import PtyProcess  # type: ignore[import-not-found]
             import threading
@@ -79,20 +102,32 @@ class Screen:
             with self._lock:
                 got, self._buf = "".join(self._buf), []
             if got:
-                self._answer(got)
-                self.text += _ANSI.sub("", got)
+                self._receive(got)
             return
         import select
-        while select.select([self.fd], [], [], 0.2)[0]:
+        end = time.monotonic() + SCREEN_POLL_INTERVAL_S
+        while (remaining := end - time.monotonic()) > 0 and select.select([self.fd], [], [], remaining)[0]:
             try:
                 got = os.read(self.fd, 65536)
             except OSError:
                 return
             if not got:
                 return
-            text = got.decode("utf-8", "replace")
-            self._answer(text)
-            self.text += _ANSI.sub("", text)
+            self._receive(self._decode.decode(got))
+
+    def _receive(self, text: str) -> None:
+        self._answer(text)
+        if self.trace is not None:
+            self.trace.feed(text)
+        self.text += _ANSI.sub("", text)
+
+    @property
+    def rendered(self) -> str:
+        return self.trace.rendered if self.trace is not None else self.text
+
+    def save_frame(self, label: str) -> None:
+        if self.trace is not None:
+            self.trace.save(label)
 
     def _answer(self, got: str) -> None:
         for asked, said in _REPLIES.items():
@@ -112,6 +147,7 @@ class Screen:
         return False
 
     def send(self, keys: str) -> None:
+        self.save_frame("before input")
         self.history = (self.history + "\n" + self.text.rstrip())[-SCREEN_HISTORY_CHARS:]
         self.text = ""  # what comes after this key
         self._write(keys)
@@ -125,18 +161,48 @@ class Screen:
 
     def close(self) -> None:
         if WINDOWS:
+            command = ["taskkill", "/PID", str(self.proc.pid), "/T"]
+            stopped = False
+            for args in (command, [*command, "/F"]):
+                try:
+                    result = subprocess.run(args, capture_output=True, timeout=PTY_CLOSE_TIMEOUT_S)
+                    if result.returncode == 0:
+                        stopped = True
+                        break
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             try:
-                subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
-                               capture_output=True, timeout=PTY_CLOSE_TIMEOUT_S)
-            except (OSError, subprocess.TimeoutExpired):
+                self.proc.close(force=not stopped)
+            except OSError:
                 pass
             return
+        if self.fd is None:
+            return
         import signal
+
+        def leader_running() -> bool:
+            try:
+                return os.waitpid(self.pid, os.WNOHANG)[0] == 0
+            except ChildProcessError:
+                return False
+
+        def group_running() -> bool:
+            try:
+                os.killpg(self.pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+
         try:
             for sig in (signal.SIGTERM, signal.SIGKILL):
-                os.kill(self.pid, sig)
+                try:
+                    os.killpg(self.pid, sig)
+                except ProcessLookupError:
+                    # close() can run before the child has entered its PTY session.
+                    if leader_running():
+                        os.kill(self.pid, sig)
                 deadline = time.monotonic() + PTY_CLOSE_TIMEOUT_S
-                while not os.waitpid(self.pid, os.WNOHANG)[0]:
+                while leader_running() or group_running():
                     if time.monotonic() >= deadline:
                         break
                     time.sleep(SCREEN_POLL_INTERVAL_S)
@@ -149,6 +215,7 @@ class Screen:
                 os.close(self.fd)
             except OSError:
                 pass
+            self.fd = None
 
 
 def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 60) -> tuple[bool, str]:

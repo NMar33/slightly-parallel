@@ -90,3 +90,20 @@ def test_anthropic_preflight_redacts_key_in_error_type_and_message(monkeypatch):
     assert probe(key, "claude-haiku-5-5", provider="anthropic") == {
         "http": 400, "type": "[redacted]", "message": "Credit balance too low for [redacted]", "verdict": "L0-billing",
     }
+
+
+def test_anthropic_credit_error_uses_the_api_envelope(monkeypatch):
+    probe = run_path(str(SCRIPT))["probe"]
+    message = ("Your credit balance is too low to access the Anthropic API. "
+               "Please go to Plans & Billing to upgrade or purchase credits.")
+    body = {"type": "error", "error": {"type": "invalid_request_error", "message": message},
+            "request_id": "req_fixture"}
+
+    class Opener:
+        def open(self, request, *, timeout):
+            raise HTTPError(request.full_url, 400, "", {}, io.BytesIO(json.dumps(body).encode()))
+
+    monkeypatch.setitem(probe.__globals__, "build_opener", lambda *_: Opener())
+    assert probe("dummy-ci-key", "claude-haiku-5-5", provider="anthropic") == {
+        "http": 400, "type": "invalid_request_error", "message": message, "verdict": "L0-billing",
+    }

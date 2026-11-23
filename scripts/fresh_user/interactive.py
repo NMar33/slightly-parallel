@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import scenario
 from agents import Tool, give_login, model_for
-from common import Report, Space, get, new_task_rows, rows
+from common import Report, Space, get, new_task_rows, redact_diagnostics, rows
 from screen import DOWN, ENTER, Screen
 
 POLL_S = 0.2
@@ -116,8 +116,15 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
 
 def _screen_tail(screen: Screen) -> str:
     shown = screen.text.strip()
-    safe = re.sub(r"sk-[^\s]+", "[redacted]", shown or screen.history)
+    safe = redact_diagnostics(shown or screen.history)
     return re.sub(r"[ \t]{3,}", " ", safe)[-900:]
+
+
+def _startup_failure(screen: Screen) -> str:
+    frame = redact_diagnostics(screen.rendered)
+    shown = re.sub(r"\s+", "", (frame + screen.text).lower())
+    reason = "Claude Code requires login" if "selectloginmethod:" in shown else "unknown screen"
+    return f"L1 {reason}:\n" + "\n".join(frame.splitlines()[:3])
 
 
 def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, model: str, home: Path,
@@ -141,7 +148,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             "opencode": ["opencode"]}[tool.name]
     if chosen:
         args += ["--model", chosen]
-    screen = Screen(args, folder, {**env, **tool.extra_env()})
+    screen = Screen(args, folder, {**env, **tool.extra_env()}, trace=space.root / f"terminal-{tool.name}-{marker}.log")
 
     def wait(check: Callable[[], bool]) -> bool:
         # Drain the PTY while the CLI is working. Its screen can fill before the hook runs.
@@ -151,8 +158,10 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             if check():
                 return True
             if "credit balance too low" in screen.text.lower() or "insufficient_quota" in screen.text.lower():
+                screen.save_frame("provider error")
                 return False
             time.sleep(POLL_S)
+        screen.save_frame("turn timed out")
         return False
 
     def type_prompt(text: str) -> None:
@@ -164,7 +173,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         codex_config = space.home / ".codex" / "config.toml" if tool.name == "codex" else None
         ready = _ready(screen, tool, seconds, answered, codex_config)
         report.notes[f"{stage} onboarding"] = answered
-        if not report.add(stage, "L1 CLI composer", ready, "L1 unknown screen:\n" + "\n".join(_screen_tail(screen).splitlines()[:3])):
+        if not ready:
+            screen.save_frame("startup failed")
+        if not report.add(stage, "L1 CLI composer", ready, "" if ready else _startup_failure(screen)):
             return None
         type_prompt(prompt)
         chats = space.data / "projects" / code / "chats"

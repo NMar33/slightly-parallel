@@ -56,7 +56,9 @@ Setup, after the agent) for a person to look at.
 ### The agent's chat
 
 `--scenario smoke` drives the real interactive CLI in a PTY (ConPTY on
-Windows, with `pywinpty==3.1.0`). It sends two prompts through the terminal
+Windows, with `pywinpty==3.1.0`). Install the test dependencies with
+`python -m pip install -r scripts/fresh_user/requirements-pty.txt` before an
+interactive run. It sends two prompts through the terminal
 and checks that the reply is recorded, the project knows that session and
 exactly one `#task` reaches the board under the same agent. A separate
 headless chat must be recorded as a helper, refuse the task through MCP

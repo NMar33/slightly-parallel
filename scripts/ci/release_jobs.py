@@ -8,11 +8,16 @@ import sys
 SYSTEMS = ("ubuntu-latest", "macos-latest", "windows-latest")
 TOOLS = ("claude-code", "codex", "opencode")
 AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
+AGENTS_PREFLIGHT = "Check provider access, authentication and model errors"
 
 
 def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
     if workflow == "agents.yml":
-        return {f"{tool} ({os})": (AGENTS_CORE,) for tool in TOOLS for os in SYSTEMS}
+        return {
+            "L0 CLI versions": ("Record the CLI package versions",),
+            **{f"L0 {provider}": (AGENTS_PREFLIGHT,) for provider in ("anthropic", "openai")},
+            **{f"{tool} ({os})": (AGENTS_CORE,) for tool in TOOLS for os in SYSTEMS},
+        }
     if workflow == "machine.yml":
         return {f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS",)
                 for os in SYSTEMS}

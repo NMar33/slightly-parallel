@@ -1,10 +1,10 @@
 # A real agent at work, on every system: the fresh-user test with Claude
 # Code, Codex and OpenCode on cheap models, with two interactive turns and
 # one headless helper check. It costs money, so it runs by hand and daily, never
-# on a push. It needs the repository secrets ANTHROPIC_API_KEY and
-# OPENAI_API_KEY (Codex and OpenCode); a missing key fails that job.
-# The OpenAI model is the repository variable CODEX_MODEL (empty:
-# Codex's own default; OpenCode then runs gpt-6-luna).
+# on a push. L0 checks provider access once for the workflow before any agent
+# starts. Select preflight to run only the API probes.
+# It needs ANTHROPIC_API_KEY and OPENAI_API_KEY (Codex and OpenCode).
+# OpenAI uses CODEX_MODEL when set, otherwise gpt-6-luna.
 name: Agents
 
 on:
@@ -34,8 +34,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cli-versions:
+    name: L0 CLI versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      claude-code: ${{ steps.packages.outputs.claude-code }}
+      codex: ${{ steps.packages.outputs.codex }}
+      opencode: ${{ steps.packages.outputs.opencode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Record the CLI package versions
+        id: packages
+        shell: bash
+        env:
+          CHANNEL: ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }}
+        run: |
+          echo '### L0 CLI versions' >> "$GITHUB_STEP_SUMMARY"
+          python scripts/ci/agent_packages.py "$CHANNEL" --github-output "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
   preflight:
-    if: github.event_name == 'workflow_dispatch' && inputs.scenario == 'preflight'
     name: L0 ${{ matrix.provider }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -67,7 +92,8 @@ jobs:
           path: preflight/${{ matrix.provider }}.json
 
   agent:
-    if: inputs.scenario != 'preflight'
+    needs: [preflight, cli-versions]
+    if: always() && !cancelled() && inputs.scenario != 'preflight'
     name: ${{ matrix.tool }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -83,6 +109,11 @@ jobs:
       SCENARIO: ${{ github.event_name == 'schedule' && 'smoke' || inputs.scenario || 'core' }}
       DISABLE_AUTOUPDATER: "1"
     steps:
+      - name: Report a blocked agent run
+        if: needs.preflight.result != 'success' || needs.cli-versions.result != 'success'
+        run: |
+          echo 'L1 startup, L2 capture, L3 MCP and L4 reply are blocked by L0. See the provider jobs.'
+          exit 1
       - name: The key for this tool
         id: key
         shell: bash
@@ -115,37 +146,44 @@ jobs:
         if: steps.key.outputs.ok
         working-directory: frontend
         run: npm ci && npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
-      - name: ConPTY for interactive CLIs
-        if: steps.key.outputs.ok && runner.os == 'Windows'
-        run: python -m pip install pywinpty==3.1.0
+      - name: PTY renderer and Windows ConPTY driver
+        if: steps.key.outputs.ok
+        run: python -m pip install -r scripts/fresh_user/requirements-pty.txt
       - name: Claude Code
         if: steps.key.outputs.ok && matrix.tool == 'claude-code'
         shell: bash
-        run: npm install -g "$(python scripts/ci/agent_packages.py "$CHANNEL" claude-code)"
+        env:
+          CLI_PACKAGE: ${{ needs.cli-versions.outputs.claude-code }}
+        run: npm install -g "$CLI_PACKAGE"
       - name: Codex, logged in with the key
         if: steps.key.outputs.ok && matrix.tool == 'codex'
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLI_PACKAGE: ${{ needs.cli-versions.outputs.codex }}
         run: |
-          npm install -g "$(python scripts/ci/agent_packages.py "$CHANNEL" codex)"
+          npm install -g "$CLI_PACKAGE"
           # The login lands in ~/.codex/auth.json, which the test copies into its own home.
           printenv OPENAI_API_KEY | codex login --with-api-key
       - name: OpenCode
         if: steps.key.outputs.ok && matrix.tool == 'opencode'
         shell: bash
-        run: npm install -g "$(python scripts/ci/agent_packages.py "$CHANNEL" opencode)"
+        env:
+          CLI_PACKAGE: ${{ needs.cli-versions.outputs.opencode }}
+        run: npm install -g "$CLI_PACKAGE"
       - name: An agent from clone to its work on the pages (${{ env.SCENARIO }}, ${{ env.CHANNEL }})
         if: steps.key.outputs.ok
+        timeout-minutes: 45
         shell: bash
         env:
           # Claude Code and OpenCode take their key from the environment; Codex has its login file.
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
           OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_MODEL: ${{ vars.CODEX_MODEL || 'gpt-6-luna' }}
         run: |
-          model=haiku
-          if [ "${{ matrix.tool }}" = "codex" ]; then model="${{ vars.CODEX_MODEL }}"; fi
-          if [ "${{ matrix.tool }}" = "opencode" ]; then model="openai/${{ vars.CODEX_MODEL || 'gpt-6-luna' }}"; fi
+          model=claude-haiku-5-5
+          if [ "${{ matrix.tool }}" = "codex" ]; then model="$CODEX_MODEL"; fi
+          if [ "${{ matrix.tool }}" = "opencode" ]; then model="openai/$CODEX_MODEL"; fi
           budget=900
           if [ "$SCENARIO" != full ]; then budget=120; fi
           python scripts/fresh_user/run.py --tools ${{ matrix.tool }} --scenario "$SCENARIO" \
