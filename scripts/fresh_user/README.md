@@ -8,6 +8,7 @@ set it up, and have an agent's work appear on the pages.
 python3 scripts/fresh_user/run.py                  # everything; Claude Code on sonnet
 python3 scripts/fresh_user/run.py --no-agent       # the stages that cost nothing (~6 min)
 python3 scripts/fresh_user/run.py --scenario core  # 8 messages instead of 21
+python3 scripts/fresh_user/run.py --scenario smoke --stages install,setup,wiring,agent
 python3 scripts/fresh_user/run.py --agent-runs 3   # the chat three times: how steady is it
 python3 scripts/fresh_user/run.py --tools claude-code,codex,opencode
 python3 scripts/fresh_user/run.py --model haiku --keep
@@ -53,6 +54,13 @@ Pictures of the pages are saved at three moments (first start, after
 Setup, after the agent) for a person to look at.
 
 ### The agent's chat
+
+`--scenario smoke` drives the real interactive CLI in a PTY (ConPTY on
+Windows, with `pywinpty==3.1.0`). It sends two prompts through the terminal
+and checks that the reply is recorded, the project knows that session and
+exactly one `#task` reaches the board under the same agent. A separate
+headless chat must be recorded as a helper, refuse the task through MCP
+and leave the board unchanged. This is the scenario used by Agents.
 
 `--scenario core`: a plain request, `#task`, `#decision`, `#rule`, the
 work, `#scan`, `#done`.

@@ -31,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scenario  # noqa: E402
 import stages  # noqa: E402
+from helper_smoke import helper_smoke  # noqa: E402
+from interactive import SmokeResult, smoke  # noqa: E402
 from agents import tools  # noqa: E402
 from common import REPO, Report, Space, free_port, http  # noqa: E402
 
@@ -46,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-agent", action="store_true", help=f"leave out the stages that start a real agent ({', '.join(PAID)})")
     ap.add_argument("--tools", default="claude-code", help="agent tools: claude-code, codex, opencode")
     ap.add_argument("--model", default="sonnet", help="sonnet, haiku or opus; or a model name passed to the tool as is")
-    ap.add_argument("--scenario", default="full", choices=sorted(scenario.SCENARIOS), help="core: 8 messages; full: the standup and every command; site: a small page built with #now, then #task, #scan, #sp, #done")
+    ap.add_argument("--scenario", default="full", choices=[*sorted(scenario.SCENARIOS), "smoke"], help="core: 8 messages; full: the standup and every command; site: a small page built with #now, then #task, #scan, #sp, #done; smoke: two interactive turns and a separate headless helper")
     ap.add_argument("--agent-runs", type=int, default=1, help="run the agent chat this many times, each in a new project")
     ap.add_argument("--source", default=str(REPO), help="the repository folder to clone")
     ap.add_argument("--upgrade-from", default="", help="the commit an upgrade starts from (default: the newest v* tag, else 5 commits back)")
@@ -63,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"unknown stage or tool: {bad_names}")
     if args.no_agent:
         wanted = [x for x in wanted if x not in PAID]
+    if args.scenario == "smoke":
+        wanted = [x for x in wanted if x != "parallel"]
     on = lambda stage: stage in wanted  # noqa: E731
 
     # Resolved: on macOS the temp folder is /var/…, a link to /private/var/…, and the server names folders resolved.
@@ -79,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time()
     print(f"fresh-user test in {space.root} on port {space.port}", flush=True)
     proc = None
-    states: list[scenario.State] = []
+    states: list[scenario.State | SmokeResult] = []
     try:
         print("\ninstall", flush=True)
         proc = stages.install(space, report, Path(args.source), args.boot_seconds)
@@ -121,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
                         stages.sh(["git", "commit", "-qm", "first commit"], folder, space.env())
                         http(space.url + "/api/setup/integrate", {"project_code": this, "project_dir": str(folder)})
                     print(f"\nagent · {n} · {args.model} · {args.scenario}" + (f" · run {i + 1} of {args.agent_runs}" if args.agent_runs > 1 else ""), flush=True)
+                    if args.scenario == "smoke":
+                        result = smoke(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds)
+                        if result is not None:
+                            states.append(result)
+                            helper_smoke(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds)
+                        continue
                     plan = args.scenario if i == 0 else ("core" if args.scenario == "full" else args.scenario)
                     stage = "" if i == 0 else f"agent:{n}:run{i + 1}"
                     st = scenario.run(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds, plan, stage)
@@ -128,11 +138,12 @@ def main(argv: list[str] | None = None) -> int:
                         states.append(st)
             if states:
                 st = states[0]
-                stages.screens(space, report, "3-after-agent", [
+                routes = [f"/project/{code}#tasks", f"/agent/{st.agent}"] if args.scenario == "smoke" else [
                     "/", f"/project/{code}", f"/project/{code}#tasks", f"/project/{code}#activity", f"/agent/{st.agent}",
                     "/kanban", "/chats", "/scans", "/standups", "/decisions", "/rules", "/visions", "/problems",
                     "/skills", "/artifacts", "/architecture", "/files", "/stats", "/important", "/time",
-                ], shots)
+                ]
+                stages.screens(space, report, "3-after-agent", routes, shots)
         if on("parallel") and not report.failed():
             print(f"\nparallel · {names[0]}", flush=True)
             scenario.parallel(space, report, (code, space.sample), (second, second_folder), names[0], args.model, Path.home(), args.turn_seconds)
