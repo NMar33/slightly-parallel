@@ -1,6 +1,6 @@
 # A real agent at work, on every system: the fresh-user test with Claude
 # Code, Codex and OpenCode on cheap models, with two interactive turns and
-# one headless helper check. It costs money, so it runs by hand and daily, never
+# one headless helper check. It costs money, so it runs by hand and weekly, never
 # on a push. L0 checks provider access once for the workflow before any agent
 # starts. Select preflight to run only the API probes.
 # It needs ANTHROPIC_API_KEY and OPENAI_API_KEY (Codex and OpenCode).
@@ -28,7 +28,7 @@ on:
         description: "JSON list of systems"
         default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
   schedule:
-    - cron: "0 5 * * *"
+    - cron: "0 5 * * 1"
 
 concurrency:
   group: agents-${{ github.ref }}-${{ github.event_name }}

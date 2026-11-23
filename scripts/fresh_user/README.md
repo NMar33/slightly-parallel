@@ -62,7 +62,13 @@ interactive run. It sends two prompts through the terminal
 and checks that the reply is recorded, the project knows that session and
 exactly one `#task` reaches the board under the same agent. A separate
 headless chat must be recorded as a helper, refuse the task through MCP
-and leave the board unchanged. The daily canary uses this scenario.
+and leave the board unchanged.
+
+`--scenario canary` starts a local server and sends a single task prompt
+through the interactive CLI. It reports startup, chat capture and the board
+write separately, without building the browser UI. This is a manual runner
+using the CLI's login. An Actions run would also need the provider preflight
+and the audited report upload.
 
 `--scenario core` extends the same interactive smoke with a file edit,
 `#decision`, `#rule`, the work, `#scan`, `#sp` and `#done`. The release

@@ -25,10 +25,13 @@ def test_core_gate_requires_both_provider_preflights(bad_provider):
         assert f"required step did not pass: L0 {bad_provider}" in problem
 
 
-def test_full_ci_cannot_release_with_a_missing_interactive_stub_job():
+@pytest.mark.parametrize("missing", [
+    "Interactive agent (opencode, windows-latest)",
+    "Interactive agent (claude-code, ubuntu-latest, trust dialog)",
+])
+def test_full_ci_cannot_release_with_a_missing_interactive_stub_job(missing):
     module = run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "ci" / "release_jobs.py"))
     sha = "b" * 40
-    missing = "Interactive agent (opencode, windows-latest)"
     jobs = [
         {"name": name, "head_sha": sha, "conclusion": "success",
          "steps": [{"name": step, "conclusion": "success"} for step in steps]}

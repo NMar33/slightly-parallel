@@ -213,7 +213,7 @@ jobs:
         run: python -m pytest -q -rs -o addopts="" tests/test_real_codex.py
 
   interactive-cli:
-    name: Interactive agent (${{ matrix.cli }}, ${{ matrix.os }})
+    name: Interactive agent (${{ matrix.cli }}, ${{ matrix.os }}${{ matrix.drive_trust && ', trust dialog' || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -221,6 +221,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         cli: [claude-code, codex, opencode]
+        drive_trust: [false]
+        include:
+          - os: ubuntu-latest
+            cli: claude-code
+            drive_trust: true
     steps:
       - uses: actions/checkout@v7
         with:
@@ -249,6 +254,7 @@ jobs:
         env:
           CLI: ${{ matrix.cli }}
           SP_REAL_INTERACTIVE: "1"
+          SP_TEST_CLAUDE_TRUST: ${{ matrix.drive_trust && '1' || '0' }}
           SP_INTERACTIVE_ARTIFACTS: ${{ runner.temp }}/sp-interactive-stub
         run: |
           python -m pytest -q -s -rs -o addopts='' --junitxml=interactive.xml "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
@@ -257,7 +263,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: interactive-${{ matrix.cli }}-${{ matrix.os }}
+          name: interactive-${{ matrix.cli }}-${{ matrix.os }}${{ matrix.drive_trust && '-trust' || '' }}
           path: ${{ runner.temp }}/sp-interactive-stub/
           if-no-files-found: ignore
 

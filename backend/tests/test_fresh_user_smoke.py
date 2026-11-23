@@ -219,7 +219,8 @@ def test_onboarding_uses_the_rendered_composer_after_the_menu_is_gone(monkeypatc
     assert interactive._ready(terminal, tools()["claude-code"], 10, [])
 
 
-def test_canary_captures_one_turn_and_one_new_task(monkeypatch, tmp_path):
+@pytest.mark.parametrize("ready", [False, True])
+def test_canary_reports_startup_capture_and_task_verdicts(monkeypatch, tmp_path, ready):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import json
     import re
@@ -253,18 +254,28 @@ def test_canary_captures_one_turn_and_one_new_task(monkeypatch, tmp_path):
         def close(self):
             pass
 
+        def save_frame(self, _):
+            pass
+
     monkeypatch.setattr(tool, "installed", lambda: True)
     monkeypatch.setattr(interactive, "Screen", Screen)
     monkeypatch.setattr(interactive, "give_login", lambda *_: True)
-    monkeypatch.setattr(interactive, "_ready", lambda *_: True)
+    monkeypatch.setattr(interactive, "_ready", lambda *_: ready)
     monkeypatch.setattr(interactive, "_wait_for_turn", lambda screen, check, seconds: "" if check() else "failure")
     monkeypatch.setattr(interactive, "get", lambda _, path: {"tasks": []} if path.startswith("/api/tasks") else {
         "agents": [{"agent_id": card["agent_id"], "session_ref": tool.session}],
     })
     monkeypatch.setattr(interactive, "new_task_rows", lambda *args: [card])
     report = Report()
-    assert interactive.smoke(space, report, "calc", tmp_path, tool, "stub", tmp_path, 10, one_turn=True).task == card["id"]
-    assert len(inputs) == 1 and inputs[0].startswith("#task ") and not report.failed()
+    result = interactive.smoke(space, report, "calc", tmp_path, tool, "stub", tmp_path, 10, one_turn=True)
+    layers = report.notes["interactive:claude-code layers"]
+    if ready:
+        assert result.task == card["id"]
+        assert len(inputs) == 1 and inputs[0].startswith("#task ") and not report.failed()
+        assert layers == {"L1": "pass", "L2": "pass", "L3": "pass"}
+    else:
+        assert result is None and not inputs and report.failed()
+        assert layers == {"L1": "fail", "L2": "blocked by L1", "L3": "blocked by L2"}
 
 
 def test_canary_uses_setup_api_without_installing_or_opening_a_browser(monkeypatch, tmp_path):
@@ -300,3 +311,61 @@ def test_canary_uses_setup_api_without_installing_or_opening_a_browser(monkeypat
     monkeypatch.setattr(run, "finish", lambda *_: 0)
     assert run.canary(space, Report(), SimpleNamespace(model="stub", turn_seconds=10), ["codex"], 0) == 0
     assert seen == ["commit sample", "server", "setup API", "one turn"]
+
+
+
+def test_canary_cleans_up_and_records_unexpected_setup_error(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import run
+    from common import Report, Space
+
+    space = Space(tmp_path / "test-machine", 8124)
+    out = tmp_path / "report"
+    monkeypatch.setattr(run, "OUT", out)
+    monkeypatch.setattr(run.stages, "stop", lambda _: None)
+
+    def fail(_):
+        space.home.mkdir()
+        (space.home / ".claude.json").write_text("simulated login", encoding="utf-8")
+        raise RuntimeError("private diagnostics")
+
+    monkeypatch.setattr(run.stages, "make_sample", fail)
+    args = SimpleNamespace(model="stub", turn_seconds=10, keep=False, agent_runs=1)
+    assert run.canary(space, Report(), args, ["claude-code"], 0) == 1
+    assert not space.root.exists()
+    report = (out / "report.json").read_text(encoding="utf-8")
+    assert "RuntimeError" in report
+    assert "private diagnostics" not in report
+
+
+def test_finish_cleans_up_if_the_report_cannot_be_written(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import run
+    from common import Report, Space
+
+    space = Space(tmp_path / "test-machine", 8124)
+    space.home.mkdir(parents=True)
+    report = Report()
+    monkeypatch.setattr(run, "OUT", tmp_path / "report")
+
+    def fail(_):
+        raise OSError("unwritable report")
+
+    monkeypatch.setattr(report, "write", fail)
+    with pytest.raises(OSError, match="unwritable report"):
+        run.finish(space, report, SimpleNamespace(keep=False, agent_runs=1), 0, space.root / "screens")
+    assert not space.root.exists()
+
+
+
+def test_report_redacts_nested_diagnostic_notes(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import json
+    from common import PLANTED_KEY, Report
+
+    report = Report(notes={"fixture": [{PLANTED_KEY: ("notice " + PLANTED_KEY, 12)}]})
+    destination = tmp_path / "report.json"
+    report.write(destination)
+    raw = destination.read_text(encoding="utf-8")
+    assert PLANTED_KEY not in raw
+    assert json.loads(raw)["notes"]["fixture"] == [{"[redacted]": ["notice [redacted]", 12]}]

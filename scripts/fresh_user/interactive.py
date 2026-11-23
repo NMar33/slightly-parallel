@@ -174,6 +174,9 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int) -> s
 def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, model: str, home: Path,
           seconds: int, *, core: bool = False, one_turn: bool = False) -> SmokeResult | None:
     stage = f"interactive:{tool.name}"
+    verdicts = {"L1": "fail", "L2": "blocked by L1", "L3": "blocked by L2"}
+    if one_turn:
+        report.notes[f"{stage} layers"] = verdicts
     if not report.add(stage, "the interactive CLI is installed", tool.installed()):
         return None
     env = space.env()
@@ -212,6 +215,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             screen.save_frame("startup failed")
         if not report.add(stage, "L1 CLI composer", ready, "" if ready else _startup_failure(screen)):
             return None
+        verdicts.update(L1="pass", L2="fail")
         existing = {row.get("id") for row in cards()} if one_turn else set()
         type_prompt(prompt)
         chats = space.data / "projects" / code / "chats"
@@ -240,6 +244,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         if not report.add(stage, "the project lists the interactive session", not error, f"{error}\n{agent}"):
             return None
         tool.session = str(session)
+        verdicts.update(L2="pass", L3="fail")
 
         if not one_turn:
             existing = {row.get("id") for row in cards()}
@@ -280,5 +285,6 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     added = new_task_rows(space, code, existing)
     ok = len(added) == 1 and added[0].get("id") == task
     if report.add(stage, "exactly one task reaches the board under the same agent", ok, str(added)[:1000]):
+        verdicts["L3"] = "pass"
         return SmokeResult(agent, str(added[0]["id"]), tool)
     return None

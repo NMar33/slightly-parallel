@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -63,9 +62,15 @@ def canary(space: Space, report: Report, args: argparse.Namespace, names: list[s
             totals = get(space, "/api/usage?project=calc&range=today").get("totals", {})
             if totals.get("new", 0) or totals.get("output", 0) or totals.get("cache", 0):
                 report.notes["model_cost"] = {key: totals.get(key) for key in ("cost_usd", "unpriced")}
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except Exception as error:  # noqa: BLE001 — report the failure without leaking exception text
         report.add("canary", "the canary finishes", False, type(error).__name__)
-    return finish(space, report, args, started, space.root / "screens", proc)
+    except BaseException:
+        try:
+            stages.stop(proc)
+        finally:
+            stages.cleanup(space, args.keep)
+        raise
+    return finish(space, report, args, started, None, proc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -260,25 +265,27 @@ def main(argv: list[str] | None = None) -> int:
     return finish(space, report, args, started, shots)
 
 
-def finish(space: Space, report: Report, args: argparse.Namespace, started: float, shots: Path, proc=None) -> int:
-    stages.stop(proc)
-    OUT.mkdir(parents=True, exist_ok=True)
-    if shots.is_dir():
-        shutil.rmtree(OUT / "screens", ignore_errors=True)
-        shutil.copytree(shots, OUT / "screens")
-    # The browser runs' and the servers' own logs, beside the report: a CI run keeps only this folder.
-    logs = OUT / "logs"
-    shutil.rmtree(logs, ignore_errors=True)
-    logs.mkdir(parents=True, exist_ok=True)
-    for directory, prefix in ((space.root, ""), (space.root / "upgrade", "upgrade-")):
-        for log in directory.glob("*.log"):
-            (logs / f"{prefix}{log.name}").write_text(
-                redact_diagnostics(log.read_text(encoding="utf-8", errors="replace")), encoding="utf-8",
-            )
-    report.notes["seconds"] = round(time.time() - started)
-    report.notes["folder"] = str(space.root) if args.keep else "removed"
-    report.write(OUT / "report.json")
-    stages.cleanup(space, args.keep)
+def finish(space: Space, report: Report, args: argparse.Namespace, started: float, shots: Path | None, proc=None) -> int:
+    try:
+        stages.stop(proc)
+        OUT.mkdir(parents=True, exist_ok=True)
+        if shots is not None and shots.is_dir():
+            shutil.rmtree(OUT / "screens", ignore_errors=True)
+            shutil.copytree(shots, OUT / "screens")
+        # The browser runs' and the servers' own logs, beside the report: a CI run keeps only this folder.
+        logs = OUT / "logs"
+        shutil.rmtree(logs, ignore_errors=True)
+        logs.mkdir(parents=True, exist_ok=True)
+        for directory, prefix in ((space.root, ""), (space.root / "upgrade", "upgrade-")):
+            for log in directory.glob("*.log"):
+                (logs / f"{prefix}{log.name}").write_text(
+                    redact_diagnostics(log.read_text(encoding="utf-8", errors="replace")), encoding="utf-8",
+                )
+        report.notes["seconds"] = round(time.time() - started)
+        report.notes["folder"] = str(space.root) if args.keep else "removed"
+        report.write(OUT / "report.json")
+    finally:
+        stages.cleanup(space, args.keep)
 
     bad = report.failed()
     soft = [c for c in report.checks if not c.ok and c.soft]

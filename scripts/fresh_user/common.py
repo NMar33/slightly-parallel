@@ -142,9 +142,18 @@ class Report:
         return [c for c in self.checks if not c.ok and not c.soft]
 
     def write(self, path: Path) -> None:
+        def scrub(value: Any) -> Any:
+            if isinstance(value, str):
+                return redact_diagnostics(value)
+            if isinstance(value, dict):
+                return {scrub(key): scrub(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [scrub(item) for item in value]
+            return value
+
         path.write_text(json.dumps({
             "passed": not self.failed(),
-            "notes": self.notes,
+            "notes": scrub(self.notes),
             "checks": [c.__dict__ for c in self.checks],
         }, indent=2), encoding="utf-8")
 

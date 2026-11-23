@@ -43,6 +43,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
     from screen import ENTER, Screen
     from stages import make_sample
 
+    drive_trust = cli == "claude-code" and os.environ.get("SP_TEST_CLAUDE_TRUST") == "1"
     space = Space(tmp_path, free_port())
     space.home.mkdir()
     space.data.mkdir()
@@ -96,9 +97,10 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             profile = space.home / ".claude.json"
             values = json.loads(profile.read_text(encoding="utf-8"))
             project = space.sample.resolve()
-            values.update(theme="dark", hasCompletedOnboarding=True,
-                          projects={path: {"hasTrustDialogAccepted": True}
-                                    for path in {str(project), project.as_posix()}})
+            values.update(theme="dark", hasCompletedOnboarding=True, projects={})
+            if not drive_trust:
+                values["projects"] = {path: {"hasTrustDialogAccepted": True}
+                                      for path in {str(project), project.as_posix()}}
             profile.write_text(json.dumps(values), encoding="utf-8")
             (space.home / "settings.json").write_text('{"enableAllProjectMcpServers":true}', encoding="utf-8")
             env.update(CLAUDE_CONFIG_DIR=str(space.home), ANTHROPIC_BASE_URL=endpoint, DISABLE_TELEMETRY="1",
@@ -132,7 +134,10 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
         layer = "L1"
         verdicts: dict[str, str] = {}
         try:
-            assert _ready(terminal, tool, 40, [], codex_config if cli == "codex" else None), terminal.rendered
+            answered: list[str] = []
+            assert _ready(terminal, tool, 40, answered, codex_config if cli == "codex" else None), terminal.rendered
+            if drive_trust:
+                assert "Claude Code project folder trusted" in answered, answered
             verdicts[layer] = "pass"
             layer = "L2"
             chats = space.data / "projects/cli/chats"
