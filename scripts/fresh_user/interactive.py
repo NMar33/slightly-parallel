@@ -198,10 +198,11 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         if core:
             state = scenario.State(code, folder, tool)
             state.agent, state.task = agent, task
-            for name, prompt_for, check in scenario.CORE:
+            for step in scenario.CORE:
+                name, _, check = step
                 if name == "#task":
                     continue
-                message = prompt_for(state)
+                message = scenario.step_prompt(space, state, step)
                 type_prompt(message)
                 finished = wait(lambda message=message: bool(_last_reply(chat, message)))
                 if not report.add(stage, f"{name}: the operator turn and answer are captured", finished, _screen_tail(screen)):

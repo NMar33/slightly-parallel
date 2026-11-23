@@ -95,3 +95,29 @@ def test_upgrade_stage_without_its_requested_base_is_red(monkeypatch, tmp_path) 
         monkeypatch.setattr(run.stages, name, lambda *_: None)
 
     assert run.main(["--stages", "upgrade", "--upgrade-from", "missing-tag"]) == 1
+
+
+@pytest.mark.parametrize(("new_text", "passes"), [
+    (None, False),
+    ("Keep unittest instead of pytest.", False),
+    ("Use pytest for the calculator tests.", True),
+])
+def test_decision_requires_a_new_entry_matching_the_operator_choice(monkeypatch, tmp_path, new_text, passes) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import scenario
+    from common import Report, Space
+
+    space = Space(tmp_path, 1)
+    report = Report()
+    state = scenario.State("calc", tmp_path, scenario.tools()["claude-code"])
+    state.agent = "cc-test"
+    decisions = [{"id": "dec_previous", "agent_id": state.agent, "decision_text": "Use pytest for the calculator tests."}]
+    monkeypatch.setattr(scenario, "get", lambda *_: {"decisions": decisions})
+    monkeypatch.setattr(scenario, "eventually", lambda read: read())
+
+    assert '"Use pytest for the calculator tests."' in scenario.step_prompt(space, state, scenario.DECISION)
+    if new_text is not None:
+        decisions.append({"id": "dec_new", "agent_id": state.agent, "decision_text": new_text})
+    scenario.after_decision(space, report, "core", state)
+
+    assert (not report.failed()) is passes

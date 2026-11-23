@@ -24,6 +24,7 @@ from common import Report, Space, eventually, get, http, rows
 from stages import YESTERDAY_SESSION, playwright, sh
 
 WIRING_AGENTS = ("cc-f0e1d2c3", f"cc-{YESTERDAY_SESSION[:8]}")
+DECISION_TEXT = "Use pytest for the calculator tests."
 
 
 class State:
@@ -34,6 +35,7 @@ class State:
         self.agent = ""
         self.task = ""
         self.problem = ""
+        self.decisions_before: set[str] = set()
         self.said: list[str] = []      # the agent's replies, in order
         self.helper = ""               # how the standup and map helpers must run (helper_settings)
         self.standup_owed = True       # no standup for yesterday when the chat began
@@ -137,9 +139,13 @@ def after_task_any(space: Space, report: Report, s: str, st: State) -> None:
 
 
 def after_decision(space: Space, report: Report, s: str, st: State) -> None:
-    got = listed(space, "/api/decisions", "decisions", st)
-    if report.add(s, "#decision logged a decision", bool(got)):
-        report.add(s, "it names pytest", "pytest" in json.dumps(got).lower(), soft=True)
+    def new_decisions() -> list[dict]:
+        return [row for row in listed(space, "/api/decisions", "decisions", st)
+                if row["id"] not in st.decisions_before]
+
+    got = eventually(lambda: [row for row in new_decisions() if row.get("decision_text") == DECISION_TEXT])
+    if report.add(s, "#decision logged a new entry with the operator's choice", bool(got),
+                  json.dumps(got or new_decisions())[:300]):
         report.add(s, "it has a weight", any(str(d.get("weight") or "") in ("minor", "normal", "major") for d in got), json.dumps(got)[:300], soft=True)
 
 
@@ -293,9 +299,17 @@ def after_done(space: Space, report: Report, s: str, st: State) -> None:
 
 Step = tuple[str, Callable[[State], str], Checker]
 
+
+def step_prompt(space: Space, st: State, step: Step) -> str:
+    _, message, check = step
+    if check is after_decision:
+        st.decisions_before = {row["id"] for row in listed(space, "/api/decisions", "decisions", st)}
+    return message(st)
+
+
 EDIT: Step = ("a plain request", lambda st: "Add a function sub(a, b) to calc.py that returns a - b. Do not commit yet.", after_edit)
 TASK: Step = ("#task", lambda st: "#task write unit tests for calc.py", after_task)
-DECISION: Step = ("#decision", lambda st: "We will use pytest, not unittest. #decision", after_decision)
+DECISION: Step = ("#decision", lambda st: f'#decision Record this exact decision text: "{DECISION_TEXT}"', after_decision)
 RULE: Step = ("#rule", lambda st: "#rule calc.py must stay a single file with no dependencies outside the standard library", kept("rule", "rules", "single file"))
 WORK: Step = ("the work", lambda st: "Write the tests now in test_calc.py, as pytest-style functions, and commit everything.", after_work)
 SCAN: Step = ("#scan", lambda st: "#scan", after_scan)
@@ -344,8 +358,9 @@ SCENARIOS = {"core": CORE, "full": FULL, "site": SITE}
 def chat(space: Space, report: Report, s: str, st: State, plan: list[Step], model: str, env: dict[str, str], turn_seconds: int) -> float:
     """Say each step and check after it. Returns what the chat cost."""
     cost = 0.0
-    for i, (name, message, check) in enumerate(plan):
-        text = message(st)
+    for i, step in enumerate(plan):
+        name, _, check = step
+        text = step_prompt(space, st, step)
         print(f"  [{st.code}] > {text}", flush=True)
         turn = st.tool.say(text, model_for(st.tool.name, model), space, env, turn_seconds, st.folder)
         cost = max(cost, turn.cost_usd)
