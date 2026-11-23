@@ -151,3 +151,16 @@ def test_redaction_preserves_json_delimiters(monkeypatch):
 
     payload = '{"error":"sk-proj-fakeVisibleKey-0987654321","status":401}'
     assert json.loads(redact_diagnostics(payload)) == {"error": "[redacted]", "status": 401}
+
+
+def test_preflight_writes_only_to_the_file_until_the_audit(monkeypatch, tmp_path, capsys):
+    run = run_path(str(SCRIPT))["main"]
+    output, summary = tmp_path / "report.json", tmp_path / "summary"
+    private = {"provider": "anthropic", "passed": False, "checks": [{"message": "provider evidence"}]}
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setattr("sys.argv", [str(SCRIPT), "--provider", "anthropic", "--output", str(output)])
+    monkeypatch.setitem(run.__globals__, "preflight", lambda *_, **__: private)
+    assert run() == 1
+    assert json.loads(output.read_text(encoding="utf-8")) == private
+    assert "provider evidence" not in capsys.readouterr().out and not summary.exists()

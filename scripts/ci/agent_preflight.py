@@ -113,10 +113,6 @@ def main() -> int:
     output = json.dumps(result, ensure_ascii=True, indent=2)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(output + "\n", encoding="utf-8")
-    print(output)
-    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with Path(summary).open("a", encoding="utf-8") as file:
-            file.write(f"### L0 {args.provider}\n\n```json\n{output}\n```\n")
     return int(not result["passed"])
 
 

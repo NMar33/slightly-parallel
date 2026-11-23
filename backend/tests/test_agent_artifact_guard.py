@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from runpy import run_path
 
@@ -74,3 +75,49 @@ def test_row_prefixes_do_not_hide_known_fragments_from_the_redactor_or_guard(mon
             wrapped = f"{prefix} {value[:split]}\n{prefix} {value[split:]} keep"
             assert contains_diagnostic_key(wrapped)
             assert redact_diagnostics(wrapped) == f"{prefix} [redacted] keep"
+
+
+@pytest.mark.parametrize("prefix", ["12 ", "- ", "a-", "⎿ 3 "])
+@pytest.mark.parametrize("provider", ["ANTHROPIC", "OPENAI"])
+def test_key_alphabet_prefixes_do_not_interrupt_matches(monkeypatch, prefix, provider):
+    run_path(str(SCRIPT))
+    from common import contains_diagnostic_key, redact_diagnostics
+
+    tail = "Q7aZ8wR9sZ1xK2yD3fB4"
+    key = ("sk-ant-api03-" if provider == "ANTHROPIC" else "sk-proj-") + "fakeSecret" + tail
+    monkeypatch.setenv(f"{provider}_API_KEY", key)
+    for value in (key, tail):
+        for split in range(1, len(value)):
+            wrapped = f"{prefix}{value[:split]}\n{prefix}{value[split:]} keep"
+            assert contains_diagnostic_key(wrapped), split
+            assert redact_diagnostics(wrapped) == f"{prefix}[redacted] keep", split
+
+
+def test_guard_distinguishes_wrapped_prefixes_from_normal_words():
+    run_path(str(SCRIPT))
+    from common import contains_diagnostic_key, redact_diagnostics
+
+    for text in ("disk-test-runner", "task-live-check", "risk-…", "sk-learn-compatible-tools"):
+        assert not contains_diagnostic_key(text)
+        assert redact_diagnostics(text) == text
+    assert contains_diagnostic_key("sk-pr\n▌ oj-")
+    display = "Incorrect key: sk-proj-abc**\n▌ ***TAIL. Keep this text."
+    assert contains_diagnostic_key(display)
+    assert redact_diagnostics(display) == "Incorrect key: [redacted]. Keep this text."
+
+
+def test_numbered_rows_can_continue_a_key_across_several_lines(monkeypatch):
+    run_path(str(SCRIPT))
+    from common import contains_diagnostic_key, redact_diagnostics
+
+    key = "sk-proj-M6jJ7pQ0zR5tW9yT4fE8eU3pZ1xC4mV7bH2eK9yT3fD8uC4bB2"
+    monkeypatch.setenv("OPENAI_API_KEY", key)
+    for width in range(20, 60):
+        for column in range(width - 3):
+            text = "x" * column + key + " keep"
+            wrapped = "\n".join(f"{number:02} {text[i:i + width - 3]}"
+                                for number, i in enumerate(range(0, len(text), width - 3), start=12))
+            assert contains_diagnostic_key(wrapped), (width, column)
+            clean = redact_diagnostics(wrapped)
+            assert "[redacted]" in clean and not contains_diagnostic_key(clean), (width, column)
+            assert re.sub(r"(?m)^\d+ ", "", clean).replace("\n", "").endswith("keep"), (width, column)

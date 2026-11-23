@@ -30,6 +30,10 @@ PLANTED_KEY = "sk-proj-freshPlanted7f3a91c0e5b24d68aa"
 # Codex needs this for redaction only. Consume it before any subprocess starts.
 _DIAGNOSTIC_OPENAI_KEY = os.environ.pop("SP_DIAGNOSTIC_OPENAI_KEY", "")
 _KEY_ALPHABET = frozenset(string.ascii_letters + string.digits + "_-")
+_ROW_DECORATION = r"[ \t│║▌›>⎿|+#]*"
+_ROW_LABEL = r"(?:(?:[0-9]{1,8}|-)[ \t]+|(?!(?i:sk)-)[A-Za-z][A-Za-z0-9_]{0,7}-(?=\S))"
+_ROW_PREFIX = re.compile(r"(?m)^" + _ROW_DECORATION + _ROW_LABEL)
+_NEXT_ROW = r"\r?\n" + _ROW_DECORATION + r"(?:" + _ROW_LABEL + r")?"
 _DIAGNOSTIC_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _DIAGNOSTIC_KEY = re.compile(
     r"(?im)(?<![\w-])sk-(?:"
@@ -37,9 +41,18 @@ _DIAGNOSTIC_KEY = re.compile(
     r"(?:[a-z0-9]+(?:\r?\n[ \t]*[a-z0-9]+)?-)*[ \t]*(?:\r?\n[ \t]*)?"
     r"(?:…+|\.{2,}|\*{2,})[ \t]*[\w-]*"
     r"(?:\r?\n[ \t]*[\w-]+(?=[ \t]*(?:[│║][ \t]*)?$))?"
-    r"|(?:ant|proj|svcacct|admin|live|test)-[a-z0-9_-]+|[a-z0-9_-]{16,})"
+    r"|(?:ant|proj|svcacct|admin|live|test)-[a-z0-9_-]+|[a-z0-9_]{20,})"
 )
-_NORMALISED_KEY_PREFIX = re.compile(r"(?i)sk-(?:ant-|proj-|svcacct-|admin-|live-|test-|…|\.{2,}|\*{2,})")
+_MASKED_KEY_ECHO = re.compile(
+    r"(?i)(?<![\w-])sk-[a-z0-9_-]*(?:\*(?:" + _NEXT_ROW + r")?){2,}"
+    r"[ \t]*[a-z0-9_-]{0,4}(?![a-z0-9_-])"
+)
+_WRAPPED_KEY_PREFIX = re.compile(
+    r"(?i)(?<![\w-])(?:" + "|".join(
+        (r"(?:" + _NEXT_ROW + r")?").join(map(re.escape, "sk-" + kind + "-"))
+        for kind in ("ant", "proj", "svcacct", "admin", "live", "test")
+    ) + r")"
+)
 _BILLING_ERROR = re.compile(
     r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota|billing_hard_limit_reached"
     r"|quota\s+exceeded\.\s*check\s+your\s+plan\s+and\s+billing\s+details"
@@ -56,24 +69,30 @@ def _known_key_spans(text: str, known_key: str) -> list[tuple[int, int]]:
             os.environ.get("OPENAI_API_KEY", "")} - {""}
     if not keys:
         return []
-    positions = [i for i, ch in enumerate(text) if ch in _KEY_ALPHABET]
-    compact = "".join(text[i] for i in positions)
+    needles = {"".join(ch for ch in key if ch in _KEY_ALPHABET)
+               for key in keys | {key[-20:] for key in keys if len(key) >= 20}} - {""}
+    alphabet_positions = [i for i, ch in enumerate(text) if ch in _KEY_ALPHABET]
+    projections = [alphabet_positions]
+    if "\n" in text:
+        label_positions = {i for label in _ROW_PREFIX.finditer(text) for i in range(*label.span())}
+        if label_positions:
+            projections.append([i for i in alphabet_positions if i not in label_positions])
     spans = []
-    for key in keys | {key[-20:] for key in keys if len(key) >= 20}:
-        needle = "".join(ch for ch in key if ch in _KEY_ALPHABET)
-        if not needle:
-            continue
-        start = compact.find(needle)
-        while start != -1:
-            spans.append((positions[start], positions[start + len(needle) - 1] + 1))
-            start = compact.find(needle, start + len(needle))
+    for positions in projections:
+        compact = "".join(text[i] for i in positions)
+        for needle in needles:
+            start = compact.find(needle)
+            while start != -1:
+                spans.append((positions[start], positions[start + len(needle) - 1] + 1))
+                start = compact.find(needle, start + len(needle))
     return spans
 
 
 def redact_diagnostics(text: str, known_key: str = "") -> str:
     text = _DIAGNOSTIC_ANSI.sub("", text)
     spans = _known_key_spans(text, known_key)
-    spans.extend(match.span() for match in _DIAGNOSTIC_KEY.finditer(text))
+    spans.extend(match.span() for pattern in (_DIAGNOSTIC_KEY, _MASKED_KEY_ECHO)
+                 for match in pattern.finditer(text))
     clean, end = [], 0
     for start, stop in sorted(spans):
         if start >= end:
@@ -85,9 +104,8 @@ def redact_diagnostics(text: str, known_key: str = "") -> str:
 
 def contains_diagnostic_key(text: str) -> bool:
     text = _DIAGNOSTIC_ANSI.sub("", text)
-    compact = "".join(ch for ch in text if not ch.isspace() and not "\u2500" <= ch <= "\u257f")
-    return bool(_known_key_spans(text, "") or _NORMALISED_KEY_PREFIX.search(compact)
-                or _DIAGNOSTIC_KEY.search(text))
+    return bool(_known_key_spans(text, "") or _WRAPPED_KEY_PREFIX.search(text)
+                or _DIAGNOSTIC_KEY.search(text) or _MASKED_KEY_ECHO.search(text))
 
 
 @dataclass

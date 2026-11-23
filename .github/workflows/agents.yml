@@ -93,6 +93,21 @@ jobs:
           OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
           AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-l0
         run: python scripts/ci/guard_agent_artifacts.py preflight/${{ matrix.provider }}.json "$AUDITED_ARTIFACTS"
+      - name: Show the audited L0 report
+        if: always() && steps.artifact-audit.outcome == 'success'
+        shell: python
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          AUDITED_REPORT: ${{ runner.temp }}/sp-audited-l0/${{ matrix.provider }}.json
+        run: |
+          import os
+          from pathlib import Path
+          report = Path(os.environ['AUDITED_REPORT'])
+          if report.is_file():
+              text = report.read_text(encoding='utf-8')
+              print(text, end='')
+              with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+                  summary.write(f"### L0 {os.environ['PROVIDER']}\n\n```json\n{text}```\n")
       - name: Keep the L0 report
         if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7
