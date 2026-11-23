@@ -38,7 +38,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
     import stub_model
     import stub_responses
     from agents import give_login, tools
-    from common import Space, free_port, get, http, wait_for
+    from common import Space, eventually, free_port, get, http, wait_for
     from interactive import _last_reply, _ready, _wait_for_turn
     from screen import ENTER, Screen
     from stages import make_sample
@@ -116,14 +116,19 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
                           enabled_providers=["anthropic"], autoupdate=False, model=model, small_model=model)
             path.write_text(json.dumps(config), encoding="utf-8")
             env.update(ANTHROPIC_API_KEY="sp-local-model-test-credential", OPENCODE_DISABLE_MODELS_FETCH="1",
+                       OPENCODE_DISABLE_AUTOUPDATE="1", NODE_NO_WARNINGS="1",
                        XDG_CONFIG_HOME=str(config_root), XDG_DATA_HOME=str(space.home / ".local/share"),
                        XDG_CACHE_HOME=str(space.home / ".cache"), XDG_STATE_HOME=str(space.home / ".local/state"))
             args += ["--model", model]
 
         terminal = Screen(args, space.sample, env, trace=trace)
         stack.callback(terminal.close)
+        layer = "L1"
+        verdicts: dict[str, str] = {}
         try:
             assert _ready(terminal, tool, 40, [], codex_config if cli == "codex" else None), terminal.rendered
+            verdicts[layer] = "pass"
+            layer = "L2"
             chats = space.data / "projects/cli/chats"
             chat = None
 
@@ -153,24 +158,39 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
                 assert not (error := _wait_for_turn(terminal, captured, 40)), f"{error}: {text}\n{terminal.rendered}"
 
             prompt("Say hello for sp-stub-hello.")
+            verdicts[layer] = "pass"
+            layer = "L3"
             prompt(f"#task {plan.TITLE}. sp-stub-task")
             cards = get(space, "/api/tasks?project=cli")["tasks"]
             assert len(cards) == 1 and cards[0]["title"] == plan.TITLE and cards[0]["agent_id"] == chat.parent.name
             prompt(f"#decision {plan.DECISION} sp-stub-decision")
             decisions = get(space, "/api/decisions?project=cli")["decisions"]
             assert len(decisions) == 1 and decisions[0]["decision_text"] == plan.DECISION
-            prompt(f"#rule {plan.RULE} sp-stub-rule")
-            rules = get(space, "/api/rules?project=cli")["rules"]
-            assert len(rules) == 1 and plan.RULE in json.dumps(rules[0])
+            assert decisions[0]["agent_id"] == chat.parent.name
+            rules_before = {row["id"] for row in get(space, "/api/rules?project=cli")["rules"]}
+            prompt(f"#rule {plan.RULE}")
+            rules = eventually(lambda: [row for row in get(space, "/api/rules?project=cli")["rules"]
+                                        if row["id"] not in rules_before], seconds=8)
+            assert len(rules) == 1 and rules[0]["l1"] == plan.RULE, rules
+            # The operator's prompt hook moves the task. The MCP call reads
+            # the result and acknowledges it, without moving another task.
             prompt(f"#done {cards[0]['id']} sp-stub-done {cards[0]['id']}")
             final = get(space, "/api/tasks?project=cli")["tasks"]
             assert len(final) == 1 and final[0]["id"] == cards[0]["id"] and final[0]["status"] == "done"
             assert sum('"method": "POST"' in line for line in model_log.read_text(encoding="utf-8").splitlines()) >= 5
+            verdicts[layer] = "pass"
+        except BaseException:
+            verdicts[layer] = "fail"
+            for later in ("L1", "L2", "L3"):
+                verdicts.setdefault(later, f"blocked by {layer}")
+            raise
         finally:
+            print(f"{cli}: {json.dumps(verdicts)}", flush=True)
             terminal.save_frame("last frame")
             if output := os.environ.get("SP_INTERACTIVE_ARTIFACTS"):
                 folder = Path(output) / cli
                 folder.mkdir(parents=True, exist_ok=True)
+                (folder / "layers.json").write_text(json.dumps(verdicts, indent=2) + "\n", encoding="utf-8")
                 for path in (trace, model_log):
                     if path.is_file():
                         shutil.copy2(path, folder / path.name)

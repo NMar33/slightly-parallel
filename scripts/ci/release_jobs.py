@@ -9,6 +9,7 @@ SYSTEMS = ("ubuntu-latest", "macos-latest", "windows-latest")
 TOOLS = ("claude-code", "codex", "opencode")
 AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
 AGENTS_PREFLIGHT = "Check provider access, authentication and model errors"
+INTERACTIVE_STUB = "Capture a real PTY turn, task, decision, rule and done on a local stub"
 
 
 def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
@@ -40,7 +41,10 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
                 "One turn: the hooks record it, the MCP server writes a decision (scripts/ci/stub_model.py; no tokens)"),
         }.items()}
     if workflow == "ci.yml":
-        return {f"Real Codex ({os})": ("One read of the limits from the real program",) for os in SYSTEMS}
+        return {
+            **{f"Real Codex ({os})": ("One read of the limits from the real program",) for os in SYSTEMS},
+            **{f"Interactive agent ({tool}, {os})": (INTERACTIVE_STUB,) for tool in TOOLS for os in SYSTEMS},
+        }
     raise ValueError(f"unknown workflow: {workflow}")
 
 

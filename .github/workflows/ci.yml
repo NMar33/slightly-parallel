@@ -249,7 +249,9 @@ jobs:
           CLI: ${{ matrix.cli }}
           SP_REAL_INTERACTIVE: "1"
           SP_INTERACTIVE_ARTIFACTS: ${{ runner.temp }}/sp-interactive-stub
-        run: python -m pytest -q -rs -o addopts='' "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
+        run: |
+          python -m pytest -q -s -rs -o addopts='' --junitxml=interactive.xml "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
+          python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("interactive.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the real PTY test must run"'
       - name: Keep the local provider and PTY evidence
         if: always()
         uses: actions/upload-artifact@v7

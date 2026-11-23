@@ -22,7 +22,10 @@ def test_claude_onboarding_reaches_the_prompt(monkeypatch, dialog, keys, action)
     class Screen:
         text = ""
         keys = []
-        frames = deque([dialog, "❯ Try writing a test\nctrl+g to edit in VS Code"])
+        frames = deque([dialog])
+        if "I trust this folder" in dialog:
+            frames.extend([dialog, "1. No, exit\n❯ 2. Yes, I trust this folder"])
+        frames.append("❯ Try writing a test\nctrl+g to edit in VS Code")
 
         def read(self):
             if self.frames:

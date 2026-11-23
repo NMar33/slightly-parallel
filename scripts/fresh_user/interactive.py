@@ -68,7 +68,7 @@ def _last_reply(chat: Path, prompt: str) -> str:
 def _composer(tool: str, text: str, shown: str) -> bool:
     if tool == "claude-code":
         return (bool(re.search(r"(?m)(?:^|\r)[ \t]*❯[^\S\r\n]*(?:Try\b|$)", text))
-                and ("ctrl+gtoeditinvscode" in shown or "?forshortcuts" in shown))
+                and any(hint in shown for hint in ("ctrl+gtoeditinvscode", "?forshortcuts", "automodeon(shift+tabtocycle)")))
     if tool == "codex":
         return "›askcodextodoanything" in shown and "forshortcuts" in shown
     return "askanything" in shown and "tabagents" in shown and "ctrl+pcommands" in shown
@@ -77,6 +77,7 @@ def _composer(tool: str, text: str, shown: str) -> bool:
 def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_config: Path | None = None) -> bool:
     deadline = time.monotonic() + seconds
     ready_since = None
+    previous_move = ""
     while time.monotonic() < deadline:
         screen.read()
         frame = getattr(screen, "rendered", "") or screen.text
@@ -97,7 +98,7 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
                 else:
                     screen.send(DOWN if option == "reviewhooks" else UP)
             elif trusted:
-                screen.text = shown.rsplit("trustallandcontinue", 1)[-1]
+                ready_since = None
         elif tool.name == "claude-code" and "doyouwanttousethisapikey?" in shown:
             if re.search(r"❯(?:\d+\.)?no\(recommended\)", shown):
                 screen.send(UP)
@@ -107,8 +108,12 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
             answered.append("Claude Code accepted CI API key")
         elif tool.name == "claude-code" and "yes,itrustthisfolder" in shown:
             if re.search(r"❯(?:\d+\.)?no,exit", shown):
-                yes_first = shown.find("yes,itrustthisfolder") < shown.find("❯")
-                screen.send(UP if yes_first else DOWN)
+                if previous_move != shown:
+                    yes_first = shown.find("yes,itrustthisfolder") < shown.find("no,exit")
+                    screen.send(UP if yes_first else DOWN)
+                    previous_move = shown
+                time.sleep(POLL_S)
+                continue  # confirm only after the next frame shows the Yes row selected
             elif not re.search(r"❯(?:\d+\.)?yes,itrustthisfolder", shown):
                 return False
             screen.send(ENTER)

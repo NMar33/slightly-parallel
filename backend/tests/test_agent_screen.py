@@ -171,3 +171,14 @@ def test_trace_hides_the_known_key_at_every_wrap_column(monkeypatch, tmp_path, d
         assert tail not in compact, (display, column)
         assert "isinvalid;keepthistext" in compact, (display, column)
         path.unlink()
+@pytest.mark.parametrize("windows", [False, True])
+def test_only_unix_pty_emulates_color_replies(monkeypatch, windows):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    monkeypatch.setattr(screen, "WINDOWS", windows)
+    sent = []
+    terminal = screen.Screen.__new__(screen.Screen)
+    terminal._write = sent.append
+    terminal._answer("\x1b]10;?\x07\x1b]11;?\x07")
+    assert len(sent) == (0 if windows else 2)

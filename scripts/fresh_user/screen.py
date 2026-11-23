@@ -131,6 +131,10 @@ class Screen:
 
     def _answer(self, got: str) -> None:
         for asked, said in _REPLIES.items():
+            # ConPTY handles OSC color queries. Injecting our own OSC into
+            # its input writes the response as text in the CLI composer.
+            if WINDOWS and asked.startswith("\x1b]"):
+                continue
             if asked in got:
                 self._write(said)
 

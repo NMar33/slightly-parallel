@@ -23,3 +23,17 @@ def test_core_gate_requires_both_provider_preflights(bad_provider):
         assert not problem
     else:
         assert f"required step did not pass: L0 {bad_provider}" in problem
+
+
+def test_full_ci_cannot_release_with_a_missing_interactive_stub_job():
+    module = run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "ci" / "release_jobs.py"))
+    sha = "b" * 40
+    missing = "Interactive agent (opencode, windows-latest)"
+    jobs = [
+        {"name": name, "head_sha": sha, "conclusion": "success",
+         "steps": [{"name": step, "conclusion": "success"} for step in steps]}
+        for name, steps in module["required_jobs"]("ci.yml").items() if name != missing
+    ]
+    jobs.extend({"name": f"Optional job {index}", "head_sha": sha, "conclusion": "success"} for index in range(30))
+    issue = module["problem"]("ci.yml", {"jobs": jobs, "total_count": len(jobs)}, sha)
+    assert issue == f"required job missing: {missing}"
