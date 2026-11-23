@@ -276,6 +276,7 @@ def test_canary_reports_startup_capture_and_task_verdicts(monkeypatch, tmp_path,
     if ready:
         assert result.task == card["id"]
         assert len(inputs) == 1 and inputs[0].startswith("#task ") and not report.failed()
+        assert 'tags to ["ag_followup"]' in inputs[0]
         assert layers == {"L1": "pass", "L2": "pass", "L3": "pass"}
     else:
         assert result is None and not inputs and report.failed()

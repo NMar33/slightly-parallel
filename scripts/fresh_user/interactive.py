@@ -216,7 +216,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     reply = f"sp-reply-{marker}"
     prompt = f"Reply with exactly {reply} on one line. Do not use any tools."
     title = f"sp-task-{marker}"
-    task_prompt = f"#task {title}. Use Slightly Parallel to create one task with the exact title {title}."
+    task_prompt = (f"#task {title}. Use the Slightly Parallel write_entry tool with lens task. "
+                   f"Set the title to {title} and tags to [\"ag_followup\"].")
     if one_turn:
         prompt = f"{task_prompt} After creating it, reply with exactly {reply} on one line."
     chosen = model_for(tool.name, model)
