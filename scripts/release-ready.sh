@@ -29,9 +29,20 @@ remote=$(git ls-remote github "refs/heads/$branch" | cut -f1)
 # passed WORKFLOW NAME: the last run of WORKFLOW for $sha completed with
 # success on its first attempt; otherwise say why and stop. Sets $id.
 passed() {
-  local workflow=$1 name=$2 extra=${3:-} run status conclusion attempt
-  run=$(gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" --commit "$sha" --limit 1 \
-    --json databaseId,status,conclusion --jq '.[] | "\(.databaseId) \(.status) \(.conclusion)"')
+  local workflow=$1 name=$2 extra=${3:-} profile="" run status conclusion attempt
+  case "$workflow" in
+    ci.yml) profile='CI (full)' ;;
+    agents.yml) profile='Agents (core, pinned)' ;;
+    machine.yml) profile='Machine (full)' ;;
+  esac
+  local format='"\(.databaseId) \(.status) \(.conclusion)"'
+  if [[ -n $profile ]]; then
+    run=$(gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" --commit "$sha" --limit 40 \
+      --json databaseId,status,conclusion,displayTitle --jq ".[] | select(.displayTitle == \"$profile\") | $format" | sed -n '1p')
+  else
+    run=$(gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" --commit "$sha" --limit 1 \
+      --json databaseId,status,conclusion --jq ".[] | $format")
+  fi
   # (.[] and not .[0]: no run at all prints nothing, where .[0] printed
   # "null null null" and the script said the run was "still null".)
   [[ -n $run ]] || { echo "no $name run for ${sha:0:7}: gh workflow run $workflow --repo $repo --ref $branch$extra" >&2; exit 1; }

@@ -107,6 +107,18 @@ def test_both_green_prints_the_release_commands(world) -> None:
     assert "git tag -a v9.9.9" in r.stdout
 
 
+def test_release_selects_full_workflow_profiles_for_the_candidate(world) -> None:
+    r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
+              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+    assert r.returncode == 0, r.stderr
+    rows = (world.fake / "calls").read_text(encoding="utf-8").splitlines()
+    for workflow, profile in (("ci.yml", "CI (full)"), ("agents.yml", "Agents (core, pinned)"),
+                              ("machine.yml", "Machine (full)")):
+        invocation = next(line for line in rows if line.startswith("run list") and f"--workflow {workflow} " in line)
+        assert f'.displayTitle == "{profile}"' in invocation
+        assert "--commit " in invocation
+
+
 def test_a_red_window_stops_the_release(world) -> None:
     r = world(ci_yml="11 completed success", terminal_yml="22 completed failure")
     assert r.returncode == 1

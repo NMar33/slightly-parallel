@@ -1,4 +1,5 @@
 name: CI
+run-name: ${{ inputs.interactive_only && 'CI (interactive stubs)' || 'CI (full)' }}
 
 on:
   push:

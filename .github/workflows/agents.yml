@@ -6,6 +6,7 @@
 # It needs ANTHROPIC_API_KEY and OPENAI_API_KEY (Codex and OpenCode).
 # OpenAI uses CODEX_MODEL when set, otherwise gpt-6-luna.
 name: Agents
+run-name: Agents (${{ github.event_name == 'schedule' && 'smoke' || inputs.scenario || 'core' }}, ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }})
 
 on:
   workflow_dispatch:

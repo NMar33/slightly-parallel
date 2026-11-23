@@ -6,6 +6,7 @@
 # (real agents on three systems): by hand, or on a push to the ci-machine
 # branch (a dispatch needs the file on the default branch first).
 name: Machine
+run-name: ${{ inputs.full && 'Machine (full)' || 'Machine (standard)' }}
 
 on:
   push:

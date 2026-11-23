@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -34,12 +35,37 @@ import stages  # noqa: E402
 from helper_smoke import helper_smoke  # noqa: E402
 from interactive import SmokeResult, smoke  # noqa: E402
 from agents import Codex, tools  # noqa: E402
-from common import REPO, Report, Space, free_port, get, http, redact_diagnostics  # noqa: E402
+from common import REPO, Report, Space, free_port, get, http, redact_diagnostics, wait_for  # noqa: E402
 
 FREE = ["install", "pages", "setup", "wiring", "backup", "report", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
 PAID = ["agent", "parallel"]
 ALL = ["install", "pages", "setup", "wiring", "agent", "parallel", "backup", "report", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
 OUT = REPO / ".sp" / "fresh-user"
+
+
+def canary(space: Space, report: Report, args: argparse.Namespace, names: list[str], started: float) -> int:
+    """One turn through the installed CLI, Setup integration, and the task board."""
+    proc = None
+    try:
+        space.data.mkdir(parents=True)
+        stages.make_sample(space)
+        proc = stages.start(space, [sys.executable, "-m", "backend.server"], "canary-server.log", {
+            "SP_DATA_ROOT": str(space.data), "SP_SANDBOX": "1", "SP_EXAMPLE": "0",
+        }, cwd=REPO / "backend")
+        if report.add("canary", "the local server answers", wait_for(space, "/api/health", 30, lambda: proc.poll() is None)):
+            known = tools()
+            http(space.url + "/api/setup/integrate", {"project_code": "calc", "project_dir": str(space.sample),
+                "write_claude_hooks": False, "write_claude_statusline": False,
+                **{known[name].integrate_flag: True for name in names}})
+            for name in names:
+                smoke(space, report, "calc", space.sample, known[name], args.model, Path.home(),
+                      args.turn_seconds, one_turn=True)
+            totals = get(space, "/api/usage?project=calc&range=today").get("totals", {})
+            if totals.get("new", 0) or totals.get("output", 0) or totals.get("cache", 0):
+                report.notes["model_cost"] = {key: totals.get(key) for key in ("cost_usd", "unpriced")}
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        report.add("canary", "the canary finishes", False, type(error).__name__)
+    return finish(space, report, args, started, space.root / "screens", proc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-agent", action="store_true", help=f"leave out the stages that start a real agent ({', '.join(PAID)})")
     ap.add_argument("--tools", default="claude-code", help="agent tools: claude-code, codex, opencode")
     ap.add_argument("--model", default="sonnet", help="sonnet, haiku or opus; or a model name passed to the tool as is")
-    ap.add_argument("--scenario", default="full", choices=[*sorted(scenario.SCENARIOS), "smoke"], help="core: 8 messages; full: the standup and every command; site: a small page built with #now, then #task, #scan, #sp, #done; smoke: two interactive turns and a separate headless helper")
+    ap.add_argument("--scenario", default="full", choices=[*sorted(scenario.SCENARIOS), "smoke", "canary"],
+                    help="canary: one interactive task, no install or browser; smoke: two turns and a helper; core: release checks")
     ap.add_argument("--agent-runs", type=int, default=1, help="run the agent chat this many times, each in a new project")
     ap.add_argument("--source", default=str(REPO), help="the repository folder to clone")
     ap.add_argument("--upgrade-from", default="", help="the commit an upgrade starts from (default: the newest v* tag, else 5 commits back)")
@@ -56,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot-seconds", type=int, default=1200, help="how long the first start may take")
     ap.add_argument("--turn-seconds", type=int, default=900, help="how long one agent turn may take")
     args = ap.parse_args(argv)
+    if args.no_agent and args.scenario == "canary":
+        ap.error("the canary requires an agent; choose a different scenario with --no-agent")
 
     wanted = [x.strip() for x in args.stages.split(",") if x.strip()]
     names = [x.strip() for x in args.tools.split(",") if x.strip()]
@@ -79,13 +108,15 @@ def main(argv: list[str] | None = None) -> int:
     space = Space(Path(tempfile.mkdtemp(prefix=prefix)).resolve(), free_port())
     report = Report()
     report.notes["root"] = str(space.root)          # scripts/machine/run.py takes the built page from here
-    if on("agent") or on("parallel"):
+    if on("agent") or on("parallel") or args.scenario == "canary":
         report.notes["cli_versions"] = {name: known[name].version() for name in names}
         print(f"agent CLI versions: {report.notes['cli_versions']}", flush=True)
     code, second = "calc", "notes"
     shots = space.root / "screens"
     started = time.time()
     print(f"fresh-user test in {space.root} on port {space.port}", flush=True)
+    if args.scenario == "canary":
+        return canary(space, report, args, names, started)
     proc = None
     states: list[scenario.State | SmokeResult] = []
     try:

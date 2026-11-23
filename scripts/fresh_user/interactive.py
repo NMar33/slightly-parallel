@@ -172,7 +172,7 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int) -> s
 
 
 def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, model: str, home: Path,
-          seconds: int, *, core: bool = False) -> SmokeResult | None:
+          seconds: int, *, core: bool = False, one_turn: bool = False) -> SmokeResult | None:
     stage = f"interactive:{tool.name}"
     if not report.add(stage, "the interactive CLI is installed", tool.installed()):
         return None
@@ -185,6 +185,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     prompt = f"Reply with exactly {reply} on one line. Do not use any tools."
     title = f"sp-task-{marker}"
     task_prompt = f"#task {title}. Use Slightly Parallel to create one task with the exact title {title}."
+    if one_turn:
+        prompt = f"{task_prompt} After creating it, reply with exactly {reply} on one line."
     chosen = model_for(tool.name, model)
     args = {"claude-code": ["claude", "--session-id", tool.session, "--mcp-config", ".mcp.json",
                             "--allowedTools", *getattr(tool, "ALLOWED", ())],
@@ -198,6 +200,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         screen.send(text)
         screen.send(ENTER)
 
+    def cards() -> list[dict]:
+        return rows(get(space, f"/api/tasks?project={code}"), "tasks")
+
     try:
         answered: list[str] = []
         codex_config = space.home / ".codex" / "config.toml" if tool.name == "codex" else None
@@ -207,6 +212,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             screen.save_frame("startup failed")
         if not report.add(stage, "L1 CLI composer", ready, "" if ready else _startup_failure(screen)):
             return None
+        existing = {row.get("id") for row in cards()} if one_turn else set()
         type_prompt(prompt)
         chats = space.data / "projects" / code / "chats"
         captured: list[Path] = []
@@ -235,15 +241,13 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             return None
         tool.session = str(session)
 
-        def cards() -> list[dict]:
-            return rows(get(space, f"/api/tasks?project={code}"), "tasks")
-
-        existing = {row.get("id") for row in cards()}
-        type_prompt(task_prompt)
-        error = _wait_for_turn(screen, lambda: bool(_last_reply(chat, task_prompt)), seconds)
-        if not report.add(stage, "the operator task turn is captured to completion", not error,
-                          f"{error}\n{agent}\n{_screen_tail(screen)}"):
-            return None
+        if not one_turn:
+            existing = {row.get("id") for row in cards()}
+            type_prompt(task_prompt)
+            error = _wait_for_turn(screen, lambda: bool(_last_reply(chat, task_prompt)), seconds)
+            if not report.add(stage, "the operator task turn is captured to completion", not error,
+                              f"{error}\n{agent}\n{_screen_tail(screen)}"):
+                return None
         initial = new_task_rows(space, code, existing)
         match = [t for t in initial if t.get("agent_id") == agent and t.get("project") == code
                  and t.get("title") == title and t.get("status") == "agent"]

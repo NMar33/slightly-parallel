@@ -217,3 +217,86 @@ def test_onboarding_uses_the_rendered_composer_after_the_menu_is_gone(monkeypatc
     ticks = iter([0, 0, 0, 1, 1])
     monkeypatch.setattr(interactive, "time", SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda _: None))
     assert interactive._ready(terminal, tools()["claude-code"], 10, [])
+
+
+def test_canary_captures_one_turn_and_one_new_task(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import json
+    import re
+    import interactive
+    from agents import tools
+    from common import Report, Space
+
+    space = Space(tmp_path, 1)
+    tool = tools()["claude-code"]
+    card = {"id": "tk_a123abcd", "project": "calc", "status": "agent", "agent_id": "cc-abcd1234"}
+    chat = space.data / "projects/calc/chats/cc-abcd1234/chat.md"
+    chat.parent.mkdir(parents=True)
+    chat.with_name("meta.json").write_text(json.dumps({"session_ref": tool.session}), encoding="utf-8")
+    inputs: list[str] = []
+
+    class Screen:
+        text = history = rendered = ""
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def send(self, line):
+            if line != interactive.ENTER:
+                inputs.append(line)
+                return
+            prompt = inputs[-1]
+            card["title"] = re.search(r"sp-task-[0-9a-f]+", prompt).group()
+            reply = re.search(r"sp-reply-[0-9a-f]+", prompt).group()
+            chat.write_text(f"# Chat\n## Turn 1\n**User**: {prompt}\n**Agent**: {reply}\n", encoding="utf-8")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(tool, "installed", lambda: True)
+    monkeypatch.setattr(interactive, "Screen", Screen)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+    monkeypatch.setattr(interactive, "_ready", lambda *_: True)
+    monkeypatch.setattr(interactive, "_wait_for_turn", lambda screen, check, seconds: "" if check() else "failure")
+    monkeypatch.setattr(interactive, "get", lambda _, path: {"tasks": []} if path.startswith("/api/tasks") else {
+        "agents": [{"agent_id": card["agent_id"], "session_ref": tool.session}],
+    })
+    monkeypatch.setattr(interactive, "new_task_rows", lambda *args: [card])
+    report = Report()
+    assert interactive.smoke(space, report, "calc", tmp_path, tool, "stub", tmp_path, 10, one_turn=True).task == card["id"]
+    assert len(inputs) == 1 and inputs[0].startswith("#task ") and not report.failed()
+
+
+def test_canary_uses_setup_api_without_installing_or_opening_a_browser(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import run
+    from common import Report, Space
+
+    space = Space(tmp_path, 8124)
+    seen = []
+    monkeypatch.setattr(run.stages, "make_sample", lambda _: seen.append("commit sample"))
+    def start(_, command, log, env, *, cwd):
+        assert command[-2:] == ["-m", "backend.server"] and cwd.name == "backend"
+        assert env["SP_DATA_ROOT"] == str(space.data)
+        seen.append("server")
+        return SimpleNamespace(poll=lambda: None)
+
+    def setup(url, body):
+        assert url.endswith("/api/setup/integrate") and body["write_codex_hooks"]
+        assert not body["write_claude_hooks"]
+        seen.append("setup API")
+
+    def smoke(_, report, code, folder, tool, model, home, seconds, *, one_turn):
+        assert tool.name == "codex" and one_turn
+        seen.append("one turn")
+
+    monkeypatch.setattr(run.stages, "start", start)
+    monkeypatch.setattr(run.stages, "install", lambda *_: pytest.fail("canary has no install stage"))
+    monkeypatch.setattr(run.stages, "screens", lambda *_: pytest.fail("canary has no browser stage"))
+    monkeypatch.setattr(run, "wait_for", lambda *_: True)
+    monkeypatch.setattr(run, "http", setup)
+    monkeypatch.setattr(run, "smoke", smoke)
+    monkeypatch.setattr(run, "get", lambda *_: {"totals": {}})
+    monkeypatch.setattr(run, "finish", lambda *_: 0)
+    assert run.canary(space, Report(), SimpleNamespace(model="stub", turn_seconds=10), ["codex"], 0) == 0
+    assert seen == ["commit sample", "server", "setup API", "one turn"]

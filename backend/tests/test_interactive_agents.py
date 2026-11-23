@@ -84,6 +84,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             codex_config.parent.mkdir(exist_ok=True)
             mcp = codex_config.read_text(encoding="utf-8")
             codex_config.write_text('model = "stub-model"\nmodel_provider = "stub"\n'
+                                    'disable_paste_burst = true\n'
                                     '[model_providers.stub]\nname = "stub"\nwire_api = "responses"\n'
                                     f'base_url = "{endpoint}/v1"\n\n{mcp}'
                                     + ('\n[windows]\nsandbox = "unelevated"\n' if os.name == "nt" else ""),
@@ -140,6 +141,10 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             def prompt(text):
                 nonlocal chat
                 terminal.send(text)
+                # ConPTY writes a whole string in one call. Wait for the new
+                # input to reach the composer before pressing the submit key.
+                if cli == "codex" and os.name == "nt":
+                    assert terminal.wait_for(text, 8), f"Codex did not display the prompt: {terminal.rendered}"
                 terminal.send(ENTER)
                 approved = False
 

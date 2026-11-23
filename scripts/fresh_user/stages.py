@@ -178,10 +178,11 @@ def install(space: Space, report: Report, source: Path, boot_seconds: int) -> su
     return proc
 
 
-def start(space: Space, args: list[str], log_name: str, extra: dict[str, str] | None = None) -> subprocess.Popen:
-    log = open(space.root / log_name, "w", encoding="utf-8")
-    return subprocess.Popen(args, cwd=space.clone, env={**space.env(), **(extra or {})}, stdout=log,
-                            stderr=subprocess.STDOUT, **SPAWN)
+def start(space: Space, args: list[str], log_name: str, extra: dict[str, str] | None = None,
+          *, cwd: Path | None = None) -> subprocess.Popen:
+    with (space.root / log_name).open("w", encoding="utf-8") as log:
+        return subprocess.Popen(args, cwd=cwd or space.clone, env={**space.env(), **(extra or {})}, stdout=log,
+                                stderr=subprocess.STDOUT, **SPAWN)
 
 
 def stop(proc: subprocess.Popen | None) -> None:
