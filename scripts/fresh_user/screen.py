@@ -157,7 +157,7 @@ class Screen:
         want = re.sub(r"\s", "", words)
         while time.time() < end:
             self.read()
-            if want in re.sub(r"\s", "", self.text):
+            if want in re.sub(r"\s", "", self.rendered):
                 return True
             time.sleep(SCREEN_POLL_INTERVAL_S)
         return False

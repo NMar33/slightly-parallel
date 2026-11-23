@@ -201,3 +201,15 @@ def test_application_cursor_mode_changes_arrow_encoding_even_across_reads(monkey
     terminal._receive("\x1b[?1l")
     terminal.send(screen.DOWN)
     assert sent == ["\x1bOB", "\x1b[B"]
+
+
+def test_wait_for_rendered_prompt_after_incremental_repaint(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    instance = screen.Screen.__new__(screen.Screen)
+    instance.trace = screen.TerminalTrace(tmp_path / "terminal.log")
+    instance.trace.feed("Say")
+    instance.text = ""
+    instance.read = lambda: instance.trace.feed("\x1b[1;4H hello")
+    assert instance.wait_for("Say hello", 1)
