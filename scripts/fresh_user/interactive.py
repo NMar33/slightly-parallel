@@ -194,10 +194,15 @@ _MCP_APPROVAL = re.compile(
 )
 
 
+_COMMAND_APPROVAL = re.compile(
+    r"(?m)^ *Would you like to run the following command\? *$"
+    r".*?^ *\$ (?P<command>.*?)^ *› (?P<choice>[^\n]+)", re.DOTALL,
+)
 RULE_INTERPRETATION = "Keep calc.py standalone."
 
 
-def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None) -> Callable[[], str]:
+def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None,
+                   *, command: str = "") -> Callable[[], str]:
     expected = {
         "#decision": ("write_entry", {
             "lens": "decision",
@@ -210,6 +215,15 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
 
     def check() -> str:
         nonlocal handled
+        if shell := _COMMAND_APPROVAL.search(screen.rendered):
+            if shell.group() == handled:
+                return ""
+            shown = " ".join(shell["command"].split())
+            if not command or handled or shown != command or shell["choice"].strip() != "1. Yes, proceed (y)":
+                return "unexpected Codex command approval"
+            handled = shell.group()
+            screen.send(ENTER)
+            return ""
         match = _MCP_APPROVAL.search(screen.rendered)
         if match is None or match.group() == handled:
             return ""
@@ -373,6 +387,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 approval = None
                 if tool.name == "codex":
                     new_rule = None
+                    command = ""
                     if name == "#rule":
                         before = {row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)}
                         message += f' Interpret the rule from this turn with the exact text "{RULE_INTERPRETATION}".'
@@ -381,11 +396,15 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                             current = {row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)} - before
                             return next(iter(current)) if len(current) == 1 else ""
 
-                    if name == "#decision":
+                    elif name == "the work":
+                        command = ("git add calc.py test_calc.py && git commit -m 'Add calculator tests' "
+                                   f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
+                        message += f" Run this exact command to stage only the two test files and commit: {command}"
+                    elif name == "#decision":
                         message += ' Use Slightly Parallel write_entry with lens decision and only the decision field.'
                     elif name == "#done":
                         message += " Call Slightly Parallel task_done with no arguments once. Report the result in chat."
-                    approval = _core_approval(screen, name, new_rule)
+                    approval = _core_approval(screen, name, new_rule, command=command)
                 type_prompt(message)
                 error = _wait_for_turn(screen, lambda message=message: bool(_last_reply(chat, message)), seconds,
                                        approval=approval)

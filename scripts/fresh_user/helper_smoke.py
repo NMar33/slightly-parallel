@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from agents import Tool, give_login, model_for
-from common import Report, Space, eventually, get, new_task_rows, rows
+from common import Report, Space, eventually, get, new_task_rows, redact_diagnostics, rows
 
 HELPER_KINDS = {"claude-code": "claude-print", "codex": "codex-exec", "opencode": "opencode-run"}
 
@@ -43,7 +43,7 @@ def _mcp_refused(space: Space, tool: Tool, reason: str) -> bool:
         _, separator, stderr = tool.last_log(space).partition("\n--- stderr ---\n")
         return bool(separator and re.search(
             r"(?m)^mcp: slightly-parallel/write_entry \(failed\)\r?\n"
-            r"(?:codex\r?\n)?422: " + re.escape(reason) + r"(?:;|\r?$)", stderr,
+            r"(?:codex\r?\n)?422: " + re.escape(reason) + r"(?:;|\r?$)", redact_diagnostics(stderr),
         ))
     return False
 

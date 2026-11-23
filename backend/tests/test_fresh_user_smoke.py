@@ -457,7 +457,8 @@ def test_codex_helper_requires_the_actual_mcp_failure(monkeypatch, tmp_path, in_
     from helper_smoke import _mcp_refused
 
     reason = "this chat is marked a helper chat"
-    failure = f"mcp: slightly-parallel/{tool} (failed)\ncodex\n422: {reason}; the command did nothing"
+    failure = (f"\x1b[31mmcp: slightly-parallel/{tool} (failed)\x1b[0m\n"
+               f"\x1b[1mcodex\x1b[0m\n422: {reason}; the command did nothing")
     log = "\n--- stderr ---\n" + failure if in_stderr else failure + "\n--- stderr ---\n"
     space = Space(tmp_path, 1)
     sessions = space.home / ".codex" / "sessions"
@@ -488,3 +489,27 @@ def test_codex_rule_approval_waits_for_the_new_saved_rule(monkeypatch):
     assert check() == "unexpected Codex MCP approval arguments" and not keys
     current_id = "rl_new"
     assert not check() and keys == [ENTER]
+
+
+
+@pytest.mark.parametrize(("operation", "choice", "allowed"), [
+    ("git add calc.py test_calc.py && git commit -m 'Add calculator tests'", "1. Yes, proceed (y)", True),
+    ("git add calc.py test_calc.py && git commit -m 'Add calculator tests'", "2. Yes, and don't ask again (p)", False),
+    ("git add . && git commit -m 'Add calculator tests'", "1. Yes, proceed (y)", False),
+    ("git add calc.py test_calc.py && git push", "1. Yes, proceed (y)", False),
+])
+def test_codex_core_accepts_only_the_exact_local_commit_command(monkeypatch, operation, choice, allowed):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import ENTER, _core_approval
+
+    keys = []
+    frame = (f"  Would you like to run the following command?\n"
+             f"  Environment: local\n\n  $ {operation}\n\n"
+             f"  › {choice}\n  3. No")
+    screen = SimpleNamespace(rendered=frame, send=keys.append)
+    check = _core_approval(screen, "the work",
+                           command="git add calc.py test_calc.py && git commit -m 'Add calculator tests'")
+    assert bool(check()) is not allowed
+    assert keys == ([ENTER] if allowed else [])
+    if allowed:
+        assert not check() and keys == [ENTER]
