@@ -24,6 +24,7 @@ CODEX_PROMPT_TIMEOUT_S = 30
 _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|[\x00-\x08\x0e-\x1f]")
 DOWN, ENTER = "\x1b[B", "\r"
 ROWS, COLS = 45, 160
+SCREEN_HISTORY_CHARS = 1600
 #: What a full-screen program asks its terminal before it draws, and what a
 #: terminal answers: the cursor, the colours, its kind, its keyboard. Left
 #: unanswered, Codex waits; tmux and real terminals answer on their own.
@@ -36,6 +37,7 @@ class Screen:
 
     def __init__(self, args: list[str], cwd: Path, env: dict[str, str]):
         self.text = ""
+        self.history = ""
         if WINDOWS:
             from winpty import PtyProcess  # type: ignore[import-not-found]
             import threading
@@ -108,6 +110,7 @@ class Screen:
         return False
 
     def send(self, keys: str) -> None:
+        self.history = (self.history + "\n" + self.text.rstrip())[-SCREEN_HISTORY_CHARS:]
         self.text = ""  # what comes after this key
         self._write(keys)
         time.sleep(KEY_PRESS_SETTLE_S)

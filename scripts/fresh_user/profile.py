@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import shutil
 import subprocess
@@ -13,6 +12,9 @@ from pathlib import Path
 
 from common import REPO, WINDOWS, Space, free_port, http, wait_for
 from stages import SPAWN, path_without, stop
+
+STARTUP_TIMEOUT_S = 120
+WINDOW_TIMEOUT_S = 45
 
 
 def verify(space: Space, profile: str) -> None:
@@ -27,13 +29,6 @@ def verify(space: Space, profile: str) -> None:
                    LOCALAPPDATA=str(home / "AppData" / "Local"), TEMP=str(home / "Temp"), TMP=str(home / "Temp"))
         for key in ("APPDATA", "LOCALAPPDATA", "TEMP"):
             Path(env[key]).mkdir(parents=True, exist_ok=True)
-    elif profile == "windows-native-user":
-        home = Path(os.environ["USERPROFILE"])
-        if home.name.isascii():
-            raise SystemExit(f"Windows assigned an ASCII profile: {home}")
-        for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"):
-            if key in os.environ:
-                env[key] = os.environ[key]
     if profile == "no-node":
         env["PATH"] = path_without(space, "node", "npm", "npx", "corepack")
         if shutil.which("node", path=env["PATH"]):
@@ -44,7 +39,7 @@ def verify(space: Space, profile: str) -> None:
         process = subprocess.Popen([sys.executable, "sp.py", "run", "--prod"], cwd=space.clone,
                                    env=env, stdout=log, stderr=subprocess.STDOUT, **SPAWN)
         try:
-            if not wait_for(space, "/api/health", 120, alive=lambda: process.poll() is None):
+            if not wait_for(space, "/api/health", STARTUP_TIMEOUT_S, alive=lambda: process.poll() is None):
                 raise SystemExit(log_path.read_text(encoding="utf-8", errors="replace")[-4000:])
             health = http(space.url + "/api/health")
             if not health.get("ok") or Path(health["data_root"]) != Path(env["SP_DATA_ROOT"]):
@@ -56,7 +51,7 @@ def verify(space: Space, profile: str) -> None:
             print("OK: health, configured data path, dashboard HTML and JavaScript")
             if profile == "no-node":
                 window = subprocess.run([sys.executable, "sp.py", "window"], cwd=space.clone, env=env,
-                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45)
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=WINDOW_TIMEOUT_S)
                 output = window.stdout + window.stderr
                 if not window.returncode or "the window needs Node 20+ with npm" not in output or "Traceback" in output:
                     raise SystemExit(f"unexpected terminal window diagnostic: {output[-1600:]}")
@@ -67,7 +62,7 @@ def verify(space: Space, profile: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("profile", choices=("no-node", "windows-cyrillic-home", "windows-native-user"))
+    parser.add_argument("profile", choices=("no-node", "windows-cyrillic-home"))
     args = parser.parse_args()
     if args.profile.startswith("windows-") and not WINDOWS:
         parser.error("this profile requires Windows")

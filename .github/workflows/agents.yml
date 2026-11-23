@@ -11,10 +11,10 @@ on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: "smoke (interactive release check), or core/full (headless diagnostics)"
+        description: "core (interactive release checks), smoke (two turns), full (legacy diagnostics)"
         type: choice
         options: [smoke, core, full]
-        default: smoke
+        default: core
       channel:
         description: "Pinned CLI versions for a release, or latest for compatibility"
         type: choice
@@ -47,6 +47,7 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
       CHANNEL: ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }}
+      SCENARIO: ${{ github.event_name == 'schedule' && 'smoke' || inputs.scenario || 'core' }}
       DISABLE_AUTOUPDATER: "1"
     steps:
       - name: The key for this tool
@@ -101,20 +102,19 @@ jobs:
         if: steps.key.outputs.ok && matrix.tool == 'opencode'
         shell: bash
         run: npm install -g "$(python scripts/ci/agent_packages.py "$CHANNEL" opencode)"
-      - name: An agent from clone to its work on the pages (${{ inputs.scenario || 'smoke' }}, ${{ env.CHANNEL }})
+      - name: An agent from clone to its work on the pages (${{ env.SCENARIO }}, ${{ env.CHANNEL }})
         if: steps.key.outputs.ok
         shell: bash
         env:
           # Claude Code and OpenCode take their key from the environment; Codex has its login file.
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
           OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
-          SCENARIO: ${{ inputs.scenario || 'smoke' }}
         run: |
           model=haiku
           if [ "${{ matrix.tool }}" = "codex" ]; then model="${{ vars.CODEX_MODEL }}"; fi
           if [ "${{ matrix.tool }}" = "opencode" ]; then model="openai/${{ vars.CODEX_MODEL || 'gpt-6-luna' }}"; fi
           budget=900
-          if [ "$SCENARIO" = smoke ]; then budget=120; fi
+          if [ "$SCENARIO" != full ]; then budget=120; fi
           python scripts/fresh_user/run.py --tools ${{ matrix.tool }} --scenario "$SCENARIO" \
             --stages install,setup,wiring,agent --turn-seconds "$budget" ${model:+--model "$model"}
       - name: The failed checks, with their detail (on failure)
@@ -131,22 +131,8 @@ jobs:
                   if not c.get("ok"):
                       print(f"[{c.get('stage')}] {c.get('name')}\n    {c.get('detail', '')[-4000:]}")
       - name: Report CLI version and model cost
-        if: always()
-        shell: python
-        run: |
-          import json, os
-          from pathlib import Path
-          path = Path(".sp/fresh-user/report.json")
-          notes = json.loads(path.read_text(encoding="utf-8")).get("notes", {}) if path.is_file() else {}
-          versions = ", ".join(f"{tool} {version}" for tool, version in notes.get("cli_versions", {}).items()) or "unavailable"
-          measured = notes.get("model_cost", {})
-          cost = "unavailable"
-          if measured.get("cost_usd") is not None:
-              cost = f"${measured['cost_usd']:.4f} estimated at API prices; {measured['unpriced']} unpriced tokens"
-          line = f"CLI: {versions} · model cost: {cost}"
-          print(line)
-          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
-              summary.write(line + "\n")
+        if: always() && steps.key.outputs.ok
+        run: python scripts/ci/agent_summary.py
       - name: Keep the report and the pictures
         if: always() && steps.key.outputs.ok
         uses: actions/upload-artifact@v7

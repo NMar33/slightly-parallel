@@ -17,6 +17,8 @@ OPERATOR_COOKIE_TIMEOUT_S = 10
 API_REQUEST_TIMEOUT_S = 30
 DOWNLOAD_TIMEOUT_S = 120
 START_PROBE_TIMEOUT_S = 3
+BOARD_SETTLE_S = 2
+BOARD_POLL_S = 0.2
 
 REPO = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
@@ -179,7 +181,7 @@ def eventually(read, seconds: float = 20):
     return got
 
 
-def new_task_rows(space: Space, code: str, known: set[str], seconds: float = 2) -> list[dict]:
+def new_task_rows(space: Space, code: str, known: set[str], seconds: float = BOARD_SETTLE_S) -> list[dict]:
     """Collect new cards while the file watcher catches up after the CLI has exited."""
     deadline = time.monotonic() + seconds
     seen: dict[str, dict] = {}
@@ -189,4 +191,4 @@ def new_task_rows(space: Space, code: str, known: set[str], seconds: float = 2) 
                 seen[row["id"]] = row
         if time.monotonic() >= deadline:
             return list(seen.values())
-        time.sleep(0.2)
+        time.sleep(BOARD_POLL_S)

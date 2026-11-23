@@ -65,7 +65,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"unknown stage or tool: {bad_names}")
     if args.no_agent:
         wanted = [x for x in wanted if x not in PAID]
-    if args.scenario == "smoke":
+    interactive = args.scenario in ("smoke", "core")
+    if interactive:
         wanted = [x for x in wanted if x != "parallel"]
     on = lambda stage: stage in wanted  # noqa: E731
 
@@ -128,8 +129,9 @@ def main(argv: list[str] | None = None) -> int:
                         stages.sh(["git", "commit", "-qm", "first commit"], folder, space.env())
                         http(space.url + "/api/setup/integrate", {"project_code": this, "project_dir": str(folder)})
                     print(f"\nagent · {n} · {args.model} · {args.scenario}" + (f" · run {i + 1} of {args.agent_runs}" if args.agent_runs > 1 else ""), flush=True)
-                    if args.scenario == "smoke":
-                        result = smoke(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds)
+                    if interactive:
+                        result = smoke(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds,
+                                       core=args.scenario == "core")
                         if result is not None:
                             states.append(result)
                             helper = tools()[n]
@@ -143,13 +145,13 @@ def main(argv: list[str] | None = None) -> int:
                     st = scenario.run(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds, plan, stage)
                     if st:
                         states.append(st)
-            if args.scenario == "smoke":
+            if interactive:
                 totals = get(space, f"/api/usage?project={code}&range=today").get("totals", {})
                 if totals.get("new", 0) or totals.get("output", 0) or totals.get("cache", 0):
                     report.notes["model_cost"] = {k: totals.get(k) for k in ("cost_usd", "unpriced")}
             if states:
                 st = states[0]
-                routes = [f"/project/{code}#tasks", f"/agent/{st.agent}"] if args.scenario == "smoke" else [
+                routes = [f"/project/{code}#tasks", f"/agent/{st.agent}"] if interactive else [
                     "/", f"/project/{code}", f"/project/{code}#tasks", f"/project/{code}#activity", f"/agent/{st.agent}",
                     "/kanban", "/chats", "/scans", "/standups", "/decisions", "/rules", "/visions", "/problems",
                     "/skills", "/artifacts", "/architecture", "/files", "/stats", "/important", "/time",
@@ -211,8 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             if base and stages.sh(["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"], Path(args.source)).returncode == 0:
                 stages.upgrade(space, report, Path(args.source), base, args.boot_seconds)
             else:
-                # A fresh repository, or a shallow clone: nothing earlier to install first.
-                report.add("upgrade", f"no earlier commit to upgrade from: {base or 'the only release tag is HEAD'}", False, soft=True)
+                report.add("upgrade", f"no earlier commit to upgrade from: {base or 'the only release tag is HEAD'}", False)
     finally:
         stages.stop(proc)
         stages.sh(stages.sp_sh("down"), space.clone, space.env()) if (space.clone / "sp.py").is_file() else None

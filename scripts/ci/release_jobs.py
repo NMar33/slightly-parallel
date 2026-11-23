@@ -7,12 +7,12 @@ import sys
 
 SYSTEMS = ("ubuntu-latest", "macos-latest", "windows-latest")
 TOOLS = ("claude-code", "codex", "opencode")
-AGENTS_SMOKE = "An agent from clone to its work on the pages (smoke, pinned)"
+AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
 
 
 def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
     if workflow == "agents.yml":
-        return {f"{tool} ({os})": (AGENTS_SMOKE,) for tool in TOOLS for os in SYSTEMS}
+        return {f"{tool} ({os})": (AGENTS_CORE,) for tool in TOOLS for os in SYSTEMS}
     if workflow == "machine.yml":
         return {f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS",)
                 for os in SYSTEMS}

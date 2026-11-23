@@ -77,3 +77,20 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(mo
     assert _ready(screen, tools()["codex"], 3, answered, config)
     assert screen.keys == ["\r", "\x1b[B", "\r"]
     assert answered == ["Codex project folder trusted", "Codex project hooks trusted"]
+
+
+def test_upgrade_stage_without_its_requested_base_is_red(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import run
+
+    scratch = tmp_path / "fresh"
+    scratch.mkdir()
+    monkeypatch.setattr(run.tempfile, "mkdtemp", lambda **_: str(scratch))
+    monkeypatch.setattr(run, "OUT", tmp_path / "reports")
+    monkeypatch.setattr(run, "free_port", lambda: 1)
+    monkeypatch.setattr(run.stages, "install", lambda *_: object())
+    monkeypatch.setattr(run.stages, "sh", lambda *_: SimpleNamespace(returncode=1))
+    for name in ("readme", "screens", "setup", "second_project", "stop", "cleanup"):
+        monkeypatch.setattr(run.stages, name, lambda *_: None)
+
+    assert run.main(["--stages", "upgrade", "--upgrade-from", "missing-tag"]) == 1

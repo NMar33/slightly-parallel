@@ -174,8 +174,8 @@ def after_important(space: Space, report: Report, s: str, st: State) -> None:
     report.add(s, "#important starred the message", bool(rows(got, "marks")) or st.agent in blob, blob[:300])
 
 
-def after_scan(space: Space, report: Report, s: str, st: State) -> None:
-    report.add(s, "#scan wrote a scan", bool(listed(space, "/api/scans", "scans", st)))
+def after_scan(space: Space, report: Report, s: str, st: State, *, soft: bool = False) -> None:
+    report.add(s, "#scan wrote a scan", bool(listed(space, "/api/scans", "scans", st)), soft=soft)
     report.add(s, "the scan's files are recorded", bool(listed(space, "/api/files", "files", st, mine=False)), soft=True)
 
 
@@ -227,12 +227,12 @@ def after_help(space: Space, report: Report, s: str, st: State) -> None:
     report.add(s, "#help lists the commands", all(c in text for c in ("#scan", "#task", "#decision", "#done")), text[:300])
 
 
-def after_sp(space: Space, report: Report, s: str, st: State) -> None:
+def after_sp(space: Space, report: Report, s: str, st: State, *, soft: bool = False) -> None:
     """#sp: the agent asked the server (the MCP tool checkup), and answered
     with what it found — not from its own idea of the setup."""
     asked = eventually(lambda: any(str(r.get("path", "")).startswith("/api/checkup")
                                    for r in rows(get(space, "/api/logs?level=INFO&limit=2000"), "records")), 10)
-    report.add(s, "#sp called the checkup", bool(asked))
+    report.add(s, "#sp called the checkup", bool(asked), soft=soft)
     text = st.said[-1].lower()
     report.add(s, "#sp answered with what it found", any(w in text for w in ("recorded", "check", "concern", "fine", "ok")),
                st.said[-1][:300], soft=True)

@@ -150,7 +150,7 @@ def test_the_bench_never_gates(world) -> None:
     assert "terminal-bench.yml" not in (world.fake / "calls").read_text()
 
 
-@pytest.mark.parametrize("variant", ["one tool", "no key", "headless scenario", "different SHA"])
+@pytest.mark.parametrize("variant", ["one tool", "no key", "smoke instead of core", "different SHA"])
 def test_green_workflow_with_incomplete_agents_evidence_is_blocked(world, variant) -> None:
     expected = dict(ci_yml="11 completed success", terminal_yml="22 completed success",
                     weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
@@ -162,8 +162,8 @@ def test_green_workflow_with_incomplete_agents_evidence_is_blocked(world, varian
         page["total_count"] = 3
     elif variant == "no key":
         page["jobs"][0]["steps"][0]["conclusion"] = "skipped"
-    elif variant == "headless scenario":
-        page["jobs"][0]["steps"][0]["name"] = "An agent from clone to its work on the pages (core)"
+    elif variant == "smoke instead of core":
+        page["jobs"][0]["steps"][0]["name"] = "An agent from clone to its work on the pages (smoke, pinned)"
     else:
         page["jobs"][0]["head_sha"] = "a" * 40
     agents_file.write_text(json.dumps(page))

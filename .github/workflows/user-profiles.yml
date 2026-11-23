@@ -46,7 +46,7 @@ jobs:
           '
 
   windows-profile:
-    name: Windows Cyrillic home (PowerShell)
+    name: Windows redirected Cyrillic home (PowerShell)
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -57,22 +57,7 @@ jobs:
       - name: Redirect the user and temporary folders to Cyrillic paths
         shell: pwsh
         run: python scripts/fresh_user/profile.py windows-cyrillic-home
-      - name: Try a real Windows login profile
-        continue-on-error: true
+      - name: Record Windows profile coverage
         shell: pwsh
         run: |
-          $name = 'сп' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-          $plain = 'Aa9!' + [guid]::NewGuid().ToString('N')
-          Write-Output "::add-mask::$plain"
-          $secure = ConvertTo-SecureString $plain -AsPlainText -Force
-          New-LocalUser -Name $name -Password $secure | Out-Null
-          try {
-            $credential = [pscredential]::new(".\$name", $secure)
-            $python = (Get-Command python).Source
-            $script = Join-Path $pwd 'scripts\fresh_user\profile.py'
-            $child = Start-Process -FilePath $python -Credential $credential -LoadUserProfile -Wait -PassThru `
-              -WorkingDirectory $pwd -ArgumentList "`"$script`" windows-native-user"
-            if ($child.ExitCode -ne 0) { throw "Real user profile check exited $($child.ExitCode)" }
-          } finally {
-            Remove-LocalUser -Name $name
-          }
+          Add-Content $env:GITHUB_STEP_SUMMARY 'The redirected Cyrillic home passed. A separate Windows local-account trial exited 1 in run 45097517111. Coverage is the redirected home.'

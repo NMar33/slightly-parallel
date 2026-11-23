@@ -17,11 +17,13 @@ the checks still to build, and the limits the release notes must name.
    for that exact commit, on their first attempt. It checks that the
    required jobs and steps ran and prints the merge and tag commands.
    The terminal benchmark is a separate measurement.
-2. **Real agents.** Use the default `smoke` scenario in Agents. Claude
+2. **Real agents.** Use the default `core` scenario in Agents. Claude
    Code, Codex and OpenCode each run an interactive chat and a separate
    headless helper on Linux, macOS and Windows. The tests verify the
    operator's captured turns and a single board card, then verify capture
-   and an explicit task refusal for the helper.
+   and an explicit task refusal for the helper. Core also exercises
+   decision, rule, scan, checkup and done in the interactive chat.
+   The daily canary uses the shorter smoke scenario with the latest CLIs.
 3. **By hand on Windows and macOS** — the list below, about half an hour each.
 4. **A late fix** makes a new candidate: CI again, the failing case shown
    fixed, and the stages it touches run again.
