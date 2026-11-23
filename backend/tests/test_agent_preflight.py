@@ -2,6 +2,7 @@ import io
 import json
 from pathlib import Path
 from runpy import run_path
+from types import SimpleNamespace
 from urllib.error import HTTPError
 
 import pytest
@@ -107,3 +108,33 @@ def test_anthropic_credit_error_uses_the_api_envelope(monkeypatch):
     assert probe("dummy-ci-key", "claude-haiku-5-5", provider="anthropic") == {
         "http": 400, "type": "invalid_request_error", "message": message, "verdict": "L0-billing",
     }
+
+
+@pytest.mark.parametrize("key_display", ["sk-ant-api03-… TAIL5678", "sk-ant-*** abcd",
+                                        "SK-ANT-\x1b[31m…\x1b[0m\n  TAIL5678",
+                                        "sk-ant-api03-… TAIL\n5678", "sk-ant-api03-… TAIL567\n8",
+                                        "sk-ant-api03-\n… TAIL5678", "sk-ant-api0\n3-… TAIL5678"])
+def test_api_and_pty_reports_hide_masked_keys_without_the_environment_key(monkeypatch, key_display):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.syspath_prepend(str(SCRIPT.parents[1] / "fresh_user"))
+    from common import redact_diagnostics
+
+    redact_api = run_path(str(SCRIPT))["_redact"]
+    text = f"API key {key_display}\nLogin required"
+    expected = "API key [redacted]\nLogin required"
+    assert redact_diagnostics(text) == expected
+    assert redact_api(text, "") == expected
+
+
+def test_pty_wait_reports_the_api_credit_error_without_waiting_for_timeout(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(SCRIPT.parents[1] / "fresh_user"))
+    import interactive
+
+    captured = []
+    frame = "Your credit balance is\ntoo low to access the Anthropic API."
+    screen = SimpleNamespace(text="", rendered=frame, read=lambda: None, save_frame=captured.append)
+    monkeypatch.setattr(interactive.time, "sleep", lambda _: pytest.fail("billing failure should return immediately"))
+    verdict = "L4 provider error (L0-billing)"
+    assert interactive._wait_for_turn(screen, lambda: False, 30) == verdict
+    assert captured == [verdict]

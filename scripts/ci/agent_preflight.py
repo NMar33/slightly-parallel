@@ -5,12 +5,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
+import sys
 from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fresh_user"))
+from common import is_provider_billing_failure, redact_diagnostics  # noqa: E402
 
 REQUEST_TIMEOUT_S = 6
 MAX_RESPONSE_BYTES = 65536
@@ -25,7 +28,7 @@ def classify(status: int, error: dict) -> str:
     if status == 401:
         return "L0-auth"
     if ({kind, code} & {"insufficient_quota", "billing_hard_limit_reached"}
-            or re.search(r"\bcredit balance (?:is )?too low\b", message)):
+            or is_provider_billing_failure(message)):
         return "L0-billing"
     if status == 404 and (code == "model_not_found" or "model" in message):
         return "L0-model"
@@ -40,10 +43,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def _redact(value: object, key: str) -> str:
-    text = str(value or "")
-    if key:
-        text = text.replace(key, "[redacted]")
-    return re.sub(r"sk-[\w.*-]+", "[redacted]", text)[:2000]
+    return redact_diagnostics(str(value or ""), key)[:2000]
 
 
 def probe(key: str, model: str, *, provider: str) -> dict:

@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import scenario
 from agents import Tool, give_login, model_for
-from common import Report, Space, get, new_task_rows, redact_diagnostics, rows
+from common import Report, Space, get, is_provider_billing_failure, new_task_rows, redact_diagnostics, rows
 from screen import DOWN, ENTER, Screen
 
 POLL_S = 0.2
@@ -26,6 +26,15 @@ STARTUP_DIALOGS = {
     "codex": ((("trustthisfolder", "trustandcontinue"), "Codex project folder trusted"),),
     "opencode": (),
 }
+STARTUP_FAILURES = (
+    (("selectloginmethod:",), "Claude Code requires login"),
+    (("doyouwanttousethisapikey?",), "Claude Code API key confirmation"),
+    (("yes,itrustthisfolder",), "Claude Code project folder trust"),
+    (("choosethetextstyle",), "Claude Code theme selection"),
+    (("securitynotes:", "pressentertocontinue"), "Claude Code security notes"),
+    (("trustallandcontinue",), "Codex project hooks trust"),
+    (("trustthisfolder", "trustandcontinue"), "Codex project folder trust"),
+)
 
 
 @dataclass(frozen=True)
@@ -115,16 +124,34 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
 
 
 def _screen_tail(screen: Screen) -> str:
-    shown = screen.text.strip()
+    shown = screen.rendered.strip()
     safe = redact_diagnostics(shown or screen.history)
     return re.sub(r"[ \t]{3,}", " ", safe)[-900:]
 
 
 def _startup_failure(screen: Screen) -> str:
-    frame = redact_diagnostics(screen.rendered)
-    shown = re.sub(r"\s+", "", (frame + screen.text).lower())
-    reason = "Claude Code requires login" if "selectloginmethod:" in shown else "unknown screen"
-    return f"L1 {reason}:\n" + "\n".join(frame.splitlines()[:3])
+    frame = redact_diagnostics(screen.rendered or screen.text)
+    shown = re.sub(r"\s+", "", frame.lower())
+    reason = next((name for signature, name in STARTUP_FAILURES if all(word in shown for word in signature)),
+                  "unknown screen")
+    return f"L1 {reason}:\n{frame}"
+
+
+def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int) -> str:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        # Drain the PTY while the CLI is working so a full buffer cannot hold up the hook.
+        screen.read()
+        if is_provider_billing_failure(screen.rendered + "\n" + screen.text):
+            verdict = "L4 provider error (L0-billing)"
+            break
+        if check():
+            return ""
+        time.sleep(POLL_S)
+    else:
+        verdict = "turn timed out"
+    screen.save_frame(verdict)
+    return verdict
 
 
 def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, model: str, home: Path,
@@ -150,20 +177,6 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         args += ["--model", chosen]
     screen = Screen(args, folder, {**env, **tool.extra_env()}, trace=space.root / f"terminal-{tool.name}-{marker}.log")
 
-    def wait(check: Callable[[], bool]) -> bool:
-        # Drain the PTY while the CLI is working. Its screen can fill before the hook runs.
-        end = time.monotonic() + seconds
-        while time.monotonic() < end:
-            screen.read()
-            if check():
-                return True
-            if "credit balance too low" in screen.text.lower() or "insufficient_quota" in screen.text.lower():
-                screen.save_frame("provider error")
-                return False
-            time.sleep(POLL_S)
-        screen.save_frame("turn timed out")
-        return False
-
     def type_prompt(text: str) -> None:
         screen.send(text)
         screen.send(ENTER)
@@ -185,8 +198,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             captured[:] = [chat for chat in chats.glob(f"{tool.id_prefix}*/chat.md") if _recorded_turn(chat, prompt, reply)]
             return bool(captured)
 
+        error = _wait_for_turn(screen, find_chat, seconds)
         if not report.add(stage, "the chat contains the exact prompt and final reply in one turn",
-                          wait(find_chat) and len(captured) == 1, f"{captured or [chats]}\n{_screen_tail(screen)}"):
+                          not error and len(captured) == 1, f"{error}\n{captured or [chats]}\n{_screen_tail(screen)}"):
             return None
         chat = captured[0]
         agent = chat.parent.name
@@ -199,7 +213,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             return bool(session) and any(row.get("agent_id") == agent and row.get("session_ref") == session
                                          for row in rows(get(space, f"/api/project/{code}"), "agents"))
 
-        if not report.add(stage, "the project lists the interactive session", wait(project_has_session), agent):
+        error = _wait_for_turn(screen, project_has_session, seconds)
+        if not report.add(stage, "the project lists the interactive session", not error, f"{error}\n{agent}"):
             return None
         tool.session = str(session)
 
@@ -208,8 +223,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
         existing = {row.get("id") for row in cards()}
         type_prompt(task_prompt)
-        finished = wait(lambda: bool(_last_reply(chat, task_prompt)))
-        if not report.add(stage, "the operator task turn is captured to completion", finished, f"{agent}\n{_screen_tail(screen)}"):
+        error = _wait_for_turn(screen, lambda: bool(_last_reply(chat, task_prompt)), seconds)
+        if not report.add(stage, "the operator task turn is captured to completion", not error,
+                          f"{error}\n{agent}\n{_screen_tail(screen)}"):
             return None
         initial = new_task_rows(space, code, existing)
         match = [t for t in initial if t.get("agent_id") == agent and t.get("project") == code
@@ -227,8 +243,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     continue
                 message = scenario.step_prompt(space, state, step)
                 type_prompt(message)
-                finished = wait(lambda message=message: bool(_last_reply(chat, message)))
-                if not report.add(stage, f"{name}: the operator turn and answer are captured", finished, _screen_tail(screen)):
+                error = _wait_for_turn(screen, lambda message=message: bool(_last_reply(chat, message)), seconds)
+                if not report.add(stage, f"{name}: the operator turn and answer are captured", not error,
+                                  f"{error}\n{_screen_tail(screen)}"):
                     break
                 state.said.append(_last_reply(chat, message))
                 if name == "#scan":

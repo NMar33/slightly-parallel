@@ -138,7 +138,7 @@ def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch)
 
     suffix = "dummyVisibleTail1234"
     text = f"Claude Code API key sk-ant-… {suffix}\nDo you want to use this API key?"
-    assert _screen_tail(SimpleNamespace(text=text, history="")) == (
+    assert _screen_tail(SimpleNamespace(rendered=text, history="")) == (
         "Claude Code API key [redacted]\nDo you want to use this API key?"
     )
 
@@ -149,4 +149,16 @@ def test_claude_login_menu_is_named_in_startup_evidence(monkeypatch) -> None:
 
     menu = "Select login method:\n❯ Claude account\n  Anthropic Console\n  Cloud provider"
     screen = SimpleNamespace(rendered=menu, text=menu)
-    assert _startup_failure(screen) == "L1 Claude Code requires login:\n" + "\n".join(menu.splitlines()[:3])
+    assert _startup_failure(screen) == "L1 Claude Code requires login:\n" + menu
+
+
+@pytest.mark.parametrize(("menu", "name"), [
+    ("Do you want to use this API key?", "Claude Code API key confirmation"),
+    ("Trust this folder? Trust and continue", "Codex project folder trust"),
+    ("Review hooks\n❯ Trust all and continue", "Codex project hooks trust"),
+])
+def test_startup_evidence_names_known_dialogs(monkeypatch, menu, name) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import _startup_failure
+
+    assert _startup_failure(SimpleNamespace(rendered=menu, text=menu)) == f"L1 {name}:\n{menu}"

@@ -84,28 +84,52 @@ subprocess.run([sys.executable, '-c', sys.argv[1]], check=True)
                 pass
 
 
-def test_conpty_can_fall_back_after_gentle_and_forced_tree_shutdown(monkeypatch):
+@pytest.mark.parametrize("outcome", ["gentle", "child survived", "taskkill failed"])
+def test_conpty_checks_the_whole_tree_after_gentle_shutdown(monkeypatch, outcome):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import psutil
     import screen
 
     requests = []
     closed = []
+    killed = []
+    waits = []
+    child = SimpleNamespace(pid=83, kill=lambda: killed.append(83))
+    leader = SimpleNamespace(pid=82, children=lambda *, recursive: [child], kill=lambda: killed.append(82))
+
+    def wait(procs, *, timeout):
+        assert timeout == screen.PTY_CLOSE_TIMEOUT_S
+        waits.append([p.pid for p in procs])
+        if outcome == "taskkill failed":
+            return [], procs
+        if outcome == "child survived" and len(waits) == 1:
+            return [leader], [child]
+        return procs, []
 
     def run(args, *, capture_output, timeout):
         assert capture_output and timeout == screen.PTY_CLOSE_TIMEOUT_S
         requests.append(args)
-        if "/F" in args:
+        if "/F" in args and outcome == "taskkill failed":
             raise subprocess.TimeoutExpired(args, timeout)
-        return subprocess.CompletedProcess(args, 1)
+        return subprocess.CompletedProcess(args, int(outcome == "taskkill failed"))
 
     monkeypatch.setattr(screen, "WINDOWS", True)
+    monkeypatch.setattr(psutil, "Process", lambda pid: leader)
+    monkeypatch.setattr(psutil, "wait_procs", wait)
     monkeypatch.setattr(screen.subprocess, "run", run)
     instance = screen.Screen.__new__(screen.Screen)
     instance.proc = SimpleNamespace(pid=82, close=lambda *, force: closed.append(force))
     instance.close()
 
-    assert requests == [["taskkill", "/PID", "82", "/T"], ["taskkill", "/PID", "82", "/T", "/F"]]
-    assert closed == [True]
+    assert waits[0] == [83, 82]
+    assert requests[0] == ["taskkill", "/PID", "82", "/T"]
+    if outcome == "gentle":
+        assert len(requests) == 1 and len(waits) == 1 and killed == [] and closed == [False]
+    elif outcome == "child survived":
+        assert len(requests) == 1 and waits[1] == [83] and killed == [83] and closed == [False]
+    else:
+        assert requests[1] == ["taskkill", "/PID", "82", "/T", "/F"]
+        assert killed == [83, 82] and closed == [True]
 
 
 def test_trace_saves_the_complete_rendered_frame_after_terminal_redraw(monkeypatch, tmp_path):

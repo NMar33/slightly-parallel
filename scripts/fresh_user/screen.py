@@ -161,20 +161,7 @@ class Screen:
 
     def close(self) -> None:
         if WINDOWS:
-            command = ["taskkill", "/PID", str(self.proc.pid), "/T"]
-            stopped = False
-            for args in (command, [*command, "/F"]):
-                try:
-                    result = subprocess.run(args, capture_output=True, timeout=PTY_CLOSE_TIMEOUT_S)
-                    if result.returncode == 0:
-                        stopped = True
-                        break
-                except (OSError, subprocess.TimeoutExpired):
-                    pass
-            try:
-                self.proc.close(force=not stopped)
-            except OSError:
-                pass
+            self._close_windows()
             return
         if self.fd is None:
             return
@@ -216,6 +203,47 @@ class Screen:
             except OSError:
                 pass
             self.fd = None
+
+    def _close_windows(self) -> None:
+        import psutil
+
+        command = ["taskkill", "/PID", str(self.proc.pid), "/T"]
+
+        def taskkill(args: list[str]) -> None:
+            try:
+                subprocess.run(args, capture_output=True, timeout=PTY_CLOSE_TIMEOUT_S)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+        running = []
+        try:
+            root = psutil.Process(self.proc.pid)
+        except psutil.NoSuchProcess:
+            root = None
+        else:
+            try:
+                running = root.children(recursive=True)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            running.append(root)
+        if running:
+            taskkill(command)
+            _, running = psutil.wait_procs(running, timeout=PTY_CLOSE_TIMEOUT_S)
+        if running:
+            if root in running:
+                taskkill([*command, "/F"])
+            # Retain process identities from before the gentle stop. Children
+            # can survive an exited parent, so taskkill /T alone can miss them.
+            for process in running:
+                try:
+                    process.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            _, running = psutil.wait_procs(running, timeout=PTY_CLOSE_TIMEOUT_S)
+        try:
+            self.proc.close(force=bool(running))
+        except OSError:
+            pass
 
 
 def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 60) -> tuple[bool, str]:

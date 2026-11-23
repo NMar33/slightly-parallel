@@ -27,13 +27,24 @@ WINDOWS = os.name == "nt"
 #: report must never show it (stages.server_report).
 PLANTED_KEY = "sk-proj-freshPlanted7f3a91c0e5b24d68aa"
 _DIAGNOSTIC_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
-_DIAGNOSTIC_KEY = re.compile(r"(?i)\bsk-(?:ant-)?(?:[ \t]*(?:…+|\.{2,}|\*{2,})[ \t]*[\w-]{8,}|[^\s]+)")
+_DIAGNOSTIC_KEY = re.compile(
+    r"(?im)\bsk-(?:"
+    # A PTY can wrap the prefix, the marker, or the suffix onto another row.
+    r"(?:[a-z0-9]+(?:\r?\n[ \t]*[a-z0-9]+)?-)*[ \t]*(?:\r?\n[ \t]*)?"
+    r"(?:…+|\.{2,}|\*{2,})[ \t]*[\w-]*"
+    r"(?:\r?\n[ \t]*[\w-]+(?=[ \t]*(?:[│║][ \t]*)?$))?"
+    r"|[^\s]+)"
+)
+_BILLING_ERROR = re.compile(r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota)\b", re.IGNORECASE)
 
 
-def redact_diagnostics(text: str) -> str:
+def is_provider_billing_failure(text: str) -> bool:
+    return bool(_BILLING_ERROR.search(text))
+
+
+def redact_diagnostics(text: str, known_key: str = "") -> str:
     text = _DIAGNOSTIC_ANSI.sub("", text)
-    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
-        key = os.environ.get(name, "")
+    for key in (known_key, os.environ.get("ANTHROPIC_API_KEY", ""), os.environ.get("OPENAI_API_KEY", "")):
         if len(key) >= 20:
             text = text.replace(key, "[redacted]").replace(key[-20:], "[redacted]")
         elif key:
