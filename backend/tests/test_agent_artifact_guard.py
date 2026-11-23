@@ -59,3 +59,18 @@ def test_codex_redaction_only_key_is_removed_from_the_subprocess_environment(mon
     namespace = run_path(str(SCRIPT.parents[1] / "fresh_user" / "common.py"), run_name="__main__")
     assert namespace["redact_diagnostics"](key[-20:]) == "[redacted]"
     assert "SP_DIAGNOSTIC_OPENAI_KEY" not in namespace["os"].environ
+
+
+@pytest.mark.parametrize("prefix", ["▌", "›", ">", "⎿", "|"])
+def test_row_prefixes_do_not_hide_known_fragments_from_the_redactor_or_guard(monkeypatch, prefix):
+    run_path(str(SCRIPT))
+    from common import contains_diagnostic_key, redact_diagnostics
+
+    tail = "Q7aZ8wR9sZ1xK2yD3fB4"
+    key = "sk-ant-api03-fakeSecret" + tail
+    monkeypatch.setenv("ANTHROPIC_API_KEY", key)
+    for value in (key, tail):
+        for split in range(1, len(value)):
+            wrapped = f"{prefix} {value[:split]}\n{prefix} {value[split:]} keep"
+            assert contains_diagnostic_key(wrapped)
+            assert redact_diagnostics(wrapped) == f"{prefix} [redacted] keep"

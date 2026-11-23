@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -20,7 +21,7 @@ def summary_line(notes: dict) -> str:
 
 
 if __name__ == "__main__":
-    report = Path(".sp/fresh-user/report.json")
+    report = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".sp/fresh-user/report.json")
     notes = json.loads(report.read_text(encoding="utf-8")).get("notes", {}) if report.is_file() else {}
     line = summary_line(notes)
     print(line)

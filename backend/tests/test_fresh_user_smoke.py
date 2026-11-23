@@ -190,3 +190,15 @@ def test_claude_approves_the_ci_key_in_its_disposable_profile(monkeypatch, tmp_p
     monkeypatch.setattr(stages, "stray", lambda _: [])
     stages.cleanup(space, keep=True)
     assert not config.exists() and space.home.exists()
+
+
+def test_ci_reports_failed_check_details_only_in_the_report(monkeypatch, capsys):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from common import Report
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    report = Report()
+    report.add("startup", "CLI ready", False, "private diagnostic")
+    printed = capsys.readouterr().out
+    assert "CLI ready" in printed and "private diagnostic" not in printed
+    assert report.failed()[0].detail == "private diagnostic"

@@ -57,13 +57,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/machine/bootstrap.ps1 --tools "$env:TOOLS"
-      - name: The archive it made
+      - uses: actions/setup-python@v7
         if: always()
+        with:
+          python-version: "3.12"
+      - name: Check the Machine archive before upload
+        id: artifact-audit
+        if: always()
+        shell: bash
+        env:
+          AUDITED_ARCHIVES: ${{ runner.temp }}/sp-audited-machine
+        run: python scripts/ci/guard_agent_artifacts.py --machine .sp/archive "$AUDITED_ARCHIVES"
+      - name: The audited Machine archive
+        if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: machine-${{ matrix.os }}
-          # Only the archive: run.py cut the secrets out of it. The raw step
-          # logs are not uploaded; a bootstrap failure shows in this job's log.
-          path: .sp/archive/sp-machine-*.zip
+          path: ${{ runner.temp }}/sp-audited-machine/sp-machine-*.zip
           if-no-files-found: warn
           retention-days: 14

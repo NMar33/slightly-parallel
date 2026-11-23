@@ -7,6 +7,7 @@ import json
 import os
 import re
 import socket
+import string
 import time
 import urllib.error
 import urllib.request
@@ -28,6 +29,7 @@ WINDOWS = os.name == "nt"
 PLANTED_KEY = "sk-proj-freshPlanted7f3a91c0e5b24d68aa"
 # Codex needs this for redaction only. Consume it before any subprocess starts.
 _DIAGNOSTIC_OPENAI_KEY = os.environ.pop("SP_DIAGNOSTIC_OPENAI_KEY", "")
+_KEY_ALPHABET = frozenset(string.ascii_letters + string.digits + "_-")
 _DIAGNOSTIC_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _DIAGNOSTIC_KEY = re.compile(
     r"(?im)(?<![\w-])sk-(?:"
@@ -49,27 +51,28 @@ def is_provider_billing_failure(text: str) -> bool:
     return bool(_BILLING_ERROR.search(text))
 
 
-def _compact(text: str) -> tuple[str, list[int]]:
-    positions = [i for i, ch in enumerate(text) if not ch.isspace() and not "\u2500" <= ch <= "\u257f"]
-    return "".join(text[i] for i in positions), positions
-
-
-def _known_key_spans(compact: str, positions: list[int], known_key: str) -> list[tuple[int, int]]:
+def _known_key_spans(text: str, known_key: str) -> list[tuple[int, int]]:
     keys = {known_key, _DIAGNOSTIC_OPENAI_KEY, os.environ.get("ANTHROPIC_API_KEY", ""),
             os.environ.get("OPENAI_API_KEY", "")} - {""}
+    if not keys:
+        return []
+    positions = [i for i, ch in enumerate(text) if ch in _KEY_ALPHABET]
+    compact = "".join(text[i] for i in positions)
     spans = []
     for key in keys | {key[-20:] for key in keys if len(key) >= 20}:
-        start = compact.find(key)
+        needle = "".join(ch for ch in key if ch in _KEY_ALPHABET)
+        if not needle:
+            continue
+        start = compact.find(needle)
         while start != -1:
-            spans.append((positions[start], positions[start + len(key) - 1] + 1))
-            start = compact.find(key, start + len(key))
+            spans.append((positions[start], positions[start + len(needle) - 1] + 1))
+            start = compact.find(needle, start + len(needle))
     return spans
 
 
 def redact_diagnostics(text: str, known_key: str = "") -> str:
     text = _DIAGNOSTIC_ANSI.sub("", text)
-    compact, positions = _compact(text)
-    spans = _known_key_spans(compact, positions, known_key)
+    spans = _known_key_spans(text, known_key)
     spans.extend(match.span() for match in _DIAGNOSTIC_KEY.finditer(text))
     clean, end = [], 0
     for start, stop in sorted(spans):
@@ -82,8 +85,8 @@ def redact_diagnostics(text: str, known_key: str = "") -> str:
 
 def contains_diagnostic_key(text: str) -> bool:
     text = _DIAGNOSTIC_ANSI.sub("", text)
-    compact, positions = _compact(text)
-    return bool(_known_key_spans(compact, positions, "") or _NORMALISED_KEY_PREFIX.search(compact)
+    compact = "".join(ch for ch in text if not ch.isspace() and not "\u2500" <= ch <= "\u257f")
+    return bool(_known_key_spans(text, "") or _NORMALISED_KEY_PREFIX.search(compact)
                 or _DIAGNOSTIC_KEY.search(text))
 
 
@@ -103,11 +106,18 @@ class Report:
     checks: list[Check] = field(default_factory=list)
     notes: dict[str, Any] = field(default_factory=dict)
 
+    @staticmethod
+    def console_detail(detail: str) -> str:
+        if not detail:
+            return ""
+        return "See the audited report artifact." if os.environ.get("GITHUB_ACTIONS") == "true" else detail
+
     def add(self, stage: str, name: str, ok: bool, detail: str = "", soft: bool = False) -> bool:
+        stage, name = redact_diagnostics(stage), redact_diagnostics(name)
         detail = redact_diagnostics(detail)
         self.checks.append(Check(stage, name, bool(ok), detail, soft))
         mark = "ok  " if ok else ("soft" if soft else "FAIL")
-        print(f"  [{mark}] {name}" + (f" — {detail}" if detail and not ok else ""), flush=True)
+        print(f"  [{mark}] {name}" + (f" — {self.console_detail(detail)}" if detail and not ok else ""), flush=True)
         return bool(ok)
 
     def failed(self) -> list[Check]:

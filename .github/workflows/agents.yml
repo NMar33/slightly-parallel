@@ -208,22 +208,15 @@ jobs:
           OPENAI_API_KEY: ${{ matrix.tool != 'claude-code' && secrets.OPENAI_API_KEY || '' }}
           AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-agent
         run: python scripts/ci/guard_agent_artifacts.py .sp/fresh-user "$AUDITED_ARTIFACTS"
-      - name: The failed checks, with their detail (on failure)
+      - name: Where to find failure details
         if: failure() && steps.artifact-audit.outcome == 'success'
-        shell: python
-        run: |
-          import json
-          from pathlib import Path
-          report = Path(".sp/fresh-user/report.json")
-          if not report.is_file():
-              print("no report: the run stopped before the install stage ended")
-          else:
-              for c in json.loads(report.read_text(encoding="utf-8")).get("checks", []):
-                  if not c.get("ok"):
-                      print(f"[{c.get('stage')}] {c.get('name')}\n    {c.get('detail', '')[-4000:]}")
+        run: echo 'See the audited report and logs artifact for available failure details.'
       - name: Report CLI version and model cost
         if: always() && steps.artifact-audit.outcome == 'success'
-        run: python scripts/ci/agent_summary.py
+        shell: bash
+        env:
+          AUDITED_REPORT: ${{ runner.temp }}/sp-audited-agent/report.json
+        run: python scripts/ci/agent_summary.py "$AUDITED_REPORT"
       - name: Keep the audited report and logs
         if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7
