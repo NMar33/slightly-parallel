@@ -413,3 +413,32 @@ def test_codex_only_confirms_the_pending_canary_task(monkeypatch, server, operat
     keys = []
     assert _approve_task_write(SimpleNamespace(rendered=frame, send=keys.append), "sp-expected") is allowed
     assert keys == ([ENTER] if allowed else [])
+
+
+
+@pytest.mark.parametrize(("step", "tool", "arguments", "choice", "allowed"), [
+    ("#done", "task_done", "", "1. Allow Run the tool and continue", True),
+    ("#done", "task_done", '  proposals: [{"title":"extra"}]\n', "1. Allow", False),
+    ("#rule", "write_entry", '  lens: rule\n', "1. Allow", False),
+    ("#decision", "write_entry", '  lens: decision\n'
+     '  fields: {"decision": "Use pytest for the calculator tests."}\n', "1. Allow", True),
+    ("#decision", "write_entry", '  lens: decision\n'
+     '  fields: {"decision": "Use pytest for the calculator tests.", "x...\n', "1. Allow", False),
+    ("#decision", "write_entry", '  lens: decision\n'
+     '  fields: {"decision": "Use another runner."}\n', "1. Allow", False),
+    ("#done", "task_done", "", "3. Always allow", False),
+])
+def test_codex_core_only_confirms_the_exact_expected_mcp_call(
+    monkeypatch, step, tool, arguments, choice, allowed,
+):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import ENTER, _core_approval
+
+    frame = (f'Field 1/1\n  Allow the slightly-parallel MCP server to run tool "{tool}"?\n'
+             f'{arguments}\n  › {choice}\n  2. Allow for this session')
+    keys = []
+    check = _core_approval(SimpleNamespace(rendered=frame, send=keys.append), step)
+    assert bool(check()) is not allowed
+    assert keys == ([ENTER] if allowed else [])
+    if allowed:
+        assert check() == "" and keys == [ENTER]

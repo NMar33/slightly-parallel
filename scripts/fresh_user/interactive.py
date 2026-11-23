@@ -154,13 +154,16 @@ def _startup_failure(screen: Screen) -> str:
     return f"L1 {reason}:\n{frame}"
 
 
-def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int) -> str:
+def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int,
+                   *, approval: Callable[[], str] | None = None) -> str:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         # Drain the PTY while the CLI is working so a full buffer cannot hold up the hook.
         screen.read()
         if is_provider_billing_failure(screen.rendered + "\n" + screen.text):
             verdict = "L4 provider error (L0-billing)"
+            break
+        if approval is not None and (verdict := approval()):
             break
         if check():
             return ""
@@ -181,6 +184,53 @@ def _approve_task_write(screen: Screen, title: str) -> bool:
     screen.send(ENTER)
     return True
 
+
+
+# In the Codex approval overlay, the displayed parameters sit between the
+# tool question and the numbered choices. Reject a truncated preview.
+_MCP_APPROVAL = re.compile(
+    r'(?m)^ *Allow the (?P<server>[^\n]+?) MCP server to run tool "(?P<tool>[^"\n]+)"\? *$'
+    r'(?P<parameters>.*?)^ *› (?P<choice>[1-4])\. [^\n]+', re.DOTALL,
+)
+
+
+def _core_approval(screen: Screen, step: str) -> Callable[[], str]:
+    expected = {
+        "#decision": ("write_entry", {
+            "lens": "decision",
+            "fields": {"decision": scenario.DECISION_TEXT},
+        }),
+        "#done": ("task_done", {}),
+    }.get(step)
+    handled = ""
+
+    def check() -> str:
+        nonlocal handled
+        match = _MCP_APPROVAL.search(screen.rendered)
+        if match is None or match.group() == handled:
+            return ""
+        if (not expected or handled or match["server"] != "slightly-parallel"
+                or match["tool"] != expected[0] or match["choice"] != "1"
+                or not re.search(r"(?m)^ *› 1\. Allow\b", match.group())):
+            return "unexpected Codex MCP approval"
+        arguments = {}
+        for line in match["parameters"].splitlines():
+            if not line.strip():
+                continue
+            key, sep, value = line.strip().partition(": ")
+            if not sep or key in arguments:
+                return "unreadable Codex MCP approval arguments"
+            try:
+                arguments[key] = json.loads(value) if key == "fields" else value
+            except ValueError:
+                return "unreadable Codex MCP approval arguments"
+        if arguments != expected[1]:
+            return "unexpected Codex MCP approval arguments"
+        handled = match.group()
+        screen.send(ENTER)
+        return ""
+
+    return check
 
 def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, model: str, home: Path,
           seconds: int, *, core: bool = False, one_turn: bool = False) -> SmokeResult | None:
@@ -310,8 +360,16 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 if name == "#task":
                     continue
                 message = scenario.step_prompt(space, state, step)
+                approval = None
+                if tool.name == "codex":
+                    if name == "#decision":
+                        message += ' Use Slightly Parallel write_entry with lens decision and only the decision field.'
+                    elif name == "#done":
+                        message += " Call Slightly Parallel task_done with no arguments once. Report the result in chat."
+                    approval = _core_approval(screen, name)
                 type_prompt(message)
-                error = _wait_for_turn(screen, lambda message=message: bool(_last_reply(chat, message)), seconds)
+                error = _wait_for_turn(screen, lambda message=message: bool(_last_reply(chat, message)), seconds,
+                                       approval=approval)
                 if not report.add(stage, f"{name}: the operator turn and answer are captured", not error,
                                   f"{error}\n{_screen_tail(screen)}"):
                     break
