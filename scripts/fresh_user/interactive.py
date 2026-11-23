@@ -12,7 +12,15 @@ from uuid import uuid4
 
 import scenario
 from agents import Tool, give_login, model_for
-from common import Report, Space, get, is_provider_billing_failure, new_task_rows, redact_diagnostics, rows
+from common import (
+    Report,
+    Space,
+    get,
+    is_provider_billing_failure,
+    new_task_rows,
+    redact_diagnostics,
+    rows,
+)
 from screen import DOWN, ENTER, Screen
 
 POLL_S = 0.2
@@ -71,7 +79,8 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
     ready_since = None
     while time.monotonic() < deadline:
         screen.read()
-        shown = re.sub(r"\s+", "", screen.text.lower())
+        frame = getattr(screen, "rendered", "") or screen.text
+        shown = re.sub(r"\s+", "", frame.lower())
         trusted = codex_config is None or (codex_config.is_file() and
                                             "trusted_hash" in codex_config.read_text(encoding="utf-8"))
         if tool.name == "claude-code" and "selectloginmethod:" in shown:
@@ -108,7 +117,7 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
                              if all(word in shown for word in signature)), None):
             screen.send(ENTER)
             answered.append(dialog)
-        elif _composer(tool.name, screen.text, shown):
+        elif _composer(tool.name, frame, shown):
             # The composer can draw before a trust modal arrives. For a new
             # Codex home also require the CLI to have persisted hook trust.
             if trusted:

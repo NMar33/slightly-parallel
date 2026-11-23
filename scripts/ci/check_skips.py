@@ -40,6 +40,7 @@ ALLOWED: list[tuple[str, set[str]]] = [
     (r"restore needs tarfile's data filter", ALL),
     (r"the real CLI runs in its own CI job", ALL),   # tests/test_real_cli.py, job real-cli   # Python before 3.12
     (r"the real Codex runs in its own CI job", ALL),   # tests/test_real_codex.py, job real-cli
+    (r"the pinned interactive CLI CI job owns this check", ALL),  # test_interactive_agents.py
     # Probes of the real stores in this user's home (test_injected_prompts.py,
     # test_queued_messages.py): they read the newest transcript the installed
     # Claude Code, Codex or OpenCode wrote, to catch a format change the

@@ -202,3 +202,15 @@ def test_ci_reports_failed_check_details_only_in_the_report(monkeypatch, capsys)
     printed = capsys.readouterr().out
     assert "CLI ready" in printed and "private diagnostic" not in printed
     assert report.failed()[0].detail == "private diagnostic"
+
+
+def test_onboarding_uses_the_rendered_composer_after_the_menu_is_gone(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    from agents import tools
+
+    terminal = SimpleNamespace(text="select login method:", rendered="Claude Code\n❯\n? for shortcuts",
+                               read=lambda: None)
+    ticks = iter([0, 0, 0, 1, 1])
+    monkeypatch.setattr(interactive, "time", SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda _: None))
+    assert interactive._ready(terminal, tools()["claude-code"], 10, [])

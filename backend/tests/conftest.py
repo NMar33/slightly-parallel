@@ -29,7 +29,7 @@ import tempfile
 # sets it with monkeypatch. test_clean_environment.py keeps this.
 TEST_KNOBS = frozenset({
     "SP_TEST_CLOCK", "SP_CRASH_SEED", "SP_HYPOTHESIS", "SP_REAL_CLI",
-    "SP_REAL_CODEX", "SP_GOLDEN_WRITE", "SP_UPDATE_GOLDEN",
+    "SP_REAL_CODEX", "SP_REAL_INTERACTIVE", "SP_INTERACTIVE_ARTIFACTS", "SP_GOLDEN_WRITE", "SP_UPDATE_GOLDEN",
 })
 #: Variables the backend or its hooks read that a developer's shell carries.
 LEAKED_NAMES = frozenset({

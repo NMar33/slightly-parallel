@@ -16,19 +16,21 @@ import json
 import sys
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sp_stub_http import LoggedStubHandler  # noqa: E402
+import stub_agent_turn
+from sp_stub_http import LoggedStubHandler
 
 WRITE = "mcp__slightly-parallel__write_entry"
 DECISION = {"lens": "decision", "fields": {"decision": "chose the stub model for the CLI test", "why": "no tokens"}}
 REPLY = "Logged the decision."
 
 
-def _events(model: str, block: dict, delta: dict, stop: str) -> list[tuple[str, dict]]:
+def _events(model: str, message_id: str, block: dict, delta: dict, stop: str) -> list[tuple[str, dict]]:
     return [
         ("message_start", {"type": "message_start", "message": {
-            "id": "msg_stub", "type": "message", "role": "assistant", "model": model, "content": [],
+            "id": message_id, "type": "message", "role": "assistant", "model": model, "content": [],
             "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 10, "output_tokens": 1}}}),
         ("content_block_start", {"type": "content_block_start", "index": 0, "content_block": block}),
         ("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": delta}),
@@ -40,6 +42,7 @@ def _events(model: str, block: dict, delta: dict, stop: str) -> list[tuple[str, 
 
 
 class Handler(LoggedStubHandler):
+    interactive = False
     def do_GET(self) -> None:
         self._note({"method": "GET", "path": self.path})
         self.send_response(404)
@@ -55,24 +58,30 @@ class Handler(LoggedStubHandler):
         if not self.path.startswith("/v1/messages") or "count_tokens" in self.path:
             return self._json({"input_tokens": 10})
         model = str(req.get("model") or "")
-        if WRITE in tools and not results:
-            block = {"type": "tool_use", "id": "toolu_stub1", "name": WRITE, "input": {}}
-            delta = {"type": "input_json_delta", "partial_json": json.dumps(DECISION)}
-            whole = {**block, "input": DECISION}
+        marker = uuid4().hex
+        tool = stub_agent_turn.choose(req.get("messages") or [], tools) if self.interactive else (
+            (WRITE, DECISION) if WRITE in tools and not results else None
+        )
+        if tool:
+            name, arguments = tool
+            block = {"type": "tool_use", "id": "toolu_" + marker, "name": name, "input": {}}
+            delta = {"type": "input_json_delta", "partial_json": json.dumps(arguments)}
+            whole = {**block, "input": arguments}
             stop = "tool_use"
         else:
             block = {"type": "text", "text": ""}
-            delta = {"type": "text_delta", "text": REPLY}
-            whole = {"type": "text", "text": REPLY}
+            reply = stub_agent_turn.REPLY if self.interactive else REPLY
+            delta = {"type": "text_delta", "text": reply}
+            whole = {"type": "text", "text": reply}
             stop = "end_turn"
         if not req.get("stream"):
-            return self._json({"id": "msg_stub", "type": "message", "role": "assistant", "model": model,
+            return self._json({"id": "msg_" + marker, "type": "message", "role": "assistant", "model": model,
                                "content": [whole], "stop_reason": stop, "stop_sequence": None,
                                "usage": {"input_tokens": 10, "output_tokens": 5}})
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
-        for name, data in _events(model, block, delta, stop):
+        for name, data in _events(model, "msg_" + marker, block, delta, stop):
             self.wfile.write(f"event: {name}\ndata: {json.dumps(data)}\n\n".encode())
             self.wfile.flush()
 
@@ -85,9 +94,9 @@ class Handler(LoggedStubHandler):
         self.wfile.write(body)
 
 
-def serve(port: int, log_file: str) -> ThreadingHTTPServer:
-    Handler.log_file = log_file
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+def serve(port: int, log_file: str, *, interactive: bool = False) -> ThreadingHTTPServer:
+    handler = type("MessagesHandler", (Handler,), {"log_file": log_file, "interactive": interactive})
+    return ThreadingHTTPServer(("127.0.0.1", port), handler)
 
 
 if __name__ == "__main__":
