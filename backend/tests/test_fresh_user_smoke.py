@@ -675,6 +675,29 @@ def test_codex_helper_requires_the_error_flag_and_number_in_structured_stderr(
     assert _mcp_refused(Space(tmp_path, 1), agent, reason) is refused
 
 
+def test_helper_refusal_requests_a_valid_task_payload_first(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import helper_smoke
+    from common import Report, Space
+
+    prompts = []
+
+    def say(prompt, *_):
+        prompts.append(prompt)
+        return SimpleNamespace(ok=False, error="probe ended after collecting the prompt")
+
+    monkeypatch.setattr(helper_smoke, "give_login", lambda *_: True)
+    monkeypatch.setattr(helper_smoke, "get", lambda *_: {"tasks": []})
+    tool = SimpleNamespace(name="codex", installed=lambda: True, say=say)
+    space = Space(tmp_path, 1)
+    helper_smoke.helper_smoke(space, Report(), "calc", space.sample, tool, "stub", space.home, 1, "codex-operator")
+    prompt, = prompts
+    payload = json.JSONDecoder().raw_decode(prompt[prompt.index("{"):])[0]
+    assert payload == {"title": prompt.split()[1].rstrip("."), "description": "Verify that a helper cannot create a task."}
+
+
 
 def test_codex_rule_approval_waits_for_the_new_saved_rule(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))

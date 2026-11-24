@@ -77,8 +77,9 @@ def helper_smoke(space: Space, report: Report, code: str, folder: Path, tool: To
 
     existing = task_ids()
     title = f"sp-helper-{uuid4().hex[:12]}"
-    prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool with lens task, title {title}, "
-              "and text describing a test. Report its result exactly.")
+    fields = {"title": title, "description": "Verify that a helper cannot create a task."}
+    prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool with lens task and exactly these fields: "
+              f"{json.dumps(fields)}. Report its result exactly.")
     turn = tool.say(prompt, model_for(tool.name, model), space, env, seconds, folder)
     if not report.add(stage, "the headless helper answers", turn.ok, turn.error):
         return
