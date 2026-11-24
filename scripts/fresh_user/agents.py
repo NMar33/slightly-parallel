@@ -17,6 +17,7 @@ from pathlib import Path
 from common import Space
 
 VERSION_TIMEOUT_S = 15
+OPENCODE_SDK_INSTALL_TIMEOUT_S = 60
 
 
 @dataclass
@@ -228,6 +229,24 @@ class OpenCode(Tool):
         # overwrite OpenCode's Windows PTY before the composer is detected.
         return {"OPENCODE_DISABLE_AUTOUPDATE": "1", "NODE_NO_WARNINGS": "1"}
 
+    def prepare_interactive(self, space: Space, folder: Path, env: dict[str, str]) -> None:
+        """Install the SDK before the CLI starts drawing, in the disposable profile only."""
+        npm = shutil.which("npm")
+        if not npm:
+            raise RuntimeError("OpenCode's plugin SDK requires npm")
+        package = f"@opencode-ai/plugin@{self.version()}"
+        config = space.home / ".config"
+        for prefix in (config / "opencode", folder / ".opencode"):
+            prefix.mkdir(parents=True, exist_ok=True)
+            subprocess.run([npm, "install", "--no-audit", "--no-fund", "--ignore-scripts", "--prefix", str(prefix), package],
+                           env=space.env(), check=True, timeout=OPENCODE_SDK_INSTALL_TIMEOUT_S, capture_output=True)
+        exclude = folder / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a", encoding="utf-8") as ignored:
+            ignored.write("\n/.opencode/node_modules/\n/.opencode/package.json\n/.opencode/package-lock.json\n")
+        env.update(XDG_CONFIG_HOME=str(config), XDG_DATA_HOME=str(space.home / ".local" / "share"),
+                   XDG_CACHE_HOME=str(space.home / ".cache"), XDG_STATE_HOME=str(space.home / ".local" / "state"))
+
     def stdin(self, message: str) -> str | None:
         return message
 
@@ -298,15 +317,12 @@ def tools() -> dict[str, Tool]:
 
 #: The model each tool is given when the run says "sonnet" (the default).
 def model_for(tool: str, model: str) -> str:
-    """The model a tool runs on: --model mapped for it; Codex takes
-    CODEX_MODEL when set (the repository variable the Agents and Machine
-    workflows pass), its own default otherwise."""
+    """Map --model unless the workflow pins this particular CLI's model."""
     import os
-    if tool == "codex" and os.environ.get("CODEX_MODEL"):
-        return os.environ["CODEX_MODEL"]
-    return MODELS[tool].get(model, model)
+    return os.environ.get(MODEL_ENV[tool]) or MODELS[tool].get(model, model)
 
 
+MODEL_ENV = {"claude-code": "SP_CLAUDE_MODEL", "codex": "CODEX_MODEL", "opencode": "SP_OPENCODE_MODEL"}
 MODELS = {
     "claude-code": {"sonnet": "sonnet", "haiku": "haiku", "opus": "opus"},
     "codex": {"sonnet": "", "haiku": "", "opus": ""},          # Codex runs its own default model
@@ -318,7 +334,10 @@ def give_login(tool: Tool, real_home: Path, space: Space, env: dict[str, str]) -
     """Let the tool in the throwaway home answer as the person running the
     test. Returns how, or '' when there is no login to give."""
     import os
-    for key in tool.login_env:
+    login_keys = tool.login_env
+    if tool.name == "opencode" and os.environ.get(MODEL_ENV[tool.name], "").startswith("openai/"):
+        login_keys = ("OPENAI_API_KEY",)
+    for key in login_keys:
         if os.environ.get(key):
             env[key] = os.environ[key]
             if tool.name == "claude-code" and key == "ANTHROPIC_API_KEY":

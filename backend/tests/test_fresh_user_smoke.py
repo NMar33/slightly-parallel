@@ -152,6 +152,8 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(mo
 
 @pytest.mark.parametrize("windows", [True, False])
 def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeypatch, tmp_path, windows):
+    import json
+
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import interactive
     import screen
@@ -162,6 +164,7 @@ def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeyp
     monkeypatch.setattr(tool, "installed", lambda: True)
     monkeypatch.setattr(interactive, "give_login", lambda *_: True)
     monkeypatch.setattr(screen, "WINDOWS", windows)
+    monkeypatch.setattr(interactive, "WINDOWS", windows, raising=False)
     monkeypatch.setattr(interactive, "_ready", lambda *_: False)
     args = []
 
@@ -170,9 +173,15 @@ def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeyp
         return SimpleNamespace(rendered="", text="", save_frame=lambda _: None, close=lambda: None)
 
     monkeypatch.setattr(interactive, "Screen", fake_screen)
-    interactive.smoke(Space(tmp_path, 8124), Report(), "calc", tmp_path, tool, "stub", tmp_path, 1)
+    folder = tmp_path / "sample ü"
+    folder.mkdir()
+    interactive.smoke(Space(tmp_path, 8124), Report(), "calc", folder, tool, "stub", tmp_path, 1, core=True)
     assert ('windows.sandbox="unelevated"' in args) is windows
     assert "--dangerously-bypass-approvals-and-sandbox" not in args
+    if windows:
+        assert args[args.index("--cd") + 1] == str(folder.resolve())
+        entry = next(arg for arg in args if arg.startswith("sandbox_workspace_write.writable_roots="))
+        assert json.loads(entry.split("=", 1)[1]) == [str(folder.resolve())]
 
 
 def test_upgrade_stage_without_its_requested_base_is_red(monkeypatch, tmp_path) -> None:
@@ -220,6 +229,7 @@ def test_decision_requires_a_new_entry_matching_the_operator_choice(monkeypatch,
 
 def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch, tmp_path):
     import json
+    import subprocess
 
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import interactive
@@ -227,15 +237,21 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     from common import Space
 
     space = Space(tmp_path, 1)
+    space.sample.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=space.sample, check=True)
     for cli in ("codex", "opencode", "claude-code"):
-        state = scenario.State("calc", tmp_path, scenario.tools()[cli])
+        state = scenario.State("calc", space.sample, scenario.tools()[cli])
         prompt = interactive._operator_core_prompt(space, state, scenario.SCAN)
         assert prompt.startswith("#scan ") and "Call scan_material without arguments" in prompt
         assert "No other MCP calls" in prompt
-        plan = json.loads((tmp_path / "scan-payloads.json").read_text(encoding="utf-8"))
+        directory = tmp_path if cli == "codex" else space.sample
+        fixture = directory / "scan-payloads.json"
+        assert json.dumps(str(fixture)) in prompt
+        plan = json.loads(fixture.read_text(encoding="utf-8"))
         assert list(plan) == ["scan", "file", "architecture"]
         assert plan["scan"]["files_n"] == "COUNTER"
         assert plan["architecture"]["trigger_id"] == "SCAN_ID"
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
 
 
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:
@@ -265,6 +281,44 @@ def test_opencode_keeps_the_pinned_cli_without_updater_output(monkeypatch):
     env = tools()["opencode"].extra_env()
     assert env.get("OPENCODE_DISABLE_AUTOUPDATE") == "1"
     assert env.get("NODE_NO_WARNINGS") == "1"
+
+
+def test_machine_uses_the_selected_cheap_models_and_the_right_provider_login(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from agents import give_login, model_for, tools
+    from common import Space
+
+    monkeypatch.setenv("SP_CLAUDE_MODEL", "claude-haiku-5-5")
+    monkeypatch.setenv("CODEX_MODEL", "gpt-6-luna")
+    monkeypatch.setenv("SP_OPENCODE_MODEL", "openai/gpt-6-luna")
+    assert model_for("claude-code", "haiku") == "claude-haiku-5-5"
+    assert model_for("codex", "haiku") == "gpt-6-luna"
+    assert model_for("opencode", "haiku") == "openai/gpt-6-luna"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-anthropic")
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-openai")
+    env = {}
+    assert give_login(tools()["opencode"], tmp_path, Space(tmp_path, 1), env) == "$OPENAI_API_KEY"
+    assert env == {"OPENAI_API_KEY": "synthetic-openai"}
+
+
+def test_opencode_prepares_the_pinned_plugin_before_the_interactive_tty(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import agents
+    from common import Space
+
+    tool = agents.tools()["opencode"]
+    monkeypatch.setattr(tool, "version", lambda: "1.19.3")
+    monkeypatch.setattr(agents.shutil, "which", lambda _: "npm")
+    calls = []
+    monkeypatch.setattr(agents.subprocess, "run", lambda args, **_: calls.append(args))
+    space = Space(tmp_path, 1)
+    env = {}
+    tool.prepare_interactive(space, space.sample, env)
+    for directory, command in zip((space.home / ".config" / "opencode", space.sample / ".opencode"), calls, strict=True):
+        assert command[-2:] == [str(directory), "@opencode-ai/plugin@1.19.3"]
+    assert env["XDG_DATA_HOME"] == str(space.home / ".local" / "share")
+    excludes = (space.sample / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert "/.opencode/node_modules/" in excludes
 
 
 @pytest.mark.parametrize(("menu", "name"), [

@@ -44,7 +44,9 @@ jobs:
       TOOLS: ${{ (inputs.full || matrix.os == 'ubuntu-latest') && 'claude-code,codex,opencode' || 'claude-code' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      CODEX_MODEL: ${{ vars.CODEX_MODEL }}      # empty: Codex's own default
+      SP_CLAUDE_MODEL: claude-haiku-5-5
+      CODEX_MODEL: gpt-6-luna
+      SP_OPENCODE_MODEL: openai/gpt-6-luna
     steps:
       - uses: actions/checkout@v7
         with:
@@ -69,6 +71,11 @@ jobs:
         env:
           AUDITED_ARCHIVES: ${{ runner.temp }}/sp-audited-machine
         run: python scripts/ci/guard_agent_artifacts.py --machine .sp/archive "$AUDITED_ARCHIVES"
+      - name: Report CLI version and model cost
+        if: always() && steps.artifact-audit.outcome == 'success'
+        env:
+          SP_AGENT_COST_LIMIT_USD: '1.00'
+        run: python scripts/ci/agent_summary.py .sp/fresh-user/report.json
       - name: The audited Machine archive
         if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7

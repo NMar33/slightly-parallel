@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 import threading
 from contextlib import ExitStack
@@ -108,24 +107,14 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             args += ["--session-id", tool.session, "--mcp-config", ".mcp.json", "--permission-mode", "default",
                      "--allowedTools", "mcp__slightly-parallel"]
         else:
-            # Install the SDK that OpenCode otherwise fetches during TUI boot.
-            npm = shutil.which("npm")
-            assert npm, "OpenCode's plugin SDK requires npm"
-            config_root = space.home / ".config"
-            for directory in (config_root / "opencode", space.sample / ".opencode"):
-                directory.mkdir(parents=True, exist_ok=True)
-                subprocess.run([npm, "install", "--no-audit", "--no-fund", "--ignore-scripts",
-                                "--prefix", str(directory), f"@opencode-ai/plugin@{tool.version()}"],
-                               env=space.env(), check=True, timeout=60, capture_output=True)
+            tool.prepare_interactive(space, space.sample, env)
             model = "anthropic/claude-sonnet-4-5"
             path = space.sample / "opencode.json"
             config = json.loads(path.read_text(encoding="utf-8"))
             config.update(provider={"anthropic": {"options": {"baseURL": f"{endpoint}/v1"}}},
                           enabled_providers=["anthropic"], autoupdate=False, model=model, small_model=model)
             path.write_text(json.dumps(config), encoding="utf-8")
-            env.update(ANTHROPIC_API_KEY="sp-local-model-test-credential", OPENCODE_DISABLE_MODELS_FETCH="1",
-                       XDG_CONFIG_HOME=str(config_root), XDG_DATA_HOME=str(space.home / ".local/share"),
-                       XDG_CACHE_HOME=str(space.home / ".cache"), XDG_STATE_HOME=str(space.home / ".local/state"))
+            env.update(ANTHROPIC_API_KEY="sp-local-model-test-credential", OPENCODE_DISABLE_MODELS_FETCH="1")
             env.update(tool.extra_env())
             args += ["--model", model]
 
@@ -263,6 +252,10 @@ def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
             "write_entry", "write_entry", "checkup", "task_done", "task_report",
         ]
         assert all(row["result"] == "accepted" for row in messages)
+        task = messages[0]["request"]["params"]["arguments"]
+        assert task["lens"] == "task"
+        assert set(task["fields"]) == {"title", "description", "tags"}
+        assert task["fields"]["description"] == "Verify the disposable calculator task is recorded."
         if output := os.environ.get("SP_INTERACTIVE_ARTIFACTS"):
             target = Path(output) / "codex-core"
             target.mkdir(parents=True, exist_ok=True)

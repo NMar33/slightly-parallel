@@ -224,7 +224,7 @@ def test_tmux_mouse_bindings_select_without_copying(tmp_path: Path) -> None:
     root = tmp_path / "data"
     root.mkdir()
     try:
-        termlib.tmux(root, "new-session", "-d", "-s", "mk-probe", "printf 'selected text\\n'; sleep 30")
+        termlib.tmux(root, "new-session", "-d", "-s", "mk-probe", "sleep 1; printf 'selected text\\n'; exec cat")
         for table in ("copy-mode", "copy-mode-vi"):
             keys = termlib.tmux(root, "list-keys", "-T", table).stdout
             assert "MouseDragEnd1Pane" not in keys
@@ -232,6 +232,7 @@ def test_tmux_mouse_bindings_select_without_copying(tmp_path: Path) -> None:
             assert all("copy-pipe" not in line for line in keys.splitlines()
                        if "DoubleClick1Pane" in line or "TripleClick1Pane" in line)
         assert not termlib.copy_selection(root, "probe")
+        assert "selected text" in _wait_screen(root, "probe", "selected text")
         termlib.tmux(root, "copy-mode", "-t", "mk-probe")
         for key in ("history-top", "start-of-line", "begin-selection", "end-of-line"):
             termlib.tmux(root, "send-keys", "-X", "-t", "mk-probe", key)

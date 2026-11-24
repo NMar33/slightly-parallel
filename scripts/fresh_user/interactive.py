@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,10 +13,11 @@ from uuid import uuid4
 
 import scenario
 import core_mcp
-from agents import Tool, give_login, model_for
+from agents import OpenCode, Tool, give_login, model_for
 from common import (
     Report,
     Space,
+    WINDOWS,
     chatstore,
     get,
     is_provider_billing_failure,
@@ -179,7 +181,17 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
     message = scenario.step_prompt(space, state, step)
     if step[0] != "#scan":
         return message
-    spec = space.root / "scan-payloads.json"
+    filename = "scan-payloads.json"
+    if state.tool.name == "codex":
+        spec = space.root / filename
+    else:
+        # OpenCode asks before reading an external directory. Keep its test
+        # inputs in the disposable project, outside the scan's Git changes.
+        spec = state.folder / filename
+        exclude = state.folder / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a", encoding="utf-8") as ignored:
+            ignored.write(f"\n/{filename}\n")
     spec.write_text(json.dumps({
         "scan": core_mcp.scan_fields(dict.fromkeys(("files_n", "lines_add", "lines_del", "decisions_n"), "COUNTER")),
         "file": core_mcp.file_fields("SCAN_ID"),
@@ -310,6 +322,12 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     env = space.env()
     if not report.add(stage, "the CLI has a login", bool(offline_provider or give_login(tool, home, space, env))):
         return None
+    if WINDOWS and isinstance(tool, OpenCode):
+        try:
+            tool.prepare_interactive(space, folder, env)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            report.add(stage, "L1 the pinned OpenCode plugin is ready", False, type(error).__name__)
+            return None
 
     if one_turn and tool.name == "claude-code":
         # Setup made this scratch project. The full PTY tests exercise the
@@ -354,6 +372,12 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                  "-c", f'{prefix}.default_tools_approval_mode="approve"', "-c", "disable_paste_burst=true",
                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                  "-c", "sandbox_workspace_write.exclude_slash_tmp=true"]
+        if WINDOWS:
+            # ConPTY's process and Codex's sandboxed shell resolve a scratch
+            # directory differently. Give both the exact disposable project.
+            project = str(folder.resolve())
+            args += ["--cd", project, "-c", 'sandbox_mode="workspace-write"',
+                     "-c", f"sandbox_workspace_write.writable_roots={json.dumps([project])}"]
     if offline_provider:
         args += ["-c", 'model_provider="sp_stub"', "-c", 'model_providers.sp_stub.name="local stub"',
                  "-c", f'model_providers.sp_stub.base_url={json.dumps(offline_provider)}',
@@ -430,7 +454,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         if not one_turn:
             existing = {row.get("id") for row in cards()}
             if policy:
-                fields = {"title": title, "tags": ["ag_followup"]}
+                fields = {"title": title, "description": "Verify the disposable calculator task is recorded.",
+                          "tags": ["ag_followup"]}
                 policy.start("#task", [["write_entry", {"lens": "task", "fields": fields}]])
                 task_prompt += " Pass exactly these fields and nothing else: " + json.dumps(fields)
             type_prompt(task_prompt)

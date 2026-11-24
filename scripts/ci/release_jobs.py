@@ -11,6 +11,7 @@ AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
 AGENTS_PREFLIGHT = "Check provider access, authentication and model errors"
 OFFLINE_CORE = "Run full Codex core through the guarded MCP on a local stub"
 INTERACTIVE_STUB = "Capture a real PTY turn, task, decision, rule and done on a local stub"
+MACHINE_COST = "Report CLI version and model cost"
 
 
 def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
@@ -21,7 +22,7 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
             **{f"{tool} ({os})": (AGENTS_CORE,) for tool in TOOLS for os in SYSTEMS},
         }
     if workflow == "machine.yml":
-        return {f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS",)
+        return {f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS", MACHINE_COST)
                 for os in SYSTEMS}
     if workflow == "terminal.yml":
         return {

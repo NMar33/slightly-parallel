@@ -154,6 +154,20 @@ def test_a_candidate_without_an_agents_run_cannot_release(world) -> None:
     assert "git tag" not in r.stdout
 
 
+def test_machine_cannot_release_without_measuring_all_model_costs(world) -> None:
+    expected = dict(ci_yml="11 completed success", terminal_yml="22 completed success",
+                    weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+    assert world(**expected).returncode == 0
+    machine = world.fake / "jobs_55"
+    page = json.loads(machine.read_text())
+    job = page["jobs"][0]
+    job["steps"] = [step for step in job["steps"] if step["name"] != "Report CLI version and model cost"]
+    machine.write_text(json.dumps(page))
+    r = world(**expected)
+    assert r.returncode == 1
+    assert "Report CLI version and model cost" in r.stderr
+
+
 def test_the_bench_never_gates(world) -> None:
     r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
               weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success",
