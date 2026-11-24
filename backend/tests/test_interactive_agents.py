@@ -259,7 +259,7 @@ def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
         messages = [json.loads(line) for line in policy.trace.read_text(encoding="utf-8").splitlines()]
         assert [row["request"]["params"]["name"] for row in messages] == [
             "write_entry", "write_entry", "interpret", "scan_material", "write_entry",
-            "write_entry", "write_entry", "checkup", "task_done",
+            "write_entry", "write_entry", "checkup", "task_done", "task_report",
         ]
         assert all(row["result"] == "accepted" for row in messages)
         if output := os.environ.get("SP_INTERACTIVE_ARTIFACTS"):

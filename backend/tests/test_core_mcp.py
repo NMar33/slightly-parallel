@@ -79,3 +79,13 @@ def test_plan_checks_entire_scan_arguments_after_the_trigger_is_known(policy):
         assert not guard.dispatch(call)["result"]["isError"]
     assert guard.dispatch(request("write_entry", {"lens": "architecture", "fields": form_fields("sn_bad")}))["result"]["isError"]
     assert forwarded == valid[:3]
+
+
+
+def test_report_cannot_write_to_a_different_task(policy):
+    plan, guard, forwarded = policy
+    plan.start("#done", [["task_done", {}], ["task_report", {"id": "tk_expected", "summary": "Done."}]])
+    done = request("task_done", {})
+    assert not guard.dispatch(done)["result"]["isError"]
+    assert guard.dispatch(request("task_report", {"id": "tk_other", "summary": "Done."}))["result"]["isError"]
+    assert forwarded == [done]

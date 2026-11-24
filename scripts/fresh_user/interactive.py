@@ -315,7 +315,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         script = Path(core_mcp.__file__).resolve()
         prefix = "mcp_servers.slightly-parallel"
         args += ["-c", f'{prefix}.args={json.dumps([str(script), str(policy.policy), str(policy.trace)])}',
-                 "-c", f'{prefix}.default_tools_approval_mode="approve"',
+                 "-c", f'{prefix}.default_tools_approval_mode="approve"', "-c", "disable_paste_burst=true",
                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                  "-c", "sandbox_workspace_write.exclude_slash_tmp=true"]
     if offline_provider:
@@ -332,6 +332,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
     def type_prompt(text: str) -> None:
         screen.send(text)
+        if policy and not screen.wait_for(text, 8):
+            raise RuntimeError("Codex did not display the core prompt before Enter")
         screen.send(ENTER)
 
     def cards() -> list[dict]:
@@ -457,10 +459,14 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                                     f"{json.dumps(str(spec))}. Write the scan, file entry, and architecture form in order. "
                                     "Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with "
                                     "the returned scan ID. Copy all other values exactly. No other MCP calls.")
-                    elif name in ("#sp", "#done"):
-                        method = "checkup" if name == "#sp" else "task_done"
-                        calls = [[method, {}]]
-                        message += f" Call {method} with no arguments once. Report its result in chat."
+                    elif name == "#sp":
+                        calls = [["checkup", {}]]
+                        message += " Call checkup with no arguments once. Report its result in chat."
+                    elif name == "#done":
+                        fields = {"id": task, "summary": "Added subtraction and tests for both calculator operations."}
+                        calls = [["task_done", {}], ["task_report", fields]]
+                        message += (" Call task_done with no arguments once, then task_report with exactly "
+                                    + json.dumps(fields) + ". No other MCP calls. Summarize the result in chat.")
                     policy.start(name, calls, rule=rule, shell=tuple(filter(None, (offline_command, command))))
 
                     command_approval = _core_approval(screen, name, command=command, offline_command=offline_command)
