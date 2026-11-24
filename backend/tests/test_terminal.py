@@ -272,7 +272,8 @@ def _pane_state(root: Path, sid: str, log: Path) -> str:
 
 
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
-def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch) -> None:
+@pytest.mark.parametrize("early_query", [False, True])
+def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch, early_query) -> None:
     c, root, _ = env
     _on(c)
     sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
@@ -280,8 +281,11 @@ def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch)
     argv = termlib.attach_argv(root, sid)
     # Model a slow tmux client that flushes the tty before drawing. If input
     # arrives early, select wakes immediately and the flush discards it.
+    query = "os.write(1, b'\\x1b[6n'); " if early_query else ""
     startup = (
         "import os, select, sys, termios; "
+        "mode = termios.tcgetattr(0); mode[3] |= termios.ICANON; termios.tcsetattr(0, termios.TCSANOW, mode); "
+        f"{query}"
         "select.select([0], [], [], 1); "
         "termios.tcflush(0, termios.TCIFLUSH); "
         "os.execvp(sys.argv[1], sys.argv[1:])"

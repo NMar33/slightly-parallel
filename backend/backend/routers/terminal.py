@@ -160,6 +160,13 @@ class PtySession:
         """The next output, blocking (a pump thread); b"" or OSError at the end."""
         return os.read(self.fd, 8192)
 
+    def in_raw_mode(self) -> bool:
+        """True once the Unix client's terminal input mode has been set."""
+        try:
+            return not (termios.tcgetattr(self.fd)[3] & termios.ICANON)
+        except (OSError, termios.error):
+            return False
+
     def foreground(self) -> str:
         return termlib.foreground_of_fd(self.fd)
 
@@ -1056,24 +1063,26 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         # Typing in a project's terminal is working on it (the smart timer).
         timer = timeauto.of(app)
         selection_possible = False
+        tmux_input_started = False
         # Only what the operator typed or pasted: a click (a mouse report,
         # with tmux's mouse on), focus in/out and xterm's answers to a
         # program's questions come through here too, and are not typing. The
         # page says which is which (`typed` on an input message); a message
         # that does not say is read by its bytes.
         async def write(b: bytes, marked: Any = None) -> None:
-            nonlocal selection_possible
-            if tmux_ready is not None:
+            nonlocal selection_possible, tmux_input_started
+            if tmux_ready is not None and not tmux_input_started:
                 # Accepting the socket forks the tmux client, whose tty setup
-                # can flush input before it draws its first screen.
+                # can print a query and then flush input before going raw.
                 if not tmux_ready.is_set():
                     try:
                         await asyncio.wait_for(tmux_ready.wait(), TMUX_FIRST_OUTPUT_TIMEOUT_S)
                     except TimeoutError:
                         await websocket.close(code=4500, reason="tmux did not draw its terminal")
                         raise WebSocketDisconnect(code=4500) from None
-                if not session.buffer:
-                    return  # the pump ended before it produced a screen
+                if not session.buffer or not session.in_raw_mode():
+                    return  # the pump ended before terminal input was ready
+                tmux_input_started = True
             typed = marked is True or (marked is not False and not termlib.is_terminal_reply(b))
             if in_tmux:
                 # An ordinary click may go to a mouse-aware app. Ask tmux only
@@ -1164,7 +1173,7 @@ async def _pump(session: PtySession, ready: asyncio.Event | None = None) -> None
             break
         session.last_output = time.time()
         session.buffer.extend(data)
-        if ready is not None:
+        if ready is not None and not ready.is_set() and session.in_raw_mode():
             ready.set()
         if len(session.buffer) > _BUFFER_BYTES:
             del session.buffer[: len(session.buffer) - _BUFFER_BYTES]
