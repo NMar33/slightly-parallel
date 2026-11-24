@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from . import capturewatch
+from . import capturewatch, chatstore
 from .db import ViewStore
 from .file_safety import atomic_write, atomic_write_json
 from .hookshared import (
@@ -337,7 +337,7 @@ def _helper_kind(tool: str, path: Path) -> tuple[str, str]:
 
 
 def _write(store: ViewStore, project: str, tool: str, c: dict[str, Any]) -> str:
-    folder = store.data_root / "projects" / project / "chats" / c["agent_id"]
+    folder = chatstore.folder(store.data_root, project, c["agent_id"])
     if (folder / "meta.json").exists() or (folder / "chat.md").exists():
         return "recorded already"
     turns = c["turns"]

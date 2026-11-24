@@ -29,6 +29,7 @@ from typing import Any, Iterable
 
 import duckdb
 
+from . import chatstore
 from .data_root import home_data_root, named_data_root
 from .entities import ENTITIES, LEDGERS, Entity
 
@@ -277,7 +278,7 @@ class ProjectFolder:
     decisions_csv: Path | None
     activity_csv: Path | None
     log_md: Path | None
-    chats_dir: Path | None
+    chats_root: Path | None
 
     @classmethod
     def discover(cls, path: Path) -> "ProjectFolder":
@@ -291,7 +292,7 @@ class ProjectFolder:
             decisions_csv=_if_exists(path / "decisions.csv"),
             activity_csv=_if_exists(path / "activity_log.csv"),
             log_md=_if_exists(path / "log.md"),
-            chats_dir=_if_exists(path / "chats"),
+            chats_root=_if_exists(chatstore.chats_in(path)),
         )
 
 
@@ -433,9 +434,10 @@ class ViewStore:
         from . import app_settings
         parts: list[tuple[str, float, int]] = []
         for pf in projects:
-            if pf.chats_dir is None:
+            if pf.chats_root is None:
                 continue
-            for f in sorted(pf.chats_dir.glob("*/*")):
+            for f in (entry for _p, _a, chat in chatstore.iter_chats(self.data_root, pf.code)
+                      for entry in sorted(chat.glob("*"))):
                 # Not usage.jsonl: no session is derived from it, and the hook
                 # appends to it every turn (it moves view_mtime through
                 # _collect_stamps, which is all the turns' usage needs).
@@ -456,7 +458,7 @@ class ViewStore:
     def _area(rel: Path) -> str:
         parts = rel.parts
         if parts and parts[0] == "projects":
-            if len(parts) >= 3 and parts[2] == "chats":
+            if chatstore.is_chat_file(rel):
                 return "chats"
             if "architecture" in parts:
                 return "scans"
@@ -496,13 +498,13 @@ class ViewStore:
             for f in (pf.goals_csv, pf.decisions_csv, pf.activity_csv, pf.log_md):
                 if f is not None:
                     note(f)
-            if pf.chats_dir is not None:
+            if pf.chats_root is not None:
                 # skills.jsonl and work.jsonl are appended by the hook after
                 # meta.json is written; each feeds a table of its own.
                 # usage.jsonl too: the chat viewer's turns carry it.
-                for name in ("*/meta.json", "*/skills.jsonl", "*/work.jsonl", "*/usage.jsonl"):
-                    for f in pf.chats_dir.glob(name):
-                        note(f)
+                for name in ("meta.json", "skills.jsonl", "work.jsonl", "usage.jsonl"):
+                    for _p, _a, chat in chatstore.iter_chats(self.data_root, pf.code, has=name, sort=False):
+                        note(chat / name)
             # The architecture page: markdown versions under the project,
             # written by an MCP tool and by no CSV. Without them here, a new
             # version left view_mtime where it was and every page that keys
@@ -1104,9 +1106,10 @@ class ViewStore:
     def _load_agents(self, projects: Iterable[ProjectFolder]) -> list[dict[str, Any]]:
         agents: list[dict[str, Any]] = []
         for pf in projects:
-            if pf.chats_dir is None:
+            if pf.chats_root is None:
                 continue
-            for meta_path in sorted(pf.chats_dir.glob("*/meta.json")):
+            for _p, _a, chat in chatstore.iter_chats(self.data_root, pf.code, has="meta.json"):
+                meta_path = chat / "meta.json"
                 try:
                     with open(meta_path, encoding="utf-8") as fh:
                         obj = json.load(fh)

@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from .. import chatstore
 from ..db import ViewStore
 from ..gitwork import SAFE_GIT, git
 from .deps import PROJECT_CODE_RE, etag_for, get_store, json_response, maybe_304, not_found
@@ -49,11 +50,11 @@ def _project_cwd(data_root: Path, project: str) -> str:
     ``cwd`` the tool was started in. The most common one is the codebase, so
     the film can ask git about it without the operator registering anything.
     """
-    chats = data_root / "projects" / project / "chats"
-    if not chats.is_dir():
+    if not chatstore.chats_root(data_root, project).is_dir():
         return ""
     seen: Counter[str] = Counter()
-    for meta in chats.glob("*/meta.json"):
+    for _p, _a, chat in chatstore.iter_chats(data_root, project, has="meta.json", sort=False):
+        meta = chat / "meta.json"
         try:
             cwd = str(json.loads(meta.read_text(encoding="utf-8")).get("cwd") or "")
         except (OSError, ValueError):

@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from . import chatstore
 from .csvio import append_row, read_rows, rewrite_rows
 from .db import ViewStore
 from .docs_md import resolve_under
@@ -528,9 +529,9 @@ def known_projects(store: ViewStore) -> list[dict[str, Any]]:
 
     for pf in store.projects:
         bump(pf.code, "chats", 0)
-        chats = pf.chats_dir
+        chats = pf.chats_root
         if chats is not None:
-            bump(pf.code, "chats", sum(1 for d in chats.iterdir() if d.is_dir()))
+            bump(pf.code, "chats", len(chatstore.folders_in(chats)))
     for csv_name in [e.csv for e in ENTITIES.values()] + ["scans.csv"]:
         for r in read_rows(store.data_root / csv_name):
             for code in str(r.get("project") or "").split(","):

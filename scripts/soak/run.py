@@ -199,7 +199,10 @@ class Soak:
         """What the ledger holds that ``root`` does not."""
         with open(root / "tasks.csv", encoding="utf-8", newline="") as fh:
             titles = {r.get("title") for r in csv.DictReader(fh)}
-        chats = "".join(p.read_text(encoding="utf-8", errors="replace") for p in root.glob("projects/*/chats/cc-50a*/chat.md"))
+        sys.path.insert(0, str(BACKEND))
+        from backend import chatstore
+        chats = "".join((f / "chat.md").read_text(encoding="utf-8", errors="replace")
+                        for _p, agent, f in chatstore.iter_chats(root, has="chat.md", sort=False) if agent.startswith("cc-50a"))
         return [r["what"] for r in self.ledger_rows(until)
                 if (r["kind"] == "task" and r["what"] not in titles) or (r["kind"] == "message" and r["what"] not in chats)]
 

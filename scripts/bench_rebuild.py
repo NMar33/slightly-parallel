@@ -32,6 +32,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "backend"))
 
+from backend import chatstore  # noqa: E402
 from backend.db import ViewStore  # noqa: E402
 
 
@@ -73,7 +74,7 @@ def build_synthetic(root: Path, decisions: int, goals: int, chats: int, turns: i
     )
     per_chat = max(1, turns // max(1, chats))
     for a in range(chats):
-        d = root / "projects" / f"proj{a % 20}" / "chats" / f"cc-{a:04d}"
+        d = chatstore.folder(root, f"proj{a % 20}", f"cc-{a:04d}")
         d.mkdir(parents=True, exist_ok=True)
         with open(d / "chat.md", "w", encoding="utf-8") as fh:
             fh.write("# Chat log\n\n---\n")

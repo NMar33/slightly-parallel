@@ -212,9 +212,11 @@ def _backfill_from_logs(root: Path) -> None:
     answers' ends; then the tokens of the chats recorded before the hooks
     kept them (usagebackfill.py)."""
     from .helperbackfill import run_once as mark_helpers
+    t0 = time.perf_counter()
     mark_helpers(root)
     _backfill_turn_times(root)
     _backfill_usage(root)
+    log.info("start backfills finished", extra={"ms": int((time.perf_counter() - t0) * 1000)})
 
 
 def _start_watchers(root: Path, store: ViewStore) -> list[Watcher]:

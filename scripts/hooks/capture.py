@@ -92,6 +92,22 @@ shared = _backend_module("hookshared")
 msgs = _backend_module("msgledger")
 # os.replace, patient on Windows, where a file open elsewhere refuses a moment.
 _replace = shared.replace_file
+# Where a chat's folder lives (backend/backend/chatstore.py). If it does not
+# load, the turn is still written, to the folder _fallback_folder names, and
+# the failure is reported once per hook run (TurnCapture); nothing is written
+# here, at import.
+_CHATSTORE_ERROR: str | None = None
+try:
+    chatstore = _backend_module("chatstore")
+except Exception as _exc:  # noqa: BLE001 — capture never stops for it
+    chatstore = None
+    _CHATSTORE_ERROR = f"{type(_exc).__name__}: {_exc}"
+
+
+def _fallback_folder(root: Path, project: str, agent: str) -> Path:
+    """The chat's folder when chatstore cannot be loaded: the same path
+    chatstore.folder builds (tests/test_hook_parity.py holds them equal)."""
+    return root / "projects" / project / "chats" / agent
 
 
 META_LOCK = "meta.json.lock"
@@ -522,9 +538,12 @@ class TurnCapture:
         self.data_root = Path(data_root).expanduser()
         self.project = project
         self.agent_name = agent_name
-        self.folder = (
-            self.data_root / "projects" / project / "chats" / agent_name
-        )
+        if chatstore is not None:
+            self.folder = chatstore.folder(self.data_root, project, agent_name)
+        else:
+            self.folder = _fallback_folder(self.data_root, project, agent_name)
+            record_failure(self.data_root, project, agent_name, "capture",
+                           f"chatstore not loaded, the turn goes to the fallback folder: {_CHATSTORE_ERROR}")
         self.chat_path = self.folder / "chat.md"
         self.meta_path = self.folder / "meta.json"
         # Set by record_usage: the usage of the last call was not kept (the
@@ -693,7 +712,9 @@ class TurnCapture:
         # the standup is the project's, so the first agent to show up is told.
         today = now_iso()[:10]
         standup_due = None
-        if settings["standup_enabled"] and meta.get("standup_asked") != today:
+        # Without chatstore the project's chats cannot be listed: the nudge
+        # is skipped this turn and asked again on the next one.
+        if settings["standup_enabled"] and meta.get("standup_asked") != today and chatstore is not None:
             standup_due = _standup_owed(self.data_root, self.project)
             meta["standup_asked"] = today
         hint = (
@@ -1845,6 +1866,8 @@ def _standup_owed(data_root: Path, project: str) -> dict | None:
     standups.csv for one already written, standup_state.json for a claim by
     another agent or a postpone by the operator.
     """
+    if chatstore is None:
+        return None   # no listing of the project's chats without it: skipped this turn
     now = datetime.now()
     then = now - timedelta(days=1)
     day = _yymm_dd(then)
@@ -1854,7 +1877,8 @@ def _standup_owed(data_root: Path, project: str) -> dict | None:
     # be, in full, on each agent's first message of the day.)
     day_start = datetime(then.year, then.month, then.day).timestamp()
     messages = chats = chars = 0
-    for chat in (data_root / "projects" / project / "chats").glob("*/chat.md"):
+    for _p, _a, folder in chatstore.iter_chats(data_root, project, has="chat.md", sort=False):
+        chat = folder / "chat.md"
         try:
             if chat.stat().st_mtime < day_start:
                 continue

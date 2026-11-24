@@ -14,6 +14,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import chatstore
 from .file_safety import atomic_write_json
 from .hookshared import codex_home
 from .usagebackfill import find_transcript
@@ -381,7 +382,8 @@ def _collect(root, halt):
                 unread_bytes = 0
                 missing = 0
                 cutoff = (datetime.now() - timedelta(days=31)).timestamp()
-                for meta in root.glob("projects/*/chats/*/meta.json"):
+                for folder_project, _a, chat in chatstore.iter_chats(root, has="meta.json", sort=False):
+                    meta = chat / "meta.json"
                     if halt.is_set():
                         return
                     try:
@@ -423,7 +425,7 @@ def _collect(root, halt):
                                 unread_bytes += advance(
                                     db,
                                     source,
-                                    meta.parents[2].name,
+                                    folder_project,  # the folder's project, as summary() filters by it
                                     meta.parent.name if source == path else source.stem,
                                 )
                     except (ValueError, OSError, TypeError):

@@ -40,7 +40,7 @@ from .date_utils import format_yymm_dd
 from .db import ViewStore
 from .docs_md import read_detail
 from .entities import ENTITIES
-from . import repomap
+from . import chatstore, repomap
 from .viewrows import rows_or_empty
 
 log = logging.getLogger("sp.search")
@@ -137,12 +137,9 @@ def _row_words(r: dict[str, Any], columns: Iterable[str]) -> str:
 
 def _chats_stamp(root: Path) -> float:
     latest = 0.0
-    chats = root / "projects"
-    if not chats.is_dir():
-        return latest
-    for chat in chats.glob("*/chats/*/chat.md"):
+    for _p, _a, chat in chatstore.iter_chats(root, has="chat.md", sort=False):
         try:
-            latest = max(latest, chat.stat().st_mtime)
+            latest = max(latest, (chat / "chat.md").stat().st_mtime)
         except OSError:
             pass
     return latest

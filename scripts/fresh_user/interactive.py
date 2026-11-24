@@ -16,6 +16,7 @@ from agents import Tool, give_login, model_for
 from common import (
     Report,
     Space,
+    chatstore,
     get,
     is_provider_billing_failure,
     new_task_rows,
@@ -387,8 +388,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         verdicts.update(L1="pass", L2="fail")
         existing = {row.get("id") for row in cards()} if one_turn else set()
         type_prompt(prompt)
-        chats = space.data / "projects" / code / "chats"
-        captured: list[Path] = []
+        captured: list[tuple[str, Path]] = []
         task_write_approved = False
 
         def approve_task_write() -> None:
@@ -399,16 +399,19 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         def find_chat() -> bool:
             if one_turn:
                 approve_task_write()
-            captured[:] = [chat for chat in chats.glob(f"{tool.id_prefix}*/chat.md") if _recorded_turn(chat, prompt, reply)]
+            candidates = ((agent, directory / "chat.md") for _, agent, directory in
+                          chatstore.iter_chats(space.data, code, has="chat.md", sort=False))
+            captured[:] = [(agent, chat) for agent, chat in candidates
+                           if agent.startswith(tool.id_prefix) and _recorded_turn(chat, prompt, reply)]
             return bool(captured)
 
         error = (_wait_for_turn(screen, find_chat, seconds, approval=policy_error) if policy
                  else _wait_for_turn(screen, find_chat, seconds))
         if not report.add(stage, "the chat contains the exact prompt and final reply in one turn",
-                          not error and len(captured) == 1, f"{error}\n{captured or [chats]}\n{_screen_tail(screen)}"):
+                          not error and len(captured) == 1,
+                          f"{error}\n{captured or [chatstore.chats_root(space.data, code)]}\n{_screen_tail(screen)}"):
             return None
-        chat = captured[0]
-        agent = chat.parent.name
+        agent, chat = captured[0]
         meta = json.loads(chat.with_name("meta.json").read_text(encoding="utf-8"))
         session = meta.get("session_ref")
 

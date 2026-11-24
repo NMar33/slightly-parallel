@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from agents import Tool, give_login, model_for
-from common import Report, Space, eventually, get, new_task_rows, redact_diagnostics, rows
+from common import Report, Space, chatstore, eventually, get, new_task_rows, redact_diagnostics, rows
 
 HELPER_KINDS = {"claude-code": "claude-print", "codex": "codex-exec", "opencode": "opencode-run"}
 
@@ -83,39 +83,39 @@ def helper_smoke(space: Space, report: Report, code: str, folder: Path, tool: To
     if not report.add(stage, "the headless helper answers", turn.ok, turn.error):
         return
 
-    def captured() -> tuple[Path, dict] | None:
-        for path in (space.data / "projects" / code / "chats").glob("*/meta.json"):
+    def captured() -> tuple[str, Path, dict] | None:
+        for _, agent, directory in chatstore.iter_chats(space.data, code, has="meta.json", sort=False):
             try:
-                meta = json.loads(path.read_text(encoding="utf-8"))
+                meta = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if meta.get("session_ref") == tool.session:
-                return path, meta
+                return agent, directory, meta
         return None
 
     raw = eventually(captured)
     if not report.add(stage, "the helper has its own captured session", raw is not None, tool.session):
         return
     assert raw is not None
-    path, meta = raw
-    report.add(stage, "the helper uses a different chat from the operator", path.parent.name != operator_agent, path.parent.name)
+    agent, directory, meta = raw
+    report.add(stage, "the helper uses a different chat from the operator", agent != operator_agent, agent)
 
     def chat_turn() -> list[str]:
-        chat = path.with_name("chat.md")
+        chat = directory / "chat.md"
         if not chat.is_file():
             return []
         return [line for line in chat.read_text(encoding="utf-8").splitlines() if line.startswith(("**User**: ", "**Agent**: "))]
 
     lines = eventually(lambda: found if len(found := chat_turn()) >= 2 else []) or chat_turn()
     report.add(stage, "the helper's board command is captured as a prompt",
-               any(line.startswith("**User**: ") and title in line for line in lines), f"{path.parent.name}: {len(lines)} prompt/reply lines")
+               any(line.startswith("**User**: ") and title in line for line in lines), f"{agent}: {len(lines)} prompt/reply lines")
     report.add(stage, "the helper's final reply is captured",
                any(line.startswith("**Agent**: ") and line.removeprefix("**Agent**: ").strip() for line in lines),
-               f"{path.parent.name}: {len(lines)} prompt/reply lines")
+               f"{agent}: {len(lines)} prompt/reply lines")
     expected = HELPER_KINDS[tool.name]
     report.add(stage, "the chat is classified as a helper", meta.get("helper") is True and meta.get("helper_kind") == expected,
                str(meta.get("helper_kind")))
-    expected_refusal = f"this chat ({path.parent.name}) is marked a helper chat ({expected}); operator commands do not apply here"
+    expected_refusal = f"this chat ({agent}) is marked a helper chat ({expected}); operator commands do not apply here"
     refused = _mcp_refused(space, tool, expected_refusal)
     report.add(stage, "the real MCP call explicitly refuses the helper task", refused, expected_refusal if refused else turn.text[-450:])
     added = new_task_rows(space, code, existing)

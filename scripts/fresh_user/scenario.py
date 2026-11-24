@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 from agents import Tool, give_login, model_for, tools
-from common import Report, Space, eventually, get, http, rows
+from common import Report, Space, chatstore, eventually, get, http, rows
 from stages import YESTERDAY_SESSION, playwright, sh
 
 WIRING_AGENTS = ("cc-f0e1d2c3", f"cc-{YESTERDAY_SESSION[:8]}")
@@ -117,7 +117,7 @@ def after_standup(space: Space, report: Report, s: str, st: State) -> None:
 
 def after_edit(space: Space, report: Report, s: str, st: State) -> None:
     find_agent(space, report, s, st)
-    chat = space.data / "projects" / st.code / "chats" / st.agent / "chat.md"
+    chat = chatstore.folder(space.data, st.code, st.agent) / "chat.md"
     text = chat.read_text(encoding="utf-8") if chat.is_file() else ""
     report.add(s, "the chat file has your message and the reply", "sub(a, b)" in text and text.count("\n") > 6, str(chat))
     report.add(s, "the agent edited the file", "def sub" in (st.folder / "calc.py").read_text(encoding="utf-8"))

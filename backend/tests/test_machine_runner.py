@@ -68,4 +68,4 @@ def test_machine_archive_keeps_chat_files_from_distinct_projects(monkeypatch, tm
     assert stage(archive.parent, audited) == 3
     with zipfile.ZipFile(audited / archive.name) as checked:
         for project in ("first", "second"):
-            assert json.loads(checked.read(f"chats/{project}/cc-f0e1d2c3/meta.json")) == {"project": project}
+            assert json.loads(checked.read(f"projects/{project}/chats/cc-f0e1d2c3/meta.json")) == {"project": project}

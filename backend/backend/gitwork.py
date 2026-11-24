@@ -35,6 +35,7 @@ GIT_TIMEOUT = 5
 #: Git is run in repositories an agent works in, and a repository's own
 #: config can name programs for git to run (a file-system monitor, hooks).
 #: These switch that off for every call made from here.
+from . import chatstore  # noqa: E402
 from .file_safety import given_path  # noqa: E402
 from .hookshared import GIT_PLAIN_PATHS, numstat_path  # noqa: E402 — shared with the hook
 from .task_refs import task_ids  # noqa: E402
@@ -418,7 +419,7 @@ def _turn_starts(chat: Path) -> dict[int, str]:
 def _stamped_by(chat_path: Path) -> dict[str, list[Claim]]:
     """sha → every chat of the same project whose stamps list it. Read once
     per change of any work.jsonl in the project."""
-    chats = chat_path.parent.parent
+    chats = chatstore.chats_root_of(chat_path.parent)
     # One pass over a task's sessions asks for every commit: the folder is
     # listed again only after OWNERS_RECHECK_S, not once per commit (a
     # thousand listings of a hundred chats made the cores' timeline slow).

@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import chatstore
 from .file_safety import acquire_flock, atomic_write_json
 from .hookshared import (
     claude_entrypoint, claude_helper_kind, codex_helper_kind, codex_home, codex_session_meta, session_key,
@@ -125,9 +126,8 @@ def backfill(data_root: Path, claude_root: Path | None = None, codex_dir: Path |
     except OSError:
         codes = []
     for code in codes:
-        chats = projects / code / "chats"
         try:
-            folders = sorted(p for p in chats.iterdir() if p.is_dir() and not p.is_symlink()) if chats.is_dir() else []
+            folders = chatstore.folders_in(chatstore.chats_root(data_root, code), skip_symlinks=True)
         except OSError:
             continue
         found: list[tuple[Path, dict[str, Any], str, str, str]] = []

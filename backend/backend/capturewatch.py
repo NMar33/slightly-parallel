@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import chatstore
 from .csvio import read_rows
 from .db import ViewStore
 from .hookshared import NO_PROMPT, NOT_OPERATOR, TRANSCRIPT_NOISE, codex_home, prompt_record, session_key, tool_wrote
@@ -258,7 +259,6 @@ def unrecorded(store: ViewStore, claude_root: Path, codex_root: Path, now: float
         code, path = str(row.get("project") or ""), str(row.get("path") or "").rstrip("/\\")
         base = max(since, _since(str(row.get("created_date") or "")))
         wired = {tool: _wired_at(path, tool) for tool in _WIRED}
-        chats = store.data_root / "projects" / code / "chats"
         folder = claude_root / folder_slug(path)
         for transcript in folder.glob("*.jsonl") if folder.is_dir() else []:
             try:
@@ -266,7 +266,7 @@ def unrecorded(store: ViewStore, claude_root: Path, codex_root: Path, now: float
                     continue
             except OSError:
                 continue
-            if (chats / f"cc-{transcript.stem[:8]}" / "meta.json").exists():
+            if (chatstore.folder(store.data_root, code, f"cc-{transcript.stem[:8]}") / "meta.json").exists():
                 continue
             at = last_prompt(transcript)
             if at is not None and at >= base:
@@ -278,7 +278,7 @@ def unrecorded(store: ViewStore, claude_root: Path, codex_root: Path, now: float
             # Recorded under its name now, or under the first 8 characters of
             # its id as it was before 17 October 2026.
             names = (f"codex-{session_key('codex', c['session'])}", f"codex-{c['session'][:8]}")
-            if any((chats / n / "meta.json").exists() for n in names):
+            if any((chatstore.folder(store.data_root, code, n) / "meta.json").exists() for n in names):
                 continue
             at = _codex_prompt(c["rollout"])
             if at is not None and at >= base:
@@ -322,7 +322,6 @@ def check(store: ViewStore, claude_root: Path | None = None, now: float | None =
         folder = root / folder_slug(path)
         if not folder.is_dir():
             continue
-        chats = store.data_root / "projects" / code / "chats"
         for transcript in folder.glob("*.jsonl"):
             try:
                 if now - transcript.stat().st_mtime > ACTIVE_SECONDS:
@@ -334,7 +333,7 @@ def check(store: ViewStore, claude_root: Path | None = None, now: float | None =
             if prompt is None or now - prompt > ACTIVE_SECONDS:
                 continue
             session = transcript.stem
-            meta = chats / f"cc-{session[:8]}" / "meta.json"
+            meta = chatstore.folder(store.data_root, code, f"cc-{session[:8]}") / "meta.json"
             captured: float | None = None
             try:
                 m = json.loads(meta.read_text(encoding="utf-8"))
