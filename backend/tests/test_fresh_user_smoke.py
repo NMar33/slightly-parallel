@@ -41,6 +41,39 @@ def test_claude_onboarding_reaches_the_prompt(monkeypatch, dialog, keys, action)
     assert answered == [f"Claude Code {action}"]
 
 
+def test_claude_accepts_windows_folder_trust_only_after_yes_is_selected(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    from agents import tools
+
+    menu = (
+        "Accessing workspace:\n C:/Users/runneradmin/AppData/Local/Temp/sp-fresh-ü/sample\n"
+        " Quick safety check: Is this a project you created or one you trust?\n"
+        "  > No, exit\n    Yes, I trust this folder\n Enter to confirm · Esc to cancel"
+    )
+
+    class Screen:
+        rendered = menu
+        keys = []
+
+        def read(self):
+            pass
+
+        def send(self, key):
+            self.keys.append(key)
+            if key == interactive.DOWN:
+                self.rendered = menu.replace("  > No, exit\n    Yes", "    No, exit\n  > Yes")
+            elif key == interactive.ENTER:
+                assert "  > Yes, I trust this folder" in self.rendered
+                self.rendered = "Claude Code\n❯\n? for shortcuts"
+
+    screen = Screen()
+    answered = []
+    assert interactive._ready(screen, tools()["claude-code"], 3, answered)
+    assert screen.keys == [interactive.DOWN, interactive.ENTER]
+    assert answered == ["Claude Code project folder trusted"]
+
+
 def test_claude_menu_cursor_is_not_the_composer(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     from agents import tools
@@ -182,6 +215,51 @@ def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeyp
         assert args[args.index("--cd") + 1] == str(folder.resolve())
         entry = next(arg for arg in args if arg.startswith("sandbox_workspace_write.writable_roots="))
         assert json.loads(entry.split("=", 1)[1]) == [str(folder.resolve())]
+
+
+def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    from agents import tools
+    from common import Report, Space
+
+    tool = tools()["codex"]
+    monkeypatch.setattr(tool, "installed", lambda: True)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+    monkeypatch.setattr(interactive, "WINDOWS", True)
+    monkeypatch.setattr(interactive, "_ready", lambda *_: True)
+    monkeypatch.setattr(interactive, "_wait_for_turn", lambda *_: "stop after sending")
+    events = []
+    commands = []
+
+    class Screen:
+        rendered = ""
+        history = ""
+
+        def __init__(self, command, *_args, **_kwargs):
+            commands.extend(command)
+
+        def send(self, value):
+            if value == interactive.ENTER:
+                assert events[-1][0] == "painted"
+            events.append(("send", value))
+
+        def wait_for(self, value, timeout):
+            assert events == [("send", value)]
+            assert timeout > 0
+            events.append(("painted", value))
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(interactive, "Screen", Screen)
+    folder = tmp_path / "sample ü"
+    folder.mkdir()
+    interactive.smoke(Space(tmp_path, 8124), Report(), "calc", folder, tool, "stub", tmp_path, 1)
+    assert events == [("send", events[0][1]), ("painted", events[0][1]), ("send", interactive.ENTER)]
+    assert events[0][1].startswith("Reply with exactly sp-reply-")
+    assert "disable_paste_burst=true" in commands
 
 
 def test_upgrade_stage_without_its_requested_base_is_red(monkeypatch, tmp_path) -> None:

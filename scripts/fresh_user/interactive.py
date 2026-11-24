@@ -30,7 +30,7 @@ from screen import DOWN, ENTER, Screen, codex_pty_args
 POLL_S = 0.2
 UP = "\x1b[A"
 COMPOSER_SETTLE_S = 1.0
-CORE_PROMPT_PAINT_TIMEOUT_S = 8
+PROMPT_PAINT_TIMEOUT_S = 8
 CLAUDE_MCP_QUESTION = "New MCP server found in this project:"
 CLAUDE_MCP_ACCEPTED = "Claude Code accepted the Slightly Parallel MCP server"
 STARTUP_DIALOGS = {
@@ -118,15 +118,17 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
             screen.send(ENTER)
             answered.append("Claude Code accepted CI API key")
         elif tool.name == "claude-code" and "yes,itrustthisfolder" in shown:
-            if re.search(r"❯(?:\d+\.)?no,exit", shown):
+            # Windows can render the choice cursor as an ASCII chevron.
+            selected = re.search(r"(?im)^ *[❯>] *(?:\d+\. *)?(no, exit|yes, i trust this folder) *$", frame)
+            if not selected:
+                return False
+            if selected[1].lower() == "no, exit":
                 if previous_move != shown:
                     yes_first = shown.find("yes,itrustthisfolder") < shown.find("no,exit")
                     screen.send(UP if yes_first else DOWN)
                     previous_move = shown
                 time.sleep(POLL_S)
                 continue  # confirm only after the next frame shows the Yes row selected
-            elif not re.search(r"❯(?:\d+\.)?yes,itrustthisfolder", shown):
-                return False
             screen.send(ENTER)
             answered.append("Claude Code project folder trusted")
         elif tool.name == "claude-code" and "newmcpserverfoundinthisproject:" in shown:
@@ -362,6 +364,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             "opencode": ["opencode"]}[tool.name]
     if chosen:
         args += ["--model", chosen]
+    wait_for_prompt = tool.name == "codex" and (WINDOWS or core)
+    if wait_for_prompt:
+        args += ["-c", "disable_paste_burst=true"]
     policy = None
     if core and tool.name == "codex":
         policy = core_mcp.Plan(space.root)
@@ -369,7 +374,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         script = Path(core_mcp.__file__).resolve()
         prefix = "mcp_servers.slightly-parallel"
         args += ["-c", f'{prefix}.args={json.dumps([str(script), str(policy.policy), str(policy.trace)])}',
-                 "-c", f'{prefix}.default_tools_approval_mode="approve"', "-c", "disable_paste_burst=true",
+                 "-c", f'{prefix}.default_tools_approval_mode="approve"',
                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                  "-c", "sandbox_workspace_write.exclude_slash_tmp=true"]
         if WINDOWS:
@@ -393,8 +398,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
     def type_prompt(text: str) -> None:
         screen.send(text)
-        if policy and not screen.wait_for(text, CORE_PROMPT_PAINT_TIMEOUT_S):
-            raise RuntimeError("Codex did not display the core prompt before Enter")
+        if wait_for_prompt and not screen.wait_for(text, PROMPT_PAINT_TIMEOUT_S):
+            raise RuntimeError("Codex did not display the prompt before Enter")
         screen.send(ENTER)
 
     def cards() -> list[dict]:
