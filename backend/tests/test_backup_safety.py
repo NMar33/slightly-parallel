@@ -168,6 +168,50 @@ def test_the_state_lists_folders_a_failed_restore_left(client, data_root):
     assert [a["name"] for a in body["kept_aside"]] == ["sp-replaced-xyz"]
 
 
+def test_restore_waits_for_a_store_rebuild_to_close_source_files(client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from backend.routers import backup as routes
+
+    store = client.app.state.store
+    reading = threading.Event()
+    close_source = threading.Event()
+    request_arrived = threading.Event()
+    restore_entered = threading.Event()
+    roots = routes._roots
+
+    def build():
+        reading.set()
+        assert close_source.wait(10)
+
+    def resolve_roots(store):
+        request_arrived.set()
+        return roots(store)
+
+    def restore(*_):
+        restore_entered.set()
+        if not close_source.is_set():
+            raise backup.BackupError("source still open: Windows refused to rename it")
+        return {"restored": {"name": "2611-25-080000__manual"}}
+
+    monkeypatch.setattr(store, "_build_once", build)
+    monkeypatch.setattr(routes, "_roots", resolve_roots)
+    monkeypatch.setattr(routes, "_restore", restore)
+    name = "2611-25-080000__manual"
+    with ThreadPoolExecutor() as pool:
+        rebuild = pool.submit(store.rebuild)
+        try:
+            assert reading.wait(5)
+            result = pool.submit(client.post, f"/api/backup/{name}/restore", json={"confirm": name})
+            assert request_arrived.wait(5)
+            assert not restore_entered.wait(0.5)
+        finally:
+            close_source.set()
+        rebuild.result(timeout=5)
+        response = result.result(timeout=5)
+    assert response.status_code == 200, response.text
+
+
 # ---------------------------------------------------------------------------
 # C4 — the trial unpacks beside the archives
 # ---------------------------------------------------------------------------

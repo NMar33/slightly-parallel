@@ -50,6 +50,64 @@ def test_claude_menu_cursor_is_not_the_composer(monkeypatch) -> None:
     assert not _ready(screen, tools()["claude-code"], 2, [])
 
 
+@pytest.mark.parametrize("windows", [True, False])
+def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_path, windows):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import stages
+    from common import Report, Space
+
+    (tmp_path / "node_modules" / "@playwright").mkdir(parents=True)
+    monkeypatch.setattr(stages, "FRONTEND", tmp_path)
+    monkeypatch.setattr(stages, "WINDOWS", windows)
+    commands = []
+
+    def shell(args, *_args, **_kwargs):
+        commands.append(args)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(stages, "sh", shell)
+    stages.pages(Space(tmp_path, 8010), Report())
+    assert len(commands) == 1
+    assert "tests/e2e/every-page.spec.ts" in commands[0]
+    assert ("--workers=1" in commands[0]) is windows
+
+
+@pytest.mark.parametrize("server", ["slightly-parallel", "unexpected-server"])
+def test_claude_confirms_only_the_single_expected_mcp_server(monkeypatch, server):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    from agents import tools
+
+    choices = ("Use this MCP server", "Use this and all future MCP servers in this project",
+               "Continue without using this MCP server")
+    seen = []
+
+    class Screen:
+        selected = len(choices) - 1
+        confirmed = False
+
+        def read(self):
+            if self.confirmed:
+                self.text = "Claude Code\n❯\n? for shortcuts"
+            else:
+                rows = [f"{'❯' if i == self.selected else ' '} {text}" for i, text in enumerate(choices)]
+                self.text = f"New MCP server found in this project: {server}\n\n" + "\n".join(rows)
+
+        def send(self, key):
+            seen.append(key)
+            if key == interactive.UP:
+                self.selected -= 1
+            elif key == interactive.ENTER:
+                assert self.selected == 0
+                self.confirmed = True
+
+    report = []
+    expected = server == "slightly-parallel"
+    assert interactive._ready(Screen(), tools()["claude-code"], 3, report) is expected
+    assert seen == ([interactive.UP, interactive.UP, interactive.ENTER] if expected else [])
+    assert report == (["Claude Code accepted the Slightly Parallel MCP server"] if expected else [])
+
+
 def test_new_cards_include_a_late_duplicate(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import common
@@ -90,6 +148,31 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(mo
     assert _ready(screen, tools()["codex"], 3, answered, config)
     assert screen.keys == ["\r", "\x1b[B", "\r"]
     assert answered == ["Codex project folder trusted", "Codex project hooks trusted"]
+
+
+@pytest.mark.parametrize("windows", [True, False])
+def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeypatch, tmp_path, windows):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    import screen
+    from agents import tools
+    from common import Report, Space
+
+    tool = tools()["codex"]
+    monkeypatch.setattr(tool, "installed", lambda: True)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+    monkeypatch.setattr(screen, "WINDOWS", windows)
+    monkeypatch.setattr(interactive, "_ready", lambda *_: False)
+    args = []
+
+    def fake_screen(command, *_args, **_kwargs):
+        args.extend(command)
+        return SimpleNamespace(rendered="", text="", save_frame=lambda _: None, close=lambda: None)
+
+    monkeypatch.setattr(interactive, "Screen", fake_screen)
+    interactive.smoke(Space(tmp_path, 8124), Report(), "calc", tmp_path, tool, "stub", tmp_path, 1)
+    assert ('windows.sandbox="unelevated"' in args) is windows
+    assert "--dangerously-bypass-approvals-and-sandbox" not in args
 
 
 def test_upgrade_stage_without_its_requested_base_is_red(monkeypatch, tmp_path) -> None:
@@ -135,6 +218,26 @@ def test_decision_requires_a_new_entry_matching_the_operator_choice(monkeypatch,
     assert (not report.failed()) is passes
 
 
+def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    import scenario
+    from common import Space
+
+    space = Space(tmp_path, 1)
+    for cli in ("codex", "opencode", "claude-code"):
+        state = scenario.State("calc", tmp_path, scenario.tools()[cli])
+        prompt = interactive._operator_core_prompt(space, state, scenario.SCAN)
+        assert prompt.startswith("#scan ") and "Call scan_material without arguments" in prompt
+        assert "No other MCP calls" in prompt
+        plan = json.loads((tmp_path / "scan-payloads.json").read_text(encoding="utf-8"))
+        assert list(plan) == ["scan", "file", "architecture"]
+        assert plan["scan"]["files_n"] == "COUNTER"
+        assert plan["architecture"]["trigger_id"] == "SCAN_ID"
+
+
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     from interactive import _screen_tail
@@ -153,6 +256,15 @@ def test_claude_login_menu_is_named_in_startup_evidence(monkeypatch) -> None:
     menu = "Select login method:\n❯ Claude account\n  Anthropic Console\n  Cloud provider"
     screen = SimpleNamespace(rendered=menu, text=menu)
     assert _startup_failure(screen) == "L1 Claude Code requires login:\n" + menu
+
+
+def test_opencode_keeps_the_pinned_cli_without_updater_output(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from agents import tools
+
+    env = tools()["opencode"].extra_env()
+    assert env.get("OPENCODE_DISABLE_AUTOUPDATE") == "1"
+    assert env.get("NODE_NO_WARNINGS") == "1"
 
 
 @pytest.mark.parametrize(("menu", "name"), [
@@ -484,6 +596,29 @@ def test_codex_helper_requires_the_actual_mcp_failure(monkeypatch, tmp_path, in_
     }), encoding="utf-8")
     agent = SimpleNamespace(name="codex", session="session", last_log=lambda _: log)
     assert _mcp_refused(space, agent, reason) is refused
+
+
+@pytest.mark.parametrize(("tool", "is_error", "status", "refused"), [
+    ("write_entry", True, 422, True),
+    ("write_entry", False, 422, False),
+    ("write_entry", True, 401, False),
+    ("read_entry", True, 422, False),
+])
+def test_codex_helper_requires_the_error_flag_and_number_in_structured_stderr(
+    monkeypatch, tmp_path, tool, is_error, status, refused,
+):
+    import json
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from common import Space
+    from helper_smoke import _mcp_refused
+
+    reason = "this chat (codex-fixture) is marked a helper chat (codex-exec); operator commands do not apply here"
+    payload = {"content": [{"type": "text", "text": f"{status}: {reason}, so the #task made no task"}],
+               "isError": is_error}
+    log = f"\n--- stderr ---\nmcp: slightly-parallel/{tool} (failed)\ncodex\n{json.dumps(payload)}\nhook: Stop"
+    agent = SimpleNamespace(name="codex", session="session", last_log=lambda _: log)
+    assert _mcp_refused(Space(tmp_path, 1), agent, reason) is refused
 
 
 

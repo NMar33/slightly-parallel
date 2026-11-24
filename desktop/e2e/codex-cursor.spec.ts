@@ -66,7 +66,7 @@ test('real Codex shows the insertion cursor, receives input, and keeps focus aft
     "server = runpy.run_path(sys.argv[1])['serve'](0, sys.argv[2])",
     'print(server.server_port)',
     'server.serve_forever()',
-  ].join('\n'), stub, log], { stdio: ['ignore', 'pipe', 'inherit'] })
+  ].join('\n'), stub, log], { cwd: path.dirname(stub), stdio: ['ignore', 'pipe', 'inherit'] })
   const stream = createInterface({ input: provider.stdout })
   try {
     const port = Number(await Promise.race([

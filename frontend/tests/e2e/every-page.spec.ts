@@ -50,6 +50,10 @@ function watch(page: Page): { problems: string[] } {
   const problems: string[] = []
   page.on('pageerror', (e) => problems.push(`uncaught: ${String(e)}`))
   page.on('response', (r) => { if (r.status() >= 500) problems.push(`${r.status()} ${r.request().method()} ${r.url()}`) })
+  page.on('requestfailed', (r) => {
+    const failure = r.failure()?.errorText
+    if (failure === 'net::ERR_NO_BUFFER_SPACE') problems.push(`${failure} ${r.method()} ${r.url()}`)
+  })
   page.on('console', (m) => {
     if (m.type() !== 'error') return
     const text = m.text()

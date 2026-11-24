@@ -22,12 +22,14 @@ from common import (
     redact_diagnostics,
     rows,
 )
-from screen import DOWN, ENTER, Screen
+from screen import DOWN, ENTER, Screen, codex_pty_args
 
 POLL_S = 0.2
 UP = "\x1b[A"
 COMPOSER_SETTLE_S = 1.0
 CORE_PROMPT_PAINT_TIMEOUT_S = 8
+CLAUDE_MCP_QUESTION = "New MCP server found in this project:"
+CLAUDE_MCP_ACCEPTED = "Claude Code accepted the Slightly Parallel MCP server"
 STARTUP_DIALOGS = {
     "claude-code": (
         (("choosethetextstyle",), "Claude Code default theme accepted"),
@@ -40,6 +42,7 @@ STARTUP_FAILURES = (
     (("selectloginmethod:",), "Claude Code requires login"),
     (("doyouwanttousethisapikey?",), "Claude Code API key confirmation"),
     (("yes,itrustthisfolder",), "Claude Code project folder trust"),
+    (("newmcpserverfoundinthisproject:",), "Claude Code project MCP consent"),
     (("choosethetextstyle",), "Claude Code theme selection"),
     (("securitynotes:", "pressentertocontinue"), "Claude Code security notes"),
     (("trustallandcontinue",), "Codex project hooks trust"),
@@ -123,6 +126,21 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
                 return False
             screen.send(ENTER)
             answered.append("Claude Code project folder trusted")
+        elif tool.name == "claude-code" and "newmcpserverfoundinthisproject:" in shown:
+            lines = [line.strip() for line in frame.splitlines()]
+            questions = [line for line in lines if line.startswith(CLAUDE_MCP_QUESTION)]
+            if questions != [f"{CLAUDE_MCP_QUESTION} slightly-parallel"]:
+                return False
+            selected = [line.removeprefix("❯").strip() for line in lines if line.startswith("❯")]
+            if CLAUDE_MCP_ACCEPTED not in answered:
+                if selected == ["Use this MCP server"]:
+                    screen.send(ENTER)
+                    answered.append(CLAUDE_MCP_ACCEPTED)
+                elif selected in (["Continue without using this MCP server"],
+                                  ["Use this and all future MCP servers in this project"]):
+                    if previous_move != selected[0]:
+                        screen.send(UP)
+                        previous_move = selected[0]
         elif dialog := next((name for signature, name in STARTUP_DIALOGS[tool.name]
                              if all(word in shown for word in signature)), None):
             screen.send(ENTER)
@@ -154,6 +172,22 @@ def _startup_failure(screen: Screen) -> str:
     reason = next((name for signature, name in STARTUP_FAILURES if all(word in shown for word in signature)),
                   "unknown screen")
     return f"L1 {reason}:\n{frame}"
+
+
+def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step) -> str:
+    message = scenario.step_prompt(space, state, step)
+    if step[0] != "#scan":
+        return message
+    spec = space.root / "scan-payloads.json"
+    spec.write_text(json.dumps({
+        "scan": core_mcp.scan_fields(dict.fromkeys(("files_n", "lines_add", "lines_del", "decisions_n"), "COUNTER")),
+        "file": core_mcp.file_fields("SCAN_ID"),
+        "architecture": core_mcp.form_fields("SCAN_ID"),
+    }, indent=2), encoding="utf-8")
+    return (message + " Call scan_material without arguments. Read the exact fields from "
+            f"{json.dumps(str(spec))}. Write the scan, file entry, and architecture form in order. "
+            "Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with "
+            "the returned scan ID. Copy all other values exactly. No other MCP calls.")
 
 
 def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int,
@@ -305,7 +339,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     chosen = model_for(tool.name, model)
     args = {"claude-code": ["claude", "--session-id", tool.session, "--mcp-config", ".mcp.json",
                             "--allowedTools", *getattr(tool, "ALLOWED", ())],
-            "codex": ["codex", "--no-daemon", "-c", "check_for_update_on_startup=false"],
+            "codex": codex_pty_args(),
             "opencode": ["opencode"]}[tool.name]
     if chosen:
         args += ["--model", chosen]
@@ -422,7 +456,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 name, _, check = step
                 if name == "#task":
                     continue
-                message = scenario.step_prompt(space, state, step)
+                message = _operator_core_prompt(space, state, step)
                 approval = None
                 if policy:
                     command = ""
@@ -449,18 +483,6 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         message += " Call write_entry with lens decision and exactly these fields: " + json.dumps(fields)
                     elif name == "#scan":
                         calls = core_mcp.requests_for_scan()
-                        spec = space.root / "scan-payloads.json"
-                        spec.write_text(json.dumps({
-                            "scan": core_mcp.scan_fields(dict.fromkeys(
-                                ("files_n", "lines_add", "lines_del", "decisions_n"), "COUNTER",
-                            )),
-                            "file": core_mcp.file_fields("SCAN_ID"),
-                            "architecture": core_mcp.form_fields("SCAN_ID"),
-                        }, indent=2), encoding="utf-8")
-                        message += (" Call scan_material without arguments. Read the exact fields from "
-                                    f"{json.dumps(str(spec))}. Write the scan, file entry, and architecture form in order. "
-                                    "Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with "
-                                    "the returned scan ID. Copy all other values exactly. No other MCP calls.")
                     elif name == "#sp":
                         calls = [["checkup", {}]]
                         message += " Call checkup with no arguments once. Report its result in chat."

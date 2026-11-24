@@ -39,8 +39,8 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
     import stub_responses
     from agents import give_login, tools
     from common import Space, eventually, free_port, get, http, wait_for
-    from interactive import _last_reply, _ready, _wait_for_turn
-    from screen import ENTER, Screen
+    from interactive import CLAUDE_MCP_ACCEPTED, _last_reply, _ready, _wait_for_turn
+    from screen import ENTER, Screen, codex_pty_args
     from stages import make_sample
 
     drive_trust = cli == "claude-code" and os.environ.get("SP_TEST_CLAUDE_TRUST") == "1"
@@ -87,10 +87,9 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             codex_config.write_text('model = "stub-model"\nmodel_provider = "stub"\n'
                                     'disable_paste_burst = true\n'
                                     '[model_providers.stub]\nname = "stub"\nwire_api = "responses"\n'
-                                    f'base_url = "{endpoint}/v1"\n\n{mcp}'
-                                    + ('\n[windows]\nsandbox = "unelevated"\n' if os.name == "nt" else ""),
+                                    f'base_url = "{endpoint}/v1"\n\n{mcp}',
                                     encoding="utf-8")
-            args += ["--no-daemon", "-c", "check_for_update_on_startup=false"]
+            args = codex_pty_args(binary)
         elif cli == "claude-code":
             monkeypatch.setenv("ANTHROPIC_API_KEY", "sp-local-model-test-credential")
             give_login(tool, space.home, space, env)
@@ -102,7 +101,8 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
                 values["projects"] = {path: {"hasTrustDialogAccepted": True}
                                       for path in {str(project), project.as_posix()}}
             profile.write_text(json.dumps(values), encoding="utf-8")
-            (space.home / "settings.json").write_text('{"enableAllProjectMcpServers":true}', encoding="utf-8")
+            if not drive_trust:
+                (space.home / "settings.json").write_text('{"enableAllProjectMcpServers":true}', encoding="utf-8")
             env.update(CLAUDE_CONFIG_DIR=str(space.home), ANTHROPIC_BASE_URL=endpoint, DISABLE_TELEMETRY="1",
                        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1", ENABLE_TOOL_SEARCH="false")
             args += ["--session-id", tool.session, "--mcp-config", ".mcp.json", "--permission-mode", "default",
@@ -124,9 +124,9 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
                           enabled_providers=["anthropic"], autoupdate=False, model=model, small_model=model)
             path.write_text(json.dumps(config), encoding="utf-8")
             env.update(ANTHROPIC_API_KEY="sp-local-model-test-credential", OPENCODE_DISABLE_MODELS_FETCH="1",
-                       OPENCODE_DISABLE_AUTOUPDATE="1", NODE_NO_WARNINGS="1",
                        XDG_CONFIG_HOME=str(config_root), XDG_DATA_HOME=str(space.home / ".local/share"),
                        XDG_CACHE_HOME=str(space.home / ".cache"), XDG_STATE_HOME=str(space.home / ".local/state"))
+            env.update(tool.extra_env())
             args += ["--model", model]
 
         terminal = Screen(args, space.sample, env, trace=trace, reply_to_kitty_query=cli != "claude-code")
@@ -138,6 +138,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             assert _ready(terminal, tool, 40, answered, codex_config if cli == "codex" else None), terminal.rendered
             if drive_trust:
                 assert "Claude Code project folder trusted" in answered, answered
+                assert CLAUDE_MCP_ACCEPTED in answered, answered
             verdicts[layer] = "pass"
             layer = "L2"
             chats = space.data / "projects/cli/chats"

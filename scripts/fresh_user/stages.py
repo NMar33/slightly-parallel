@@ -208,13 +208,19 @@ def stop(proc: subprocess.Popen | None) -> None:
 
 # ----------------------------------------------------- the browser (Playwright)
 
+PAGE_WALK_SPEC = "tests/e2e/every-page.spec.ts"
+
+
 def playwright(space: Space, report: Report, stage: str, name: str, args: list[str], extra: dict[str, str] | None = None) -> bool:
     """Run browser tests from this repository against the server under test.
     The browser belongs to whoever runs the test, so it keeps the real home."""
     if not (FRONTEND / "node_modules" / "@playwright").is_dir():
         return report.add(stage, name, False, "Playwright is not installed here: cd frontend && npm install && npx playwright install chromium")
     env = {**os.environ, "SP_E2E_URL": space.url, **(extra or {})}
-    p = sh([NPX, "playwright", "test", *args, "--reporter=line"], FRONTEND, env, timeout=BROWSER_TEST_TIMEOUT_S)
+    # The Windows runner ran out of network buffers during the route walk.
+    # Limit concurrent browser contexts while keeping all routes and assertions.
+    workers = ["--workers=1"] if WINDOWS and PAGE_WALK_SPEC in args else []
+    p = sh([NPX, "playwright", "test", *args, *workers, "--reporter=line"], FRONTEND, env, timeout=BROWSER_TEST_TIMEOUT_S)
     out = (p.stdout + p.stderr).strip()
     spec = next((a for a in reversed(args) if a.endswith(".ts")), "run").split("/")[-1].removesuffix(".spec.ts")
     (space.root / f"playwright-{stage.replace(':', '-')}-{spec}.log").write_text(out, encoding="utf-8")
@@ -227,7 +233,7 @@ def playwright(space: Space, report: Report, stage: str, name: str, args: list[s
 
 
 def pages(space: Space, report: Report) -> None:
-    playwright(space, report, "pages", "every page opens without a crash", ["tests/e2e/every-page.spec.ts"])
+    playwright(space, report, "pages", "every page opens without a crash", [PAGE_WALK_SPEC])
 
 
 # -------------------------------------------------------------------- setup
@@ -994,7 +1000,7 @@ def volume(space: Space, report: Report, tasks_n: int = 400, turns_n: int = 1500
             report.add(s, f"{name} answers in {best * 1000:.0f} ms", not failed and best < 2.0, failed or f"{best * 1000:.0f} ms")
         report.notes["volume_read_ms"] = slow
 
-        playwright(big, report, s, "every page opens on a month of data", ["tests/e2e/every-page.spec.ts"])
+        playwright(big, report, s, "every page opens on a month of data", [PAGE_WALK_SPEC])
         playwright(big, report, s, "the heavy pages show their content in time", ["--config", "playwright.fresh.config.ts", "volume.spec.ts"],
                    {"FRESH_AGENT": agent, "FRESH_CODE": "shopfront"})
     finally:
@@ -1073,7 +1079,7 @@ def upgrade(space: Space, report: Report, source: Path, base: str, boot_seconds:
                    bool(mine) and mine[0].get("status") in ("fresh", "stale"), json.dumps(mine)[:200])
         fired = fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(old.sample), "prompt": "After the upgrade: still here."}, folder=old.sample)
         report.add(s, "the old project's hook still captures", fired.returncode == 0 and "After the upgrade" in chat.read_text(encoding="utf-8"), (fired.stderr or fired.stdout)[-300:])
-        playwright(old, report, s, "every page opens after the upgrade", ["tests/e2e/every-page.spec.ts"])
+        playwright(old, report, s, "every page opens after the upgrade", [PAGE_WALK_SPEC])
         # The new release's own parts reach an old install: the built-in
         # skills in the home folder, a refreshed integration, and #sp.
         skills = space.home / ".claude" / "skills"

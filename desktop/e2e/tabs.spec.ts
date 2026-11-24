@@ -383,12 +383,13 @@ test.describe('tab strip', () => {
     await page.reload()
     const tabs = strip(page)
     await expect(tabs.getByRole('tab')).toHaveCount(9)
-    await expect(tabs.getByRole('tab').last()).toHaveAttribute('aria-label', /^e2e Codex chat at the far right /)
+    const chat = sessionTab(tabs, last.id)
+    // PowerShell can rename the tab through OSC while it boots.
+    await expect(tabs.getByRole('tab').last().and(chat)).toHaveCount(1)
     await expect.poll(() => tabs.evaluate((el) => el.scrollWidth > el.clientWidth), { message: 'the strip overflows horizontally' }).toBe(true)
     const first = tabs.getByRole('tab').first()
     await first.click()
     await expect(first).toHaveAttribute('aria-selected', 'true')
-    const chat = tabs.locator(`[data-tab="${last.id}"]`).getByRole('tab')
     await expect.poll(() => chat.evaluate((button) => button.getBoundingClientRect().width <= button.closest('[role="tablist"]')!.clientWidth),
       { message: 'the strip is wide enough to show one whole tab' }).toBe(true)
     // Before these keys stayed local, boot could save its first view to the

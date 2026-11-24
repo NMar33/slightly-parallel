@@ -381,6 +381,9 @@ class ViewStore:
         self.load_errors: list[dict[str, str]] = []
         # One build at a time, off the read lock — see rebuild().
         self._build_cv = threading.Condition()
+        # Cached queries can continue during restore. Builds must close the
+        # live source files first so Windows can rename their directories.
+        self.source_files_lock = threading.Lock()
         self._building = False
         self._requested = 0
         self._completed = 0
@@ -575,7 +578,8 @@ class ViewStore:
             while True:
                 with self._build_cv:
                     target = self._requested
-                self._build_once()
+                with self.source_files_lock:
+                    self._build_once()
                 with self._build_cv:
                     self._completed = target
                     if self._requested == target:

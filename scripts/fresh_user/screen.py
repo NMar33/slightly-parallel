@@ -270,12 +270,20 @@ class Screen:
             pass
 
 
+def codex_pty_args(binary: str = "codex") -> list[str]:
+    # The background server would outlive the disposable folder. Windows CI
+    # chooses the normal non-admin sandbox before the first-run setup prompt.
+    args = [binary, "--no-daemon", "-c", "check_for_update_on_startup=false"]
+    if WINDOWS:
+        args += ["-c", 'windows.sandbox="unelevated"']
+    return args
+
+
 def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 60) -> tuple[bool, str]:
     """Open Codex in the folder, trust the folder and its hooks on Codex's own
     screen, and check that Codex saved the hooks' trust. Answers (done, what
     the screen showed last)."""
-    # --no-daemon: Codex's background server would outlive the test's folder.
-    screen = Screen(["codex", "--no-daemon"], folder, env)
+    screen = Screen(codex_pty_args(), folder, env)
     try:
         if screen.wait_for("Trust this folder", seconds):
             screen.send(ENTER)

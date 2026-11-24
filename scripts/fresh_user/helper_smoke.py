@@ -41,10 +41,25 @@ def _mcp_refused(space: Space, tool: Tool, reason: str) -> bool:
         # Newer Codex prints this tool failure in stderr rather than
         # retaining it as a function_call_output in the rollout.
         _, separator, stderr = tool.last_log(space).partition("\n--- stderr ---\n")
-        return bool(separator and re.search(
-            r"(?m)^mcp: slightly-parallel/write_entry \(failed\)\r?\n"
-            r"(?:codex\r?\n)?422: " + re.escape(reason) + r"(?!\w)", redact_diagnostics(stderr),
-        ))
+        if separator:
+            pattern = r"(?m)^mcp: slightly-parallel/write_entry \(failed\)\r?\n(?:codex\r?\n)?([^\r\n]+)"
+            refusal = re.compile(r"^422: " + re.escape(reason) + r"(?!\w)")
+            for failed_call in re.finditer(pattern, redact_diagnostics(stderr)):
+                line = failed_call[1]
+                if refusal.match(line):
+                    return True
+                try:
+                    output = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(output, dict) or output.get("isError") is not True:
+                    continue
+                blocks = output.get("content")
+                if isinstance(blocks, list) and any(
+                    isinstance(block, dict) and block.get("type") == "text" and
+                    isinstance(body := block.get("text"), str) and bool(refusal.match(body)) for block in blocks
+                ):
+                    return True
     return False
 
 

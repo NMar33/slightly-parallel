@@ -223,6 +223,11 @@ class OpenCode(Tool):
     spaces, and the chat would record the quotes as typed. No --auto: the
     permissions are the project's own, as Setup writes them."""
 
+    def extra_env(self) -> dict[str, str]:
+        # Keep the pinned CLI in the test. Updater and Node warnings can
+        # overwrite OpenCode's Windows PTY before the composer is detected.
+        return {"OPENCODE_DISABLE_AUTOUPDATE": "1", "NODE_NO_WARNINGS": "1"}
+
     def stdin(self, message: str) -> str | None:
         return message
 

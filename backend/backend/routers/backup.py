@@ -257,8 +257,13 @@ async def backup_restore(
             detail=f'restoring replaces the data root — send {{"confirm": "{name}"}}',
         )
     data_root, backup_root = _roots(store)
+
+    def restore_live() -> dict[str, Any]:
+        with store.source_files_lock:
+            return _restore(data_root, backup_root, name)
+
     try:
-        result = await asyncio.to_thread(_restore, data_root, backup_root, name)
+        result = await asyncio.to_thread(restore_live)
     except backup.BackupError as exc:
         raise _fail(exc) from exc
     # The views are a cache of a directory that just changed underneath them.
