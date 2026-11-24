@@ -8,6 +8,7 @@ import re
 import subprocess
 from pathlib import Path
 
+NPM_VERSION_TIMEOUT_S = 15
 PACKAGES = {
     "claude-code": ("@anthropic-ai/claude-code", "2.1.330"),
     "codex": ("@openai/codex", "0.170.0"),
@@ -23,7 +24,7 @@ def package_spec(channel: str, tool: str, *, freeze: bool = False) -> str:
     if not freeze:
         return spec
     result = subprocess.run(["npm", "view", spec, "version", "--json"], capture_output=True, text=True,
-                            timeout=15, check=True)
+                            timeout=NPM_VERSION_TIMEOUT_S, check=True)
     version = json.loads(result.stdout)
     if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)*", version):
         raise ValueError(f"npm did not return a single version for {package}")

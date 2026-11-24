@@ -283,11 +283,15 @@ def test_canary_reports_startup_capture_and_task_verdicts(monkeypatch, tmp_path,
         assert layers == {"L1": "fail", "L2": "blocked by L1", "L3": "blocked by L2"}
 
 
-def test_canary_uses_setup_api_without_installing_or_opening_a_browser(monkeypatch, tmp_path):
+@pytest.mark.parametrize("on_actions", [False, True], ids=["local", "actions"])
+def test_canary_uses_setup_api_without_installing_or_opening_a_browser(monkeypatch, tmp_path, on_actions):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import run
     from common import Report, Space
 
+    monkeypatch.setenv("GITHUB_ACTIONS", "true" if on_actions else "false")
+    if on_actions:
+        monkeypatch.setenv("SP_AGENT_PREFLIGHT_RESULT", "success")
     space = Space(tmp_path, 8124)
     seen = []
     monkeypatch.setattr(run.stages, "make_sample", lambda _: seen.append("commit sample"))
@@ -319,11 +323,15 @@ def test_canary_uses_setup_api_without_installing_or_opening_a_browser(monkeypat
 
 
 
-def test_canary_cleans_up_and_records_unexpected_setup_error(monkeypatch, tmp_path):
+@pytest.mark.parametrize("on_actions", [False, True], ids=["local", "actions"])
+def test_canary_cleans_up_and_records_unexpected_setup_error(monkeypatch, tmp_path, on_actions):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import run
     from common import Report, Space
 
+    monkeypatch.setenv("GITHUB_ACTIONS", "true" if on_actions else "false")
+    if on_actions:
+        monkeypatch.setenv("SP_AGENT_PREFLIGHT_RESULT", "success")
     space = Space(tmp_path / "test-machine", 8124)
     out = tmp_path / "report"
     monkeypatch.setattr(run, "OUT", out)

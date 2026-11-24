@@ -27,6 +27,7 @@ from screen import DOWN, ENTER, Screen
 POLL_S = 0.2
 UP = "\x1b[A"
 COMPOSER_SETTLE_S = 1.0
+CORE_PROMPT_PAINT_TIMEOUT_S = 8
 STARTUP_DIALOGS = {
     "claude-code": (
         (("choosethetextstyle",), "Claude Code default theme accepted"),
@@ -333,7 +334,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
     def type_prompt(text: str) -> None:
         screen.send(text)
-        if policy and not screen.wait_for(text, 8):
+        if policy and not screen.wait_for(text, CORE_PROMPT_PAINT_TIMEOUT_S):
             raise RuntimeError("Codex did not display the core prompt before Enter")
         screen.send(ENTER)
 

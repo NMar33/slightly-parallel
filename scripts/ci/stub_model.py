@@ -15,10 +15,8 @@ from __future__ import annotations
 import json
 import sys
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 from uuid import uuid4
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stub_agent_turn
 from sp_stub_http import LoggedStubHandler
 

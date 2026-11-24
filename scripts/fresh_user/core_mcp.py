@@ -14,6 +14,8 @@ from uuid import uuid4
 SCAN_SUMMARY = "The calculator now subtracts and has tests for addition and subtraction."
 SCAN_GROUPS = ["does", "owes", "runs", "stores", "talks", "built with", "faces", "holds"]
 RULE_TEXT = "Keep calc.py standalone."
+RULE_POLL_INTERVAL_S = 0.1
+RULE_CAPTURE_TIMEOUT_S = 4
 OFFLINE_EDIT = r"printf '\ndef sub(a, b):\n    return a - b\n' >> calc.py"
 OFFLINE_TESTS = (r"printf 'from calc import add, sub\n\ndef test_calc():\n"
                  r"    assert add(2, 3) == 5\n    assert sub(3, 2) == 1\n' > test_calc.py")
@@ -93,7 +95,7 @@ class Guard:
 
     def _arguments(self, template, rule):
         if "$rule_id" in template:
-            end = time.monotonic() + 4
+            end = time.monotonic() + RULE_CAPTURE_TIMEOUT_S
             before = set(rule["before"])
             while True:
                 new = {row["id"] for row in self.rules(rule) if row.get("agent_id") == rule["agent"]} - before
@@ -101,7 +103,7 @@ class Guard:
                     return {**template["$rule_id"], "id": new.pop()}
                 if new or time.monotonic() >= end:
                     raise ValueError("expected one new rule")
-                time.sleep(0.1)
+                time.sleep(RULE_POLL_INTERVAL_S)
         if isinstance(fields := template.get("fields"), dict):
             if fields == {"$scan_fields": True}:
                 return {**template, "fields": scan_fields(self.counters)}
