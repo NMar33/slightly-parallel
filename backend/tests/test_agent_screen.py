@@ -184,6 +184,19 @@ def test_only_unix_pty_emulates_color_replies(monkeypatch, windows):
     assert len(sent) == (0 if windows else 2)
 
 
+@pytest.mark.parametrize("reply_to_kitty_query", [False, True], ids=["claude", "codex"])
+def test_terminal_keeps_unwanted_kitty_reply_out_of_the_composer(monkeypatch, reply_to_kitty_query):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from screen import Screen
+
+    terminal = Screen.__new__(Screen)
+    terminal.reply_to_kitty_query = reply_to_kitty_query
+    sent = []
+    terminal._write = sent.append
+    terminal._answer("\x1b[c\x1b[?u")
+    assert sent == (["\x1b[?1;2c", "\x1b[?0u"] if reply_to_kitty_query else ["\x1b[?1;2c"])
+
+
 def test_application_cursor_mode_changes_arrow_encoding_even_across_reads(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import screen

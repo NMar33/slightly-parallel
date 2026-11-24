@@ -28,13 +28,14 @@ _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)
 DOWN, ENTER = "\x1b[B", "\r"
 _CURSOR_MODE = re.compile(r"\x1b\[\?1([hl])")
 _CURSOR_ARROWS = {"\x1b[A": "\x1bOA", DOWN: "\x1bOB"}
+KITTY_KEYBOARD_QUERY = "\x1b[?u"
 ROWS, COLS = 45, 160
 SCREEN_HISTORY_CHARS = 1600
 #: What a full-screen program asks its terminal before it draws, and what a
 #: terminal answers: the cursor, the colours, its kind, its keyboard. Left
 #: unanswered, Codex waits; tmux and real terminals answer on their own.
 _REPLIES = {"\x1b[6n": "\x1b[1;1R", "\x1b]10;?": "\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
-            "\x1b]11;?": "\x1b]11;rgb:0000/0000/0000\x1b\\", "\x1b[c": "\x1b[?1;2c", "\x1b[?u": "\x1b[?0u"}
+            "\x1b]11;?": "\x1b]11;rgb:0000/0000/0000\x1b\\", "\x1b[c": "\x1b[?1;2c", KITTY_KEYBOARD_QUERY: "\x1b[?0u"}
 
 
 class TerminalTrace:
@@ -60,11 +61,13 @@ class TerminalTrace:
 class Screen:
     """One program on a pseudo-terminal: what it shows so far, and keys to send."""
 
-    def __init__(self, args: list[str], cwd: Path, env: dict[str, str], *, trace: Path | None = None):
+    def __init__(self, args: list[str], cwd: Path, env: dict[str, str], *, trace: Path | None = None,
+                 reply_to_kitty_query: bool = True):
         self.text = ""
         self.history = ""
         self.exited = False
         self.application_cursor = False
+        self.reply_to_kitty_query = reply_to_kitty_query
         self._cursor_tail = ""
         self.trace = TerminalTrace(trace) if trace is not None else None
         self._decode = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -143,12 +146,17 @@ class Screen:
 
     def _answer(self, got: str) -> None:
         for asked, said in _REPLIES.items():
+            if asked not in got:
+                continue
             # ConPTY handles OSC color queries. Injecting our own OSC into
             # its input writes the response as text in the CLI composer.
             if WINDOWS and asked.startswith("\x1b]"):
                 continue
-            if asked in got:
-                self._write(said)
+            # A late Kitty reply can insert a literal 'u' into Claude's
+            # composer. Use its legacy keyboard fallback in this PTY.
+            if asked == KITTY_KEYBOARD_QUERY and not self.reply_to_kitty_query:
+                continue
+            self._write(said)
 
     def wait_for(self, words: str, seconds: float) -> bool:
         """Until the screen shows these words. A full-screen program moves the

@@ -322,7 +322,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         args += ["-c", 'model_provider="sp_stub"', "-c", 'model_providers.sp_stub.name="local stub"',
                  "-c", f'model_providers.sp_stub.base_url={json.dumps(offline_provider)}',
                  "-c", 'model_providers.sp_stub.wire_api="responses"']
-    screen = Screen(args, folder, {**env, **tool.extra_env()}, trace=space.root / f"terminal-{tool.name}-{marker}.log")
+    screen = Screen(args, folder, {**env, **tool.extra_env()}, trace=space.root / f"terminal-{tool.name}-{marker}.log",
+                    reply_to_kitty_query=tool.name != "claude-code")
 
     def policy_error() -> str:
         return policy.result()[1] if policy else ""

@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import errno
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,8 @@ import time
 WINDOWS_QUEUE_POLL_S = 0.5
 TASKKILL_TIMEOUT_S = 5
 PROCESS_EXIT_TIMEOUT_S = 5
+QUEUE_TIMEOUT_S = 45 * 60
+PYTEST_TRACE_TIMEOUT_S = 300
 
 REPO = Path(__file__).resolve().parents[1]
 WINDOWS = os.name == "nt"
@@ -49,7 +52,11 @@ Wave = tuple[str, tuple[Step, ...]]
 
 @contextmanager
 def machine_queue(path: Path = LOCK):
-    """The OS releases the lock if this runner dies."""
+    """Hold an OS lock tied to this open file, even across PID reuse.
+
+    The kernel releases it when the holder dies. Keep the lock file in place:
+    unlinking it could let separate waiters lock different file objects.
+    """
     with path.open("a+b") as lock:
         if lock.tell() == 0:
             lock.write(b"\0")
@@ -307,17 +314,44 @@ def verify(sha: str, report_dir: Path, profile: str, jobs: int, queued_at: float
             git("worktree", "remove", "--force", str(snapshot))
 
 
-def queue_command(command: list[str]) -> int:
+def queue_timeout(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("timeout must be a positive number of seconds") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("timeout must be a positive number of seconds")
+    return seconds
+
+
+def queued_env(command: list[str], timeout: float) -> dict[str, str]:
+    env = os.environ.copy()
+    executable = Path(command[0]).stem.lower()
+    if executable in {"pytest", "py.test"} or command[1:3] == ["-m", "pytest"]:
+        # Pytest's built-in per-test watchdog also runs inside xdist workers.
+        # Leave time for its stderr dump before the process group is stopped.
+        trace_after = min(PYTEST_TRACE_TIMEOUT_S, timeout / 4)
+        addopts = env.get("PYTEST_ADDOPTS", "")
+        env["PYTEST_ADDOPTS"] = f"{addopts} -o faulthandler_timeout={trace_after:g}".strip()
+    return env
+
+
+def queue_command(command: list[str], timeout: float = QUEUE_TIMEOUT_S) -> int:
     print("Waiting for the machine test queue", flush=True)
     try:
         with machine_queue(LOCK):
             executable = shutil.which(command[0]) or command[0]
             child = subprocess.Popen(
-                [executable, *command[1:]], start_new_session=not WINDOWS,
+                [executable, *command[1:]], env=queued_env(command, timeout), start_new_session=not WINDOWS,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0,
             )
             try:
-                code = child.wait()
+                code = child.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                print(f"Queued command timed out after {timeout:g}s. Stopping its process group.",
+                      file=sys.stderr, flush=True)
+                stop_process(child)
+                return 124
             except KeyboardInterrupt:
                 stop_process(child)
                 raise
@@ -328,12 +362,18 @@ def queue_command(command: list[str]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=__doc__, epilog="To queue another command, use %(prog)s queue -- COMMAND [ARG ...].",
+        description=__doc__, epilog="To queue another command, use %(prog)s queue [--timeout SECONDS] -- COMMAND [ARG ...].",
     )
     if sys.argv[1:2] == ["queue"]:
-        if sys.argv[2:3] != ["--"] or len(sys.argv) < 4:
-            parser.error("queue requires -- followed by a command")
-        return queue_command(sys.argv[3:])
+        queue_parser = argparse.ArgumentParser(prog=f"{parser.prog} queue")
+        queue_parser.add_argument("--timeout", type=queue_timeout, default=QUEUE_TIMEOUT_S,
+                                  help="per-run deadline in seconds after acquiring the lock (default: 2700)")
+        tail = sys.argv[2:]
+        split = tail.index("--") if "--" in tail else len(tail)
+        args = queue_parser.parse_args(tail[:split])
+        if not tail[split + 1:]:
+            queue_parser.error("queue requires -- followed by a command")
+        return queue_command(tail[split + 1:], args.timeout)
     parser.add_argument("profile", choices=["fast", "waves"])
     parser.add_argument("--ref", default="HEAD", help="commit to snapshot before waiting for the queue")
     parser.add_argument("--jobs", type=int, choices=[1, 2], default=1, help="run one or two groups at once for the waves pilot")

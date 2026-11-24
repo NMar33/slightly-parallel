@@ -129,7 +129,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
                        XDG_CACHE_HOME=str(space.home / ".cache"), XDG_STATE_HOME=str(space.home / ".local/state"))
             args += ["--model", model]
 
-        terminal = Screen(args, space.sample, env, trace=trace)
+        terminal = Screen(args, space.sample, env, trace=trace, reply_to_kitty_query=cli != "claude-code")
         stack.callback(terminal.close)
         layer = "L1"
         verdicts: dict[str, str] = {}
