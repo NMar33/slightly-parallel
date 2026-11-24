@@ -9,6 +9,7 @@ SYSTEMS = ("ubuntu-latest", "macos-latest", "windows-latest")
 TOOLS = ("claude-code", "codex", "opencode")
 AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
 AGENTS_PREFLIGHT = "Check provider access, authentication and model errors"
+OFFLINE_CORE = "Run full Codex core through the guarded MCP on a local stub"
 INTERACTIVE_STUB = "Capture a real PTY turn, task, decision, rule and done on a local stub"
 
 
@@ -44,6 +45,7 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
         return {
             **{f"Real Codex ({os})": ("One read of the limits from the real program",) for os in SYSTEMS},
             **{f"Interactive agent ({tool}, {os})": (INTERACTIVE_STUB,) for tool in TOOLS for os in SYSTEMS},
+            "Interactive agent (codex, ubuntu-latest)": (INTERACTIVE_STUB, OFFLINE_CORE),
             "Interactive agent (claude-code, ubuntu-latest, trust dialog)": (INTERACTIVE_STUB,),
         }
     raise ValueError(f"unknown workflow: {workflow}")

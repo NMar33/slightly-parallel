@@ -12,6 +12,7 @@ a test can say what Codex sent. Checked with Codex 0.163.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -56,6 +57,7 @@ def _events(reply: str = REPLY, tool: tuple[str, str, dict] | None = None) -> li
 
 class Handler(LoggedStubHandler):
     interactive = False
+    core = None
     def do_GET(self) -> None:
         self._note({"method": "GET", "path": self.path})
         body = json.dumps({"object": "list", "data": [], "models": []}).encode()
@@ -77,20 +79,24 @@ class Handler(LoggedStubHandler):
                         tools[f"{name}_{child}"] = (name, child)
             else:
                 tools[name] = ("", name)
-        selected = stub_agent_turn.choose(req.get("input") or [], list(tools)) if self.interactive else None
+        selected = (self.core(req.get("input") or [], list(tools)) if self.core else
+                    stub_agent_turn.choose(req.get("input") or [], list(tools)) if self.interactive else None)
+        reply = stub_agent_turn.REPLY if self.interactive else REPLY
+        if self.core and (marker := re.search(r"sp-reply-[0-9a-f]{12}", json.dumps(req.get("input")))):
+            reply = marker[0] if not selected and self.core.policy_name() == "hello" else reply
         tool = (*tools[selected[0]], selected[1]) if selected else None
         self._note({"method": "POST", "path": self.path, "model": req.get("model"), "reasoning": req.get("reasoning"),
                     "tools": list(tools), "called_tool": selected[0] if selected else None})
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
-        for e in _events(stub_agent_turn.REPLY if self.interactive else REPLY, tool):
+        for e in _events(reply, tool):
             self.wfile.write(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode())
             self.wfile.flush()
 
 
-def serve(port: int, log_file: str, *, interactive: bool = False) -> ThreadingHTTPServer:
-    handler = type("ResponsesHandler", (Handler,), {"log_file": log_file, "interactive": interactive})
+def serve(port: int, log_file: str, *, interactive: bool = False, core=None) -> ThreadingHTTPServer:
+    handler = type("ResponsesHandler", (Handler,), {"log_file": log_file, "interactive": interactive, "core": core})
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 
 

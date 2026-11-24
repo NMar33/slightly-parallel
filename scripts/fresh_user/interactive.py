@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import scenario
+import core_mcp
 from agents import Tool, give_login, model_for
 from common import (
     Report,
@@ -198,30 +199,35 @@ _COMMAND_APPROVAL = re.compile(
     r"(?m)^ *Would you like to run the following command\? *$"
     r".*?^ *\$ (?P<command>.*?)^ *› (?P<choice>[^\n]+)", re.DOTALL,
 )
-RULE_INTERPRETATION = "Keep calc.py standalone."
+RULE_INTERPRETATION = core_mcp.RULE_TEXT
 
 
 def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None,
-                   *, command: str = "") -> Callable[[], str]:
+                   *, command: str = "", offline_command: str = "") -> Callable[[], str]:
     expected = {
         "#decision": ("write_entry", {
             "lens": "decision",
             "fields": {"decision": scenario.DECISION_TEXT},
         }),
+        "#scan": ("scan_material", {}),
         "#done": ("task_done", {}),
         "#rule": ("interpret", {"lens": "rule", "text": RULE_INTERPRETATION}),
     }.get(step)
     handled = ""
+    commands = tuple(filter(None, (offline_command, command)))
+    command_index = 0
 
     def check() -> str:
-        nonlocal handled
+        nonlocal handled, command_index
         if shell := _COMMAND_APPROVAL.search(screen.rendered):
             if shell.group() == handled:
                 return ""
             shown = " ".join(shell["command"].split())
-            if not command or handled or shown != command or shell["choice"].strip() != "1. Yes, proceed (y)":
+            if (command_index >= len(commands) or shown != " ".join(commands[command_index].split())
+                    or shell["choice"].strip() != "1. Yes, proceed (y)"):
                 return "unexpected Codex command approval"
             handled = shell.group()
+            command_index += 1
             screen.send(ENTER)
             return ""
         match = _MCP_APPROVAL.search(screen.rendered)
@@ -257,7 +263,8 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
     return check
 
 def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, model: str, home: Path,
-          seconds: int, *, core: bool = False, one_turn: bool = False) -> SmokeResult | None:
+          seconds: int, *, core: bool = False, one_turn: bool = False,
+          offline_provider: str = "") -> SmokeResult | None:
     stage = f"interactive:{tool.name}"
     verdicts = {"L1": "fail", "L2": "blocked by L1", "L3": "blocked by L2"}
     if one_turn:
@@ -265,7 +272,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     if not report.add(stage, "the interactive CLI is installed", tool.installed()):
         return None
     env = space.env()
-    if not report.add(stage, "the CLI has a login", bool(give_login(tool, home, space, env))):
+    if not report.add(stage, "the CLI has a login", bool(offline_provider or give_login(tool, home, space, env))):
         return None
 
     if one_turn and tool.name == "claude-code":
@@ -301,7 +308,27 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             "opencode": ["opencode"]}[tool.name]
     if chosen:
         args += ["--model", chosen]
+    policy = None
+    if core and tool.name == "codex":
+        policy = core_mcp.Plan(space.root)
+        policy.start("hello")
+        script = Path(core_mcp.__file__).resolve()
+        prefix = "mcp_servers.slightly-parallel"
+        args += ["-c", f'{prefix}.args={json.dumps([str(script), str(policy.policy), str(policy.trace)])}',
+                 "-c", f'{prefix}.default_tools_approval_mode="approve"',
+                 "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+                 "-c", "sandbox_workspace_write.exclude_slash_tmp=true"]
+    if offline_provider:
+        args += ["-c", 'model_provider="sp_stub"', "-c", 'model_providers.sp_stub.name="local stub"',
+                 "-c", f'model_providers.sp_stub.base_url={json.dumps(offline_provider)}',
+                 "-c", 'model_providers.sp_stub.wire_api="responses"']
     screen = Screen(args, folder, {**env, **tool.extra_env()}, trace=space.root / f"terminal-{tool.name}-{marker}.log")
+
+    def policy_error() -> str:
+        return policy.result()[1] if policy else ""
+
+    def policy_complete() -> bool:
+        return not policy or policy.result() == (policy.expected, "")
 
     def type_prompt(text: str) -> None:
         screen.send(text)
@@ -337,7 +364,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             captured[:] = [chat for chat in chats.glob(f"{tool.id_prefix}*/chat.md") if _recorded_turn(chat, prompt, reply)]
             return bool(captured)
 
-        error = _wait_for_turn(screen, find_chat, seconds)
+        error = (_wait_for_turn(screen, find_chat, seconds, approval=policy_error) if policy
+                 else _wait_for_turn(screen, find_chat, seconds))
         if not report.add(stage, "the chat contains the exact prompt and final reply in one turn",
                           not error and len(captured) == 1, f"{error}\n{captured or [chats]}\n{_screen_tail(screen)}"):
             return None
@@ -360,12 +388,19 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
         if not one_turn:
             existing = {row.get("id") for row in cards()}
+            if policy:
+                fields = {"title": title, "tags": ["ag_followup"]}
+                policy.start("#task", [["write_entry", {"lens": "task", "fields": fields}]])
+                task_prompt += " Pass exactly these fields and nothing else: " + json.dumps(fields)
             type_prompt(task_prompt)
-            def find_task_turn() -> bool:
-                approve_task_write()
-                return bool(_last_reply(chat, task_prompt))
 
-            error = _wait_for_turn(screen, find_task_turn, seconds)
+            def find_task_turn() -> bool:
+                if not policy:
+                    approve_task_write()
+                return policy_complete() and bool(_last_reply(chat, task_prompt))
+
+            error = (_wait_for_turn(screen, find_task_turn, seconds, approval=policy_error) if policy
+                     else _wait_for_turn(screen, find_task_turn, seconds))
             if not report.add(stage, "the operator task turn is captured to completion", not error,
                               f"{error}\n{agent}\n{_screen_tail(screen)}"):
                 return None
@@ -385,28 +420,56 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     continue
                 message = scenario.step_prompt(space, state, step)
                 approval = None
-                if tool.name == "codex":
-                    new_rule = None
+                if policy:
                     command = ""
-                    if name == "#rule":
-                        before = {row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)}
-                        message += f' Interpret the rule from this turn with the exact text "{RULE_INTERPRETATION}".'
-
-                        def new_rule(before: set[str] = before) -> str:
-                            current = {row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)} - before
-                            return next(iter(current)) if len(current) == 1 else ""
-
+                    offline_command = ""
+                    rule = None
+                    calls = []
+                    if name == "a plain request" and offline_provider:
+                        offline_command = core_mcp.OFFLINE_EDIT
+                    elif name == "#rule":
+                        rule = {"project": code, "agent": agent, "before": [
+                            row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)
+                        ]}
+                        calls = [["interpret", {"$rule_id": {"lens": "rule", "text": RULE_INTERPRETATION}}]]
+                        message += f' Call interpret with only lens, the new rule ID and text "{RULE_INTERPRETATION}".'
                     elif name == "the work":
+                        if offline_provider:
+                            offline_command = core_mcp.OFFLINE_TESTS
                         command = ("git add calc.py test_calc.py && git commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
-                        message += f" Run this exact command to stage only the two test files and commit: {command}"
+                        message += f" Run this exact command to stage and commit: {command}"
                     elif name == "#decision":
-                        message += ' Use Slightly Parallel write_entry with lens decision and only the decision field.'
-                    elif name == "#done":
-                        message += " Call Slightly Parallel task_done with no arguments once. Report the result in chat."
-                    approval = _core_approval(screen, name, new_rule, command=command)
+                        fields = {"decision": scenario.DECISION_TEXT, "weight": "normal"}
+                        calls = [["write_entry", {"lens": "decision", "fields": fields}]]
+                        message += " Call write_entry with lens decision and exactly these fields: " + json.dumps(fields)
+                    elif name == "#scan":
+                        calls = core_mcp.requests_for_scan()
+                        spec = space.root / "scan-payloads.json"
+                        spec.write_text(json.dumps({
+                            "scan": core_mcp.scan_fields(dict.fromkeys(
+                                ("files_n", "lines_add", "lines_del", "decisions_n"), "COUNTER",
+                            )),
+                            "file": core_mcp.file_fields("SCAN_ID"),
+                            "architecture": core_mcp.form_fields("SCAN_ID"),
+                        }, indent=2), encoding="utf-8")
+                        message += (" Call scan_material without arguments. Read the exact fields from "
+                                    f"{json.dumps(str(spec))}. Write the scan, file entry, and architecture form in order. "
+                                    "Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with "
+                                    "the returned scan ID. Copy all other values exactly. No other MCP calls.")
+                    elif name in ("#sp", "#done"):
+                        method = "checkup" if name == "#sp" else "task_done"
+                        calls = [[method, {}]]
+                        message += f" Call {method} with no arguments once. Report its result in chat."
+                    policy.start(name, calls, rule=rule, shell=tuple(filter(None, (offline_command, command))))
+
+                    command_approval = _core_approval(screen, name, command=command, offline_command=offline_command)
+
+                    def approval(command_approval=command_approval):
+                        return policy_error() or command_approval()
+
                 type_prompt(message)
-                error = _wait_for_turn(screen, lambda message=message: bool(_last_reply(chat, message)), seconds,
+                error = _wait_for_turn(screen, lambda message=message: policy_complete() and bool(_last_reply(chat, message)), seconds,
                                        approval=approval)
                 if not report.add(stage, f"{name}: the operator turn and answer are captured", not error,
                                   f"{error}\n{_screen_tail(screen)}"):

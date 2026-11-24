@@ -43,7 +43,7 @@ def _mcp_refused(space: Space, tool: Tool, reason: str) -> bool:
         _, separator, stderr = tool.last_log(space).partition("\n--- stderr ---\n")
         return bool(separator and re.search(
             r"(?m)^mcp: slightly-parallel/write_entry \(failed\)\r?\n"
-            r"(?:codex\r?\n)?422: " + re.escape(reason) + r"(?:;|\r?$)", redact_diagnostics(stderr),
+            r"(?:codex\r?\n)?422: " + re.escape(reason) + r"(?!\w)", redact_diagnostics(stderr),
         ))
     return False
 

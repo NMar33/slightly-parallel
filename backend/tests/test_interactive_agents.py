@@ -211,3 +211,58 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
                 for path in (trace, model_log):
                     if path.is_file():
                         shutil.copy2(path, folder / path.name)
+
+
+def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
+    for folder in (REPO / "scripts" / "ci", REPO / "scripts" / "fresh_user"):
+        monkeypatch.syspath_prepend(str(folder))
+    import stub_responses
+    from agents import tools
+    from common import Report, Space, free_port, get, http, wait_for
+    from core_mcp import Plan
+    from interactive import smoke
+    from stages import make_sample
+
+    space = Space(tmp_path, free_port())
+    space.home.mkdir()
+    space.data.mkdir()
+    make_sample(space)
+    config = space.home / ".codex" / "config.toml"
+    monkeypatch.setattr(setup, "CODEX_CONFIG_PATH", config)
+    monkeypatch.setattr(setup, "_MCP_PYTHON", Path(sys.executable))
+    monkeypatch.setenv("SP_PORT", str(space.port))
+    monkeypatch.setenv("CODEX_HOME", str(config.parent))
+
+    from stub_core import CoreModel
+
+    with ExitStack() as stack:
+        app = create_app(data_root=space.data, watch=True, run_monitor=False)
+        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=space.port, log_level="error"))
+        web = threading.Thread(target=server.run, daemon=True)
+        web.start()
+
+        def stop():
+            server.should_exit = True
+            web.join(timeout=10)
+
+        stack.callback(stop)
+        assert wait_for(space, "/api/health", 15)
+        http(space.url + "/api/setup/integrate", {"project_code": "calc", "project_dir": str(space.sample),
+                                                 "write_codex_hooks": True, "write_claude_hooks": False})
+        policy = Plan(space.root)
+        model = CoreModel(policy, lambda rule: get(space, f"/api/rules?project={rule['project']}")["rules"])
+        port = _serve(stack, stub_responses.serve(0, str(tmp_path / "stub-core.jsonl"), interactive=True, core=model))
+        report = Report()
+        result = smoke(space, report, "calc", space.sample, tools()["codex"], "stub-model", space.home,
+                       40, core=True, offline_provider=f"http://127.0.0.1:{port}/v1")
+        assert result and not report.failed(), [(c.name, c.detail) for c in report.failed()]
+        messages = [json.loads(line) for line in policy.trace.read_text(encoding="utf-8").splitlines()]
+        assert [row["request"]["params"]["name"] for row in messages] == [
+            "write_entry", "write_entry", "interpret", "scan_material", "write_entry",
+            "write_entry", "write_entry", "checkup", "task_done",
+        ]
+        assert all(row["result"] == "accepted" for row in messages)
+        if output := os.environ.get("SP_INTERACTIVE_ARTIFACTS"):
+            target = Path(output) / "codex-core"
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(policy.trace, target / policy.trace.name)

@@ -259,6 +259,16 @@ jobs:
         run: |
           python -m pytest -q -s -rs -o addopts='' --junitxml=interactive.xml "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
           python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("interactive.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the real PTY test must run"'
+      - name: Run full Codex core through the guarded MCP on a local stub
+        if: matrix.cli == 'codex' && runner.os == 'Linux'
+        working-directory: backend
+        timeout-minutes: 6
+        env:
+          SP_REAL_INTERACTIVE: "1"
+          SP_INTERACTIVE_ARTIFACTS: ${{ runner.temp }}/sp-interactive-stub
+        run: |
+          python -m pytest -q -s -rs -o addopts='' --junitxml=core.xml tests/test_interactive_agents.py::test_codex_runs_full_core_against_the_local_model
+          python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("core.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the offline core must run"'
       - name: Keep the local provider and PTY evidence
         if: always()
         uses: actions/upload-artifact@v7

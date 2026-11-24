@@ -417,6 +417,9 @@ def test_codex_only_confirms_the_pending_canary_task(monkeypatch, server, operat
 
 
 @pytest.mark.parametrize(("step", "tool", "arguments", "choice", "allowed"), [
+    ("#scan", "scan_material", "", "1. Allow Run the tool and continue", True),
+    ("#scan", "scan_material", "  unexpected: true\n", "1. Allow", False),
+    ("#scan", "write_entry", "  lens: decision\n", "1. Allow", False),
     ("#done", "task_done", "", "1. Allow Run the tool and continue", True),
     ("#done", "task_done", '  proposals: [{"title":"extra"}]\n', "1. Allow", False),
     ("#rule", "write_entry", '  lens: rule\n', "1. Allow", False),
@@ -445,20 +448,24 @@ def test_codex_core_only_confirms_the_exact_expected_mcp_call(
 
 
 
-@pytest.mark.parametrize(("in_stderr", "tool", "refused"), [
-    (True, "write_entry", True),
-    (False, "write_entry", False),
-    (True, "read_entry", False),
+@pytest.mark.parametrize(("in_stderr", "tool", "ending", "refused"), [
+    (True, "write_entry", ", so the command did nothing", True),
+    (True, "write_entry", " — no task was made", True),
+    (True, "write_entry", ".", True),
+    (True, "write_entry", "", True),
+    (True, "write_entry", "by default", False),
+    (False, "write_entry", ", so the command did nothing", False),
+    (True, "read_entry", ", so the command did nothing", False),
 ])
-def test_codex_helper_requires_the_actual_mcp_failure(monkeypatch, tmp_path, in_stderr, tool, refused):
+def test_codex_helper_requires_the_actual_mcp_failure(monkeypatch, tmp_path, in_stderr, tool, ending, refused):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import json
     from common import Space
     from helper_smoke import _mcp_refused
 
-    reason = "this chat is marked a helper chat"
+    reason = "this chat (codex-fixture) is marked a helper chat (codex-exec); operator commands do not apply here"
     failure = (f"\x1b[31mmcp: slightly-parallel/{tool} (failed)\x1b[0m\n"
-               f"\x1b[1mcodex\x1b[0m\n422: {reason}; the command did nothing")
+               f"\x1b[1mcodex\x1b[0m\n422: {reason}{ending}")
     log = "\n--- stderr ---\n" + failure if in_stderr else failure + "\n--- stderr ---\n"
     space = Space(tmp_path, 1)
     sessions = space.home / ".codex" / "sessions"
