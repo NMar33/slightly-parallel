@@ -9,15 +9,29 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.fixture
+def scripted_onboarding(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+
+    # These screens advance on read(), so only the poll interval matters.
+    now = 0.0
+
+    def sleep(seconds):
+        nonlocal now
+        now += seconds
+
+    monkeypatch.setattr(interactive, "time", SimpleNamespace(monotonic=lambda: now, sleep=sleep))
+    return interactive
+
+
 @pytest.mark.parametrize(("dialog", "keys", "action"), [
     ("Do you want to use this API key? Yes ❯ No (recommended)", ["\x1b[A", "\r"], "accepted CI API key"),
     ("❯ 1. No, exit\n2. Yes, I trust this folder", ["\x1b[B", "\r"], "project folder trusted"),
     ("1. Yes, I trust this folder\n❯ 2. No, exit", ["\x1b[A", "\r"], "project folder trusted"),
 ])
-def test_claude_onboarding_reaches_the_prompt(monkeypatch, dialog, keys, action) -> None:
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+def test_claude_onboarding_reaches_the_prompt(scripted_onboarding, dialog, keys, action) -> None:
     from agents import tools
-    from interactive import _ready
 
     class Screen:
         text = ""
@@ -36,15 +50,15 @@ def test_claude_onboarding_reaches_the_prompt(monkeypatch, dialog, keys, action)
 
     screen = Screen()
     answered: list[str] = []
-    assert _ready(screen, tools()["claude-code"], 2, answered)
+    assert scripted_onboarding._ready(screen, tools()["claude-code"], 2, answered)
     assert screen.keys == keys
     assert answered == [f"Claude Code {action}"]
 
 
-def test_claude_accepts_windows_folder_trust_only_after_yes_is_selected(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
-    import interactive
+def test_claude_accepts_windows_folder_trust_only_after_yes_is_selected(scripted_onboarding) -> None:
     from agents import tools
+
+    interactive = scripted_onboarding
 
     menu = (
         "Accessing workspace:\n C:/Users/runneradmin/AppData/Local/Temp/sp-fresh-ü/sample\n"
@@ -74,13 +88,11 @@ def test_claude_accepts_windows_folder_trust_only_after_yes_is_selected(monkeypa
     assert answered == ["Claude Code project folder trusted"]
 
 
-def test_claude_menu_cursor_is_not_the_composer(monkeypatch) -> None:
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+def test_claude_menu_cursor_is_not_the_composer(scripted_onboarding) -> None:
     from agents import tools
-    from interactive import _ready
 
     screen = SimpleNamespace(text="Settings\n❯ Personal profile\n  Project profile", read=lambda: None)
-    assert not _ready(screen, tools()["claude-code"], 2, [])
+    assert not scripted_onboarding._ready(screen, tools()["claude-code"], 2, [])
 
 
 @pytest.mark.parametrize("windows", [True, False])
@@ -106,10 +118,10 @@ def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_pa
 
 
 @pytest.mark.parametrize("server", ["slightly-parallel", "unexpected-server"])
-def test_claude_confirms_only_the_single_expected_mcp_server(monkeypatch, server):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
-    import interactive
+def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding, server):
     from agents import tools
+
+    interactive = scripted_onboarding
 
     choices = ("Use this MCP server", "Use this and all future MCP servers in this project",
                "Continue without using this MCP server")
@@ -153,10 +165,8 @@ def test_new_cards_include_a_late_duplicate(monkeypatch) -> None:
     assert [row["id"] for row in cards] == ["first", "repeated"]
 
 
-def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(monkeypatch, tmp_path) -> None:
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(scripted_onboarding, tmp_path) -> None:
     from agents import tools
-    from interactive import _ready
 
     config = tmp_path / "config.toml"
 
@@ -178,7 +188,7 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(mo
 
     screen = Screen()
     answered: list[str] = []
-    assert _ready(screen, tools()["codex"], 3, answered, config)
+    assert scripted_onboarding._ready(screen, tools()["codex"], 3, answered, config)
     assert screen.keys == ["\r", "\x1b[B", "\r"]
     assert answered == ["Codex project folder trusted", "Codex project hooks trusted"]
 
