@@ -1,4 +1,4 @@
-import { test, expect, echoCalc, expectLine, fullSize, openShell, ready, sessions } from './fixtures'
+import { test, expect, echoCalc, expectLine, fullSize, openShell, ready, sessions, typeLine } from './fixtures'
 
 test('opening a tab on the right keeps the left shell and puts keyboard input in the right shell', async ({ win, shell, server, paneEvidence: _paneEvidence }) => {
   const { app, page } = win
@@ -8,6 +8,10 @@ test('opening a tab on the right keeps the left shell and puts keyboard input in
   await ready(page)
   const tab = (id: string) => page.locator(`[data-tab="${id}"]`).getByRole('tab')
   await tab(shell.id).click()
+  if (process.env.SP_E2E_SHORT_SHELL_PROMPT === '1' && shell.backend === 'tmux') {
+    await typeLine(page, "PS1='sp-probe$ '")
+    await expectLine(page, 'sp-probe$')
+  }
   await tab(other.id).click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Open on the right' }).click()
   const main = page.locator('.aqua-screen')

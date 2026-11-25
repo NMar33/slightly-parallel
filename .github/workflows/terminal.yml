@@ -116,7 +116,14 @@ jobs:
         run: |
           sw_vers
           tmux -V
+          /bin/sh -c 'printf "Shell bash version: %s\n" "$BASH_VERSION"'
           npm run e2e -- e2e/msgmenu.spec.ts e2e/tab-split.spec.ts --grep 'narrow window|opening a tab on the right' --repeat-each 12 --retries=0 --trace=on --output=e2e/test-results/probe
+      - name: Repeat the split with a shell prompt that does not wrap
+        if: ${{ !cancelled() && github.ref_name == 'ci-macos-terminal-probe' && runner.os == 'macOS' }}
+        working-directory: desktop
+        env:
+          SP_E2E_SHORT_SHELL_PROMPT: "1"
+        run: npm run e2e -- e2e/tab-split.spec.ts --grep 'opening a tab on the right' --repeat-each 12 --retries=0 --trace=on --output=e2e/test-results/short-prompt
       - name: Traces and screenshots (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
         if: failure() || github.ref_name == 'ci-macos-terminal-probe'
         uses: actions/upload-artifact@v7

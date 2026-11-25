@@ -1,3 +1,7 @@
+import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { promisify } from 'node:util'
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test'
 
 const MAX_RECORDS = 400
@@ -64,11 +68,44 @@ function observeLayout() {
   }, true)
 }
 
+const run = promisify(execFile)
+const tapPane = `import shlex, sys
+from pathlib import Path
+from backend.termlib import PREFIX, tmux
+root, target, output = sys.argv[1:]
+command = ["pipe-pane", "-t", PREFIX + target]
+if output:
+    command += ["-O", "cat > " + shlex.quote(output)]
+r = tmux(Path(root), *command, timeout=3)
+if r.returncode:
+    sys.exit(r.stderr or r.returncode)
+`
+
+async function pipeShellOutput(shell: { id: string; backend: string }, testInfo: TestInfo) {
+  if (shell.backend !== 'tmux' || !testInfo.file.endsWith('tab-split.spec.ts')) return async () => ''
+  const cwd = path.resolve(__dirname, '..', '..', 'backend')
+  const python = path.join(cwd, '.venv', 'bin', 'python')
+  const root = path.join(process.env.SP_DESKTOP_E2E_ROOT!, 'data')
+  const output = path.join(process.env.SP_DESKTOP_E2E_ROOT!, `pane-${shell.id}.log`)
+  const pipe = (file: string) => run(python, ['-c', tapPane, root, shell.id, file],
+    { cwd, env: { ...process.env, TMUX_TMPDIR: process.env.SP_DESKTOP_E2E_TMUX }, timeout: 3500 })
+  try { await pipe(output) } catch (error) { return async () => String(error) }
+  return async () => {
+    try {
+      await pipe('')
+      return String(await readFile(output, 'utf8')).slice(-16000)
+    } catch (error) {
+      return String(error)
+    }
+  }
+}
+
 export async function recordPaneEvidence(page: Page, api: APIRequestContext,
                                          shell: { id: string; backend: string }, testInfo: TestInfo) {
   if (process.env.SP_E2E_PANE_EVIDENCE !== '1') return async () => {}
   // CDP watches the socket writer and reader without wrapping WebSocket.
   // Keep only socket paths and frames from these disposable shell tests.
+  const closePipe = await pipeShellOutput(shell, testInfo)
   const network = await page.context().newCDPSession(page)
   const events: object[] = []
   const paths = new Map<string, string>()
@@ -97,17 +134,19 @@ export async function recordPaneEvidence(page: Page, api: APIRequestContext,
   await page.evaluate(observeLayout)
 
   return async () => {
-    const [layout, pane] = await Promise.allSettled([
+    const [layout, pane, shellOutput] = await Promise.allSettled([
       page.evaluate(() => Reflect.get(window, '__spPaneEvidence') as object[]),
       shell.backend === 'tmux'
         ? api.post(`/api/terminal/sessions/${shell.id}/capture`, {
           data: { mode: 'screen' }, timeout: 3000,
         }).then(async (response) => response.ok() ? (await response.json()).text : `HTTP ${response.status()}`)
         : Promise.resolve('This session has no tmux pane.'),
+      closePipe(),
     ])
     await testInfo.attach('pane evidence', {
       body: JSON.stringify({ browser: layout.status === 'fulfilled' ? layout.value : String(layout.reason),
-        socket: events, pane: pane.status === 'fulfilled' ? pane.value : String(pane.reason) }, null, 2),
+        socket: events, pane: pane.status === 'fulfilled' ? pane.value : String(pane.reason),
+        shellOutput: shellOutput.status === 'fulfilled' ? shellOutput.value : String(shellOutput.reason) }, null, 2),
       contentType: 'application/json',
     })
     await network.detach().catch(() => {})
