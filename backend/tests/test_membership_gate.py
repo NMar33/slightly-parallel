@@ -108,7 +108,8 @@ def test_a_code_spelled_another_case_is_the_same_folder_where_case_folds(op: Tes
     # Windows and macOS: projects/alpha is the folder projects/ALPHA (CI found
     # it, test_audit_round3: a chat written under «alpha» filed in «ALPHA»).
     store = op.app.state.store
-    assert memberships.may_write(store, A, "alpha")[0] is False        # Linux: two folders
+    if not memberships.folds_case(store.data_root):
+        assert memberships.may_write(store, A, "alpha")[0] is False    # Linux: two folders
     monkeypatch.setattr(memberships, "folds_case", lambda root: True)
     assert memberships.may_write(store, A, "alpha") == (True, "")
     assert memberships.may_write_row(store, A, "beta", "task") == (True, "")
