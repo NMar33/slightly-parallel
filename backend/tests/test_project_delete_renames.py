@@ -255,3 +255,38 @@ def test_a_refused_delete_gives_the_members_from_elsewhere_their_membership_back
         ("join", "ALPHA", ""), ("leave", "ALPHA", mf.DELETED), ("join", "ALPHA", project_admin.REJOINED)]
     m = mf.load(world, memberships.existing_codes(world), {agent: "BETA"})
     assert "ALPHA" in m.members(agent)
+
+
+def test_a_ledger_phase_failure_names_the_trash_and_a_retry_finishes_into_it(world: Path,
+                                                                            monkeypatch) -> None:
+    """The renames went through, then a ledger's lock times out (csvio's
+    flock, FileSafetyError). Not a 503 «held by a chat move»: a 500 naming
+    the trash folder and what is where. A second delete finishes into the
+    same folder, so one archive holds the whole project."""
+    from backend.file_safety import FileSafetyError
+    real = project_admin.rewrite_rows
+
+    def busy(path, *a, **k):
+        if Path(path).name == "tasks.csv":
+            raise FileSafetyError("could not acquire lock on tasks.csv.lock within 10s")
+        return real(path, *a, **k)
+
+    app = create_app(data_root=world, watch=False)
+    with TestClient(app) as c:
+        monkeypatch.setattr(project_admin, "rewrite_rows", busy)
+        r = c.post("/api/setup/delete-data", json={"project_code": "ALPHA", "confirm": "ALPHA"})
+        monkeypatch.undo()
+        assert r.status_code == 500, r.text
+        detail = r.json()["detail"]
+        folders = sorted(p for p in (world / TRASH).glob("ALPHA-*") if p.is_dir())
+        assert len(folders) == 1 and str(folders[0]) in detail, detail
+        assert "\n" not in detail and "try again" not in detail.lower(), detail
+        assert "tasks" in detail and "still live" in detail, detail
+        assert (folders[0] / "projects" / "ALPHA").is_dir()
+        r = c.post("/api/setup/delete-data", json={"project_code": "ALPHA", "confirm": "ALPHA"})
+        assert r.status_code == 200, r.text
+        assert sorted(p for p in (world / TRASH).glob("ALPHA-*") if p.is_dir()) == folders
+        assert Path(r.json()["trash"]) == folders[0]
+        assert {x["id"] for x in read_rows(folders[0] / "tasks.csv")} >= {"tk_alpha_auth", "tk_alpha_doc"}
+        assert all(x["project"] != "ALPHA" for x in read_rows(world / "tasks.csv"))
+        assert not list((world / TRASH).glob("*.unfinished"))

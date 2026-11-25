@@ -26,10 +26,24 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path, PurePath
 from typing import Any, Iterator
 
 PROJECTS = "projects"
+# A project code is a folder name under ``projects/``: letters, digits and
+# a few punctuation marks, never a path. The same shape ``artifactlib``
+# has always enforced — the other three guards checked only ``is_dir()``,
+# and ``..`` passes that (``<data_root>/projects/..`` is a directory), so a
+# write addressed to project ".." landed outside the projects tree.
+PROJECT_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def is_code(code: str) -> bool:
+    """``code`` has the shape of a project code: one folder name, no path."""
+    return bool(PROJECT_CODE_RE.match(code)) and ".." not in code
+
+
 CHATS = "chats"
 #: A chat folder on its way into a project (the one-chat move, chatmove.py):
 #: ``<chats>/.incoming-<agent>``. No listing counts it as a chat.

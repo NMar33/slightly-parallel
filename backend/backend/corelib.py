@@ -32,6 +32,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import chatstore
 from .actors import identity_of, is_agent, refuse_agent
 from .csvio import append_row, read_rows, rewrite_rows
 from .date_utils import now_iso
@@ -329,7 +330,7 @@ def create(store: ViewStore, body: dict) -> dict[str, Any]:
     as typed and becomes the founding note; ``anchors`` are file or
     file:symbol paths the agent knows from the chat."""
     project = str(body.get("project") or "").strip()
-    if not project or not (store.data_root / "projects" / project).is_dir():
+    if not project or not chatstore.is_code(project) or not (store.data_root / "projects" / project).is_dir():
         raise CoreRefused(f"project not found: {project!r}")
     name = " ".join(str(body.get("name") or "").split())
     if not name:

@@ -131,6 +131,23 @@ def turns_of(folder: Path) -> dict[str, int]:
     }
 
 
+def _code(root: Path, to: str) -> None:
+    """``to`` is one project code that exists: one folder name under
+    ``projects/``, never a path (``ALPHA/chats/../../ALPHA`` once made
+    abandon take an agent's only chat folder to the trash)."""
+    if not chatstore.is_code(to) or to not in memberships.existing_codes(root):
+        shown = " ".join(to.split())[:80]
+        raise MoveRefused(404, f"no project «{shown}»: «to» names one project by its code")
+
+
+def _same(a: Path, b: Path) -> bool:
+    """The same folder on disk, however the two paths are spelled."""
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
+
+
 def _check(root: Path, agent: str, to: str) -> tuple[str, Path, dict[str, Any]]:
     """The checks of step 1 that need no lock of the chat: the agent's one
     origin folder, the target a member project, nothing at the target."""
@@ -142,7 +159,7 @@ def _check(root: Path, agent: str, to: str) -> tuple[str, Path, dict[str, Any]]:
     if len(chats) > 1:
         where = ", ".join(sorted(o for o, _f, _m in chats))
         target = chatstore.folder(root, to, agent)
-        others = [f for _o, f, _m in chats if f != target]
+        others = [f for _o, f, _m in chats if not _same(f, target)]
         if to in {o for o, _f, _m in chats} and len(others) == 1:
             raise MoveRefused(409, _stopped(agent, to, others[0], target))
         if to in {o for o, _f, _m in chats}:
@@ -247,6 +264,7 @@ def abandon(root: str | Path, agent: str, to: str) -> dict[str, Any]:
     written nothing."""
     root = Path(root)
     with memberships.locked(root):
+        _code(root, to)
         chats = memberships.chats_on_disk(root, agent)
         if not chats:
             raise MoveRefused(404, f"agent not found: {agent}")
@@ -254,7 +272,7 @@ def abandon(root: str | Path, agent: str, to: str) -> dict[str, Any]:
         incoming = chatstore.incoming(root, to, agent)
         if not (target.is_dir() or incoming.is_dir()):
             raise MoveRefused(409, f"{to} holds no copy of {agent}'s chat to abandon")
-        others = [f for _o, f, _m in chats if f != target]
+        others = [f for _o, f, _m in chats if not _same(f, target)]
         if not others:
             raise MoveRefused(409, f"the folder of {agent} in {to} is the only folder of its chat: "
                                    "it is the chat, not a copy; nothing was removed")
@@ -299,6 +317,7 @@ def move(root: str | Path, agent: str, to: str) -> dict[str, Any]:
     one-line reason when it may not, leaving everything as it was."""
     root = Path(root)
     with memberships.locked(root):
+        _code(root, to)
         origin, folder, target, before, turns = _copy_in(root, agent, to)
         # The chat's locks are released: no handle is open inside the original.
         if fingerprint(folder) != before:                     # step 8

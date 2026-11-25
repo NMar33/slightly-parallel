@@ -42,7 +42,7 @@ import secrets
 from pathlib import Path
 from typing import Any
 
-from . import limits
+from . import chatstore, limits
 from .actors import identity_of, is_agent
 from .csvio import append_row, as_int, read_rows, rewrite_rows
 from .date_utils import now_iso, today_yymm_dd
@@ -685,7 +685,7 @@ def write(store: ViewStore, body: Any) -> dict[str, Any]:
     if not is_agent(who):
         raise NoteRefused("agent_id is required: notes are written by an agent's chat through note_write")
     project = str(body.get("project") or "").strip() or _agent_project(store, who)
-    if not project or not (store.data_root / "projects" / project).is_dir():
+    if not project or not chatstore.is_code(project) or not (store.data_root / "projects" / project).is_dir():
         raise NoteRefused(f"project {project or '(none)'} is not one Slightly Parallel knows")
     note_id = _text(body, "id", 44)
     text = _text(body, "text", TEXT_MAX, required=True, what="the note's markdown")

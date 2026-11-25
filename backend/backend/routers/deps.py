@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -15,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..server_address import DEFAULT_PORT
 from .. import frontmatter
+from ..chatstore import PROJECT_CODE_RE  # one folder name under projects/, never a path
 from ..db import ViewStore
 from ..docs_md import parse_sections, resolve_under
 from ..entities import DONE_STATUSES
@@ -106,12 +106,6 @@ def foreign_origin(headers: Any, settings: Any) -> bool:
     return str(headers.get("sec-fetch-site", "") or "").strip().lower() == "cross-site"
 
 
-# A project code is a folder name under ``projects/``: letters, digits and
-# a few punctuation marks, never a path. The same shape ``artifactlib``
-# has always enforced — the other three guards checked only ``is_dir()``,
-# and ``..`` passes that (``<data_root>/projects/..`` is a directory), so a
-# write addressed to project ".." landed outside the projects tree.
-PROJECT_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 #: Names Windows keeps for devices, with or without an extension: a folder
 #: ``projects/con`` cannot be made there, and ``nul`` swallows what is written.

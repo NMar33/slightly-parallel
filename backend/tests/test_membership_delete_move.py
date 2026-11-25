@@ -684,3 +684,62 @@ def test_a_trashed_original_that_cannot_be_read_still_writes_the_moved_row(op: T
     assert "could not be compared" in got["warning"] and "Access is denied" in got["warning"], got
     rows, _ = mf.read(root / mf.LEDGER)
     assert rows[-1]["op"] == "moved" and got["warning"] in rows[-1]["value"]
+
+
+# ---------------------------------------------------------------------------
+# `to` is one project code, nothing that builds another path (tk_dc394600)
+# ---------------------------------------------------------------------------
+
+PROBES = ["ALPHA/chats/../../ALPHA", "ALPHA/../ALPHA", "ALPHA\\..\\ALPHA", "..", "../projects/ALPHA",
+          "BETA/", "", "   ", "NOPE"]
+
+
+@pytest.mark.parametrize("route", ["move-chat/abandon", "move-chat"])
+@pytest.mark.parametrize("to", [*PROBES, "absolute", "ALPHA"])
+def test_a_to_that_is_not_one_project_code_moves_nothing(op: TestClient, root: Path, route: str,
+                                                         to: str) -> None:
+    """The critic's probe: abandon with ``ALPHA/chats/../../ALPHA`` took
+    the agent's only chat folder to the trash. Every such ``to``, and the
+    origin's own code, is refused and the data folder stays as it was."""
+    post(op, A, op="join", project="BETA")
+    src = chatstore.folder(root, "ALPHA", A)
+    if to == "absolute":
+        to = str(root / "projects" / "ALPHA")
+    before = tree(root)
+    r = op.post(f"/api/agents/{A}/{route}", json={"to": to})
+    assert 400 <= r.status_code < 500, r.text
+    assert "\n" not in r.json()["detail"]
+    assert tree(root) == before
+    assert src.is_dir() and (src / "meta.json").is_file()
+    assert not (root / ".trash").exists() or not any(p.is_file() for p in (root / ".trash").rglob("*"))
+
+
+@pytest.mark.parametrize("to", [*PROBES, "absolute", "ALPHA"])
+def test_the_library_refuses_the_same_to(root: Path, to: str) -> None:
+    memberships.write(root, A, "join", "BETA")
+    if to == "absolute":
+        to = str(root / "projects" / "ALPHA")
+    before = tree(root)
+    for call in (chatmove.abandon, chatmove.move):
+        with pytest.raises(chatmove.MoveRefused):
+            call(root, A, to)
+    assert tree(root) == before
+
+
+@pytest.mark.parametrize("code", ["ALPHA/chats/../../ALPHA", "ALPHA/../ALPHA", "../projects/ALPHA"])
+def test_notes_cores_and_capture_take_one_project_code(op: TestClient, root: Path, code: str) -> None:
+    """The other places a project code from a body meets a path: a note and
+    a core checked only ``is_dir()``, which ``ALPHA/../ALPHA`` passes; the
+    capture import and ignore took it as given."""
+    from backend import corelib, notelib
+    store = op.app.state.store  # type: ignore[attr-defined]
+    before = tree(root)
+    with pytest.raises(notelib.NoteRefused):
+        notelib.write(store, {"agent_id": A, "project": code, "text": "a note", "title": "t"})
+    with pytest.raises(corelib.CoreRefused):
+        corelib.create(store, {"project": code, "name": "a core", "type": "store", "actor": "operator"})
+    for r in (op.get("/api/capture/import", params={"project": code, "tool": "claude"}),
+              op.post("/api/capture/import", json={"project": code, "tool": "claude"}),
+              op.post("/api/capture/ignore", json={"project": code, "tool": "claude"})):
+        assert r.status_code == 422, r.text
+    assert tree(root) == before

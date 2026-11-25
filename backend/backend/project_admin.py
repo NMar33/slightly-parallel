@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -484,7 +485,10 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
     restored project re-joins nobody. A leave needs the project to exist,
     so the leaves come before the renames; a delete then refused
     (``DeleteRefused``) writes each of those agents a ``join`` back, value
-    «project delete refused»."""
+    «project delete refused». A failure after the renames, in the ledger
+    phase, is a 500 naming the trash folder and what is where; the folder is
+    marked unfinished, and the next delete of the project finishes into it
+    rather than starting a second archive."""
     from . import membership_fold as mf
     from . import memberships
     data_root = store.data_root
@@ -498,7 +502,10 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
             left.append(agent)
         # Then the files, all or nothing (DeleteRefused names a failure),
         # then the ledger rows.
-        trash = data_root / TRASH_DIR / f"{code}-{_stamp()}"
+        # A delete that stopped in its ledger phase is finished into its own
+        # folder: one archive holds the whole project.
+        unfinished = _unfinished(data_root, code)
+        trash = unfinished or data_root / TRASH_DIR / f"{code}-{_stamp()}"
         trash.mkdir(parents=True, exist_ok=True)
         renames = _Renames(trash, code)
         try:
@@ -507,16 +514,48 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
             missed = _rejoin(data_root, code, left)
             if missed:
                 refused.detail += f" {', '.join(missed)} left {code} and could not join it again."
-                refused.args = (refused.detail,)
+            if unfinished is not None:
+                refused.detail += (f" An earlier delete of {code} stopped halfway: what it moved is "
+                                   f"in {trash}.")
+            refused.args = (refused.detail,)
             raise
         except BaseException:
             renames.back()
             _rejoin(data_root, code, left)
             raise
-        out = _delete_project_data(store, code, trash, counts)
+        marker = _marker(trash)
+        marker.touch()
+        try:
+            out = _delete_project_data(store, code, trash, counts)
+        except Exception as e:  # noqa: BLE001 - the files are in the trash: say what is where
+            moved = sorted(p.stem for p in trash.glob("*.csv"))
+            why = " ".join(f"{type(e).__name__}: {e}".split())
+            raise DeleteRefused(500, (
+                f"Delete of {code} stopped after its files went to {trash}: moving its ledger rows "
+                f"failed ({why}). Rows already in that folder: {', '.join(moved) or 'none'}; "
+                f"the other rows of {code} are still live.")) from None
+        try:
+            marker.unlink()
+        except OSError:
+            pass
     if left:
         out["left"] = left
     return out
+
+
+def _marker(trash: Path) -> Path:
+    """Beside the trash folder (inside, a restore would copy it back): the
+    delete's ledger phase has begun and not finished."""
+    return trash.with_name(trash.name + ".unfinished")
+
+
+def _unfinished(data_root: Path, code: str) -> Path | None:
+    """The trash folder of a delete of ``code`` that stopped in its ledger
+    phase, the newest if several."""
+    found = sorted(m for m in (data_root / TRASH_DIR).glob(f"{code}-*.unfinished")
+                   if m.with_suffix("").is_dir()
+                   and re.fullmatch(r"\d{8}-\d{6}", m.with_suffix("").name[len(code) + 1:]))
+    return found[-1].with_suffix("") if found else None
 
 
 #: The value of the join that undoes a leave of a delete that was refused.

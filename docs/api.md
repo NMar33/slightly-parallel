@@ -148,7 +148,17 @@ noted writes.
   holds), a chat that changed during the copy, a helper chat, two chat
   folders. Answers: `agent_id`, `from`, `to`, `folder`, `trash`, `turns`,
   `files`, `row`, and `effects` — its past minutes, tokens and commit
-  ownership count to `to`; its session ids change.
+  ownership count to `to`; its session ids change. A move that stopped
+  before the original went to the trash leaves two folders: a second try is
+  refused saying which holds the later writes and what to do.
+- `POST /api/agents/{agent_id}/move-chat/abandon` — the operator's only.
+  Body: `to`, the project that holds the copy a stopped move left. Moves the
+  copy (and a `.incoming-<id>` one) to `.trash/abandon-<id>-<stamp>/` by one
+  rename, so the move can be made again. Refused in one line, writing
+  nothing: `to` not a project code, no copy at `to`, the copy being the
+  chat's only folder, two originals, a copy holding writes the original
+  lacks, a lock a hook holds in the copy. Answers: `agent_id`, `to`,
+  `original`, `trash`, `removed`.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
   Answers: `agent_id`, `agent_group`.
 - `POST /api/agents/{agent_id}/rename` — body: `name`, stored as
