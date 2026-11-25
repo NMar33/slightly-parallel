@@ -48,7 +48,7 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
             **{f"Real Codex ({os})": ("One read of the limits from the real program",) for os in SYSTEMS},
             **{f"Interactive agent ({tool}, {os})": (INTERACTIVE_STUB,) for tool in TOOLS for os in SYSTEMS},
             **{f"Interactive agent (opencode, {os})": (INTERACTIVE_STUB, HEADLESS_OPENCODE) for os in SYSTEMS},
-            "Interactive agent (codex, ubuntu-latest)": (INTERACTIVE_STUB, OFFLINE_CORE),
+            **{f"Interactive agent (codex, {os})": (INTERACTIVE_STUB, OFFLINE_CORE) for os in SYSTEMS},
             **{f"Interactive agent (claude-code, {os}, trust dialog)": (INTERACTIVE_STUB,) for os in SYSTEMS},
         }
     raise ValueError(f"unknown workflow: {workflow}")

@@ -240,6 +240,9 @@ def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
     space = Space(tmp_path, free_port())
     space.home.mkdir()
     space.data.mkdir()
+    if os.name == "nt":
+        space.clone.mkdir()
+        shutil.copy2(REPO / "SLIGHTLY-PARALLEL.md", space.clone / "SLIGHTLY-PARALLEL.md")
     make_sample(space)
     config = space.home / ".codex" / "config.toml"
     monkeypatch.setattr(setup, "CODEX_CONFIG_PATH", config)
@@ -278,7 +281,8 @@ def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
         assert all(row["result"] == "accepted" for row in messages)
         task = messages[0]["request"]["params"]["arguments"]
         assert task["lens"] == "task"
-        assert set(task["fields"]) == {"title", "description", "tags"}
+        assert set(task["fields"]) == {"title", "description", "status", "tags"}
+        assert task["fields"]["status"] == "agent"
         assert task["fields"]["description"] == "Verify the disposable calculator task is recorded."
         if output := os.environ.get("SP_INTERACTIVE_ARTIFACTS"):
             target = Path(output) / "codex-core"

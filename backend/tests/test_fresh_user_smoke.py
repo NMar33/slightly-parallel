@@ -95,6 +95,19 @@ def test_claude_menu_cursor_is_not_the_composer(scripted_onboarding) -> None:
     assert not scripted_onboarding._ready(screen, tools()["claude-code"], 2, [])
 
 
+@pytest.mark.parametrize(("line", "ready"), [
+    ('>\u00a0Try "edit <filepath> to…"', True),
+    (">", True),
+    ("> Continue without using this MCP server", False),
+])
+def test_claude_windows_composer_respects_the_ascii_cursor(scripted_onboarding, line, ready):
+    from agents import tools
+
+    frame = f"Claude Code v2.1.330\n\n{line}\n\n⏵⏵ auto mode on (shift+tab to cycle)"
+    screen = SimpleNamespace(rendered=frame, read=lambda: None)
+    assert scripted_onboarding._ready(screen, tools()["claude-code"], 2, []) is ready
+
+
 @pytest.mark.parametrize("windows", [True, False])
 def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_path, windows):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
@@ -325,7 +338,8 @@ def test_decision_requires_a_new_entry_matching_the_operator_choice(monkeypatch,
     assert (not report.failed()) is passes
 
 
-def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch, tmp_path):
+@pytest.mark.parametrize("windows", [False, True])
+def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch, tmp_path, windows):
     import json
     import subprocess
 
@@ -334,6 +348,7 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     import scenario
     from common import Space
 
+    monkeypatch.setattr(interactive, "WINDOWS", windows)
     space = Space(tmp_path, 1)
     space.sample.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=space.sample, check=True)
@@ -342,7 +357,7 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
         prompt = interactive._operator_core_prompt(space, state, scenario.SCAN)
         assert prompt.startswith("#scan ") and "Call scan_material without arguments" in prompt
         assert "No other MCP calls" in prompt
-        directory = tmp_path if cli == "codex" else space.sample
+        directory = tmp_path if cli == "codex" and not windows else space.sample
         fixture = directory / "scan-payloads.json"
         assert json.dumps(str(fixture)) in prompt
         plan = json.loads(fixture.read_text(encoding="utf-8"))
@@ -367,6 +382,31 @@ def test_core_edit_points_windows_codex_at_one_exact_read(monkeypatch, tmp_path,
     read = f"Get-Content -LiteralPath '{path}'"
     assert (read in prompt) is (windows and cli == "codex")
     assert len(prompt.splitlines()) == 1
+
+
+def test_windows_core_accepts_only_a_single_read_of_the_installed_contract(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import ENTER, _core_approval
+
+    root = "C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-fixture"
+    calc = f"Get-Content -LiteralPath '{root}/sample/calc.py'"
+    contract = f"Get-Content -LiteralPath '{root}/slightly-parallel/SLIGHTLY-PARALLEL.md'"
+    keys = []
+    screen = SimpleNamespace(rendered="", send=keys.append)
+    check = _core_approval(screen, "a plain request", command=calc, contract_read=contract)
+
+    def show(command, choice="1. Yes, proceed (y)"):
+        screen.rendered = ("  Would you like to run the following command?\n"
+                           f"  Environment: local\n\n  $ {command}\n\n  › {choice}\n  3. No")
+        return check()
+
+    assert not show(calc)
+    assert not show(contract)
+    assert not show(contract)
+    assert keys == [ENTER, ENTER]
+    assert show(f"{contract}; Get-ChildItem") == "unexpected Codex command approval"
+    assert show(contract, "2. Yes, and don't ask again (p)") == "unexpected Codex command approval"
+    assert keys == [ENTER, ENTER]
 
 
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:

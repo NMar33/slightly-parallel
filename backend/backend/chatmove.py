@@ -30,10 +30,16 @@ mass move: transcripts stay where they started otherwise.
 9. the ``moved`` row written to the ledger. A write that reached the
    original between the last look and the rename went with it into the
    trash, not to the target: the answer (``warning``) and the row say so.
+   A trashed original that cannot be read is said the same way; a row that
+   cannot be written is a refusal naming where the chat and the original
+   are (the fold reads the move from the chat's place).
 
 A failure before 7 leaves the original untouched. One between 7 and 8 leaves
-two folders: the next call finds the target and refuses; a project delete
-then goes ahead, the chat being filed at the target.
+two folders: the next call finds the target and refuses, saying which of the
+two is newer. When the original holds all the copy holds, ``abandon`` takes
+the copy to the trash (one rename, the same guards), and the move can be
+made again; a project delete also goes ahead, the chat being filed at the
+target.
 """
 
 from __future__ import annotations
@@ -68,6 +74,11 @@ EFFECTS = (
     # (capture.py TurnCapture) and writes without the lock after 2 s
     # (hookshared.locked): an agent still running there writes a new folder.
     "close the agent first; if it is started again from the old folder, it starts a new chat folder there",
+    # POSIX: a file opened before the rename keeps its handle on the
+    # original, which went to the trash; the look before the rename cannot
+    # see a write that comes after it.
+    "a write the agent makes during the move can land in the trash, not at {to}: "
+    "a file it opened before the move keeps writing into the original; close the agent first",
 )
 
 
@@ -120,6 +131,23 @@ def turns_of(folder: Path) -> dict[str, int]:
     }
 
 
+def _code(root: Path, to: str) -> None:
+    """``to`` is one project code that exists: one folder name under
+    ``projects/``, never a path (``ALPHA/chats/../../ALPHA`` once made
+    abandon take an agent's only chat folder to the trash)."""
+    if not chatstore.is_code(to) or to not in memberships.existing_codes(root):
+        shown = " ".join(to.split())[:80]
+        raise MoveRefused(404, f"no project «{shown}»: «to» names one project by its code")
+
+
+def _same(a: Path, b: Path) -> bool:
+    """The same folder on disk, however the two paths are spelled."""
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
+
+
 def _check(root: Path, agent: str, to: str) -> tuple[str, Path, dict[str, Any]]:
     """The checks of step 1 that need no lock of the chat: the agent's one
     origin folder, the target a member project, nothing at the target."""
@@ -130,6 +158,10 @@ def _check(root: Path, agent: str, to: str) -> tuple[str, Path, dict[str, Any]]:
         raise MoveRefused(409, f"{agent} is a helper chat: it goes where its parent goes")
     if len(chats) > 1:
         where = ", ".join(sorted(o for o, _f, _m in chats))
+        target = chatstore.folder(root, to, agent)
+        others = [f for _o, f, _m in chats if not _same(f, target)]
+        if to in {o for o, _f, _m in chats} and len(others) == 1:
+            raise MoveRefused(409, _stopped(agent, to, others[0], target))
         if to in {o for o, _f, _m in chats}:
             raise MoveRefused(409, f"{agent} has a folder in {to} already")
         raise MoveRefused(409, f"{agent} has chat folders in {where}: move one chat folder at a time")
@@ -166,26 +198,153 @@ def _both(folder: Path, target: Path) -> str:
     return f"the chat is at {target}; the original is left whole at {folder}"
 
 
+def _starts_with(whole: Path, part: Path) -> bool:
+    """``whole``'s bytes begin with all of ``part``'s."""
+    try:
+        with open(whole, "rb") as a, open(part, "rb") as b:
+            while chunk := b.read(1 << 20):
+                if a.read(len(chunk)) != chunk:
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def _meta_but_project(folder: Path) -> object:
+    try:
+        meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(meta, dict):
+        meta.pop("project", None)
+    return meta
+
+
+def newer(original: Path, target: Path) -> str:
+    """Which of the two folders a stopped move left holds the later writes:
+    ``same``, ``original`` (it holds all the copy holds, and more) or
+    ``target`` (the copy holds a write the original lacks). A chat's files
+    are appended to, so a file of the copy is held by the original when the
+    original's begins with it; meta.json, which the copy rewrote, counts
+    only for ``same``, without its ``project``."""
+    mine = {p.relative_to(original).as_posix(): p for p in _files(original)}
+    copy = {p.relative_to(target).as_posix(): p for p in _files(target)}
+    for rel, p in copy.items():
+        if rel != "meta.json" and (rel not in mine or not _starts_with(mine[rel], p)):
+            return "target"
+    same = (set(mine) == set(copy) and _meta_but_project(original) == _meta_but_project(target)
+            and all(rel == "meta.json" or mine[rel].stat().st_size == p.stat().st_size
+                    for rel, p in copy.items()))
+    return "same" if same else "original"
+
+
+def _abandon_then(agent: str, to: str) -> str:
+    return (f"abandon the copy (POST /api/agents/{agent}/move-chat/abandon {{\"to\": \"{to}\"}}), "
+            "then move it again")
+
+
+def _stopped(agent: str, to: str, original: Path, target: Path) -> str:
+    """The refusal of a move that finds the folders a stopped move left."""
+    head = f"{agent} has a folder in {to} already: a move stopped before the original went to the trash"
+    which = newer(original, target)
+    if which == "target":
+        return (f"{head}, and the copy at {target} holds writes the original at {original} lacks: "
+                "compare the two by hand before deleting either")
+    state = ("the two hold the same chat" if which == "same"
+             else "the original is newer (it holds writes the copy lacks)")
+    return f"{head}; {state} (the original at {original}, the copy at {target}): {_abandon_then(agent, to)}"
+
+
+def abandon(root: str | Path, agent: str, to: str) -> dict[str, Any]:
+    """Undo a stopped move: the copy at ``to`` (and a ``.incoming`` one)
+    goes to the trash by one rename, when the original is there and holds
+    all the copy holds. Under the ledger's lock; the copy's locks are tried
+    without waiting (a hook writing there is an agent running there), then
+    released before the rename. Raises ``MoveRefused`` in one line, having
+    written nothing."""
+    root = Path(root)
+    with memberships.locked(root):
+        _code(root, to)
+        chats = memberships.chats_on_disk(root, agent)
+        if not chats:
+            raise MoveRefused(404, f"agent not found: {agent}")
+        target = chatstore.folder(root, to, agent)
+        incoming = chatstore.incoming(root, to, agent)
+        if not (target.is_dir() or incoming.is_dir()):
+            raise MoveRefused(409, f"{to} holds no copy of {agent}'s chat to abandon")
+        others = [f for _o, f, _m in chats if not _same(f, target)]
+        if not others:
+            raise MoveRefused(409, f"the folder of {agent} in {to} is the only folder of its chat: "
+                                   "it is the chat, not a copy; nothing was removed")
+        if len(others) > 1:
+            where = ", ".join(str(f) for f in others)
+            raise MoveRefused(409, f"{agent} has chat folders at {where}: abandon needs one original")
+        original = others[0]
+        if target.is_dir():
+            with ExitStack() as held:
+                for name in LOCKED_FILES:
+                    try:
+                        held.enter_context(acquire_flock(target / f"{name}.lock", mode="a", timeout_s=0))
+                    except FileSafetyError:
+                        raise MoveRefused(409, f"a hook holds the {name} lock of {agent} in {to}: "
+                                               "the agent is running there") from None
+                if newer(original, target) == "target":
+                    raise MoveRefused(409, f"the copy at {target} holds writes the original at {original} "
+                                           "lacks: compare the two by hand; nothing was removed")
+        dest = root / TRASH_DIR / f"abandon-{agent}-{datetime.now():%Y%m%d-%H%M%S}"
+        dest.mkdir(parents=True, exist_ok=True)
+        gone: list[str] = []
+        for copy in (target, incoming):
+            if not copy.is_dir():
+                continue
+            try:
+                os.rename(copy, dest / copy.name)   # one rename, never a copy and a delete
+            except OSError as e:
+                if not gone:
+                    try:
+                        dest.rmdir()
+                    except OSError:
+                        pass
+                moved = f"{gone[0]} is in {dest}; " if gone else "nothing was removed; "
+                raise MoveRefused(500, f"the copy at {copy} could not go to the trash ({e.strerror or e}): "
+                                       f"{moved}the original at {original} is untouched") from None
+            gone.append(str(copy))
+    return {"agent_id": agent, "to": to, "original": str(original), "trash": str(dest), "removed": gone}
+
+
 def move(root: str | Path, agent: str, to: str) -> dict[str, Any]:
     """Move the agent's chat folder to ``to``; raise ``MoveRefused`` with a
     one-line reason when it may not, leaving everything as it was."""
     root = Path(root)
     with memberships.locked(root):
+        _code(root, to)
         origin, folder, target, before, turns = _copy_in(root, agent, to)
         # The chat's locks are released: no handle is open inside the original.
         if fingerprint(folder) != before:                     # step 8
-            raise MoveRefused(409, f"the agent wrote after the copy: {_both(folder, target)}")
+            raise MoveRefused(409, f"the agent wrote after the copy: {_both(folder, target)}; "
+                                   f"the original is newer: stop the agent, {_abandon_then(agent, to)}")
         try:
             trashed = _trash(root, folder, agent)
         except OSError as e:
             raise MoveRefused(500, f"the original could not go to the trash ({e.strerror or e}): "
-                                   f"{_both(folder, target)}") from None
+                                   f"{_both(folder, target)}; the two hold the same chat: close what holds "
+                                   f"the original open, {_abandon_then(agent, to)}") from None
         warning = ""
-        if fingerprint_bytes(trashed) != fingerprint_bytes_of(before):
-            warning = (f"a write reached the original after the copy; it is kept in "
-                       f"{TRASH_DIR}/{trashed.name}/, not in {target.relative_to(root).as_posix()}")
+        kept = f"{TRASH_DIR}/{trashed.name}/, not in {target.relative_to(root).as_posix()}"
+        try:
+            if fingerprint_bytes(trashed) != fingerprint_bytes_of(before):
+                warning = f"a write reached the original after the copy; it is kept in {kept}"
+        except OSError as e:
+            warning = (f"the original in the trash could not be compared with the copy ({e.strerror or e}); "
+                       f"a write made during the move may be kept in {kept}")
         value = f"{mf.MOVED_FROM}{origin}" + (f"{mf.MOVED_NOTE}{warning}" if warning else "")
-        row = memberships.write(root, agent, "moved", to, value, held=True)  # step 9
+        try:
+            row = memberships.write(root, agent, "moved", to, value, held=True)  # step 9
+        except Exception as e:  # noqa: BLE001 - the move is done on disk: say where everything is
+            why = " ".join(f"{type(e).__name__}: {getattr(e, 'detail', None) or e}".split())
+            raise MoveRefused(500, f"the chat is at {target} and the original in the trash at {trashed}, but "
+                                   f"the moved row could not be written ({why}); the membership reads the "
+                                   "move from the chat's place" + (f"; {warning}" if warning else "")) from None
     out: dict[str, Any] = {
         "agent_id": agent, "from": origin, "to": to, "folder": str(target), "trash": str(trashed),
         "turns": turns, "files": len(before), "row": row,

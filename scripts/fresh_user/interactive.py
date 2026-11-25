@@ -78,7 +78,7 @@ def _last_reply(chat: Path, prompt: str) -> str:
 
 def _composer(tool: str, text: str, shown: str) -> bool:
     if tool == "claude-code":
-        return (bool(re.search(r"(?m)(?:^|\r)[ \t]*❯[^\S\r\n]*(?:Try\b|$)", text))
+        return (bool(re.search(r"(?m)(?:^|\r)[ \t]*[❯>][^\S\r\n]*(?:Try\b|$)", text))
                 and any(hint in shown for hint in ("ctrl+gtoeditinvscode", "?forshortcuts", "automodeon(shift+tabtocycle)")))
     if tool == "codex":
         return "›askcodextodoanything" in shown and "forshortcuts" in shown
@@ -192,24 +192,24 @@ def _startup_failure(screen: Screen) -> str:
     return f"L1 {reason}:\n{frame}"
 
 
-def _windows_calc_read(folder: Path) -> str:
-    path = (folder / "calc.py").resolve().as_posix().replace("'", "''")
+def _windows_file_read(file: Path) -> str:
+    path = file.resolve().as_posix().replace("'", "''")
     return f"Get-Content -LiteralPath '{path}'"
 
 
 def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step, *, offline: bool = False) -> str:
     message = scenario.step_prompt(space, state, step)
     if step == scenario.EDIT and WINDOWS and state.tool.name == "codex" and not offline:
-        return message + (f" Read the file first with this exact PowerShell command: `{_windows_calc_read(state.folder)}`."
+        return message + (f" Read the file first with this exact PowerShell command: `{_windows_file_read(state.folder / 'calc.py')}`."
                           " Then edit calc.py directly. Do not enumerate files or combine commands.")
     if step[0] != "#scan":
         return message
     filename = "scan-payloads.json"
-    if state.tool.name == "codex":
+    if state.tool.name == "codex" and not WINDOWS:
         spec = space.root / filename
     else:
-        # OpenCode asks before reading an external directory. Keep its test
-        # inputs in the disposable project, outside the scan's Git changes.
+        # OpenCode and Windows Codex can ask before accessing another folder.
+        # Keep the fixture readable in the project and out of the Git scan.
         spec = state.folder / filename
         exclude = state.folder / ".git" / "info" / "exclude"
         exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -274,7 +274,7 @@ RULE_INTERPRETATION = core_mcp.RULE_TEXT
 
 
 def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None,
-                   *, command: str = "", offline_command: str = "") -> Callable[[], str]:
+                   *, command: str = "", offline_command: str = "", contract_read: str = "") -> Callable[[], str]:
     expected = {
         "#decision": ("write_entry", {
             "lens": "decision",
@@ -287,18 +287,23 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
     handled = ""
     commands = tuple(filter(None, (offline_command, command)))
     command_index = 0
+    contract_pending = " ".join(contract_read.split())
 
     def check() -> str:
-        nonlocal handled, command_index
+        nonlocal handled, command_index, contract_pending
         if shell := _COMMAND_APPROVAL.search(screen.rendered):
             if shell.group() == handled:
                 return ""
             shown = " ".join(shell["command"].split())
-            if (command_index >= len(commands) or shown != " ".join(commands[command_index].split())
-                    or shell["choice"].strip() != "1. Yes, proceed (y)"):
+            if shell["choice"].strip() != "1. Yes, proceed (y)":
+                return "unexpected Codex command approval"
+            if contract_pending and shown == contract_pending:
+                contract_pending = ""
+            elif command_index < len(commands) and shown == " ".join(commands[command_index].split()):
+                command_index += 1
+            else:
                 return "unexpected Codex command approval"
             handled = shell.group()
-            command_index += 1
             screen.send(ENTER)
             return ""
         match = _MCP_APPROVAL.search(screen.rendered)
@@ -480,10 +485,13 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         if not one_turn:
             existing = {row.get("id") for row in cards()}
             if policy:
-                fields = {"title": title, "description": "Verify the disposable calculator task is recorded.",
-                          "tags": ["ag_followup"]}
-                policy.start("#task", [["write_entry", {"lens": "task", "fields": fields}]])
-                task_prompt += " Pass exactly these fields and nothing else: " + json.dumps(fields)
+                arguments = {"lens": "task", "fields": {
+                    "title": title, "description": "Verify the disposable calculator task is recorded.",
+                    "status": "agent", "tags": ["ag_followup"],
+                }}
+                policy.start("#task", [["write_entry", arguments]])
+                task_prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool once, "
+                               f"with exactly this JSON argument: {json.dumps(arguments)}. Report the task ID.")
             type_prompt(task_prompt)
 
             def find_task_turn() -> bool:
@@ -515,12 +523,19 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 if policy:
                     command = ""
                     offline_command = ""
+                    contract_read = ""
                     rule = None
                     calls = []
                     if name == "a plain request" and offline_provider:
-                        offline_command = core_mcp.OFFLINE_EDIT
+                        if WINDOWS:
+                            offline_command = _windows_file_read(folder / "calc.py")
+                            contract_read = _windows_file_read(space.clone / "SLIGHTLY-PARALLEL.md")
+                            command = core_mcp.OFFLINE_EDIT_POWERSHELL
+                        else:
+                            offline_command = core_mcp.OFFLINE_EDIT
                     elif name == "a plain request" and WINDOWS:
-                        command = _windows_calc_read(folder)
+                        command = _windows_file_read(folder / "calc.py")
+                        contract_read = _windows_file_read(space.clone / "SLIGHTLY-PARALLEL.md")
                     elif name == "#rule":
                         rule = {"project": code, "agent": agent, "before": [
                             row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)
@@ -529,7 +544,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         message += f' Call interpret with only lens, the new rule ID and text "{RULE_INTERPRETATION}".'
                     elif name == "the work":
                         if offline_provider:
-                            offline_command = core_mcp.OFFLINE_TESTS
+                            offline_command = core_mcp.OFFLINE_TESTS_POWERSHELL if WINDOWS else core_mcp.OFFLINE_TESTS
                         command = ("git add calc.py test_calc.py && git commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
                         message += f" Run this exact command to stage and commit: {command}"
@@ -547,9 +562,10 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         calls = [["task_done", {}], ["task_report", fields]]
                         message += (" Call task_done with no arguments once, then task_report with exactly "
                                     + json.dumps(fields) + ". No other MCP calls. Summarize the result in chat.")
-                    policy.start(name, calls, rule=rule, shell=tuple(filter(None, (offline_command, command))))
+                    policy.start(name, calls, rule=rule, shell=tuple(filter(None, (offline_command, contract_read, command))))
 
-                    command_approval = _core_approval(screen, name, command=command, offline_command=offline_command)
+                    command_approval = _core_approval(screen, name, command=command, offline_command=offline_command,
+                                                      contract_read=contract_read)
 
                     def approval(command_approval=command_approval):
                         return policy_error() or command_approval()

@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from .. import logbook
+from .. import chatstore, logbook
 from ..db import ViewStore
 from .deps import get_store
 from .terminal import enabled as terminal_on
@@ -130,8 +130,8 @@ def capture_ignore(body: dict = Body(...), store: ViewStore = Depends(get_store)
     asking for attention."""
     from .. import capturewatch
     project, tool = str(body.get("project") or "").strip(), str(body.get("tool") or "").strip()
-    if not project or tool not in ("claude", "codex", "opencode", "cursor"):
-        raise HTTPException(status_code=422, detail="project, and tool one of claude, codex, opencode, cursor")
+    if not chatstore.is_code(project) or tool not in ("claude", "codex", "opencode", "cursor"):
+        raise HTTPException(status_code=422, detail="project (one project code), and tool one of claude, codex, opencode, cursor")
     pairs = capturewatch.set_ignored(store.data_root, project, tool, bool(body.get("ignored", True)))
     return {"ignored": sorted(pairs)}
 
@@ -143,6 +143,8 @@ def capture_import_preview(project: str = Query(...), tool: str = Query(...),
     be read from the tool's own log (sessionimport.py): what an import would
     write. Nothing is written."""
     from .. import sessionimport
+    if not chatstore.is_code(project):
+        raise HTTPException(status_code=422, detail="project is one project code")
     if tool not in ("claude", "codex"):
         raise HTTPException(status_code=422, detail="tool must be claude or codex")
     return {"project": project, "tool": tool, "sessions": sessionimport.preview(store, project, tool)}
@@ -155,8 +157,8 @@ def capture_import(body: dict = Body(...), store: ViewStore = Depends(get_store)
     the ids given; a session recorded meanwhile is skipped."""
     from .. import sessionimport
     project, tool = str(body.get("project") or "").strip(), str(body.get("tool") or "").strip()
-    if not project or tool not in ("claude", "codex"):
-        raise HTTPException(status_code=422, detail="project, and tool one of claude, codex")
+    if not chatstore.is_code(project) or tool not in ("claude", "codex"):
+        raise HTTPException(status_code=422, detail="project (one project code), and tool one of claude, codex")
     ids = body.get("sessions")
     return sessionimport.run(store, project, tool, [str(x) for x in ids] if isinstance(ids, list) else None)
 

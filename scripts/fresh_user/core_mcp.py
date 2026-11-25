@@ -19,6 +19,9 @@ RULE_CAPTURE_TIMEOUT_S = 4
 OFFLINE_EDIT = r"printf '\ndef sub(a, b):\n    return a - b\n' >> calc.py"
 OFFLINE_TESTS = (r"printf 'from calc import add, sub\n\ndef test_calc():\n"
                  r"    assert add(2, 3) == 5\n    assert sub(3, 2) == 1\n' > test_calc.py")
+OFFLINE_EDIT_POWERSHELL = "Add-Content -LiteralPath 'calc.py' -Value @('', 'def sub(a, b):', '    return a - b')"
+OFFLINE_TESTS_POWERSHELL = ("Set-Content -LiteralPath 'test_calc.py' -Value @('from calc import add, sub', '', "
+                           "'def test_calc():', '    assert add(2, 3) == 5', '    assert sub(3, 2) == 1')")
 
 
 def scan_fields(counters):
@@ -68,7 +71,8 @@ class Plan:
         errors = [event for event in events if event["result"] != "accepted"]
         if errors:
             first = errors[0]
-            return 0, f"MCP {first['result']} in {first['name']}"
+            detail = f" ({first['reason']})" if first.get("reason") else ""
+            return 0, f"MCP {first['result']} in {first['name']}{detail}"
         return sum(event["turn"] == self.turn for event in events), ""
 
 
@@ -79,6 +83,21 @@ def requests_for_scan():
         ["write_entry", {"lens": "file", "fields": {"$file_fields": True}}],
         ["write_entry", {"lens": "architecture", "fields": {"$form_fields": True}}],
     ]
+
+
+def _argument_mismatch(wanted, actual, path="arguments"):
+    """Explain a mismatch using fixture field names, never model text."""
+    if type(wanted) is not type(actual):
+        return f"{path} has the wrong type"
+    if isinstance(wanted, dict):
+        if missing := sorted(wanted.keys() - actual.keys()):
+            return f"{path} is missing {', '.join(missing)}"
+        if extra := len(actual.keys() - wanted.keys()):
+            return f"{path} has {extra} extra field" + ("s" if extra > 1 else "")
+        for key, value in wanted.items():
+            if json.dumps(actual[key], sort_keys=True) != json.dumps(value, sort_keys=True):
+                return _argument_mismatch(value, actual[key], f"{path}.{key}")
+    return f"{path} differs from the fixture"
 
 
 class Guard:
@@ -124,6 +143,7 @@ class Guard:
         name, args = params.get("name"), params.get("arguments", {})
         reply = None
         outcome = "rejected unexpected call"
+        reason = ""
         calls = policy["calls"]
         if not self.failed and self.index < len(calls) and message.get("id") is not None:
             expected, template = calls[self.index]
@@ -147,11 +167,14 @@ class Guard:
                                 raise ValueError("invalid scan id")
                     except (KeyError, ValueError, TypeError, IndexError):
                         outcome = "invalid scan result"
+            elif name == expected and wanted is not None:
+                reason = _argument_mismatch(wanted, args)
         if outcome != "accepted":
             self.failed = True
         with self.trace.open("a", encoding="utf-8") as log:
             log.write(json.dumps({"turn": self.turn, "name": policy["name"], "result": outcome,
-                                  "request": message, "scan_id": self.scan_id, "counters": self.counters}, ensure_ascii=False) + "\n")
+                                  "reason": reason, "request": message, "scan_id": self.scan_id,
+                                  "counters": self.counters}, ensure_ascii=False) + "\n")
         if reply is not None:
             return reply
         return {"jsonrpc": "2.0", "id": message.get("id"), "result": {

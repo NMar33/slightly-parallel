@@ -266,7 +266,7 @@ jobs:
           python -m pytest -q -s -rs -o addopts='' --junitxml=interactive.xml "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
           python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("interactive.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the real PTY test must run"'
       - name: Run full Codex core through the guarded MCP on a local stub
-        if: matrix.cli == 'codex' && runner.os == 'Linux'
+        if: matrix.cli == 'codex'
         working-directory: backend
         timeout-minutes: 6
         env:

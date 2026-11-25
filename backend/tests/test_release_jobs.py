@@ -42,3 +42,20 @@ def test_full_ci_cannot_release_with_a_missing_interactive_stub_job(missing):
     jobs.extend({"name": f"Optional job {index}", "head_sha": sha, "conclusion": "success"} for index in range(30))
     issue = module["problem"]("ci.yml", {"jobs": jobs, "total_count": len(jobs)}, sha)
     assert issue == f"required job missing: {missing}"
+
+
+@pytest.mark.parametrize("os", ["macos-latest", "windows-latest"])
+def test_full_ci_requires_the_offline_codex_core_on_all_systems(os):
+    module = run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "ci" / "release_jobs.py"))
+    sha = "c" * 40
+    job_name = f"Interactive agent (codex, {os})"
+    step_name = module["OFFLINE_CORE"]
+    jobs = [
+        {"name": name, "head_sha": sha, "conclusion": "success", "steps": [
+            {"name": step, "conclusion": "success"} for step in steps if name != job_name or step != step_name
+        ]}
+        for name, steps in module["required_jobs"]("ci.yml").items()
+    ]
+    jobs.extend({"name": f"Optional job {index}", "head_sha": sha, "conclusion": "success"} for index in range(28))
+    issue = module["problem"]("ci.yml", {"jobs": jobs, "total_count": len(jobs)}, sha)
+    assert issue == f"required step did not pass: {job_name} / {step_name} (missing)"

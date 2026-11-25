@@ -33,7 +33,7 @@ from ..config import Settings
 from ..csvio import append_if_absent, read_rows, rewrite_rows
 from ..memberships import LedgerUnreadable
 from ..project_admin import (
-    ProjectHeld, delete_project_data, known_projects, remove_block, remove_bridge, strip_file,
+    DeleteRefused, ProjectHeld, delete_project_data, known_projects, remove_block, remove_bridge, strip_file,
 )
 from ..date_utils import today_yymm_dd
 from ..db import ViewStore
@@ -989,6 +989,10 @@ def delete_data(
         # Rule 1 (tk_d1d25a4d): the line, and each agent with the projects
         # its chat can move to (POST /api/agents/{id}/move-chat).
         return JSONResponse(status_code=409, content={"detail": held.detail, "held": held.held})
+    except DeleteRefused as refused:
+        # A rename into the trash failed (tk_dc394600): what had moved went
+        # back, and the line names the path and the state.
+        raise HTTPException(status_code=refused.status, detail=refused.detail) from None
     except FileSafetyError:
         raise HTTPException(status_code=503, detail="the membership ledger is held by a chat move; try again in a moment") from None
 

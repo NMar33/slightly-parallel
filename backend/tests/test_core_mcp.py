@@ -40,7 +40,8 @@ def test_rejects_wrong_call_before_dispatch_and_stays_closed(policy, tool, args)
     assert guard.dispatch(request(tool, args))["result"]["isError"]
     assert guard.dispatch(request("checkup", {}))["result"]["isError"]
     assert not forwarded
-    assert plan.result() == (0, "MCP rejected unexpected call in checkup")
+    count, why = plan.result()
+    assert count == 0 and why.startswith("MCP rejected unexpected call in checkup")
 
 
 def test_accepts_exact_calls_in_order_and_rejects_extra_calls(policy):
@@ -89,3 +90,17 @@ def test_report_cannot_write_to_a_different_task(policy):
     assert not guard.dispatch(done)["result"]["isError"]
     assert guard.dispatch(request("task_report", {"id": "tk_other", "summary": "Done."}))["result"]["isError"]
     assert forwarded == [done]
+
+
+@pytest.mark.parametrize(("fields", "reason"), [
+    ({"title": "Not the requested title"}, "arguments.fields.title differs from the fixture"),
+    ({}, "arguments.fields is missing title"),
+    ({"title": "Fixture", "random-field-name": "random-field-value"}, "arguments.fields has 1 extra field"),
+    ("random-field-value", "arguments.fields has the wrong type"),
+])
+def test_rejection_reports_the_differing_fixture_field_without_echoing_arguments(policy, fields, reason):
+    plan, guard, forwarded = policy
+    plan.start("task fixture", [["write_entry", {"lens": "task", "fields": {"title": "Fixture"}}]])
+    assert guard.dispatch(request("write_entry", {"lens": "task", "fields": fields}))["result"]["isError"]
+    assert plan.result() == (0, f"MCP rejected unexpected call in task fixture ({reason})")
+    assert not forwarded
