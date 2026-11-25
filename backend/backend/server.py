@@ -681,7 +681,17 @@ def membership_refusal(store: ViewStore, path: str, data: Any, actor: str) -> tu
         ok, line = memberships.may_write_row(store, actor, project, row[1] if row else "")
         if not ok:
             return 403, line
+    if _LINK_CREATE.fullmatch(path) and isinstance(data.get("to"), str):
+        # A link joins two tasks: the other end is checked as the delete checks both.
+        other = _task_project(store, data["to"].strip())
+        if other is not None:
+            ok, line = memberships.may_write_row(store, actor, other, "task")
+            if not ok:
+                return 403, line
     return None
+
+
+_LINK_CREATE = re.compile(r"/api/tasks/[^/]+/link")
 
 
 class AgentsViaMcp:

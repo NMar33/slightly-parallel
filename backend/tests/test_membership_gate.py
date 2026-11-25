@@ -273,6 +273,18 @@ def test_three_segment_task_paths_are_checked_with_mcp_only_off(op: TestClient, 
         assert tree(root) == before, path
 
 
+def test_a_link_to_a_task_of_a_non_member_project_is_refused(op: TestClient, root: Path) -> None:
+    # The critic of c2: the delete checks both tasks; the create checked only its own.
+    before = tree(root)
+    r = op.post("/api/tasks/tk_alpha_auth/link", json={"agent_id": A, "to": GAMMA_TASK, "kind": "relates"},
+                headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (403, not_member_task("GAMMA"))
+    assert tree(root) == before
+    r = op.post("/api/tasks/tk_alpha_auth/link", json={"agent_id": A, "to": "tk_beta_x", "kind": "relates"},
+                headers=VIA)
+    assert r.status_code == 201, r.text
+
+
 # -- agents' updates on tasks (answer 1) --------------------------------------
 
 UPDATES = {

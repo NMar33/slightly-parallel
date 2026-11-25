@@ -138,6 +138,10 @@ noted writes.
   chat move write (`project deleted`, `moved from …`), `op: moved`, a field
   of the wrong shape (422 naming it). 503 while a delete or a move holds the
   ledger. Answers: the GET's fields and `row`, the row written.
+  A leave and an agent's write that race: a write whose membership check
+  starts after the `leave` row is in the ledger is refused; one checked while
+  the agent was still a member counts, even when it lands after the leave
+  (tests/test_membership_race.py).
 - `POST /api/agents/{agent_id}/move-chat` — the operator's only. Body: `to`,
   one of the agent's member projects other than its origin. Moves the chat
   folder there (copy, verify bytes, sha256 and turns, set `project` in the
