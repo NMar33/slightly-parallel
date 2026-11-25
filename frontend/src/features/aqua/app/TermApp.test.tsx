@@ -415,6 +415,33 @@ describe('SP Aqua at /term', () => {
     expect(termW()).toBe(w0)
   })
 
+  it('keeps the grid when the previous native resize arrives during a sidebar close', async () => {
+    ;(window as unknown as { spWindow: unknown }).spWindow = { postMessage: () => {} }
+    world = { sessions: [row({ label: 'calendar-overlap' })] }
+    page()
+    await screen.findByRole('tablist', { name: 'Chats' })
+    const gridWidth = () => (frame().querySelector('[data-level]') as HTMLElement).style.width
+    const viewport = (width: number) => Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
+    const resized = () => act(() => { window.dispatchEvent(new Event('resize')) })
+    const width = gridWidth()
+
+    key('BracketRight', { alt: true })
+    expect(screen.getByRole('complementary', { name: 'Right sidebar' })).toBeTruthy()
+    viewport(2020)
+    key('BracketRight', { alt: true })
+    expect(screen.queryByRole('complementary', { name: 'Right sidebar' })).toBeNull()
+    expect(gridWidth()).toBe(width)
+
+    resized()
+    expect(gridWidth()).toBe(width)
+    viewport(1680)
+    resized()
+    expect(gridWidth()).toBe(width)
+    viewport(1700)
+    resized()
+    expect(gridWidth()).toBe('1700px')
+  })
+
   it('has no close or minimise in a browser', async () => {
     world = { sessions: [row({})] }
     page()

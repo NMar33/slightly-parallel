@@ -371,7 +371,12 @@ function AquaWindow({ status }: { status: Status }) {
   const wanted = widths(at)
   const [pendingNativeW, setPendingNativeW] = useState<number | null>(null)
   const growWait = useRef<ReturnType<typeof setTimeout>>()
-  useEffect(() => { setPendingNativeW(null) }, [vp.w])
+  useEffect(() => {
+    // A resize from an earlier toggle can arrive after the next one starts.
+    // Only the current destination confirms the pending request.
+    const actualWidth = window.innerWidth
+    setPendingNativeW((pending) => pending === vp.w && pending === actualWidth ? null : pending)
+  }, [vp.w])
   useEffect(() => () => clearTimeout(growWait.current), [])
   const nativeFrameW = sidebarMode === 'inward' ? vp.w : pendingNativeW ?? vp.w
   const { lw, rw } = native ? fitSidebarWidths(nativeFrameW, wanted.lw, wanted.rw) : wanted
