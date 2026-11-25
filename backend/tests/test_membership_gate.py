@@ -280,6 +280,10 @@ def test_a_link_to_a_task_of_a_non_member_project_is_refused(op: TestClient, roo
                 headers=VIA)
     assert (r.status_code, r.json()["detail"]) == (403, not_member_task("GAMMA"))
     assert tree(root) == before
+    # Over plain HTTP with agents.mcp_only off too (the critic's probe got 201).
+    r = op.post("/api/tasks/tk_alpha_auth/link", json={"agent_id": A, "to": GAMMA_TASK, "kind": "blocks"})
+    assert (r.status_code, r.json()["detail"]) == (403, not_member_task("GAMMA"))
+    assert tree(root) == before
     r = op.post("/api/tasks/tk_alpha_auth/link", json={"agent_id": A, "to": "tk_beta_x", "kind": "relates"},
                 headers=VIA)
     assert r.status_code == 201, r.text
@@ -342,6 +346,34 @@ def test_after_done_closes_a_foreign_task_its_report_and_evidence_pass(op: TestC
     op.app.state.store.rebuild()
     r = op.post(f"/api/tasks/{GAMMA_TASK}/report", json={"agent_id": other, "text": "x", "outcome": "done"}, headers=VIA)
     assert r.status_code == 403, r.text
+
+
+@pytest.mark.parametrize("task,result", [("tk_alpha_cyr", "already"), ("tk_alpha_old", "archived")])
+def test_a_done_that_closed_nothing_gives_no_rights(op: TestClient, root: Path, task: str, result: str) -> None:
+    # The critic of 54c217ee: #done naming a task already done or archived
+    # gave that chat lasting report rights on it. A task of a project the
+    # chat is not in: move ALPHA's closed task to GAMMA first.
+    import csv
+    from datetime import datetime, timedelta
+    with open(root / "tasks.csv", encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    for row in rows:
+        if row["id"] == task:
+            row["project"] = row["projects"] = "GAMMA"
+    with open(root / "tasks.csv", "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    (root / "done.json").write_text('{"since": "2000-01-01T00:00:00"}', encoding="utf-8")
+    at = (datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds")
+    make_chat(root, "ALPHA", A, [("2026-11-20T10:00:00", "work", "ok"), (at, f"#done {task}", "closed")])
+    op.app.state.store.rebuild()
+    got = op.get("/api/done-tags", params={"agent_id": A}).json()
+    assert [t["result"] for t in got["tasks"]] == [result], got
+    before = tree(root)
+    r = op.post(f"/api/tasks/{task}/report", json={"agent_id": A, "text": "x", "outcome": "done"}, headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (403, not_member_task("GAMMA"))
+    assert tree(root) == before
 
 
 def test_the_operator_is_never_refused(op: TestClient) -> None:

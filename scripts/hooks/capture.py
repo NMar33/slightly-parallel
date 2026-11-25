@@ -387,22 +387,18 @@ def fold_agent(data_root: Path, project: str, agent: str) -> tuple[list[str], st
             m.level(agent))
 
 
-def ledger_stats(data_root: Path) -> list:
-    """One stat of the membership ledger and the alias file: what
-    ``membership_seen`` in meta.json compares (a missing file is None)."""
-    mf = _membership_fold()
-    out: list = []
-    for p in (mf.path(data_root), mf.aliases_path(data_root)):
-        try:
-            st = os.stat(p)
-        except FileNotFoundError:
-            out.append(None)
-            continue
-        except OSError:
-            out.append("unstat")
-            continue
-        out.append([st.st_size, st.st_mtime_ns, st.st_ino])
-    return out
+def ledger_stats(data_root: Path) -> list | str | None:
+    """One stat of the membership ledger: what ``membership_seen`` in
+    meta.json compares (a missing file is None). The alias file is not
+    stat'ed each turn: aliases matter to the braces only, and a task
+    command reads it anyway."""
+    try:
+        st = os.stat(_membership_fold().path(data_root))
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unstat"
+    return [st.st_size, st.st_mtime_ns, st.st_ino]
 
 
 def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
@@ -670,17 +666,19 @@ class TurnCapture:
         self.usage_failed = False
 
     def _membership_turn(self, meta: dict, commands: list[str]) -> str | None:
-        """Note nt_258a7ed7 §5: one stat of the ledgers per turn against
-        ``membership_seen``; the fold only on a task command or a change, the
-        stat taken after that read. On a change, the operator summary for
-        this turn's notice. A missing file is the normal state; one that
+        """Note nt_258a7ed7 §5: one stat of the ledger per turn against
+        ``membership_seen``; the fold only on a task command or a change. The
+        stat is taken before the read and kept as seen: a write that lands
+        between them changes the next turn's stat, which reads again and
+        tells it (taken after, it was saved as seen and never told). On a
+        change, the operator summary for this turn's notice. A missing file is the normal state; one that
         cannot be read writes one failure line and reads as home only."""
         self._folded: tuple | None = None
         stats = ledger_stats(self.data_root)
-        seen = meta.get("membership_seen")
-        changed = seen is not None and stats != seen
+        first = "membership_seen" not in meta     # a missing ledger is seen as None
+        changed = not first and stats != meta.get("membership_seen")
         task_cmd = any(c in ("task", "done") or c.startswith("now") for c in commands)
-        if seen is None:
+        if first:
             meta["membership_seen"] = stats
         if not changed and not task_cmd:
             return None
@@ -693,7 +691,7 @@ class TurnCapture:
             level = _membership_fold().DEFAULT_LEVEL
         # The braces of this turn's command read this fold, not a second one.
         self._folded = (members, home, aliases, codes)
-        meta["membership_seen"] = ledger_stats(self.data_root)
+        meta["membership_seen"] = stats
         if not changed:
             return None
         return _membership_fold().summary_text(self.agent_name, home, members, self.project, level)

@@ -148,3 +148,34 @@ def test_the_wrong_shape_of_to(world) -> None:
         r = c.post(f"/api/tasks/{TASK}/move", json=body)
         assert r.status_code == 422, r.text
     assert tree(root) == before
+
+
+def test_the_rest_of_the_card_goes_with_it_or_is_let_go_and_said(world) -> None:
+    # The critic of 54c217ee: the move left sprint_id, the milestone link and
+    # the notes' and evidence's project on A, and a stack's next card was not
+    # made its head.
+    c, root = world
+    store = c.app.state.store
+    assert c.post(f"/api/tasks/{TASK}/update", json={"actor": "operator", "sprint_id": "sp_alpha"}).status_code == 200
+    # A stack of two cards in one column: TASK and another ALPHA card.
+    other = c.post("/api/tasks", json={"project": "ALPHA", "title": "Next in the stack", "status": "doing",
+                                       "actor": "operator", "created_date": "2611-20", "created_time": "10:00"})
+    other_id = other.json()["metadata"]["id"]
+    for tid, pos in ((TASK, "1"), (other_id, "2")):
+        r = c.post(f"/api/tasks/{tid}/update", json={"actor": "operator", "stack_id": "st_alpha", "position": pos})
+        assert r.status_code == 200, r.text
+    r = c.post("/api/milestones", json={"project": "ALPHA", "title": "Alpha out", "outcome": "x", "check": "x",
+                                        "target_date": "2026-12-01", "tasks": [TASK]})
+    assert r.status_code == 201, r.text
+    mid = r.json()["milestone"]["id"]
+    assert c.post(f"/api/tasks/{TASK}/notes", json={"type": "article", "body": "1) A note"}).status_code == 201
+    got = c.post(f"/api/tasks/{TASK}/move", json={"actor": "operator", "to": "BETA"}).json()
+    assert got["sprint_dropped"] and got["milestones_dropped"] == [mid] and got["stack_dropped"], got
+    assert "its sprint sp_alpha is ALPHA's: let go" in got["said"]
+    assert f"its milestone {mid} is ALPHA's: let go" in got["said"]
+    row = store.query_one("SELECT sprint_id, stack_id FROM tasks_mutual WHERE id = ?", (TASK,))
+    assert not row["sprint_id"] and not row["stack_id"]
+    assert not store.query("SELECT * FROM milestone_tasks_mutual WHERE task_id = ?", (TASK,))
+    assert {r["project"] for r in store.query("SELECT project FROM task_notes_mutual WHERE task_id = ?", (TASK,))} == {"BETA"}
+    head = store.query_one("SELECT stack_head_at FROM tasks_mutual WHERE id = ?", (other_id,))
+    assert head["stack_head_at"], "the next card of the stack became its head"

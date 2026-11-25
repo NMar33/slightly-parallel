@@ -9,9 +9,12 @@ Two processes, 50 runs. A subprocess appends ``leave BETA`` with
 memberships.write and prints the moment the append returned. This process
 writes decisions to BETA in a loop as the agent, and the moment each
 membership check began is taken inside the check itself: memberships.may_write
-is wrapped to note ``time.monotonic_ns()`` on entry. CLOCK_MONOTONIC is one
-clock for the whole machine (Linux, macOS; Windows' performance counter
-too), so the two processes' moments compare; a timestamp taken before the
+is wrapped to note ``time.perf_counter_ns()`` on entry. That counter is one
+clock for the whole machine and fine-grained everywhere (CLOCK_MONOTONIC on
+Linux, mach_absolute_time on macOS, QueryPerformanceCounter on Windows), so
+the two processes' moments compare. ``time.monotonic_ns()`` is not: on
+Windows it ticks every 15.6 ms, and CI found a check and the leave's end on
+the same tick. A timestamp taken before the
 request would only bound the check from below and could hide a late check.
 Every write that succeeded must have begun its check before the leave's
 append returned; every write checked after it must be refused.
@@ -50,7 +53,7 @@ root, agent, start = sys.argv[2:5]
 while time.time() < float(start):
     pass
 memberships.write(root, agent, "leave", "BETA")
-print(time.monotonic_ns())
+print(time.perf_counter_ns())
 """
 
 
@@ -62,7 +65,7 @@ def world(data_root: Path, monkeypatch):
 
     def noted(store, agent, project):
         if project == "BETA":
-            checks.append(time.monotonic_ns())
+            checks.append(time.perf_counter_ns())
         return real(store, agent, project)
 
     monkeypatch.setattr(memberships, "may_write", noted)
@@ -91,7 +94,7 @@ def test_a_write_checked_after_the_leave_is_refused(world) -> None:
                 "agent_id": A, "project": "BETA", "created_date": "2611-26", "created_time": "10:00",
                 "decision": f"race {run} write {n}", "why": "x"}, headers=VIA)
             assert checks, "the gate did not check the membership"
-            writes.append((checks[0], r.status_code, time.monotonic_ns()))
+            writes.append((checks[0], r.status_code, time.perf_counter_ns()))
             refused_since = refused_since + 1 if r.status_code == 403 else 0
         out, err = leaver.communicate(timeout=60)
         assert leaver.returncode == 0, err

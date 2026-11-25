@@ -111,22 +111,31 @@ def test_the_summary_shows_on_the_turn_after_a_change(root: Path) -> None:
     assert "projects changed" not in _turn(cap, "and on")      # once
 
 
-def test_the_stat_is_taken_after_the_read(root: Path, monkeypatch) -> None:
+def test_a_join_landing_after_the_read_is_told_next_turn(root: Path, monkeypatch) -> None:
+    # The critic of 54c217ee: with the stat taken after the read, a join
+    # landing between them was saved as seen and never told. The stat is
+    # taken before the read, so the next turn sees the change and tells it.
     cap = _cap(root)
     real = capture.fold_agent
 
-    def join_while_reading(*a, **k):
-        real(*a, **k)
-        memberships.write(root, A, "join", "beta")      # a write lands while the hook reads
-        return real(*a, **k)
+    def join_after_reading(*a, **k):
+        got = real(*a, **k)
+        memberships.write(root, A, "join", "beta")      # lands after the read, before the turn ends
+        return got
 
-    monkeypatch.setattr(capture, "fold_agent", join_while_reading)
+    monkeypatch.setattr(capture, "fold_agent", join_after_reading)
     _turn(cap, "#task first")
     monkeypatch.setattr(capture, "fold_agent", real)
-    # The stat was taken after the read, which saw the join: no change is
-    # reported for it again on the next turn.
-    meta = json.loads(cap.meta_path.read_text(encoding="utf-8"))
-    assert meta["membership_seen"] == capture.ledger_stats(root)
+    out = _turn(cap, "next")
+    assert "[slightly-parallel] this chat's projects changed —" in out
+    assert "member of: alpha, beta" in out
+
+
+def test_the_first_ledger_is_a_change(root: Path) -> None:
+    # No ledger yet is seen as «none»; the first join makes one and is told.
+    cap = _cap(root)
+    memberships.write(root, A, "join", "beta")
+    assert "projects changed" in _turn(cap, "go on")
 
 
 def test_an_unreadable_ledger_falls_back_with_one_failure_line(root: Path) -> None:

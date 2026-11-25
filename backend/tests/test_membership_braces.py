@@ -67,7 +67,8 @@ def world(tmp_path: Path):
     with open(root / "tasks.csv", "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["id", "project", "title", "status", "lane", "assignee", "archived_at"])
-        for i, (code, lane) in enumerate([(HOME, "ui"), (HOME, "merkhet-ui"), (HOME, "release"), (MEMBER, "docs")]):
+        for i, (code, lane) in enumerate([(HOME, "ui"), (HOME, "merkhet-ui"), (HOME, "release"), (MEMBER, "docs"),
+                                              (HOME, "phase-1"), (HOME, "sprint1"), (HOME, "bugs-ui")]):
             w.writerow(_task_row(i, code, lane))
     make_chat(root, HOME, A, [("2026-11-20T10:00:00", "start", "ok")])
     # Tags older than this are history (nowlib); the tests' chats are newer.
@@ -108,8 +109,13 @@ TABLE: list[tuple[str, tuple[str, str, str]]] = [
     ("#task {shopfront} x", ("", "", NOT_SHOPFRONT)),
     ("#task {project:nowhere} x", ("", "", "{project:nowhere}: nowhere is not a project of this agent")),
     ("#task {brand new lane} x", ("", "brand new lane", "")),
-    ("#task {ui2} x", ("", "", "{ui2} is not a lane of merkhet's board — did you mean ui?")),   # a lane's near miss
-    ("#task {writing-tracker} {doc} x", ("", "", "{doc} is not a lane of writing-tracker's board — did you mean docs?")),
+    ("#task {ui2} x", ("", "", "{ui2} is not a lane of merkhet's board — did you mean ui? or write {lane:ui2}")),
+    ("#task {writing-tracker} {doc} x",
+     ("", "", "{doc} is not a lane of writing-tracker's board — did you mean docs? or write {lane:doc}")),
+    # A numbered or suffixed sibling of a live lane is a new lane, not a typo.
+    ("#task {phase-2} x", ("", "phase-2", "")),
+    ("#task {sprint2} x", ("", "sprint2", "")),
+    ("#task {bugs-ux} x", ("", "bugs-ux", "")),
     ("#task {relase} x", ("", "", near("relase", "release"))),                        # an alias's near miss first
     ("#task {" + "a" * 80 + "} x", ("", "a" * 80, "")),                               # 80 characters
     ("#task {" + "a" * 81 + "} x", ("", "", "")),                                    # 81: not a group
@@ -225,6 +231,10 @@ def test_the_now_card_resolves_the_braces_once(world) -> None:
              if "build the export" in str(t.get("title") or "")]
     assert len(cards) == 1, cards
     assert (cards[0]["project"], cards[0]["lane"], cards[0]["status"]) == (MEMBER, "docs", "doing")
+    # The server's card in a project other than home says so (the critic of 54c217ee).
+    events = c.app.state.store.query(
+        "SELECT new_value FROM task_events_mutual WHERE task_id = ? AND field = 'created_in'", (cards[0]["id"],))
+    assert [e["new_value"] for e in events] == [f"{MEMBER} (home {HOME})"]
 
 
 def test_a_refused_now_makes_no_card(world) -> None:

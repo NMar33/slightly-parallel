@@ -267,6 +267,18 @@ def pick_task_hit(hits: list[Any], kind: str = "") -> Any:
     return nows[0] if nows else hits[-1]
 
 
+#: A lane's numbered or suffixed sibling: «phase-2» beside «phase-1»,
+#: «sprint2» beside «sprint1», «bugs-ux» beside «bugs-ui».
+_LANE_STEM_RE = re.compile(r"^(.+?)(?:[-_. ]?[0-9]+|[-_. ][^-_. ]{1,3})$")
+
+
+def _lane_variant(a: str, b: str) -> bool:
+    """Two lane names that differ only in a trailing number or a short
+    suffix after a separator: a sibling lane, never a typo of the other."""
+    ma, mb = _LANE_STEM_RE.match(a), _LANE_STEM_RE.match(b)
+    return ma is not None and mb is not None and ma.group(1) == mb.group(1)
+
+
 def brace_refusal_member(agent: str, code: str, members: list[str]) -> str:
     return (f"agent {agent} is not a member of {code}; its projects: {', '.join(members) or 'none'}. "
             "The operator adds it on the agent card")
@@ -333,9 +345,11 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
                 hint = {**{c.lower(): c for c in codes}, **{a.lower(): a for a in aliases}}.get(best, best)
                 return refuse(f"{{{g}}} is not a project of this agent — did you mean {hint}?")
             # A near miss of a live lane is a typo, not a new lane ({bug} for Bugs).
-            lane = max(live, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
+            close = [n for n in live if not _lane_variant(low, n)]
+            lane = max(close, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
             if lane and difflib.SequenceMatcher(None, low, lane).ratio() >= NEAR_MISS:
-                return refuse(f"{{{g}}} is not a lane of {target}'s board — did you mean {live[lane]}?")
+                return refuse(f"{{{g}}} is not a lane of {target}'s board — did you mean {live[lane]}? "
+                              f"or write {{lane:{g}}}")
             lanes.append(g)
     if len(set(projects)) > 1:
         return refuse(f"two projects in braces ({', '.join(dict.fromkeys(projects))}): name one")

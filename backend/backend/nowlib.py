@@ -275,6 +275,13 @@ def _write_card(store: ViewStore, tag: dict) -> str:
     # The card is the chat's: its agent can retitle it, and the chat's page lists it.
     rewrite_rows(store.data_root / ENTITIES["task"].csv, ENTITIES["task"].columns,
                  lambda rs: _own(rs, task_id, agent))
+    if not out.get("existing"):
+        # Filed into a project the braces named, not the chat's home: the
+        # history says so, as for an agent's own task (tasklib.create_task).
+        from . import memberships
+        view = memberships.agent_view(store, agent)
+        if view is not None and view.home and project != view.home:
+            append_events(store, task_id, agent, [("created_in", "", f"{project} (home {view.home})")])
     verb, tagname = ("started", "#now") if column == "doing" else ("filed", f"#now-{column}")
     if out.get("existing"):
         # The id comes from the message: a retry after a write that stopped

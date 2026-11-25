@@ -144,7 +144,7 @@ def test_a_near_miss_of_a_lane_the_board_has_is_refused_with_its_name(tmp_path: 
     r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
                                    "agent_id": "cc-a", "title": "x", "tags": "ag_bug"})
     assert r.status_code == 403, r.text
-    assert r.json()["detail"] == "{bug} is not a lane of alpha's board — did you mean Bugs?"
+    assert r.json()["detail"] == "{bug} is not a lane of alpha's board — did you mean Bugs? or write {lane:bug}"
     c.__exit__(None, None, None)
 
 

@@ -665,6 +665,11 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     topic = entry_of(store, ep_id) if ep_id else None
     drop_topic = topic is not None and str(topic.get("project") or "") != to
     stack = str(row.get("stack_id") or "").strip()
+    sprint = str(row.get("sprint_id") or "").strip()
+    from .entities import MILESTONE_TASK_COLUMNS, TASK_EVIDENCE_COLUMNS, TASK_NOTE_COLUMNS
+    milestones = [str(r.get("milestone_id") or "") for r in store.query(
+        "SELECT milestone_id FROM milestone_tasks_mutual WHERE task_id = ?", (task_id,))]
+    deferred: list = []
     projects = ",".join([to, *[c for c in project_codes(row.get("projects")) if c not in (old, to)]])
     ent = ENTITIES["task"]
 
@@ -677,10 +682,29 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
         if lane and not kept_lane:
             target["lane"] = target["assignee"] = ""
         if stack:
+            # The stack stays in A: the card leaves it as a card leaving its
+            # column does, so the next one there becomes its head.
+            after_status_change(store, rows, target, str(target.get("status") or ""), [], deferred)
             target["stack_id"] = ""
+        if sprint:
+            target["sprint_id"] = ""
         return True
 
     rewrite_rows(store.data_root / ent.csv, ent.columns, mutate)
+    for ev_task, ev_actor, ev_changes in deferred:
+        _append_events(store, ev_task, ev_actor, ev_changes)
+    # Its notes and evidence go with it; a milestone is A's plan and lets it go.
+    for name, columns in (("task_notes.csv", TASK_NOTE_COLUMNS), ("task_evidence.csv", TASK_EVIDENCE_COLUMNS)):
+        def follow(rs: list[dict[str, str]]) -> bool:
+            hit = [r for r in rs if r.get("task_id") == task_id and r.get("project") != to]
+            for r in hit:
+                r["project"] = to
+            return bool(hit)
+        if (store.data_root / name).exists():
+            rewrite_rows(store.data_root / name, columns, follow)
+    if milestones:
+        rewrite_rows(store.data_root / "milestone_tasks.csv", MILESTONE_TASK_COLUMNS,
+                     lambda rs: bool([rs.remove(r) for r in list(rs) if r.get("task_id") == task_id]))
     if drop_topic:
         rewrite_rows(store.data_root / TOPICS_FILE, TASK_TOPIC_COLUMNS,
                      lambda rs: bool([rs.remove(r) for r in list(rs) if r.get("task_id") == task_id]))
@@ -689,7 +713,9 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
         ("project", old, to),
         ("moved", "", f"from {old} to {to}, by {by}"),
     ] + ([("lane", lane, "")] if lane and not kept_lane else [])
-      + ([("stack_id", stack, "")] if stack else []))
+      + ([("stack_id", stack, "")] if stack else [])
+      + ([("sprint_id", sprint, "")] if sprint else [])
+      + [("milestone", m, "") for m in milestones])
     store.rebuild()
     said = [f"{task_id} → {to}" + (f" · lane {kept_lane}" if kept_lane else "")]
     if lane and not kept_lane:
@@ -698,6 +724,13 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
         said.append(f"its topic {ep_id} is {old}'s: let go")
     if stack:
         said.append(f"its stack {stack} stays in {old}: let go")
+    if sprint:
+        said.append(f"its sprint {sprint} is {old}'s: let go")
+    if milestones:
+        said.append(f"its milestone{'s' if len(milestones) > 1 else ''} {', '.join(milestones)} "
+                    f"{'are' if len(milestones) > 1 else 'is'} {old}'s: let go")
+    said.append("its notes and evidence go with it")
     return {"task_id": task_id, "from": old, "to": to, "lane": kept_lane, "projects": projects,
             "lane_cleared": bool(lane and not kept_lane), "topic_dropped": drop_topic,
-            "stack_dropped": bool(stack), "where": said[0], "said": "; ".join(said)}
+            "stack_dropped": bool(stack), "sprint_dropped": bool(sprint), "milestones_dropped": milestones,
+            "where": said[0], "said": "; ".join(said)}

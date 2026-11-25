@@ -617,14 +617,16 @@ _DONE_FOLLOWUP = re.compile(r"/api/tasks/([^/]+)/(report|evidence|story)")
 
 def closed_here(store: ViewStore, actor: str, path: str) -> bool:
     """Did the operator's #done in this agent's chat close the task this
-    report, evidence or story is for?"""
+    report, evidence or story is for? Only a #done that moved it (done.csv
+    result «moved»): one naming a task already done or archived closed
+    nothing, and gives no rights on it."""
     hit = _DONE_FOLLOWUP.fullmatch(path)
     if hit is None:
         return False
     from . import donelib
     task_id = urllib.parse.unquote(hit.group(1))
     return any(r.get("agent_id") == actor and r.get("task_id") == task_id
-               and r.get("result") in donelib.RESOLVED for r in donelib.rows(store))
+               and r.get("result") == "moved" for r in donelib.rows(store))
 
 
 def row_of_write(store: ViewStore, path: str) -> tuple[list[str], str] | None:
