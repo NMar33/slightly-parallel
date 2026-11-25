@@ -135,9 +135,11 @@ const DARK_ROUTES = ['/', '/kanban', '/chats', '/calendar', '/visions', '/rules'
 
 test.describe('the dark theme opens', () => {
   test.use({ colorScheme: 'dark' })
-  walk(DARK_ROUTES, ' in dark', (page) => page.addInitScript(() => {
-    try { localStorage.setItem('sp-theme', 'dark') } catch { /* fine */ }
-  }), async (page, url) => {
+  walk(DARK_ROUTES, ' in dark', async (page) => {
+    await page.addInitScript(() => {
+      try { localStorage.setItem('sp-theme', 'dark') } catch { /* fine */ }
+    })
+  }, async (page, url) => {
     // The theme really applied: the app ground is the dark base, not white.
     const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
     expect(bg, `body ground in ${url}`).not.toBe('rgb(255, 255, 255)')

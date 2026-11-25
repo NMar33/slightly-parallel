@@ -333,9 +333,16 @@ for (const native of [false, true]) test(`Shift-click extends a selection across
     if ((el.closest('.sp-reader') !== null) !== !!area.querySelector('.sp-reader[style*="visibility: visible"]')) return []
     const rect = row.getBoundingClientRect()
     const screen = area.getBoundingClientRect()
-    const y = rect.y + rect.height / 2
-    if (y < screen.top || y > screen.bottom) return []
-    return [{ n: Number(text.slice(-3)), x: rect.x + 2, y, charWidth: rect.width / Number(el.closest<HTMLElement>('[data-cols]')!.dataset.cols) }]
+    const x = Math.floor(rect.x + 2)
+    const top = Math.max(rect.top, screen.top)
+    const bottom = Math.min(rect.bottom, screen.bottom)
+    const points = [Math.floor((top + bottom) / 2), Math.ceil(top), Math.ceil(bottom) - 1]
+    // Fractional scrolling clips the first row inside the reader. Its
+    // midpoint can land on the reader background instead of the terminal.
+    const y = points.find((point) => point >= top && point < bottom
+      && document.elementFromPoint(x, point)?.closest('.xterm') === el)
+    if (y === undefined) return []
+    return [{ n: Number(text.slice(-3)), x, y, charWidth: rect.width / Number(el.closest<HTMLElement>('[data-cols]')!.dataset.cols) }]
   }))
   const clipboard = () => app.evaluate(({ clipboard: system }) => system.readText())
   const x11 = LINUX ? process.env.SP_E2E_X11_DISPLAY : undefined
@@ -371,9 +378,13 @@ for (const native of [false, true]) test(`Shift-click extends a selection across
   expect(await clipboard()).toBe('previous clipboard')
   if (x11) expect(primaryOwner(x11)).toBe(primary)
 
-  await page.keyboard.press(MAC ? 'Meta+KeyC' : 'Control+Shift+KeyC')
   const selected = Array.from({ length: 164 - last.n }, (_, i) => label(last.n + i)).join('\n')
   try {
+    const target = await page.evaluate(() => JSON.parse(document.body.dataset.shiftClickTarget ?? 'null'))
+    expect(target, 'Shift-click hit the terminal at the selected visible row').toMatchObject({
+      terminal: true, x: last.x, y: last.y,
+    })
+    await page.keyboard.press(MAC ? 'Meta+KeyC' : 'Control+Shift+KeyC')
     await expect.poll(async () => (await clipboard()).replace(/\r\n/g, '\n').replace(/ +$/, '')).toBe(selected + '\n')
   } catch (error) {
     const targets = await page.evaluate(() => ({
