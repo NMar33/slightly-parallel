@@ -61,6 +61,10 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: backend
         run: .venv\Scripts\python -m pytest -q -rs -p no:cacheprovider tests/test_conpty.py tests/test_terminal_windows.py tests/test_terminal.py
+      - name: The kernel tty is ready before the first key after resize
+        if: github.ref_name == 'ci-macos-terminal-probe' && runner.os == 'macOS'
+        working-directory: backend
+        run: .venv/bin/python -m pytest -o addopts= -q tests/test_terminal.py -k shells_actual_size
       - name: Frontend build (the server serves it) and the Playwright the suite runs on
         working-directory: frontend
         run: npm ci && npm run build
