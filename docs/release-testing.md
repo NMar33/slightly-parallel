@@ -60,8 +60,8 @@ up. Follow the README as written.
       `python scripts/ci/check_codex_limits.py`; it prints the plan, the
       5-hour and the weekly percentages. On Windows, with Codex installed by
       `npm install -g @openai/codex`, Usage › "Read now" on the Codex row shows
-      the same. *A login:* only a ChatGPT login has plan limits; CI logs in
-      with an API key, so it proves the read works and ends, not the percentages.
+      the same. Plan percentages need a ChatGPT login. CI uses an empty
+      profile and checks the precise signed-out response from the limits RPC.
 - [ ] macOS, a real sleep of over an hour with the server running: after
       waking, the Codex row is read again within a few minutes, and Monitor ›
       Server shows no error for the poll. *A real computer:* a runner cannot sleep.
@@ -71,8 +71,8 @@ up. Follow the README as written.
 - **Codex's Read now through the real server** — in CI (job Real Codex,
   `scripts/ci/codex_server_check.py`, three systems): the server on an empty
   data folder, `POST /api/usage/limits/refresh` as the page sends it, the
-  Codex row answers (with the key login: "not signed in" or Codex's own
-  sentence), no codex or node process from the read is left, no temporary
+  Codex row consistently reports "not signed in" with a fresh profile,
+  no codex or node process from the read is left, no temporary
   file in `.usage`.
 - **Network off** — in CI (job Launcher, `scripts/ci/offline_check.py`,
   three systems): new outgoing connections dropped by the system firewall

@@ -13,6 +13,8 @@ OFFLINE_CORE = "Run full Codex core through the guarded MCP on a local stub"
 INTERACTIVE_STUB = "Capture a real PTY turn, task, decision, rule and done on a local stub"
 HEADLESS_OPENCODE = "Save the headless OpenCode reply before the process exits"
 MACHINE_COST = "Report CLI version and model cost"
+CODEX_LIMITS = ("Codex limits RPC rejects a signed-out account",
+                "The real server reports the signed-out Codex limits response")
 
 
 def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
@@ -25,6 +27,19 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
     if workflow == "machine.yml":
         return {f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS", MACHINE_COST)
                 for os in SYSTEMS}
+    if workflow == "pipeline-self-test.yml":
+        return {"Verify pipeline failure propagation": ("Require every native probe to fail and prove why",)}
+    if workflow == "user-profiles.yml":
+        return {
+            "Dashboard without Node (ubuntu-latest)": (
+                "Run the shipped dashboard and native agent CLIs in a container with no Node",
+            ),
+            **{f"Dashboard without Node ({os})": ("Run the shipped dashboard with Node removed from PATH",)
+               for os in SYSTEMS[1:]},
+            "Windows redirected Cyrillic home (PowerShell)": (
+                "Redirect the user and temporary folders to Cyrillic paths", "Record Windows profile coverage",
+            ),
+        }
     if workflow == "terminal.yml":
         return {
             "Terminal window (ubuntu-latest)": (
@@ -33,19 +48,22 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
                 "End to end, Linux, plain terminals (no tmux, what Windows has): restore skips, named",
             ),
             "Terminal window (macos-latest)": ("End to end, macOS",),
-            "Terminal window (windows-latest)": ("End to end, Windows",),
+            "Terminal window (windows-latest)": (
+                "Windows: the ConPTY and the terminal's routes (pywinpty, from requirements.lock)",
+                "End to end, Windows",
+            ),
         }
     if workflow == "weekly.yml":
-        return {f"{name} ({os})": (step,) for os in SYSTEMS for name, step in {
-            "Heavy tests": "The heavy tests (-rs: a skipped test is named)",
-            "Property tests, deep": "3 000 examples each (SP_HYPOTHESIS=deep); a failure prints the example to replay",
-            "Newest Codex": "One read of the limits from the newest program",
+        return {f"{name} ({os})": steps for os in SYSTEMS for name, steps in {
+            "Heavy tests": ("The heavy tests (-rs: a skipped test is named)",),
+            "Property tests, deep": ("3 000 examples each (SP_HYPOTHESIS=deep); a failure prints the example to replay",),
+            "Newest Codex": CODEX_LIMITS,
             "Real Claude Code latest against a stub model": (
-                "One turn: the hooks record it, the MCP server writes a decision (scripts/ci/stub_model.py; no tokens)"),
+                "One turn: the hooks record it, the MCP server writes a decision (scripts/ci/stub_model.py; no tokens)",),
         }.items()}
     if workflow == "ci.yml":
         return {
-            **{f"Real Codex ({os})": ("One read of the limits from the real program",) for os in SYSTEMS},
+            **{f"Real Codex ({os})": CODEX_LIMITS for os in SYSTEMS},
             **{f"Interactive agent ({tool}, {os})": (INTERACTIVE_STUB,) for tool in TOOLS for os in SYSTEMS},
             **{f"Interactive agent (opencode, {os})": (INTERACTIVE_STUB, HEADLESS_OPENCODE) for os in SYSTEMS},
             **{f"Interactive agent (codex, {os})": (INTERACTIVE_STUB, OFFLINE_CORE) for os in SYSTEMS},
@@ -61,16 +79,19 @@ def problem(workflow: str, payload: dict, sha: str) -> str:
     by_name = {job["name"]: job for job in jobs}
     if len(by_name) != len(jobs):
         return "duplicate job names"
-    if workflow == "ci.yml" and len(jobs) < 28:
-        return f"required CI matrix is incomplete: {len(jobs)} jobs, expected at least 28"
-    for name, steps in required_jobs(workflow).items():
+    if workflow == "ci.yml" and len(jobs) != 40:
+        return f"required CI matrix is incomplete: {len(jobs)} jobs, expected 40"
+    required = required_jobs(workflow)
+    if workflow != "ci.yml" and len(jobs) != len(required):
+        return f"{workflow}: expected {len(required)} jobs, got {len(jobs)}"
+    for name, steps in required.items():
         job = by_name.get(name)
         if job is None:
             return f"required job missing: {name}"
-        checks = {row["name"]: row.get("conclusion") for row in job.get("steps", [])}
         for step in steps:
-            if checks.get(step) != "success":
-                return f"required step did not pass: {name} / {step} ({checks.get(step, 'missing')})"
+            matches = [row.get("conclusion") for row in job.get("steps", []) if row["name"] == step]
+            if matches != ["success"]:
+                return f"required step did not pass exactly once: {name} / {step} ({matches or 'missing'})"
     for name, job in by_name.items():
         if job.get("head_sha") != sha:
             return f"job ran on a different SHA: {name}"

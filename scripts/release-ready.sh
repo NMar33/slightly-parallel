@@ -7,7 +7,8 @@
 #
 # Green means the last run of each gating workflow for the branch's head
 # commit finished with success on its first attempt: CI, Terminal window,
-# Weekly, Agents and full Machine, with their required jobs and steps. A run for
+# Weekly, Agents, full Machine, User profiles and the recent Pipeline self-test,
+# with their required jobs and steps. A run for
 # an earlier commit, or one that passed only when re-run, does not count. The
 # terminal bench (terminal-bench.yml) measures and never gates.
 # On green it prints the merge and tag commands; it runs none of them.
@@ -40,8 +41,9 @@ passed() {
     run=$(gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" --commit "$sha" --limit 40 \
       --json databaseId,status,conclusion,displayTitle --jq ".[] | select(.displayTitle == \"$profile\") | $format" | sed -n '1p')
   else
-    run=$(gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" --commit "$sha" --limit 1 \
-      --json databaseId,status,conclusion --jq ".[] | $format")
+    run=$(gh run list --repo "$repo" --workflow "$workflow" --branch "$branch" --commit "$sha" --limit 40 \
+      --json databaseId,status,conclusion,displayTitle \
+      --jq ".[] | select(.displayTitle | startswith(\"Pipeline probe \") | not) | $format" | sed -n '1p')
   fi
   # (.[] and not .[0]: no run at all prints nothing, where .[0] printed
   # "null null null" and the script said the run was "still null".)
@@ -61,13 +63,23 @@ passed() {
   fi
 }
 
-workflows=(ci.yml terminal.yml weekly.yml agents.yml machine.yml)
-labels=(CI 'Terminal window' Weekly Agents 'Machine full')
+workflows=(ci.yml terminal.yml weekly.yml agents.yml machine.yml user-profiles.yml pipeline-self-test.yml)
+labels=(CI 'Terminal window' Weekly Agents 'Machine full' 'User profiles' 'Pipeline self-test')
 ids=()
 for i in "${!workflows[@]}"; do
   extra=""
   [[ ${workflows[i]} != machine.yml ]] || extra=" -f full=true"
   passed "${workflows[i]}" "${labels[i]}" "$extra"
+  if [[ ${workflows[i]} == pipeline-self-test.yml ]]; then
+    created=$(gh api "repos/$repo/actions/runs/$id" --jq .created_at)
+    if ! python3 -c 'from datetime import UTC, datetime, timedelta
+import sys
+created = datetime.fromisoformat(sys.argv[1])
+sys.exit(not timedelta() <= datetime.now(UTC) - created <= timedelta(days=8))' "$created"; then
+      echo "Pipeline self-test run $id is outside the last eight days. Run it again for ${sha:0:7}." >&2
+      exit 1
+    fi
+  fi
   ids+=("$id")
 done
 for i in "${!workflows[@]}"; do

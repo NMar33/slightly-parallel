@@ -14,6 +14,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,10 @@ if [[ $1 == api ]]; then
     exit $?
   fi
   id=${2##*/}
+  if [[ $* == *'--jq .created_at'* ]]; then
+    cat "$FAKE_GH/created_$id"
+    exit $?
+  fi
   cat "$FAKE_GH/attempt_$id" 2>/dev/null || echo 1
   exit 0
 fi
@@ -74,7 +79,7 @@ def world(tmp_path):
     sha = _git(publish, "rev-parse", "HEAD")
     required_jobs = runpy.run_path(str(SCRIPT.parent / "ci" / "release_jobs.py"))["required_jobs"]
 
-    def run(**workflows: str) -> subprocess.CompletedProcess:
+    def run(*, proof_days_old: int = 1, **workflows: str) -> subprocess.CompletedProcess:
         for name, line in workflows.items():
             filename = name.replace("_", "-").replace("-yml", ".yml")
             (fake / filename).write_text(line + "\n")
@@ -82,9 +87,16 @@ def world(tmp_path):
                 continue
             path = fake / f"jobs_{line.split()[0]}"
             if not path.exists():
-                matrix = required_jobs(filename)
+                try:
+                    matrix = required_jobs(filename)
+                except ValueError:
+                    # The old release gate did not ask for these new workflows.
+                    matrix = {}
+                if filename == "pipeline-self-test.yml":
+                    created = datetime.now(UTC) - timedelta(days=proof_days_old)
+                    (fake / f"created_{line.split()[0]}").write_text(created.isoformat())
                 if filename == "ci.yml":
-                    matrix.update({f"CI job {i}": () for i in range(28 - len(matrix))})
+                    matrix.update({f"CI job {i}": () for i in range(40 - len(matrix))})
                 path.write_text(json.dumps({"total_count": len(matrix), "jobs": [
                     {"name": job, "head_sha": sha, "conclusion": "success",
                      "steps": [{"name": step, "conclusion": "success"} for step in steps]}
@@ -101,7 +113,8 @@ def world(tmp_path):
 
 def test_both_green_prints_the_release_commands(world) -> None:
     r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
-              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success",
+              user_profiles_yml="66 completed success", pipeline_self_test_yml="77 completed success")
     assert r.returncode == 0, r.stderr
     assert "CI run 11 passed" in r.stdout and "Machine full run 55 passed" in r.stdout
     assert "git tag -a v9.9.9" in r.stdout
@@ -109,9 +122,13 @@ def test_both_green_prints_the_release_commands(world) -> None:
 
 def test_release_selects_full_workflow_profiles_for_the_candidate(world) -> None:
     r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
-              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success",
+              user_profiles_yml="66 completed success", pipeline_self_test_yml="77 completed success")
     assert r.returncode == 0, r.stderr
     rows = (world.fake / "calls").read_text(encoding="utf-8").splitlines()
+    for workflow in ("terminal.yml", "weekly.yml", "user-profiles.yml"):
+        invocation = next(line for line in rows if line.startswith("run list") and f"--workflow {workflow} " in line)
+        assert 'startswith("Pipeline probe ")' in invocation
     for workflow, profile in (("ci.yml", "CI (full)"), ("agents.yml", "Agents (core, pinned)"),
                               ("machine.yml", "Machine (full)")):
         invocation = next(line for line in rows if line.startswith("run list") and f"--workflow {workflow} " in line)
@@ -148,7 +165,8 @@ def test_a_window_green_only_on_a_rerun_does_not_count(world) -> None:
 
 def test_a_candidate_without_an_agents_run_cannot_release(world) -> None:
     r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
-              weekly_yml="33 completed success", machine_yml="55 completed success")
+              weekly_yml="33 completed success", machine_yml="55 completed success",
+              user_profiles_yml="66 completed success", pipeline_self_test_yml="77 completed success")
     assert r.returncode == 1
     assert "no Agents run for" in r.stderr
     assert "git tag" not in r.stdout
@@ -156,7 +174,8 @@ def test_a_candidate_without_an_agents_run_cannot_release(world) -> None:
 
 def test_machine_cannot_release_without_measuring_all_model_costs(world) -> None:
     expected = dict(ci_yml="11 completed success", terminal_yml="22 completed success",
-                    weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+                    weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success",
+              user_profiles_yml="66 completed success", pipeline_self_test_yml="77 completed success")
     assert world(**expected).returncode == 0
     machine = world.fake / "jobs_55"
     page = json.loads(machine.read_text())
@@ -171,6 +190,7 @@ def test_machine_cannot_release_without_measuring_all_model_costs(world) -> None
 def test_the_bench_never_gates(world) -> None:
     r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
               weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success",
+              user_profiles_yml="66 completed success", pipeline_self_test_yml="77 completed success",
               terminal_bench_yml="33 completed failure")
     assert r.returncode == 0, r.stderr
     assert "terminal-bench.yml" not in (world.fake / "calls").read_text()
@@ -179,7 +199,8 @@ def test_the_bench_never_gates(world) -> None:
 @pytest.mark.parametrize("variant", ["one tool", "no key", "smoke instead of core", "different SHA"])
 def test_green_workflow_with_incomplete_agents_evidence_is_blocked(world, variant) -> None:
     expected = dict(ci_yml="11 completed success", terminal_yml="22 completed success",
-                    weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+                    weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success",
+              user_profiles_yml="66 completed success", pipeline_self_test_yml="77 completed success")
     assert world(**expected).returncode == 0
     agents_file = world.fake / "jobs_44"
     page = json.loads(agents_file.read_text())
@@ -197,3 +218,47 @@ def test_green_workflow_with_incomplete_agents_evidence_is_blocked(world, varian
     assert r.returncode == 1
     assert "Agents run 44" in r.stderr
     assert "git tag" not in r.stdout
+
+
+BASE_RUNS = dict(ci_yml="11 completed success", terminal_yml="22 completed success",
+                 weekly_yml="33 completed success", agents_yml="44 completed success",
+                 machine_yml="55 completed success")
+
+
+def test_all_old_gates_green_without_profiles_cannot_release(world):
+    r = world(**BASE_RUNS, pipeline_self_test_yml="77 completed success")
+    assert r.returncode == 1
+    assert "no User profiles run" in r.stderr
+    assert "git tag" not in r.stdout
+
+
+def test_all_positive_runs_without_a_pipeline_self_test_cannot_release(world):
+    r = world(**BASE_RUNS, user_profiles_yml="66 completed success")
+    assert r.returncode == 1
+    assert "no Pipeline self-test run" in r.stderr
+    assert "git tag" not in r.stdout
+
+
+@pytest.mark.parametrize("age", [9, -1])
+def test_pipeline_self_test_must_be_recent(world, age):
+    r = world(**BASE_RUNS, user_profiles_yml="66 completed success",
+              pipeline_self_test_yml="77 completed success", proof_days_old=age)
+    assert r.returncode == 1
+    assert "Pipeline self-test run 77 is outside" in r.stderr
+    assert "git tag" not in r.stdout
+
+
+@pytest.mark.parametrize(("run_id", "text"), [(22, "ConPTY"), (66, "Cyrillic"), (77, "native probe")])
+def test_release_needs_the_named_coverage_in_each_new_gate(world, run_id, text):
+    expected = dict(BASE_RUNS, user_profiles_yml="66 completed success",
+                    pipeline_self_test_yml="77 completed success")
+    assert world(**expected).returncode == 0
+    path = world.fake / f"jobs_{run_id}"
+    page = json.loads(path.read_text())
+    target = next(step for job in page["jobs"] for step in job["steps"] if text in step["name"])
+    target["conclusion"] = "skipped"
+    path.write_text(json.dumps(page))
+    result = world(**expected)
+    assert result.returncode == 1
+    assert text in result.stderr
+    assert "git tag" not in result.stdout

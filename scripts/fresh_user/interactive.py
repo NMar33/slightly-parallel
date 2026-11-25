@@ -36,6 +36,7 @@ CLAUDE_MCP_ACCEPTED = "Claude Code accepted the Slightly Parallel MCP server"
 CLAUDE_MCP_MOVE_RETRY_S = 2.0
 CLAUDE_MCP_MOVE_ATTEMPTS = 3
 WINDOWS_CORE_APPROVAL_COLUMNS = 640
+WINDOWS_CORE_WORK_SECTION = "Calculator core work commands"
 STARTUP_DIALOGS = {
     "claude-code": (
         (("choosethetextstyle",), "Claude Code default theme accepted"),
@@ -463,11 +464,13 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     def policy_complete() -> bool:
         return not policy or policy.result() == (policy.expected, "")
 
-    def type_prompt(text: str) -> None:
+    def type_prompt(text: str, turn: str) -> bool:
         screen.send(text)
         if wait_for_prompt and not screen.wait_for(text, PROMPT_PAINT_TIMEOUT_S):
-            raise RuntimeError("Codex did not display the prompt before Enter")
+            screen.save_frame("prompt paint timed out")
+            return report.add(stage, f"{turn}: Codex did not display the prompt before Enter", False, _screen_tail(screen))
         screen.send(ENTER)
+        return True
 
     def cards() -> list[dict]:
         return rows(get(space, f"/api/tasks?project={code}"), "tasks")
@@ -483,7 +486,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             return None
         verdicts.update(L1="pass", L2="fail")
         existing = {row.get("id") for row in cards()} if one_turn else set()
-        type_prompt(prompt)
+        if not type_prompt(prompt, "hello" if not one_turn else "canary"):
+            return None
         captured: list[tuple[str, Path]] = []
         task_write_approved = False
 
@@ -534,7 +538,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 policy.start("#task", [["write_entry", arguments]])
                 task_prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool once, "
                                f"with exactly this JSON argument: {json.dumps(arguments)}. Report the task ID.")
-            type_prompt(task_prompt)
+            if not type_prompt(task_prompt, "#task"):
+                return None
 
             def find_task_turn() -> bool:
                 if not policy:
@@ -599,8 +604,15 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         command = (f"{git} add calc.py test_calc.py && {git} commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
                         if workspace_shell:
-                            message += (f" Create the test file with `{offline_command}` and commit with `{command}`."
-                                        " If the sandbox refuses either operation, ask once for that exact command.")
+                            # Put the literal commands in the already approved, Git-excluded project contract.
+                            # The PTY must still see the entire prompt before it presses Enter.
+                            with project_contract.open("a", encoding="utf-8") as instructions:
+                                instructions.write(f"\n\n## {WINDOWS_CORE_WORK_SECTION}\n\n"
+                                                   "Run these commands exactly, in order:\n\n"
+                                                   f"```powershell\n{offline_command}\n{command}\n```\n")
+                            message += (f" Use Get-Content -LiteralPath to read {project_contract.name} and run the two exact"
+                                        f" commands in its {WINDOWS_CORE_WORK_SECTION} section, in order."
+                                        " If the sandbox refuses either, ask once for that exact command.")
                         else:
                             message += f" Run this exact command to stage and commit: {command}"
                     elif name == "#decision":
@@ -630,7 +642,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     def approval(command_approval=command_approval):
                         return policy_error() or command_approval()
 
-                type_prompt(message)
+                if not type_prompt(message, name):
+                    return None
                 error = _wait_for_turn(screen, lambda message=message: policy_complete() and bool(_last_reply(chat, message)), seconds,
                                        approval=approval)
                 if not report.add(stage, f"{name}: the operator turn and answer are captured", not error,

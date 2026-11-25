@@ -71,7 +71,9 @@ npm install -g --silent "${packages[@]}"
 
 if [[ -n $QUIET ]]; then
   say "No login prompts: the keys come from the environment"
-  if [[ -n ${OPENAI_API_KEY:-} && ! -f $HOME/.codex/auth.json ]]; then printenv OPENAI_API_KEY | codex login --with-api-key || true; fi
+  if [[ -n ${OPENAI_API_KEY:-} && ! -f $HOME/.codex/auth.json ]]; then
+    printenv OPENAI_API_KEY | codex login --with-api-key
+  fi
 else
 say "Log in to each agent now — the only step that needs you"
 if [[ ! -f $HOME/.claude/.credentials.json ]]; then

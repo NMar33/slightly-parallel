@@ -10,11 +10,21 @@
 # (backend/tests/test_conpty.py and the terminal's routes): a pty that does
 # not work fails there, before the window's suite.
 name: Terminal window
+run-name: ${{ inputs.expect_failure && format('Pipeline probe {0} / Terminal window', inputs.probe_id) || 'Terminal window' }}
 
 on:
   push:
     branches: [ci-terminal]
   workflow_dispatch:
+    inputs:
+      expect_failure:
+        description: Inject and check a failure in every job without running normal steps
+        type: boolean
+        default: false
+      probe_id:
+        description: ID of the pipeline self-test dispatching this run
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -35,13 +45,35 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
           cache: npm
@@ -49,37 +81,46 @@ jobs:
             frontend/package-lock.json
             desktop/package-lock.json
       - name: "No two paths differ only by case (one file on macOS and Windows: scripts/ci/case_clash_check.py)"
+        if: ${{ !inputs.expect_failure }}
         run: python scripts/ci/case_clash_check.py
       - name: tmux, and Xvfb for a display (Linux); tmux (macOS)
-        if: runner.os != 'Windows'
+        if: ${{ !inputs.expect_failure && (runner.os != 'Windows') }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux xvfb libxtst6; else brew install tmux; fi
       - name: Backend environment (the suite starts the server from backend/.venv)
+        if: ${{ !inputs.expect_failure }}
         working-directory: backend
         shell: bash
         run: |
           python -m venv .venv
           .venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python -m pip install -q -r requirements.lock -r requirements-dev.txt
       - name: "Windows: the ConPTY and the terminal's routes (pywinpty, from requirements.lock)"
-        if: runner.os == 'Windows'
+        if: ${{ !inputs.expect_failure && (runner.os == 'Windows') }}
         working-directory: backend
-        run: .venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider tests/test_conpty.py tests/test_terminal_windows.py tests/test_terminal.py
+        run: |
+          .venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider --junitxml=conpty.xml tests/test_conpty.py
+          .venv/Scripts/python.exe ../scripts/ci/check_skips.py conpty.xml --minimum 8
+          .venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider --junitxml=windows-terminal.xml tests/test_terminal_windows.py tests/test_terminal.py
+          .venv/Scripts/python.exe ../scripts/ci/check_skips.py windows-terminal.xml --minimum 80
       - name: Frontend build (the server serves it) and the Playwright the suite runs on
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npm ci && npm run build
       - name: Electron
+        if: ${{ !inputs.expect_failure }}
         working-directory: desktop
         run: npm ci
       - name: The window's unit tests
+        if: ${{ !inputs.expect_failure }}
         working-directory: desktop
         run: npm test
       - name: Codex CLI for the interactive terminal check
-        if: runner.os == 'Linux'
+        if: ${{ !inputs.expect_failure && (runner.os == 'Linux') }}
         run: npm install -g @openai/codex@0.170.0
       # Playwright clears its output directory before each run. Keep the
       # three Linux modes apart so a later run cannot erase an earlier failure.
       - name: "End to end, Linux: an X11 window under Xvfb (no GPU there)"
-        if: runner.os == 'Linux'
+        if: ${{ !inputs.expect_failure && (runner.os == 'Linux') }}
         working-directory: desktop
         env:
           SP_E2E_NO_GPU: "1"
@@ -93,20 +134,20 @@ jobs:
             npm run e2e -- --output=e2e/test-results/x11
           '
       - name: "End to end, Linux: no display at all (Chromium's headless Ozone, as on a laptop with SP_E2E_HEADLESS=1)"
-        if: always() && runner.os == 'Linux'
+        if: ${{ !inputs.expect_failure && (always() && runner.os == 'Linux') }}
         working-directory: desktop
         env:
           SP_E2E_HEADLESS: "1"
         run: npm run e2e -- --output=e2e/test-results/headless
       - name: "End to end, Linux, plain terminals (no tmux, what Windows has): restore skips, named"
-        if: always() && runner.os == 'Linux'
+        if: ${{ !inputs.expect_failure && (always() && runner.os == 'Linux') }}
         working-directory: desktop
         env:
           SP_E2E_KEEP: plain
           SP_E2E_HEADLESS: "1"
         run: npm run e2e -- --output=e2e/test-results/plain
       - name: End to end, ${{ runner.os }}
-        if: runner.os != 'Linux'
+        if: ${{ !inputs.expect_failure && (runner.os != 'Linux') }}
         working-directory: desktop
         env:
           # The Windows runner draws in software (first run: gpu_compositing
@@ -114,7 +155,7 @@ jobs:
           SP_E2E_NO_GPU: ${{ runner.os == 'Windows' && '1' || '' }}
         run: npm run e2e
       - name: Traces and screenshots (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
-        if: failure()
+        if: ${{ !inputs.expect_failure && (failure()) }}
         uses: actions/upload-artifact@v7
         with:
           name: terminal-window-${{ matrix.os }}

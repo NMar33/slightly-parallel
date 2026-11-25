@@ -12,6 +12,7 @@ test cannot run here, and where it does run.
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -60,9 +61,9 @@ def system() -> str:
     return platform.system()
 
 
-def skipped(path: str) -> list[tuple[str, str]]:
+def skipped(cases: list[ET.Element]) -> list[tuple[str, str]]:
     out = []
-    for case in ET.parse(path).getroot().iter("testcase"):
+    for case in cases:
         for sk in case.findall("skipped"):
             if sk.get("type") == "pytest.xfail":
                 continue
@@ -72,17 +73,28 @@ def skipped(path: str) -> list[tuple[str, str]]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) == 3 and argv[2] == "--one-passed":
-        cases = list(ET.parse(argv[1]).getroot().iter("testcase"))
-        if len(cases) != 1 or any(cases[0].find(tag) is not None for tag in ("skipped", "failure", "error")):
-            print("Expected exactly one passed test in the JUnit report", file=sys.stderr)
-            return 1
-        return 0
-    here = argv[2] if len(argv) > 2 else system()
-    found = skipped(argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("report")
+    parser.add_argument("system", nargs="?", default=system())
+    count = parser.add_mutually_exclusive_group()
+    count.add_argument("--minimum", type=int, default=1)
+    count.add_argument("--one-passed", action="store_true")
+    args = parser.parse_args(argv[1:])
+    if args.minimum < 1:
+        parser.error("--minimum must be at least one")
+    report = ET.parse(args.report).getroot()
+    cases = list(report.iter("testcase"))
+    failed = sum(case.find("failure") is not None or case.find("error") is not None for case in cases)
+    passed = sum(all(case.find(tag) is None for tag in ("skipped", "failure", "error")) for case in cases)
+    if failed or passed < args.minimum or (args.one_passed and len(cases) != 1):
+        expected = "exactly one passed test" if args.one_passed else f"at least {args.minimum} passed tests"
+        print(f"Expected {expected} and no failures. Found {passed} passes, {failed} failures in {len(cases)} cases.", file=sys.stderr)
+        return 1
+    here = args.system
+    found = skipped(cases)
     unexpected = [(n, why) for n, why in found
                   if not any(re.search(p, why) and here in where for p, where in ALLOWED)]
-    print(f"{len(found)} skipped on {here}; {len(unexpected)} not expected here")
+    print(f"{passed} passed, {len(found)} skipped on {here}; {len(unexpected)} not expected here")
     for n, why in unexpected:
         print(f"  {n}: {why.strip()[:200]}")
     return 1 if unexpected else 0

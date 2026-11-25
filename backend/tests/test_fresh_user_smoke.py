@@ -318,6 +318,106 @@ def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypa
     assert "disable_paste_burst=true" in commands
 
 
+@pytest.mark.parametrize("paint_work", [True, False])
+def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monkeypatch, tmp_path, paint_work):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import json
+    import re
+    import core_mcp
+    import interactive
+    import scenario
+    from common import Report, Space
+
+    space = Space(tmp_path, 1)
+    folder = space.root / ("long project path " * 4 + "ü")
+    exclude = folder / ".git/info/exclude"
+    exclude.parent.mkdir(parents=True)
+    exclude.touch()
+    contract = folder / "SLIGHTLY-PARALLEL.md"
+    tool = scenario.tools()["codex"]
+    agent, task = "codex-abcd1234", "tk_abcd1234"
+    chat = space.data / "projects/calc/chats" / agent / "chat.md"
+    chat.parent.mkdir(parents=True)
+    chat.with_name("meta.json").write_text(json.dumps({"session_ref": "core-session"}), encoding="utf-8")
+    card = {"id": task, "agent_id": agent, "project": "calc", "status": "agent"}
+    typed, submitted, frames, planned = [], [], [], []
+    initial_contract = (Path(interactive.__file__).resolve().parents[2] / contract.name).read_text(encoding="utf-8")
+
+    class ModelPlan(core_mcp.Plan):
+        def start(self, name, *args, **kwargs):
+            super().start(name, *args, **kwargs)
+            if name == scenario.WORK[0]:
+                planned.extend(kwargs["shell"])
+
+        def result(self):
+            return self.expected, ""
+
+    class Screen:
+        rendered = history = ""
+
+        def __init__(self, *args, columns, **kwargs):
+            self.columns = columns
+
+        def send(self, line):
+            if line != interactive.ENTER:
+                typed.append(line)
+                return
+            prompt = typed[-1]
+            submitted.append(prompt)
+            match = re.search(r"sp-task-[0-9a-f]+", prompt)
+            if match:
+                card["title"] = match.group()
+            reply = re.search(r"sp-reply-[0-9a-f]+", prompt)
+            reply_text = reply.group() if reply else "Captured"
+            with chat.open("a", encoding="utf-8") as record:
+                record.write(f"\n## Turn {len(submitted)}\n**User**: {prompt}\n**Agent**: {reply_text}\n")
+
+        def wait_for(self, value, _timeout):
+            self.rendered = value
+            if value.startswith("Write the tests"):
+                self.rendered = value[:self.columns] if paint_work else value[:30]
+            return value in self.rendered
+
+        def save_frame(self, label):
+            frames.append((label, self.rendered))
+
+        def close(self):
+            pass
+
+    def wait_for_turn(_screen, check, _seconds, **_):
+        if len(submitted) == 3:
+            return "stop after submitting the work prompt"
+        return "" if check() else "missing simulated turn"
+
+    monkeypatch.setattr(tool, "installed", lambda: True)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+    monkeypatch.setattr(interactive, "WINDOWS", True)
+    monkeypatch.setattr(interactive, "Screen", Screen)
+    monkeypatch.setattr(interactive, "_ready", lambda *_: True)
+    monkeypatch.setattr(interactive, "_wait_for_turn", wait_for_turn)
+    monkeypatch.setattr(interactive, "get", lambda *_: {"tasks": [], "agents": [{"agent_id": agent, "session_ref": "core-session"}]})
+    monkeypatch.setattr(interactive, "new_task_rows", lambda *_: [card])
+    monkeypatch.setattr(core_mcp, "Plan", ModelPlan)
+    monkeypatch.setattr(scenario, "CORE", [scenario.WORK])
+
+    report = Report()
+    interactive.smoke(space, report, "calc", folder, tool, "stub", tmp_path, 1, core=True)
+    assert len(typed) == 3 and typed[-1].startswith("Write the tests")
+    assert "SLIGHTLY-PARALLEL.md" in typed[-1] and all(command not in typed[-1] for command in planned)
+    updated = contract.read_text(encoding="utf-8")
+    assert updated.startswith(initial_contract)
+    assert [line for line in updated[len(initial_contract):].splitlines() if line in planned] == planned
+    assert len(planned) == 2 and f"Task: {task}" in planned[1] and f"Agent: {agent}" in planned[1]
+    assert "/SLIGHTLY-PARALLEL.md" in exclude.read_text(encoding="utf-8").splitlines()
+    if paint_work:
+        assert submitted == typed and not frames
+    else:
+        assert submitted == typed[:2]
+        [(label, frame)] = frames
+        assert label == "prompt paint timed out" and frame == typed[-1][:30]
+        assert any("before Enter" in check.name for check in report.failed())
+
+
 def test_upgrade_stage_without_its_requested_base_is_red(monkeypatch, tmp_path) -> None:
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import run

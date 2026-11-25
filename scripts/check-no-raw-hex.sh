@@ -24,11 +24,19 @@ ALLOW=(
 )
 allowed=$(printf '%s:\n' "${ALLOW[@]}")
 
-matches=$(grep -rnoE '(^|[^&])#[0-9a-fA-F]{3,8}\b' frontend/src \
+grep_or_empty() {
+  local status=0
+  grep "$@" || status=$?
+  if (( status > 1 )); then
+    return "$status"
+  fi
+}
+
+matches=$(grep_or_empty -rnoE '(^|[^&])#[0-9a-fA-F]{3,8}\b' frontend/src \
   --include='*.ts' --include='*.tsx' --include='*.css' \
-  | grep -v 'frontend/src/styles/' \
-  | grep -vE '(test|spec)\.' \
-  | grep -vF "$allowed" || true)
+  | grep_or_empty -v 'frontend/src/styles/' \
+  | grep_or_empty -vE '(test|spec)\.' \
+  | grep_or_empty -vF "$allowed")
 if [[ -n "$matches" ]]; then
   echo "Raw hex colors outside styles/ — use a token instead:"
   echo "$matches"
