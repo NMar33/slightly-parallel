@@ -69,6 +69,31 @@ def test_setup_installs_native_rg_and_exports_the_discovered_directory(monkeypat
     assert github_path.read_text(encoding="utf-8").splitlines() == [str(directory.absolute())]
 
 
+@pytest.mark.parametrize("already_installed", [True, False])
+def test_setup_preserves_ci_path_when_rg_is_available_on_the_current_path(monkeypatch, tmp_path, already_installed):
+    setup = run_path(str(SETUP))["setup"]
+    github_path = tmp_path / "github-path"
+    github_path.write_text("previous-entry\n", encoding="utf-8")
+    paths = iter(["/usr/bin/rg"] if already_installed else [None, "/usr/bin/rg"])
+    ran = []
+
+    def which(name):
+        assert name == "rg"
+        return next(paths)
+
+    def run(command, *, check):
+        assert check
+        ran.append(command)
+
+    monkeypatch.setitem(setup.__globals__, "os", SimpleNamespace(environ={"GITHUB_PATH": str(github_path)}))
+    monkeypatch.setitem(setup.__globals__, "shutil", SimpleNamespace(which=which))
+    monkeypatch.setitem(setup.__globals__, "subprocess", SimpleNamespace(run=run))
+    setup("Linux")
+    apt = [["sudo", "apt-get", "update"], ["sudo", "apt-get", "install", "-y", "ripgrep"]]
+    assert ran == ([*apt, ["/usr/bin/rg", "--version"]] if not already_installed else [["/usr/bin/rg", "--version"]])
+    assert github_path.read_text(encoding="utf-8") == "previous-entry\n"
+
+
 def test_setup_fails_if_the_package_manager_does_not_provide_rg(monkeypatch):
     setup = run_path(str(SETUP))["setup"]
     monkeypatch.setitem(setup.__globals__, "shutil", SimpleNamespace(which=lambda *_args, **_kwargs: None))
