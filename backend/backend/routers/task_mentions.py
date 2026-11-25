@@ -6,7 +6,7 @@ import time
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from .. import taskthread
+from .. import memberships, taskthread
 from ..db import ViewStore
 from .deps import (
     DONE_SQL, agents_by_id, attach_agent, etag_for, get_store, iso_moment, json_response,
@@ -185,12 +185,14 @@ def tasks_mentions_by_agent(
     etag = etag_for(f"tasks:mentions:by-agent:{project}", store, "tasks", "chats")
     if (r := maybe_304(request, etag)) is not None:
         return r
+    # The lanes of the project's listed chats (memberships.Listing).
+    where, params = memberships.listing(store, project).sql("m.project", "m.agent_id")
     rows = store.query(
         "SELECT m.agent_id, m.task_id, COALESCE(t.title, '') AS title, "
         "m.at_ts AS at, m.role, m.session_id, m.turn "
         "FROM task_mentions m JOIN tasks_mutual t ON t.id = m.task_id "
-        "WHERE m.project = ? ORDER BY m.at_ts ASC, m.turn ASC, CASE m.role WHEN 'user' THEN 0 ELSE 1 END",
-        (project,),
+        f"WHERE {where} ORDER BY m.at_ts ASC, m.turn ASC, CASE m.role WHEN 'user' THEN 0 ELSE 1 END",
+        params,
     )
     by: dict[str, list[dict]] = {}
     for r in rows:

@@ -72,6 +72,7 @@ from .routers import (
     lenses,
     logs,
     marks,
+    memberships as memberships_routes,
     messages as messages_routes,
     pins,
     done,
@@ -1102,6 +1103,7 @@ def create_app(
     app.include_router(sprint_deck.router)
     app.include_router(evidence.router)
     app.include_router(agents_extra.router)
+    app.include_router(memberships_routes.router)
     app.include_router(boards.router)
     app.include_router(sets.router)
     app.include_router(integrate.router)

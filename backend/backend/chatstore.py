@@ -31,6 +31,9 @@ from typing import Any, Iterator
 
 PROJECTS = "projects"
 CHATS = "chats"
+#: A chat folder on its way into a project (the one-chat move, chatmove.py):
+#: ``<chats>/.incoming-<agent>``. No listing counts it as a chat.
+INCOMING = ".incoming-"
 
 
 def project_dir(root: str | os.PathLike[str], project: str) -> Path:
@@ -58,6 +61,12 @@ def folder(root: str | os.PathLike[str], project: str, agent: str) -> Path:
     return Path(root) / PROJECTS / project / CHATS / agent
 
 
+def incoming(root: str | os.PathLike[str], project: str, agent: str) -> Path:
+    """``<root>/projects/<project>/chats/.incoming-<agent>``: where the
+    one-chat move copies a chat before it renames the copy into place."""
+    return chats_root(root, project) / (INCOMING + agent)
+
+
 def is_chat_file(rel: str | os.PathLike[str]) -> bool:
     """A path relative to the data root that lies in a project's chats
     folder: ``projects/<project>/chats/…``."""
@@ -71,7 +80,8 @@ def folders_in(chats: str | os.PathLike[str], *, skip_symlinks: bool = False) ->
     chats = Path(chats)
     if not chats.is_dir():
         return []
-    return sorted(p for p in chats.iterdir() if p.is_dir() and not (skip_symlinks and p.is_symlink()))
+    return sorted(p for p in chats.iterdir() if p.is_dir() and not (skip_symlinks and p.is_symlink())
+                  and not p.name.startswith(INCOMING))
 
 
 def _listed(path: Path, sort: bool) -> list[Path]:
@@ -104,6 +114,8 @@ def iter_chats(root: str | os.PathLike[str], project: str | None = None, *, has:
         projects = [project_dir(root, project)]
     for proj in projects:
         for f in _listed(chats_in(proj), sort):
+            if f.name.startswith(INCOMING):
+                continue  # a move under way (chatmove.py), not a chat yet
             if has is None or os.path.lexists(f / has):
                 yield proj.name, f.name, f
 

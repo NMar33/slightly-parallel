@@ -59,6 +59,9 @@ log = logging.getLogger("sp.terminal")
 
 PLAIN_SHELL_COMMAND_DELAY_S = 0.4
 TMUX_FIRST_OUTPUT_TIMEOUT_S = 10
+# Tmux 3.8 can defer applying a successive resize to the pane's tty by 250 ms.
+TMUX_PANE_RESIZE_TIMEOUT_S = 0.4
+TMUX_PANE_RESIZE_POLL_S = 0.015
 
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
@@ -94,6 +97,33 @@ _MAX_ROWS, _MAX_COLS = 500, 1000
 
 def _size(cols: int, rows: int) -> tuple[int, int]:
     return min(max(cols, 1), _MAX_COLS), min(max(rows, 1), _MAX_ROWS)
+
+
+def _wait_for_tmux_pane_size(root: Path, sid: str, size: tuple[int, int], deadline: float) -> None:
+    """The client and tmux grid can resize before the tty that signals the shell."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return
+    result = termlib.tmux_read(root, "display-message", "-p", "-t", termlib.PREFIX + sid,
+                              "#{pane_tty}", timeout=remaining)
+    tty = result.stdout.strip()
+    if result.returncode or not tty.startswith("/dev/"):
+        return
+    try:
+        fd = os.open(tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError:
+        return
+    try:
+        cols, rows = size
+        while termios.tcgetwinsize(fd) != (rows, cols):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(remaining, TMUX_PANE_RESIZE_POLL_S))
+    except (OSError, termios.error):
+        pass  # A gone or inaccessible pane must not consume the operator's input.
+    finally:
+        os.close(fd)
 
 
 # The pumps' own threads. Each open terminal holds one in a blocking read for
@@ -1064,13 +1094,15 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         timer = timeauto.of(app)
         selection_possible = False
         tmux_input_started = False
+        view_size = _size(cols, rows)
+        pane_resize_deadline = 0.0
         # Only what the operator typed or pasted: a click (a mouse report,
         # with tmux's mouse on), focus in/out and xterm's answers to a
         # program's questions come through here too, and are not typing. The
         # page says which is which (`typed` on an input message); a message
         # that does not say is read by its bytes.
         async def write(b: bytes, marked: Any = None) -> None:
-            nonlocal selection_possible, tmux_input_started
+            nonlocal selection_possible, tmux_input_started, pane_resize_deadline
             if tmux_ready is not None and not tmux_input_started:
                 # Accepting the socket forks the tmux client, whose tty setup
                 # can print a query and then flush input before going raw.
@@ -1085,6 +1117,10 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 tmux_input_started = True
             typed = marked is True or (marked is not False and not termlib.is_terminal_reply(b))
             if in_tmux:
+                if typed and pane_resize_deadline:
+                    deadline, pane_resize_deadline = pane_resize_deadline, 0.0
+                    if deadline > time.monotonic():
+                        await run_in_threadpool(_wait_for_tmux_pane_size, root, session_id, view_size, deadline)
                 # An ordinary click may go to a mouse-aware app. Ask tmux only
                 # before the first text after a left click, and only cancel a
                 # real selection. Wheels, replies and navigation retain their routes.
@@ -1127,7 +1163,11 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                         continue
                     kind = payload.get("type")
                     if kind == "resize":
-                        session.resize(_to_int(payload.get("cols"), 100), _to_int(payload.get("rows"), 30))
+                        size = _size(_to_int(payload.get("cols"), 100), _to_int(payload.get("rows"), 30))
+                        if in_tmux and size != view_size:
+                            pane_resize_deadline = time.monotonic() + TMUX_PANE_RESIZE_TIMEOUT_S
+                        view_size = size
+                        session.resize(*size)
                     elif kind == "input":
                         data = str(payload.get("data") or "")
                         await write(data.encode(), payload.get("typed"))

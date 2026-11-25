@@ -17,6 +17,7 @@ import { agentLabel } from '../../utils/agentLabel'
 import { useWaitingNotify } from './waiting'
 import { SETTINGS_QUERY_KEY, useStrSetting } from '../../lib/settings'
 import { postJson } from '../../lib/getJson'
+import { listedIn } from '../../lib/projectCodes'
 import { termLog, type LogMode } from './telemetry'
 import { TermWindowSettings } from '../aqua/app/tabs/WindowSettings'
 import { t, tn } from '../../i18n/scope/system'
@@ -81,7 +82,7 @@ export function Launcher({ project, onDone, wide = false }: { project?: string; 
   const agents = useMemo(() => {
     const n = find.trim().toLowerCase()
     return (snap.data?.agents ?? [])
-      .filter((a) => (a as { session_ref?: string }).session_ref && (!project || a.project === project))
+      .filter((a) => (a as { session_ref?: string }).session_ref && (!project || listedIn(a, project)))
       .filter((a) => !n || `${agentLabel(a)} ${a.project}`.toLowerCase().includes(n))
       .sort((a, b) => (b.last_active || '').localeCompare(a.last_active || ''))
       .slice(0, wide ? 12 : 8)

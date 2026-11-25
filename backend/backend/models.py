@@ -93,6 +93,10 @@ class Agent(_Model):
     # as the group's name on the timeline; the ids underneath never change.
     agent_group: str = ""
     project: str = ""
+    # Every project that lists the chat, origin first, as a comma string —
+    # the shape tasks carry (tk_d1d25a4d). Computed per request from the
+    # membership ledger, never stored; "" where an answer does not fill it.
+    projects: str = ""
     parent_agent_id: str | None = None
     # A run another program started (a codex exec, a claude -p): recorded,
     # its commands not acted on, listed under the chat that started it

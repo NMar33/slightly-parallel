@@ -10,6 +10,49 @@ const toggle = (side: 'left' | 'right') => `[data-toggle="${side}"]`
 const innerW = (page: Page) => page.evaluate(() => window.innerWidth)
 
 test.describe('sidebars', () => {
+  test('closing the outward right sidebar preserves the live grid while native resize is pending', async ({ win }) => {
+    const { app, page } = win
+    await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(640, 500) })
+    await expect.poll(() => innerW(page)).toBe(640)
+    await ready(page)
+    await expect.poll(async () => (await termWidth(page)).frame).toBe(640)
+    const start = await termWidth(page)
+    const tty = await ptySize(page)
+    const side = page.getByRole('complementary', { name: 'Right sidebar' })
+    await page.keyboard.press('Alt+BracketRight')
+    await expect(side).toBeVisible()
+    await expect.poll(() => innerW(page)).toBe(640 + RW)
+    await expect.poll(() => termWidth(page)).toEqual(start)
+
+    // Delay Electron applying the shrink, as the compositor sometimes does.
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      const resize = window.setBounds.bind(window)
+      let pending: Parameters<typeof resize> | undefined
+      window.setBounds = (...args) => { pending = args }
+      Object.assign(window, { applyDeferredSidebarBounds: () => {
+        window.setBounds = resize
+        if (pending) resize(...pending)
+      } })
+    })
+    try {
+      await page.keyboard.press('Alt+BracketRight')
+      await expect(side).toHaveCount(0)
+      expect(await innerW(page)).toBe(640 + RW)
+      await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))))
+      expect(await termWidth(page), 'the grid during the unacknowledged native shrink').toEqual(start)
+      await expect(page.getByRole('textbox', { name: 'Terminal input' })).toBeFocused()
+    } finally {
+      await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0] as Electron.BrowserWindow & { applyDeferredSidebarBounds(): void }
+        window.applyDeferredSidebarBounds()
+      })
+    }
+    await expect.poll(() => innerW(page)).toBe(640)
+    await expect.poll(() => termWidth(page)).toEqual(start)
+    expect(await ptySize(page)).toEqual(tty)
+  })
+
   for (const how of ['buttons', 'keys'] as const) {
     test(`sidebars by ${how}: the window grows by the panel and back; the terminal keeps its width and columns`, async ({ win }) => {
       const { app, page } = win

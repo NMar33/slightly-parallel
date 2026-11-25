@@ -26,16 +26,18 @@ import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from .. import example
 from ..config import Settings
 from ..csvio import append_if_absent, read_rows, rewrite_rows
+from ..memberships import LedgerUnreadable
 from ..project_admin import (
-    delete_project_data, known_projects, remove_block, remove_bridge, strip_file,
+    ProjectHeld, delete_project_data, known_projects, remove_block, remove_bridge, strip_file,
 )
 from ..date_utils import today_yymm_dd
 from ..db import ViewStore
-from ..file_safety import atomic_write_json, write_in_place
+from ..file_safety import FileSafetyError, atomic_write_json, write_in_place
 from ..hookshared import (
     codex_home, is_sp_statusline, read_statusline_then, statusline_key, statusline_then_path,
 )
@@ -959,11 +961,11 @@ def _forget(body: dict, store: ViewStore) -> dict:
     }
 
 
-@router.post("/api/setup/delete-data")
+@router.post("/api/setup/delete-data", response_model=None)
 def delete_data(
     body: dict = Body(...),
     store: ViewStore = Depends(get_store),
-) -> dict:
+) -> dict | JSONResponse:
     """Archive everything Slightly Parallel holds for a project into ``.trash/``.
 
     ``confirm`` must repeat the project code — this moves chats and every
@@ -979,7 +981,16 @@ def delete_data(
         )
     if project_code not in {p["code"] for p in known_projects(store)}:
         raise HTTPException(status_code=404, detail=f"no data for project: {project_code}")
-    return delete_project_data(store, project_code)
+    try:
+        return delete_project_data(store, project_code)
+    except LedgerUnreadable as bad:
+        raise HTTPException(status_code=503, detail=bad.detail) from None
+    except ProjectHeld as held:
+        # Rule 1 (tk_d1d25a4d): the line, and each agent with the projects
+        # its chat can move to (POST /api/agents/{id}/move-chat).
+        return JSONResponse(status_code=409, content={"detail": held.detail, "held": held.held})
+    except FileSafetyError:
+        raise HTTPException(status_code=503, detail="the membership ledger is held by a chat move; try again in a moment") from None
 
 
 # ---------------------------------------------------------------------------

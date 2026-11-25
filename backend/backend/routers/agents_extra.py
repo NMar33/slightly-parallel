@@ -25,6 +25,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
+from .. import memberships
 from ..csvio import append_if_absent, read_rows
 from ..db import ViewStore
 from ..entities import (
@@ -165,12 +166,15 @@ def _helpers_by_parent(agents: list[dict[str, Any]]) -> dict[str, list[dict[str,
     return out
 
 
-def orphan_helpers(agents: list[dict[str, Any]], project: str) -> list[dict[str, Any]]:
+def orphan_helpers(agents: list[dict[str, Any]], project: str,
+                   listed: "memberships.Listing | None" = None) -> list[dict[str, Any]]:
     """The project's helper chats whose parent is not known, or is no chat
-    that was recorded: the board folds them into one group."""
+    that was recorded: the board folds them into one group. ``listed``: the
+    project's listing (its members too); without it, the chats filed there."""
     from ..sessions import is_helper
     known = {str(a.get("agent_id") or "") for a in agents}
-    rows = [a for a in agents if a.get("project") == project and is_helper(a)
+    shown = listed.has if listed is not None else (lambda p, _a: p == project)
+    rows = [a for a in agents if shown(a.get("project"), a.get("agent_id")) and is_helper(a)
             and (str(a.get("helper_of") or "") in ("", str(a.get("agent_id") or ""))
                  or str(a.get("helper_of") or "") not in known)]
     rows.sort(key=lambda x: str(x.get("last_active") or ""), reverse=True)
@@ -284,13 +288,20 @@ def build_profile(
     parent = next((a for a in agents if a.get("agent_id") == raw.get("parent_agent_id")), None)
     children = [a for a in agents if a.get("parent_agent_id") == aid]
     group = str(raw.get("agent_group") or "")
+    # Peers: the same group, in a project both are listed in.
+    fold = memberships.current(store)
+
+    def listed_in(a: dict[str, Any]) -> set[str]:
+        return set(fold.members(str(a.get("agent_id") or ""))) | {str(a.get("project") or "")}
+
+    mine_projects = listed_in(raw)
     members = [
         _brief(a) for a in agents
-        if group and a.get("agent_group") == group and a.get("project") == raw.get("project")
-        and a.get("agent_id") != aid
+        if group and a.get("agent_group") == group and a.get("agent_id") != aid
+        and (a.get("project") == raw.get("project") or mine_projects & listed_in(a))
     ]
     return {
-        "agent": clean_agent(raw),
+        "agent": {**clean_agent(raw), "projects": memberships.row_projects(fold, aid, str(raw.get("project") or ""))},
         "origin": {
             "tool": raw.get("tool") or "",
             "cwd": raw.get("cwd") or "",
@@ -407,13 +418,15 @@ def agents_profiles(
     if (r := maybe_304(request, etag)) is not None:
         return r
     agents = store.agents()
-    roster = [a for a in agents if a.get("project") == project and not is_helper(a)]
+    listed = memberships.listing(store, project)
+    roster = [a for a in listed.agents(agents) if not is_helper(a)]
     # One read of each table for the whole roster, not one per agent.
     pre = profile_rows(store, [str(a.get("agent_id") or "") for a in roster])
     helpers_of = _helpers_by_parent(agents)
     rows = [build_profile(store, a, pre, helpers_of) for a in roster]
     rows.sort(key=lambda p: (p["agent"].get("created_date") or "", p["agent"].get("agent_id") or ""))
-    return json_response({"total": len(rows), "profiles": rows, "orphans": orphan_helpers(agents, project)}, etag)
+    return json_response({"total": len(rows), "profiles": rows,
+                          "orphans": orphan_helpers(agents, project, listed)}, etag)
 
 
 @router.get("/api/agents/links")
@@ -623,9 +636,10 @@ def agent_groups(
     if (r := maybe_304(request, etag)) is not None:
         return r
     groups: dict[str, list[dict]] = {}
+    listed = memberships.listing(store, project)
     for a in store.agents():
         g = str(a.get("agent_group") or "")
-        if a.get("project") == project and g:
+        if g and listed.has(a.get("project"), a.get("agent_id")):
             groups.setdefault(g, []).append(_brief(a))
     return json_response(
         {"groups": [{"name": g, "members": m} for g, m in sorted(groups.items())]}, etag

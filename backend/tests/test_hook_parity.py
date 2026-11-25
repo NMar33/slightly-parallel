@@ -200,12 +200,13 @@ def test_the_copied_patterns_are_equal() -> None:
 def test_the_shared_module_needs_nothing_but_python() -> None:
     """The hooks load them by path with the operator's own Python: no package
     around them, no third-party import (hookshared; chatstore, where every
-    chat folder's path is built)."""
+    chat folder's path is built; membership_fold, the one reading of an
+    agent's projects)."""
     import ast
 
-    from backend import chatstore, hookshared
+    from backend import chatstore, hookshared, membership_fold
 
-    for module in (hookshared, chatstore):
+    for module in (hookshared, chatstore, membership_fold):
         tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
         names = set()
         for node in ast.walk(tree):

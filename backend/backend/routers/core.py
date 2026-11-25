@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
-from .. import app_settings
+from .. import app_settings, memberships
 from ..sessions import helper_ids, is_helper
 from ..date_utils import format_yymm_dd
 from ..db import ViewStore
@@ -230,7 +230,8 @@ def snapshot(
         dec_7d = _int(dec_by.get(pf.code) or 0)
         mins_30d = _int(mins_by.get(pf.code) or 0)
         last_act = str(last_by.get(pf.code) or "")
-        proj_agents = [a for a in agents if a.get("project") == pf.code]
+        # Listed: its own chats and its members (memberships.Listing).
+        proj_agents = memberships.listing(store, pf.code).agents(agents)
         summaries.append(
             ProjectSummary(
                 code=pf.code,
@@ -282,7 +283,8 @@ def snapshot(
         recent_decisions=rows_as(
             Decision, recent_decisions_rows, source="snapshot.recent_decisions"
         ),
-        agents=rows_as(Agent, agents, source="snapshot.agents", prepare=clean_agent),
+        agents=rows_as(Agent, memberships.with_projects(store, agents), source="snapshot.agents",
+                       prepare=clean_agent),
     )
     return json_response(payload, etag)
 
@@ -309,6 +311,10 @@ def project_folders(store: ViewStore = Depends(get_store)) -> dict:
     return {"folders": folders, "data_root": str(store.data_root)}
 
 
+#: The most blocks a project bundle lists.
+ACTIVITY_LIMIT = 500
+
+
 @router.get("/api/project/{code}", response_model=ProjectBundle)
 def project(
     code: str,
@@ -331,13 +337,28 @@ def project(
         (code,),
     ), source=f"project:{code}.decisions")
     no_helpers, helper_vals = _no_helpers(store)
-    activity = rows_as(Activity, store.query(
-        f"SELECT * FROM time_blocks WHERE project=? AND {no_helpers} "
-        "ORDER BY created_date DESC LIMIT 500",
-        (code, *helper_vals),
+    # ACCOUNT: the minutes and the last activity are the project's own
+    # blocks, read on their own so members' blocks never push them out of
+    # the limit. LIST: the activity shown is those and the members' blocks
+    # (memberships.Listing), newest first, at most ACTIVITY_LIMIT.
+    listed = memberships.listing(store, code)
+    order = "ORDER BY created_date DESC LIMIT ?"
+    own_activity = rows_as(Activity, store.query(
+        f"SELECT * FROM time_blocks WHERE project=? AND {no_helpers} {order}",
+        (code, *helper_vals, ACTIVITY_LIMIT),
     ), source=f"project:{code}.activity")
+    where, listed_vals = listed.sql()
+    member_activity = rows_as(Activity, store.query(
+        f"SELECT * FROM time_blocks WHERE {where} AND project <> ? AND {no_helpers} {order}",
+        (*listed_vals, code, *helper_vals, ACTIVITY_LIMIT),
+    ), source=f"project:{code}.activity") if listed.joined else []
+    # By day only, and stable: with no members the list is the own read, in
+    # the order it always came (the store's order inside a day).
+    activity = sorted([*own_activity, *member_activity],
+                      key=lambda a: a.created_date or "", reverse=True)[:ACTIVITY_LIMIT]
+    listed_agents = [a for a in listed.agents(store.agents()) if not is_helper(a)]
     agents = rows_as(
-        Agent, [a for a in store.agents() if a.get("project") == code and not is_helper(a)],
+        Agent, memberships.with_projects(store, listed_agents),
         source=f"project:{code}.agents", prepare=clean_agent,
     )
 
@@ -356,22 +377,20 @@ def project(
     dec_7d = sum(1 for d in decisions if d.created_date >= _yymmdd_offset(-7))
     mins_30d = sum(
         (a.agent_min if a.agent_min is not None else a.duration_min or 0)
-        for a in activity
+        for a in own_activity
         if a.created_date >= _yymmdd_offset(-30)
     )
     summary = ProjectSummary(
         code=code,
         name=code,
-        l1_headline=_pick_headline(
-            [a for a in store.agents() if a.get("project") == code and not is_helper(a)]
-        ),
+        l1_headline=_pick_headline(listed_agents),
         open_tasks=open_tasks,
         tasks_total=tasks_total,
         tasks_done_7d=tasks_done_7d,
         decisions_7d=dec_7d,
         est_hours_30d=round(mins_30d / 60.0, 1),
         active_agents=len(agents),
-        last_activity=activity[0].created_date if activity else "",
+        last_activity=own_activity[0].created_date if own_activity else "",
     )
     payload = ProjectBundle(
         code=code,
@@ -413,7 +432,7 @@ def agent(
         (agent_id,),
     ), source=f"agent:{agent_id}.decisions")
     payload = AgentDetail(
-        agent=Agent(**clean_agent(raw)),
+        agent=Agent(**clean_agent(memberships.with_projects(store, [raw])[0])),
         chat_lines=chat_lines,
         chat_available=chat_path.exists(),
         decisions=decisions,
@@ -504,6 +523,13 @@ def search(
     result.total = len(hits)
     result.counts = searchlib.counts(hits)          # over every match, not the page
     result.hits = [h.as_dict() for h in hits[:limit]]
+    # A chat's hit (one of its turns, the chat itself) belongs to every
+    # project that lists the chat: ``projects``, per request (tk_d1d25a4d).
+    fold = memberships.current(store)
+    for h in result.hits:
+        chat = str(h.get("agent_id") or "") if h.get("kind") == "turn" else (
+            str(h.get("id") or "") if h.get("kind") == "agent" else "")
+        h["projects"] = memberships.row_projects(fold, chat, str(h.get("project") or ""))
 
     # The three the top bar has always shown, from the same one search.
     by_kind: dict[str, list[str]] = {}
@@ -570,14 +596,18 @@ def timeline(
         return r
 
     agents = [a for a in store.agents() if not is_helper(a)]
-    if project:
-        agents = [a for a in agents if a.get("project") == project]
+    listed = memberships.listing(store, project) if project else None
+    if listed is not None:
+        # Lanes: the project's own chats and its members'; activities: the
+        # blocks of those lanes (memberships.Listing).
+        agents = listed.agents(agents)
 
     sql_parts = ["SELECT * FROM time_blocks WHERE 1=1"]
     params: list[Any] = []
-    if project:
-        sql_parts.append("AND project = ?")
-        params.append(project)
+    if listed is not None:
+        where, more = listed.sql()
+        sql_parts.append(f"AND {where}")
+        params.extend(more)
     if from_:
         sql_parts.append("AND created_date >= ?")
         params.append(from_)

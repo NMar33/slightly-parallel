@@ -31,6 +31,9 @@ export type Session = {
   end: string
   turns_n: number
   l1: string
+  /** A member's session (an agent that joined this project): its home. The
+   *  server counts it in none of the project's numbers. */
+  from?: string
 }
 
 export type Mark = { at: string; kind: string; task_id: string; actor: string }

@@ -58,6 +58,8 @@ export interface SnapshotAgent {
   /** The name the user gave the chat in their tool; outranked by agent_name. */
   chat_title?: string
   project: string
+  /** Every project that lists the chat, origin first, comma-separated (lib/projectCodes). */
+  projects?: string
   parent_agent_id: string | null
   created_date: string
   last_active: string

@@ -20,6 +20,12 @@ export interface ComputerState {
   sandbox: boolean
 }
 
+/** An agent whose chat folder a project holds while it is a member of other projects. */
+export interface HeldChat {
+  agent_id: string
+  also_in: string[]
+}
+
 export interface SetupInfo {
   app_root: string
   contract_path: string
@@ -30,7 +36,14 @@ export interface SetupInfo {
   api_url: string
   integrations: Integration[]
   /** Every project Slightly Parallel holds data for, registered or not. */
-  data_projects: Array<{ code: string; chats: number; rows: number }>
+  data_projects: Array<{
+    code: string
+    chats: number
+    rows: number
+    /** The agents whose chat holds the project back from a delete: each is a
+     *  member elsewhere, and its chat can move to one of `also_in`. */
+    held?: HeldChat[]
+  }>
   codex: { state: 'installed' | 'foreign' | 'absent'; config: string }
   /** Which tools this computer has (the command, or its settings folder). */
   tools_installed?: Record<ToolKey, boolean>

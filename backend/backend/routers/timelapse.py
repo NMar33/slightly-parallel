@@ -22,7 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from .. import chatstore
+from .. import chatstore, memberships
 from ..db import ViewStore
 from ..gitwork import SAFE_GIT, git
 from .deps import PROJECT_CODE_RE, etag_for, get_store, json_response, maybe_304, not_found
@@ -358,10 +358,15 @@ def timelapse_source(
                     "actor": str(e.get("actor") or ""),
                 })
 
+    # LIST: the project's own sessions and its members' (memberships.Listing),
+    # a member's marked "from" its home; the totals and the span below are
+    # the project's own.
+    fold = memberships.current(store)
+    where, params = memberships.listing(store, project).sql()
     river = store.query(
-        "SELECT id, agent_id, created_date, start_time, end_time, duration_min, "
-        "turns_n, l1 FROM sessions WHERE project = ? ORDER BY created_date, start_time",
-        (project,),
+        "SELECT id, project, agent_id, created_date, start_time, end_time, duration_min, "
+        f"turns_n, l1 FROM sessions WHERE {where} ORDER BY created_date, start_time",
+        params,
     )
     sessions = []
     for s in river:
@@ -376,14 +381,17 @@ def timelapse_source(
             "end": end or start,
             "turns_n": int(s.get("turns_n") or 0),
             "l1": str(s.get("l1") or ""),
+            **({} if str(s.get("project") or "") == project
+               else {"from": fold.home(str(s.get("agent_id") or "")) or str(s.get("project") or "")}),
         })
+    own = [s for s in sessions if "from" not in s]
 
     stamps = [c["born"] for c in cards.values()]
     stamps += [m["at"] for c in cards.values() for m in c["moves"]]
-    stamps += [s["end"] for s in sessions]
+    stamps += [s["end"] for s in own]
     span = {"start": min(stamps), "end": max(stamps)} if stamps else {"start": "", "end": ""}
 
-    turns = sum(s["turns_n"] for s in sessions)
+    turns = sum(s["turns_n"] for s in own)
     stats: dict[str, Any] = {"turns": turns}
     detail: dict[str, Any] = {}
     if span["start"]:

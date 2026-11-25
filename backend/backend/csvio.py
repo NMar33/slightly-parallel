@@ -136,6 +136,36 @@ def append_if_absent(
         return None
 
 
+def append_checked(
+    csv_path: Path,
+    columns: Sequence[str],
+    row: dict[str, Any],
+    check: "Callable[[list[dict[str, str]]], str | None]",
+    *,
+    held: bool = False,
+) -> str | None:
+    """Append ``row`` when ``check`` passes on the rows already there; the
+    read, the check and the write are one step under the lock.
+
+    ``check`` gets the stored rows in file order and returns a refusal (one
+    line) or None. A refusal is returned and nothing is written. A file that
+    cannot be read raises: it is never taken for an empty one (P17).
+    ``held``: the caller holds the file's lock already (``lock_path``)."""
+    if held:
+        return _check_then_append(csv_path, columns, row, check)
+    with acquire_flock(lock_path(csv_path), mode="a"):
+        return _check_then_append(csv_path, columns, row, check)
+
+
+def _check_then_append(csv_path: Path, columns: Sequence[str], row: dict[str, Any],
+                       check: "Callable[[list[dict[str, str]]], str | None]") -> str | None:
+    refusal = check(read_rows(csv_path))
+    if refusal:
+        return refusal
+    _append_locked(csv_path, columns, row)
+    return None
+
+
 def _append_locked(csv_path: Path, columns: Sequence[str], row: dict[str, Any]) -> None:
     """The append itself. Caller holds the lock."""
     write_header = not csv_path.exists() or csv_path.stat().st_size == 0

@@ -13,6 +13,8 @@ export interface SearchHit {
   id: string
   title: string
   project: string
+  /** A chat's hit (a turn, the chat): every project that lists the chat (lib/projectCodes). */
+  projects?: string
   date: string
   snippet: string
   where: 'title' | 'text'

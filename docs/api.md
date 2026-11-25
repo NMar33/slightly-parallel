@@ -122,6 +122,33 @@ noted writes.
 - `GET /api/agents/{agent_id}/profile` — everything one agent left behind,
   `helpers` (the runs it started) included. A helper's own profile carries
   `helper`, `helper_kind` and `helper_of` in `agent`.
+- `GET /api/agents/{agent_id}/membership` — the agent's projects
+  (tk_d1d25a4d): `origin` (the project of the folder its chat started in),
+  `home`, `members` (origin first), `joined`, `projects` (the same as a comma
+  string, the shape tasks carry), `level` 1–3 with `level_words`,
+  `runs_from_folder`, `helper`, and `summary`, the operator summary in three
+  lines. Folded from `agent_memberships.csv` per request.
+- `POST /api/agents/{agent_id}/membership` — the operator's only. Body:
+  `op` (`join` | `leave` | `level`; `home` is refused until routing and
+  accounting follow it), `project` (join, leave), `value` (level: 1, 2 or 3;
+  otherwise an optional one-line reason). Refused, each in one line and
+  writing nothing: an agent's identity, a project that does not exist, a
+  join of a project the agent is in, a leave of its origin or home or of a
+  project it is not in, a helper chat, the values the project delete and the
+  chat move write (`project deleted`, `moved from …`), `op: moved`, a field
+  of the wrong shape (422 naming it). 503 while a delete or a move holds the
+  ledger. Answers: the GET's fields and `row`, the row written.
+- `POST /api/agents/{agent_id}/move-chat` — the operator's only. Body: `to`,
+  one of the agent's member projects other than its origin. Moves the chat
+  folder there (copy, verify bytes, sha256 and turns, set `project` in the
+  copy's meta.json, rename; the original to `.trash/move-<id>-<stamp>/`) and
+  writes a `moved` row. Refused in one line, writing nothing: a target that
+  is not a member project or is the origin, a folder already at the target,
+  a running agent (a turn open, a change in the last 60 s, a lock a hook
+  holds), a chat that changed during the copy, a helper chat, two chat
+  folders. Answers: `agent_id`, `from`, `to`, `folder`, `trash`, `turns`,
+  `files`, `row`, and `effects` — its past minutes, tokens and commit
+  ownership count to `to`; its session ids change.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
   Answers: `agent_id`, `agent_group`.
 - `POST /api/agents/{agent_id}/rename` — body: `name`, stored as
@@ -1018,7 +1045,13 @@ not apply here because agents never call these.
   `forgotten`, `path`, `agents_md`, `claude_md`, `hooks`, `sets`.
 - `POST /api/setup/delete-data` — archive everything Slightly Parallel holds for a
   project into `.trash/`. Body: `project_code`, `confirm` (must repeat the
-  code).
+  code). Holds the membership ledger's lock from its check to the trash.
+  Refused (409, writing nothing) while the project holds the chat of an
+  agent that is a member of other projects: `detail` names them, `held` is
+  `[{agent_id, also_in}]`, the projects each chat can move to
+  (`POST /api/agents/{agent_id}/move-chat`). Members from elsewhere get a
+  `leave` row, value `project deleted`; the answer lists them in `left`.
+  `GET /api/setup/info`'s `data_projects` carry the same `held` per project.
 
 ### Settings, preferences, doctor
 

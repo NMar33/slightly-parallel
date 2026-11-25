@@ -1099,8 +1099,40 @@ def upgrade(space: Space, report: Report, source: Path, base: str, boot_seconds:
         report.add(s, "#sp after the upgrade: the folder, the contract and the hooks are fine",
                    all(by.get(k, {}).get("status") == "ok" for k in ("folder", "contract", "hooks")),
                    json.dumps({k: by.get(k, {}).get("title") for k in ("folder", "contract", "hooks")})[:300])
+        membership_after_upgrade(old, report, s, session, chat)
     finally:
         stop(proc)
+
+
+def membership_after_upgrade(old: Space, report: Report, s: str, session: str, chat: Path) -> None:
+    """An install from before the membership ledger (tk_d1d25a4d step 2): the
+    chat joins a second project through the API, is listed there, and its
+    next hook turn lands in the folder it always had."""
+    import urllib.error
+    agent = f"cc-{session[:8]}"
+    report.add(s, "the upgraded install starts with no membership ledger", not (old.data / "agent_memberships.csv").exists())
+    second = old.root / "second-app"
+    second.mkdir(exist_ok=True)
+    (second / "app.py").write_text("print('two')\n", encoding="utf-8")
+    http(old.url + "/api/setup/integrate", {"project_code": "second", "project_dir": str(second)})
+    other = "0eae0000-0000-4000-8000-000000000006"  # its own agent id (cc-0eae0000)
+    fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": other, "cwd": str(second), "prompt": "The second project's own chat."}, folder=second)
+    fire_hook(old, {"hook_event_name": "Stop", "session_id": other, "cwd": str(second), "last_assistant_message": "Its own reply."}, folder=second)
+    try:
+        joined = http(old.url + f"/api/agents/{agent}/membership", {"op": "join", "project": "second"})
+    except urllib.error.HTTPError as exc:
+        joined = {"error": exc.code, "detail": exc.read().decode("utf-8", "replace")[:300]}
+    report.add(s, "a join through the API makes the chat a member of a second project",
+               isinstance(joined, dict) and joined.get("members") == ["kept", "second"], json.dumps(joined)[:300])
+    listed = eventually(lambda: [r for r in rows(get(old, "/api/sessions?project=second"), "sessions")
+                                 if r.get("agent_id") == agent] or None, 20) or []
+    report.add(s, "the chat is listed in the second project, filed under its own",
+               bool(listed) and all(r.get("project") == "kept" and r.get("projects") == "kept,second" for r in listed),
+               json.dumps(listed)[:300])
+    fired = fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(old.sample), "prompt": "After the join: filed where it was."}, folder=old.sample)
+    report.add(s, "a hook turn after the join lands where it did before",
+               fired.returncode == 0 and "After the join" in chat.read_text(encoding="utf-8")
+               and not chatstore.folder(old.data, "second", agent).exists(), (fired.stderr or fired.stdout)[-300:])
 
 
 def screens(space: Space, report: Report, moment: str, routes: list[str], out: Path) -> None:

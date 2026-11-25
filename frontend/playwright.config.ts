@@ -42,6 +42,9 @@ function dataRoot(): string {
   buildIfStale(__dirname)
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-e2e-'))
   fs.cpSync(path.join(REPO, 'fixtures'), root, { recursive: true })
+  // The workers inherit it: a spec that must age a chat's files (the
+  // one-chat move refuses a chat written in the last minute) finds the copy.
+  process.env.SP_E2E_DATA_ROOT = root
   addUsageGolden(root)
   addHelpers(root)
   addEntryPoint(root)
@@ -155,10 +158,12 @@ export default defineConfig({
   projects: [
     // The terminal flow turns the global terminal.enabled setting on while it
     // runs, which the other flows must not see: it runs by itself, after them.
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, grepInvert: /terminal:|restore:/ },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, grepInvert: /terminal:|restore:|delete-dialog:/ },
     { name: 'terminal', use: { ...devices['Desktop Chrome'] }, grep: /terminal:/, dependencies: ['chromium'] },
     // The restore flow replaces the whole data folder: alone, after all others.
     { name: 'restore', use: { ...devices['Desktop Chrome'] }, grep: /restore:/, dependencies: ['terminal'] },
+    // The delete dialog deletes a demo project: last, after every flow that reads it.
+    { name: 'delete', use: { ...devices['Desktop Chrome'] }, grep: /delete-dialog:/, dependencies: ['restore'] },
   ],
   webServer: process.env.SP_E2E_URL
     ? undefined

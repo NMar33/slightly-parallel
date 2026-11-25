@@ -32,7 +32,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from .. import rhythm, termlib, usagelib
+from .. import memberships, rhythm, termlib, usagelib
 from ..db import ViewStore
 from ..entities import DONE_STATUSES
 from ..sessions import is_helper
@@ -160,9 +160,10 @@ def terminal_resumable(request: Request, project: str = Query(...), store: ViewS
     held = {str(v.get("agent_id") or "") for v in termlib.agent_links(root).values()}
     held |= {str(r.get("agent_id") or "") for r in termlib.rows(root)}
     out = []
+    listed = memberships.listing(store, project)
     for a in store.agents():
         aid = str(a.get("agent_id") or "")
-        if a.get("project") != project or is_helper(a) or aid in held:
+        if not listed.has(a.get("project"), aid) or is_helper(a) or aid in held:
             continue
         if not termlib.resume_command(str(a.get("tool") or ""), str(a.get("session_ref") or "")):
             continue

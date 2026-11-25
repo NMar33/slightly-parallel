@@ -599,6 +599,52 @@ def _wait_screen(root: Path, sid: str, text: str, timeout: float = 5.0) -> str:
 
 
 @needs_tmux
+@pytest.mark.parametrize("apply_resize", [True, False])
+def test_tmux_input_after_resize_waits_for_the_shells_actual_size(env, monkeypatch, apply_resize: bool) -> None:
+    from threading import Event
+
+    from backend.routers import terminal
+
+    c, root, work = env
+    _on(c)
+    sid = _open(c)["id"]
+    target = termlib.PREFIX + sid
+    # Tmux may redraw at the outer size before resizing the shell's own tty.
+    # Hold its inner width manually until the test releases it.
+    window = termlib.tmux(root, "resize-window", "-t", target, "-x", "63", "-y", "33")
+    assert window.returncode == 0, window.stderr
+    size_file = work / "typed-size"
+    pending = shlex.quote(str(size_file.with_suffix(".pending")))
+    command = f"stty size > {pending} && mv {pending} {shlex.quote(str(size_file))}\r"
+    delivered = Event()
+    writes = []
+    write = terminal.PtySession.write
+
+    def observe_write(session, data):
+        if session.session_id == sid and data == command.encode():
+            writes.append(data)
+            delivered.set()
+        return write(session, data)
+
+    monkeypatch.setattr(terminal.PtySession, "write", observe_write)
+    token = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={token}&cols=63&rows=33") as ws:
+        ws.receive_bytes()
+        ws.send_json({"type": "resize", "cols": 128, "rows": 33})
+        ws.send_json({"type": "input", "data": command, "typed": True})
+        assert not delivered.wait(0.15), "input reached the shell before its tty was resized"
+        if apply_resize:
+            window = termlib.tmux(root, "resize-window", "-t", target, "-x", "128", "-y", "33")
+            assert window.returncode == 0, window.stderr
+        assert delivered.wait(2), "input was lost while waiting for the pane"
+        deadline = time.monotonic() + 2
+        while not size_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert size_file.read_text(encoding="utf-8").split() == ["33", "128" if apply_resize else "63"]
+        assert writes == [command.encode()]
+
+
+@needs_tmux
 def test_a_terminal_has_a_role(env) -> None:
     c, _, _ = env
     _on(c)

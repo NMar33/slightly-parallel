@@ -30,7 +30,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import hookshared, limits, marklib, termlib
+from . import hookshared, limits, marklib, memberships, termlib
 from .actors import is_agent
 from .csvio import append_row
 from .date_utils import now_iso
@@ -138,6 +138,7 @@ def listing(store: ViewStore, which: str, *, project: str = "", agent_id: str = 
     briefs = hookshared.briefs_of(store.data_root)
     needle = q.strip().lower()
     items: list[dict[str, Any]] = []
+    fold = memberships.current(store)
     for r in marklib.active(store, project):
         if r.get("kind") not in kinds:
             continue
@@ -168,6 +169,9 @@ def listing(store: ViewStore, which: str, *, project: str = "", agent_id: str = 
             item["command"] = termlib.fork_command(
                 str(a.get("tool") or ""), str(a.get("session_ref") or ""), str(a.get("cwd") or ""),
                 fork_prompt(text, turn, side, lang))
+        # The projects that list the message's chat (tk_d1d25a4d): the page
+        # shows the mark in each of them.
+        item["projects"] = memberships.row_projects(fold, agent, str(r.get("project") or ""))
         if needle:
             name = (item["agent"] or {}).get("agent_name") or ""
             hay = " ".join((text, item.get("brief") or "", r.get("excerpt") or "", name, agent)).lower()

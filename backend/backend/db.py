@@ -29,7 +29,7 @@ from typing import Any, Iterable
 
 import duckdb
 
-from . import chatstore
+from . import chatstore, membership_fold
 from .data_root import home_data_root, named_data_root
 from .entities import ENTITIES, LEDGERS, Entity
 
@@ -464,6 +464,10 @@ class ViewStore:
                 return "scans"
             return "rest"
         n = parts[0].lower() if parts else ""
+        # Which projects list a chat (tk_d1d25a4d): a join changes the chat
+        # pages, as a chat's own file does.
+        if n == membership_fold.LEDGER:
+            return "chats"
         if any(w in n for w in ("task", "sprint", "milestone", "evidence", "story", "board", "time_")):
             return "tasks"
         if any(w in n for w in ("scan", "snapshot", "file", "architecture")):
