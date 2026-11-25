@@ -128,3 +128,31 @@ def move_chat(
         raise HTTPException(status_code=503, detail=BUSY) from None
     store.rebuild()
     return out
+
+
+@router.post("/api/agents/{agent_id}/move-chat/abandon")
+def abandon_move(
+    agent_id: str,
+    body: Any = Body(...),
+    store: ViewStore = Depends(get_store),
+) -> dict:
+    """``{to}``: undo a move that stopped before the original went to the
+    trash — the copy at ``to`` goes to the trash, only when the original is
+    there and holds all the copy holds (chatmove.abandon). Then the move
+    can be made again."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail=f"the body is one object {{to}}, not a {type(body).__name__}")
+    operator_only(body, "Abandoning a chat move",
+                  "ask the operator to abandon it from the project delete dialog")
+    to = _text(body, "to")
+    if not to:
+        raise HTTPException(status_code=422, detail="to names the project the copy is in")
+    _agent(store, agent_id)
+    try:
+        out = chatmove.abandon(store.data_root, agent_id, to)
+    except chatmove.MoveRefused as r:
+        raise HTTPException(status_code=r.status, detail=r.detail) from None
+    except FileSafetyError:
+        raise HTTPException(status_code=503, detail=BUSY) from None
+    store.rebuild()
+    return out

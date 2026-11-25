@@ -10,14 +10,25 @@ line go; the project's files are otherwise untouched and its data stays
 their detail documents — move to ``<data_root>/.trash/<code>-<stamp>/``,
 preserving relative paths, so one bad click is recoverable by moving the
 folder back. Sprints spanning several projects only lose the membership.
+
+Every folder and file goes to the trash by one ``os.rename`` (the trash is
+inside the data root, so on its volume), never ``shutil.move``: its
+fallback copies, then deletes, and a delete that stops partway (Windows, a
+handle open inside the folder) leaves the live project half deleted behind
+a full copy in the trash (tk_dc394600). The renames come first, before any
+ledger row moves; the first that fails puts back what was moved, newest
+first, and the delete is refused in one line naming the path and the state
+(``DeleteRefused``), as the backup restore's swap does.
 """
 
 from __future__ import annotations
 
+import errno
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from . import chatstore
 from .csvio import append_row, read_rows, rewrite_rows
@@ -101,14 +112,30 @@ def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
+def _volume(path: Path) -> int:
+    return os.lstat(path).st_dev
+
+
+def _rename(src: Path, dst: Path) -> None:
+    """One rename into the trash; raises ``OSError`` and moves nothing when
+    it cannot. Never a copy: the trash is on the data root's volume, and a
+    path that is not (a mount inside the data root) is refused, not copied."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if _volume(src) != _volume(dst.parent):
+        raise OSError(errno.EXDEV, "it is on another volume than the trash", str(src))
+    if dst.exists() or dst.is_symlink():
+        raise FileExistsError(errno.EEXIST, "the trash holds that path already", str(dst))
+    os.rename(src, dst)
+
+
 def _archive_file(data_root: Path, trash: Path, rel: str) -> bool:
+    """A file that arrived after the delete's renames (a row written in
+    between): one rename, or it stays whole where it is."""
     src = resolve_under(data_root, rel)
     if src is None or not src.exists():
         return False
-    dst = trash / rel
-    dst.parent.mkdir(parents=True, exist_ok=True)
     try:
-        shutil.move(str(src), str(dst))
+        _rename(src, trash / rel)
     except OSError:
         return False
     return True
@@ -154,16 +181,143 @@ def _header(path: Path) -> tuple[str, ...]:
 
 
 def _archive_folder(data_root: Path, trash: Path, rel: str) -> bool:
+    """``_archive_file`` for a folder."""
     src = data_root / rel
     if not src.is_dir():
         return False
-    dst = trash / rel
-    dst.parent.mkdir(parents=True, exist_ok=True)
     try:
-        shutil.move(str(src), str(dst))
+        _rename(src, trash / rel)
     except OSError:
         return False
     return True
+
+
+class DeleteRefused(Exception):
+    """A rename into the trash failed: the delete stopped and put back what
+    it had moved. 409 when everything is back in place, 500 when not."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
+class _Renames:
+    """The first phase of a delete: every folder and file of the project,
+    each by one rename into the trash. The first that fails puts the others
+    back, newest first, and raises ``DeleteRefused``."""
+
+    def __init__(self, trash: Path, code: str) -> None:
+        self.trash = trash
+        self.code = code
+        self.done: list[tuple[Path, Path, str]] = []   # (where it was, where it is, rel)
+
+    def move(self, src: Path | None, rel: str) -> bool:
+        if src is None or not (src.exists() or src.is_symlink()):
+            return False
+        dst = self.trash / rel
+        try:
+            _rename(src, dst)
+        except OSError as e:
+            self.refuse(rel, e.strerror or str(e))
+        self.done.append((src, dst, rel))
+        return True
+
+    def back(self) -> list[tuple[Path, Path, str]]:
+        """Put back what moved, newest first; returns what could not go back."""
+        left = []
+        for src, dst, rel in reversed(self.done):
+            try:
+                if src.exists() or src.is_symlink():
+                    # Something was written there since: never rename over it.
+                    raise FileExistsError(errno.EEXIST, "written again since", str(src))
+                os.rename(dst, src)
+            except OSError:
+                left.append((src, dst, rel))
+        self.done = []
+        if not left:
+            for folder, _dirs, _files in os.walk(self.trash, topdown=False):
+                try:
+                    os.rmdir(folder)   # only the empty folders the delete made
+                except OSError:
+                    pass
+        return left
+
+    def refuse(self, rel: str, reason: str) -> NoReturn:
+        left = self.back()
+        head = f"Delete of {self.code} refused: {rel} could not move to the trash ({reason})"
+        if not left:
+            raise DeleteRefused(409, f"{head}; nothing deleted, everything is where it was. "
+                                     "Close what holds it open (a running agent) and try again.")
+        where = "; ".join(f"{r} is at {d}" for _s, d, r in left)
+        raise DeleteRefused(500, f"{head}, and {len(left)} of what had moved could not be put back: "
+                                 f"{where}. Move those back by hand; everything else is where it was.")
+
+
+def _rename_all(data_root: Path, code: str, r: _Renames) -> dict[str, int]:
+    """Every folder and file the delete takes, renamed into the trash in the
+    order the ledgers name them, before any ledger row moves. Returns the
+    counts by kind (the keys of the delete's ``moved``)."""
+    counts: dict[str, int] = {}
+
+    def bump(key: str) -> None:
+        counts[key] = counts.get(key, 0) + 1
+
+    def is_project(row: dict[str, str]) -> bool:
+        return str(row.get("project") or "") == code
+
+    def doc(row: dict[str, str], key: str = "detail_docs", col: str = "md_ref") -> None:
+        rel = str(row.get(col) or "")
+        if r.move(resolve_under(data_root, rel), rel):
+            bump(key)
+
+    def versions(row: dict[str, str]) -> None:
+        rid = str(row.get("id") or "")
+        if not rid:
+            return
+        for rel in (f"{VERSIONS_DIR}/{rid}.md", f"{VERSIONS_DIR}/{rid}"):
+            if r.move(data_root / rel, rel):
+                bump("kept_versions")
+
+    def folder(rel: str, key: str) -> None:
+        if (data_root / rel).is_dir() and r.move(data_root / rel, rel):
+            bump(key)
+
+    if r.move(data_root / "projects" / code, f"projects/{code}"):
+        bump("projects_folder")
+    for row in read_rows(data_root / "scans.csv"):
+        if is_project(row):
+            doc(row)
+    owned: dict[str, set[str]] = {}
+    for ent in ENTITIES.values():
+        if ent.name == "sprint":
+            continue
+        for row in read_rows(data_root / ent.csv):
+            if is_project(row):
+                owned.setdefault(ent.name, set()).add(str(row.get("id") or ""))
+                doc(row)
+                versions(row)
+    tasks = sorted(owned.get("task", set()) - {""})
+    for tid in tasks:
+        folder(f"task_evidence/{tid}", "task_evidence_folders")
+    for tid in tasks:
+        folder(f"task_story/{tid}", "task_story_folders")
+    for row in read_rows(data_root / "story_images.csv"):
+        if is_project(row):
+            doc(row, "story_image_files", "path")
+    for row in read_rows(data_root / ENTITIES["sprint"].csv):
+        members = [p.strip() for p in str(row.get("projects") or "").split(",") if p.strip()]
+        if members and set(members) == {code}:
+            doc(row)
+            versions(row)
+    cards = sorted(owned.get("publish", set()) - {""})
+    notes = sorted(owned.get("note", set()) - {""})
+    eps = sorted(owned.get("entrypoint", set()) - {""})
+    for rel in ([f"note_details/{i}" for i in notes] + [f"note_images/{i}" for i in notes]
+                + [f"entrypoint_shots/{i}" for i in eps] + [f"publish_images/{i}" for i in cards]
+                + [f"publish_files/{i}" for i in cards] + [f"publish_context/{i}" for i in cards]):
+        folder(rel, "side_folders")
+    return counts
 
 
 def _sweep_side_ledgers(data_root: Path, trash: Path, code: str, owned: dict[str, set[str]],
@@ -327,7 +481,10 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
     while the project holds the chat of an agent that is a member elsewhere
     (``ProjectHeld``); rule 2 writes a ``leave`` for each member from
     elsewhere, value «project deleted». The ledger keeps its rows: a
-    restored project re-joins nobody."""
+    restored project re-joins nobody. A leave needs the project to exist,
+    so the leaves come before the renames; a delete then refused
+    (``DeleteRefused``) writes each of those agents a ``join`` back, value
+    «project delete refused»."""
     from . import membership_fold as mf
     from . import memberships
     data_root = store.data_root
@@ -339,20 +496,58 @@ def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
         for agent in members_from_elsewhere(data_root, code):
             memberships.write(data_root, agent, "leave", code, mf.DELETED, held=True)
             left.append(agent)
-        out = _delete_project_data(store, code)
+        # Then the files, all or nothing (DeleteRefused names a failure),
+        # then the ledger rows.
+        trash = data_root / TRASH_DIR / f"{code}-{_stamp()}"
+        trash.mkdir(parents=True, exist_ok=True)
+        renames = _Renames(trash, code)
+        try:
+            counts = _rename_all(data_root, code, renames)
+        except DeleteRefused as refused:
+            missed = _rejoin(data_root, code, left)
+            if missed:
+                refused.detail += f" {', '.join(missed)} left {code} and could not join it again."
+                refused.args = (refused.detail,)
+            raise
+        except BaseException:
+            renames.back()
+            _rejoin(data_root, code, left)
+            raise
+        out = _delete_project_data(store, code, trash, counts)
     if left:
         out["left"] = left
     return out
 
 
-def _delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
-    """The archive itself; the caller holds the membership ledger's lock."""
+#: The value of the join that undoes a leave of a delete that was refused.
+REJOINED = "project delete refused"
+
+
+def _rejoin(data_root: Path, code: str, agents: list[str]) -> list[str]:
+    """The members from elsewhere that left ``code`` for a delete that was
+    then refused join it again (the ledger is append-only: a leave, then a
+    join). Returns the agents whose join could not be written."""
+    from . import memberships
+    missed = []
+    for agent in agents:
+        try:
+            memberships.write(data_root, agent, "join", code, REJOINED, held=True)
+        except Exception:  # noqa: BLE001 - named in the refusal instead
+            missed.append(agent)
+    return missed
+
+
+def _delete_project_data(store: ViewStore, code: str, trash: Path,
+                         renamed: dict[str, int]) -> dict[str, Any]:
+    """The ledger rows, after ``_rename_all`` moved the files (``renamed``
+    counts them); the caller holds the membership ledger's lock. A file that
+    a row written in between names goes by one rename too, or stays whole
+    where it is."""
     data_root = store.data_root
-    trash = data_root / TRASH_DIR / f"{code}-{_stamp()}"
-    trash.mkdir(parents=True, exist_ok=True)
-    moved: dict[str, int] = {}
-    docs = 0
-    versions = 0
+    moved: dict[str, int] = {k: n for k, n in renamed.items()
+                             if k in ("projects_folder", "task_evidence_folders", "task_story_folders")}
+    docs = renamed.get("detail_docs", 0)
+    versions = renamed.get("kept_versions", 0)
 
     def keep_doc(row: dict[str, str]) -> None:
         nonlocal docs
@@ -376,25 +571,14 @@ def _delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
             return
         if _archive_file(data_root, trash, f"{VERSIONS_DIR}/{rid}.md"):
             versions += 1
-        folder = data_root / VERSIONS_DIR / rid
-        if folder.is_dir():
-            dest = trash / VERSIONS_DIR / rid
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                shutil.move(str(folder), str(dest))
-                versions += 1
-            except OSError:
-                pass
+        if _archive_folder(data_root, trash, f"{VERSIONS_DIR}/{rid}"):
+            versions += 1
 
     def keep_all(row: dict[str, str]) -> None:
         keep_doc(row)
         keep_versions(row)
 
-    # The chats folder — capture's home.
-    proj_dir = data_root / "projects" / code
-    if proj_dir.exists():
-        shutil.move(str(proj_dir), str(trash / "projects" / code))
-        moved["projects_folder"] = 1
+    # The chats folder — capture's home — went first, in _rename_all.
 
     # Scans have their own ledger and detail folder.
     moved["scans"] = _split_rows(
@@ -438,34 +622,13 @@ def _delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
             data_root, trash, "task_evidence.csv", TASK_EVIDENCE_COLUMNS,
             lambda r: str(r.get("task_id") or "") in task_ids,
         )
-        evidence_moved = 0
-        for tid in sorted(task_ids):
-            folder = data_root / "task_evidence" / tid
-            if folder.is_dir():
-                dest = trash / "task_evidence" / tid
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    shutil.move(str(folder), str(dest))
-                except (OSError, UnicodeDecodeError):
-                    continue  # left in place, as a detail document that will not move is
-                evidence_moved += 1
-        if evidence_moved:
-            moved["task_evidence_folders"] = evidence_moved
-        # The story prompts and images of the project's tasks, kept per task
-        # (story_release.STORY_DIR): left behind, they outlived the task.
-        story_moved = 0
-        for tid in sorted(task_ids):
-            folder = data_root / "task_story" / tid
-            if folder.is_dir():
-                dest = trash / "task_story" / tid
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    shutil.move(str(folder), str(dest))
-                except (OSError, UnicodeDecodeError):
-                    continue
-                story_moved += 1
-        if story_moved:
-            moved["task_story_folders"] = story_moved
+        # Their evidence images and the story prompts and images kept per
+        # task (story_release.STORY_DIR) went in _rename_all; a task written
+        # since takes its folders here, or leaves them whole in place.
+        for key, base in (("task_evidence_folders", "task_evidence"), ("task_story_folders", "task_story")):
+            n = sum(_archive_folder(data_root, trash, f"{base}/{tid}") for tid in sorted(task_ids))
+            if n:
+                moved[key] = moved.get(key, 0) + n
 
     # The side ledgers that carry the project: the operator's dates and
     # milestones, agent links, story requests and storyboard documents,
@@ -505,7 +668,7 @@ def _delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
     # Story images live flat too (``task_story/<task_id>/`` named by each
     # row's ``path``), so the ledger rows and their files are swept by
     # project rather than carried along by the project folder.
-    images = 0
+    images = renamed.get("story_image_files", 0)
 
     def keep_image(row: dict[str, str]) -> None:
         nonlocal images
@@ -560,6 +723,8 @@ def _delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
             moved[name.removesuffix(".csv")] = n
 
     _sweep_side_ledgers(data_root, trash, code, owned_ids, task_ids, moved)
+    if renamed.get("side_folders"):
+        moved["side_folders"] = moved.get("side_folders", 0) + renamed["side_folders"]
 
     moved["detail_docs"] = docs
     moved["kept_versions"] = versions

@@ -152,10 +152,10 @@ def test_a_join_of_the_project_waits_for_the_delete_then_is_refused(root: Path, 
     store = ViewStore(root)
     started, real = threading.Event(), project_admin._delete_project_data
 
-    def slow(store_, code):
+    def slow(store_, *rest):
         started.set()
         time.sleep(1.0)
-        return real(store_, code)
+        return real(store_, *rest)
 
     monkeypatch.setattr(project_admin, "_delete_project_data", slow)
     t = threading.Thread(target=project_admin.delete_project_data, args=(store, "GAMMA"))
@@ -328,10 +328,15 @@ def test_a_crash_between_the_trash_and_the_moved_row(op: TestClient, root: Path,
         return real(root_, agent, op_, *a, **k)
 
     monkeypatch.setattr(memberships, "write", no_moved_row)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(chatmove.MoveRefused) as got:
         chatmove.move(root, A, "BETA")
     monkeypatch.undo()
     assert not chatstore.folder(root, "ALPHA", A).exists() and chatstore.folder(root, "BETA", A).is_dir()
+    # The answer names the exact state, in one line (tk_dc394600).
+    detail = got.value.detail
+    assert got.value.status == 500 and "\n" not in detail
+    assert str(chatstore.folder(root, "BETA", A)) in detail and str(root / ".trash") in detail, detail
+    assert "the machine went down" in detail and "moved row" in detail, detail
     op.app.state.store.rebuild()
     assert op.get(f"/api/agents/{A}/membership").json()["members"] == ["BETA"]
     issues = [i for i in op.get("/api/doctor").json()["issues"] if i["kind"] == "membership-skipped"]
@@ -557,3 +562,125 @@ def test_a_write_after_the_last_look_is_kept_in_the_trash_and_said(op: TestClien
     op.app.state.store.rebuild()
     assert op.get(f"/api/agents/{A}/membership").json()["members"] == ["BETA"]
     assert mf.load(root, {"ALPHA", "BETA", "GAMMA"}, {A: "BETA"}).skips == {}
+
+
+# ---------------------------------------------------------------------------
+# A refused move can be undone from inside the product (tk_dc394600)
+# ---------------------------------------------------------------------------
+
+def _two_folders(op: TestClient, root: Path, monkeypatch) -> tuple[Path, Path]:
+    """The state a move leaves when it stops between the rename and the
+    trash: the original at ALPHA, its copy at BETA."""
+    post(op, A, op="join", project="BETA")
+
+    def crash(*_a, **_k):
+        raise RuntimeError("the machine went down")
+
+    with monkeypatch.context() as m:
+        m.setattr(chatmove, "_trash", crash)
+        with pytest.raises(RuntimeError):
+            chatmove.move(root, A, "BETA")
+    op.app.state.store.rebuild()
+    return chatstore.folder(root, "ALPHA", A), chatstore.folder(root, "BETA", A)
+
+
+@pytest.mark.parametrize("newer", ["same", "original", "target"])
+def test_a_second_try_says_which_folder_is_newer_and_what_to_do(op: TestClient, root: Path,
+                                                                monkeypatch, newer: str) -> None:
+    src, dst = _two_folders(op, root, monkeypatch)
+    if newer == "original":
+        with open(src / "chat.md", "a", encoding="utf-8") as fh:
+            fh.write("\n## Turn 3 after the copy\n")
+    elif newer == "target":
+        with open(dst / "chat.md", "a", encoding="utf-8") as fh:
+            fh.write("\n## Turn 3 at the target\n")
+    age(src)
+    r = op.post(f"/api/agents/{A}/move-chat", json={"to": "BETA"})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert "has a folder in BETA already" in detail and "\n" not in detail
+    assert str(src) in detail and str(dst) in detail, detail
+    if newer == "target":
+        assert "holds writes the original" in detail and "by hand" in detail, detail
+        assert "move-chat/abandon" not in detail
+    else:
+        assert ("the same chat" if newer == "same" else "the original is newer") in detail, detail
+        assert "move-chat/abandon" in detail and "then move it again" in detail, detail
+
+
+def test_abandon_takes_only_the_copy_then_the_move_goes_ahead(op: TestClient, root: Path,
+                                                              monkeypatch) -> None:
+    src, dst = _two_folders(op, root, monkeypatch)
+    with open(src / "chat.md", "a", encoding="utf-8") as fh:
+        fh.write("\n## Turn 3 after the copy\n")
+    age(src)
+    original, copy = tree(src), tree(dst)
+    r = op.post(f"/api/agents/{A}/move-chat/abandon", json={"to": "BETA"})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert tree(src) == original
+    assert not dst.exists()
+    trashed = Path(got["trash"])
+    assert trashed.parent == root / ".trash" and tree(trashed / A) == copy
+    rows, _ = mf.read(root / mf.LEDGER)
+    assert [x["op"] for x in rows] == ["join"]
+    r = op.post(f"/api/agents/{A}/move-chat", json={"to": "BETA"})
+    assert r.status_code == 200, r.text
+    assert "after the copy" in (dst / "chat.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("case", ["no-copy", "target-newer", "only-folder", "agent-identity", "running"])
+def test_every_abandon_refusal_writes_nothing(op: TestClient, root: Path, monkeypatch, case: str) -> None:
+    body, status, words = {"to": "BETA"}, 409, ""
+    hold = None
+    if case == "no-copy":
+        post(op, A, op="join", project="BETA")
+        words = "no copy"
+    else:
+        src, dst = _two_folders(op, root, monkeypatch)
+        if case == "target-newer":
+            with open(dst / "chat.md", "a", encoding="utf-8") as fh:
+                fh.write("\n## Turn 3 at the target\n")
+            words = "holds writes the original"
+        elif case == "only-folder":
+            shutil.move(str(src), str(root / "aside"))  # the copy is the only chat left
+            words = "the only folder"
+        elif case == "agent-identity":
+            body, status, words = {"to": "BETA", "actor": "cc-other999"}, 422, "operator"
+        elif case == "running":
+            hold = acquire_flock(dst / "turns.jsonl.lock", mode="a")
+            hold.__enter__()
+            words = "holds the turns.jsonl lock"
+    before = tree(root)
+    try:
+        r = op.post(f"/api/agents/{A}/move-chat/abandon", json=body)
+    finally:
+        if hold is not None:
+            hold.__exit__(None, None, None)
+    assert r.status_code == status, r.text
+    assert words in r.json()["detail"], r.text
+    assert "\n" not in r.json()["detail"]
+    assert tree(root) == before
+
+
+def test_the_effects_say_a_write_during_the_move_can_land_in_the_trash() -> None:
+    effects = [e.format(to="BETA") for e in chatmove.EFFECTS]
+    assert any("during the move" in e and "trash" in e and "close the agent" in e for e in effects), effects
+
+
+def test_a_trashed_original_that_cannot_be_read_still_writes_the_moved_row(op: TestClient, root: Path,
+                                                                          monkeypatch) -> None:
+    post(op, A, op="join", project="BETA")
+    real = chatmove.fingerprint_bytes
+
+    def unreadable(folder: Path):
+        if chatmove.TRASH_DIR in Path(folder).parts:
+            raise PermissionError(13, "Access is denied", str(folder))
+        return real(folder)
+
+    monkeypatch.setattr(chatmove, "fingerprint_bytes", unreadable)
+    got = chatmove.move(root, A, "BETA")
+    monkeypatch.undo()
+    assert "could not be compared" in got["warning"] and "Access is denied" in got["warning"], got
+    rows, _ = mf.read(root / mf.LEDGER)
+    assert rows[-1]["op"] == "moved" and got["warning"] in rows[-1]["value"]
