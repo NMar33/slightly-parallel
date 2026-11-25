@@ -104,6 +104,26 @@ def test_whoami_names_home_members_and_level(op: TestClient, root: Path, tmp_pat
     assert (who["project"], who["home"], who["members"], who["level"]) == ("ALPHA", "ALPHA", ["ALPHA", "BETA"], 2)
 
 
+def test_a_code_spelled_another_case_is_the_same_folder_where_case_folds(op: TestClient, monkeypatch) -> None:
+    # Windows and macOS: projects/alpha is the folder projects/ALPHA (CI found
+    # it, test_audit_round3: a chat written under «alpha» filed in «ALPHA»).
+    store = op.app.state.store
+    assert memberships.may_write(store, A, "alpha")[0] is False        # Linux: two folders
+    monkeypatch.setattr(memberships, "folds_case", lambda root: True)
+    assert memberships.may_write(store, A, "alpha") == (True, "")
+    assert memberships.may_write_row(store, A, "beta", "task") == (True, "")
+    assert memberships.may_write(store, A, "gamma")[0] is False
+
+
+def test_folds_case_reads_the_file_system(op: TestClient, tmp_path: Path) -> None:
+    import os
+    (tmp_path / "projects").mkdir()
+    probe = tmp_path / "Probe"
+    probe.mkdir()
+    folds = (tmp_path / "PROBE").exists() and os.path.samefile(probe, tmp_path / "PROBE")
+    assert memberships.folds_case(tmp_path) is folds
+
+
 # -- creates, at the gate ----------------------------------------------------
 
 @pytest.mark.parametrize("via", [VIA, {}], ids=["mcp", "http-mcp_only-off"])

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import uuid
@@ -341,13 +342,46 @@ class AgentView:
     """One agent's projects now: ``members`` (home first when it is the
     origin), ``home`` and the task ``level``."""
 
-    __slots__ = ("agent", "members", "home", "level")
+    __slots__ = ("agent", "members", "home", "level", "origins")
 
-    def __init__(self, agent: str, members: list[str], home: str, level: int) -> None:
+    def __init__(self, agent: str, members: list[str], home: str, level: int,
+                 origins: tuple[str, ...] = ()) -> None:
         self.agent = agent
         self.members = members
         self.home = home
         self.level = level
+        # The projects its chat folders are filed under as spelled there (not
+        # those it left): on a file system without case, the same folders as
+        # the codes that spell them otherwise.
+        self.origins = origins
+
+
+_folds: dict[str, bool] = {}
+
+
+def folds_case(root: str | Path) -> bool:
+    """Is the data root on a file system that does not tell letter case
+    apart (Windows, macOS by default)? There ``projects/alpha`` is the
+    folder ``projects/ALPHA``: one project spelled two ways (docs/testing.md
+    #10), so a code compares without case."""
+    key = str(root)
+    if key not in _folds:
+        base = Path(root) / chatstore.PROJECTS
+        other = Path(root) / chatstore.PROJECTS.swapcase()
+        try:
+            _folds[key] = base.is_dir() and other.is_dir() and os.path.samefile(base, other)
+        except OSError:
+            _folds[key] = False
+    return _folds[key]
+
+
+def _member(store: Any, view: AgentView, project: str) -> bool:
+    if project in view.members:
+        return True
+    if not folds_case(store.data_root):
+        return False
+    low = project.casefold()
+    return any(c.casefold() == low for c in [*view.members, *view.origins])
 
 
 def unrecorded(agent: str) -> AgentView | None:
@@ -367,7 +401,8 @@ def agent_view(store: Any, agent: str) -> AgentView | None:
         return None
     m = current(store)
     if m.origins(agent):
-        return AgentView(agent, m.members(agent), m.home(agent), m.level(agent))
+        stay = tuple(o for o in m.origins(agent) if o not in m.left(agent))
+        return AgentView(agent, m.members(agent), m.home(agent), m.level(agent), stay)
     origins = tuple(dict.fromkeys(o for o, _f, _m in chats_on_disk(store.data_root, agent)))
     if not origins:
         return unrecorded(agent)
@@ -378,7 +413,8 @@ def agent_view(store: Any, agent: str) -> AgentView | None:
         rows, cut = [], 0
     one = mf.fold([r for r in rows if r.get("agent_id") == agent], existing_codes(store.data_root),
                   {agent: origins}, cut)
-    return AgentView(agent, one.members(agent), one.home(agent), one.level(agent))
+    stay = tuple(o for o in origins if o not in one.left(agent))
+    return AgentView(agent, one.members(agent), one.home(agent), one.level(agent), stay)
 
 
 def may_write(store: Any, agent: str, project: str) -> tuple[bool, str]:
@@ -388,7 +424,7 @@ def may_write(store: Any, agent: str, project: str) -> tuple[bool, str]:
     view = agent_view(store, agent)
     if view is None:
         return False, UNINDEXED.format(agent=agent)
-    if project in view.members:
+    if _member(store, view, project):
         return True, ""
     return False, NOT_MEMBER.format(agent=agent, project=project or "(none)",
                                     projects=", ".join(view.members) or "none")
@@ -403,7 +439,7 @@ def may_write_row(store: Any, agent: str, project: str, what: str) -> tuple[bool
     view = agent_view(store, agent)
     if view is None:
         return False, UNINDEXED.format(agent=agent)
-    if project in view.members:
+    if _member(store, view, project):
         return True, ""
     return False, NOT_MEMBER_ROW.format(agent=agent, project=project, what=what)
 
