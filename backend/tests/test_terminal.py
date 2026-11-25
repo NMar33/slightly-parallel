@@ -301,6 +301,50 @@ def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch,
 
 
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+@pytest.mark.parametrize("enable_raw", [True, False])
+def test_first_socket_input_reaches_a_client_that_goes_raw_after_its_only_frame(env, monkeypatch, enable_raw) -> None:
+    from backend.routers import terminal
+
+    c, _, work = env
+    _on(c)
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    armed = work / "enable-raw"
+    received = work / "received-input"
+    startup = """
+import os
+from pathlib import Path
+import sys
+import time
+import tty
+
+os.write(1, b'only frame before raw mode')
+while not Path(sys.argv[1]).exists():
+    time.sleep(0.01)
+tty.setraw(0)
+out = Path(sys.argv[2])
+temp = out.with_suffix('.tmp')
+temp.write_bytes(os.read(0, 4096))
+temp.replace(out)
+"""
+    monkeypatch.setattr(termlib, "attach_argv", lambda *_: [sys.executable, "-c", startup, str(armed), str(received)])
+    monkeypatch.setattr(terminal, "TMUX_INPUT_READY_TIMEOUT_S", 1)
+    token = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={token}") as ws:
+        assert ws.receive_bytes() == b"only frame before raw mode"
+        ws.send_json({"type": "input", "data": "first input", "typed": True})
+        if not enable_raw:
+            assert ws.receive()["code"] == 4500
+            assert not received.exists()
+            return
+        armed.touch()
+        deadline = time.monotonic() + 2
+        while not received.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert received.is_file(), "the first input was never written after the client's raw-mode transition"
+        assert received.read_bytes() == b"first input"
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
 def test_a_wrapped_line_above_does_not_shift_the_lines_cut_out(env) -> None:
     """What the page copies goes by the screen's rows. A command wider than the
     pane takes two of them; on CI's macOS a long machine name in the prompt did

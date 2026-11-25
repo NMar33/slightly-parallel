@@ -58,7 +58,8 @@ from .deps import foreign_origin, get_store, not_found, operator_only, to_int
 log = logging.getLogger("sp.terminal")
 
 PLAIN_SHELL_COMMAND_DELAY_S = 0.4
-TMUX_FIRST_OUTPUT_TIMEOUT_S = 10
+TMUX_INPUT_READY_TIMEOUT_S = 10
+TMUX_INPUT_MODE_POLL_S = 0.01
 # Tmux 3.8 can defer applying a successive resize to the pane's tty by 250 ms.
 TMUX_PANE_RESIZE_TIMEOUT_S = 0.4
 TMUX_PANE_RESIZE_POLL_S = 0.015
@@ -1106,13 +1107,23 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             if tmux_ready is not None and not tmux_input_started:
                 # Accepting the socket forks the tmux client, whose tty setup
                 # can print a query and then flush input before going raw.
-                if not tmux_ready.is_set():
-                    try:
-                        await asyncio.wait_for(tmux_ready.wait(), TMUX_FIRST_OUTPUT_TIMEOUT_S)
-                    except TimeoutError:
-                        await websocket.close(code=4500, reason="tmux did not draw its terminal")
-                        raise WebSocketDisconnect(code=4500) from None
-                if not session.buffer or not session.in_raw_mode():
+                deadline = time.monotonic() + TMUX_INPUT_READY_TIMEOUT_S
+                try:
+                    if not tmux_ready.is_set():
+                        await asyncio.wait_for(tmux_ready.wait(), TMUX_INPUT_READY_TIMEOUT_S)
+                    # The client may finish drawing before entering raw
+                    # mode and stay quiet until its first key arrives.
+                    while not session.in_raw_mode():
+                        if session.closed or not session.buffer or (session.pump_task and session.pump_task.done()):
+                            return
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError
+                        await asyncio.sleep(min(remaining, TMUX_INPUT_MODE_POLL_S))
+                except TimeoutError:
+                    await websocket.close(code=4500, reason="tmux did not become ready for input")
+                    raise WebSocketDisconnect(code=4500) from None
+                if session.closed or not session.buffer or (session.pump_task and session.pump_task.done()):
                     return  # the pump ended before terminal input was ready
                 tmux_input_started = True
             typed = marked is True or (marked is not False and not termlib.is_terminal_reply(b))
@@ -1213,7 +1224,7 @@ async def _pump(session: PtySession, ready: asyncio.Event | None = None) -> None
             break
         session.last_output = time.time()
         session.buffer.extend(data)
-        if ready is not None and not ready.is_set() and session.in_raw_mode():
+        if ready is not None and not ready.is_set():
             ready.set()
         if len(session.buffer) > _BUFFER_BYTES:
             del session.buffer[: len(session.buffer) - _BUFFER_BYTES]
