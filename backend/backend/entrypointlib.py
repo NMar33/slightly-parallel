@@ -1061,13 +1061,15 @@ def chat_turns(store: ViewStore, row: dict[str, str], tasks: list[dict[str, Any]
     from .taskwork import _filing_turns
     project = str(row.get("project") or "")
     agents = {str(a.get("agent_id") or ""): a for a in store.agents()}
+    # The chats of the topic's project, its members included (memberships.Listing).
+    listed = memberships.listing(store, project)
     want: dict[str, dict[int, list[str]]] = {}
 
     def add(agent: str, n: int, why: str) -> None:
         if not agent or not is_agent(agent) or n <= 0:
             return
         a = agents.get(agent)
-        if a is None or str(a.get("project") or "") != project:
+        if a is None or not listed.has(a.get("project"), agent):
             return
         want.setdefault(agent, {}).setdefault(n, [])
         if why not in want[agent][n]:
@@ -1104,7 +1106,7 @@ def chat_turns(store: ViewStore, row: dict[str, str], tasks: list[dict[str, Any]
     needed = set(want) | {a for a, _, _, _ in timed if a and is_agent(a)}
     for agent in needed:
         a = agents.get(agent)
-        if a is None or str(a.get("project") or "") != project:
+        if a is None or not listed.has(a.get("project"), agent):
             continue
         path = chat_path(store, agent)
         try:
@@ -1185,8 +1187,10 @@ def context(store: ViewStore, ep_id: str, *, now: datetime | None = None) -> dic
     for r in donelib.rows(store):
         if r.get("result") in donelib.RESOLVED and r.get("task_id"):
             done_rows[str(r["task_id"])] = r
+    listed = memberships.listing(store, project)
+
     def _ours(agent: str) -> str:
-        return agent if agent and project_of.get(agent) == project else ""
+        return agent if agent and agent in project_of and listed.has(project_of[agent], agent) else ""
 
     open_tasks, done_tasks = [], []
     for t in tasks:

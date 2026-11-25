@@ -57,8 +57,13 @@ def send(request: Request, body: dict = Body(...)) -> dict[str, Any]:
     if reply_to:
         if not msgledger.ID_RE.match(reply_to) or msgledger.find(root, reply_to) is None:
             raise HTTPException(status_code=404, detail=f"reply_to {reply_to!r} is no message (msg_…)")
-    project = str(target.get("project") or "")
-    if sender != msgledger.OPERATOR:
+    # A message is filed in the sender's home, never where the body says
+    # (tk_d1d25a4d step 3, note nt_258a7ed7 §7); the operator's in the target's.
+    from .. import memberships
+    store = request.app.state.store
+    who = memberships.agent_view(store, to if sender == msgledger.OPERATOR else sender)
+    project = who.home if who is not None and who.home else str(target.get("project") or "")
+    if sender != msgledger.OPERATOR and (who is None or not who.home):
         own = msgdeliver.chat_meta(root, sender)
         if own is not None and own.get("project"):
             project = str(own["project"])
@@ -102,7 +107,11 @@ def listing(request: Request, agent_id: str = Query(""), project: str = Query(""
     if agent_id:
         rows = [r for r in rows if agent_id in (r["from_agent"], r["to_agent"])]
     if project:
-        rows = [r for r in rows if r["project"] == project]
+        # The project's messages and its member chats' (memberships.Listing).
+        from .. import memberships
+        listed = memberships.listing(request.app.state.store, project)
+        rows = [r for r in rows if r["project"] == project or listed.has(r["project"], r["from_agent"])
+                or listed.has(r["project"], r["to_agent"])]
     rows.sort(key=lambda r: (r["sent_at"], r["id"]), reverse=True)
     return {"total": len(rows), "messages": rows[:limit]}
 

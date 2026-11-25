@@ -532,12 +532,16 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         }
 
     @router.get("/api/terminal/sessions")
-    def terminal_sessions(request: Request, project: str = Query("")) -> dict[str, Any]:
+    def terminal_sessions(request: Request, project: str = Query(""),
+                          store: ViewStore = Depends(get_store)) -> dict[str, Any]:
         _guard(request)
         root = request.app.state.settings.data_root
         items = termlib.listing(root, _plain_status())
         if project:
-            items = [x for x in items if x.get("project") == project]
+            # The project's terminals and its member chats' (memberships.Listing).
+            from .. import memberships
+            listed = memberships.listing(store, project)
+            items = [x for x in items if listed.has(x.get("project"), x.get("agent_id"))]
         counts = {s: sum(1 for x in items if x["state"] == s)
                   for s in ("shell", "working", "waiting", "running", "ended", "asleep")}
         return {"sessions": items, "counts": counts}

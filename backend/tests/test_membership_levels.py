@@ -94,3 +94,18 @@ def test_level_one_refuses_a_member_code_in_projects(world) -> None:
                                    "title": "x", "tags": "ag_bug"}, headers=VIA)
     assert (r.status_code, r.json()["detail"]) == (403, LEVEL_ONE)
     assert tree(root) == before
+
+
+@pytest.mark.parametrize("level", [1, 2, 3])
+@pytest.mark.parametrize("change", [{"projects": "ALPHA,BETA"}, {"lane": "ui"}, {"assignee": "ui"}])
+def test_an_agent_does_not_place_a_task_on_update(world, level: int, change: dict) -> None:
+    # The critic of c1: level 1 holds on create; on update the projects a
+    # card shows on and its lane are the operator's at every level
+    # (tasks_extra._OPERATOR_FIELDS), so an update cannot go round it.
+    c, root = world
+    if level != 2:
+        assert c.post(f"/api/agents/{A}/membership", json={"op": "level", "value": level}).status_code == 200
+    before = tree(root)
+    r = c.post("/api/tasks/tk_alpha_auth/update", json={"agent_id": A, **change}, headers=VIA)
+    assert r.status_code == 422 and "the operator's switch" in r.json()["detail"], r.text
+    assert tree(root) == before

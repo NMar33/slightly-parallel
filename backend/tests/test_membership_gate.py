@@ -213,6 +213,66 @@ def test_every_write_on_a_task_by_id_checks_the_tasks_project(op: TestClient, ro
     assert tree(root) == before
 
 
+@pytest.mark.parametrize("path", WRITE_PATHS)
+def test_every_by_id_write_path_knows_how_its_row_is_checked(path: str) -> None:
+    # The critic's case: a path that names a row by id and no project in its
+    # body was not checked at all (/api/cores/{id}/notes on a GAMMA core).
+    if "zz_none" not in path:
+        return
+    known = any(p.fullmatch(path) for p, _w, _r in _server._ROW_WRITES)
+    assert known or path.startswith(_server.ROW_CHECKED_IN_LIBRARIES), path
+
+
+def _gamma_rows(op: TestClient) -> dict[str, str]:
+    """One row of each kind written by id, in GAMMA, made by the operator."""
+    out: dict[str, str] = {}
+    r = op.post("/api/cores", json={"project": "GAMMA", "name": "Gamma core", "type": "capability",
+                                    "agent_id": "operator", "text": "#core-new Gamma core"})
+    assert r.status_code in (200, 201), r.text
+    out["core"] = r.json()["core"]["id"] if "core" in r.json() else r.json()["id"]
+    r = op.post("/api/docs", json={"project": "GAMMA", "kind": "article", "title": "gamma doc"})
+    assert r.status_code == 201, r.text
+    out["doc"] = r.json()["doc"]["id"]
+    r = op.post("/api/visions", json={"created_date": "2611-20", "created_time": "10:00", "project": "GAMMA",
+                                      "agent_id": "operator", "l1": "A gamma vision", "l2": "wording"})
+    assert r.status_code == 201, r.text
+    out["vision"] = r.json()["metadata"]["id"]
+    r = op.post(f"/api/tasks/{GAMMA_TASK}/notes", json={"type": "article", "body": "1) Gamma note"})
+    assert r.status_code == 201, r.text
+    out["task_note"] = r.json()["note"]["id"] if "note" in r.json() else r.json()["id"]
+    r = op.post(f"/api/tasks/{GAMMA_TASK}/link", json={"to": "tk_beta_x", "kind": "relates"})
+    assert r.status_code == 201, r.text
+    out["task_link"] = r.json()["link"]["id"]
+    return out
+
+
+def test_writes_by_id_with_no_project_are_checked_against_the_row(op: TestClient, root: Path) -> None:
+    rows = _gamma_rows(op)
+    cases = [
+        (f"/api/cores/{rows['core']}/notes", {"text": "x", "comment": "y"}, "core"),
+        (f"/api/cores/{rows['core']}/off", {}, "core"),
+        (f"/api/docs/{rows['doc']}/versions", {"body": "x", "note": "y"}, "document"),
+        (f"/api/visions/{rows['vision']}/interpretation", {"text": "x"}, "vision"),
+    ]
+    for path, body, what in cases:
+        before = tree(root)
+        r = op.post(path, json={"agent_id": A, **body}, headers=VIA)
+        assert (r.status_code, r.json()["detail"]) == (403, (
+            f"agent {A} is not a member of GAMMA; this {what} is GAMMA's. "
+            "The operator adds it on the agent card")), path
+        assert tree(root) == before, path
+
+
+def test_three_segment_task_paths_are_checked_with_mcp_only_off(op: TestClient, root: Path) -> None:
+    rows = _gamma_rows(op)
+    for path in (f"/api/tasks/notes/{rows['task_note']}/update", f"/api/tasks/notes/{rows['task_note']}/delete",
+                 f"/api/tasks/links/{rows['task_link']}/delete"):
+        before = tree(root)
+        r = op.post(path, json={"agent_id": A, "body": "x"})      # plain HTTP, mcp_only off
+        assert (r.status_code, r.json().get("detail")) == (403, not_member_task("GAMMA")), (path, r.text)
+        assert tree(root) == before, path
+
+
 # -- agents' updates on tasks (answer 1) --------------------------------------
 
 UPDATES = {
@@ -243,6 +303,33 @@ def test_an_agents_update_on_a_member_task_passes_the_gate(op: TestClient, kind:
     r = op.post(f"/api/tasks/{task}/{verb}", json={"agent_id": A, **body}, headers=VIA)
     # The router may refuse it for its own reasons (no story request): not for membership.
     assert "is not a member of" not in str(r.json().get("detail", "")), (kind, r.text)
+
+
+def test_after_done_closes_a_foreign_task_its_report_and_evidence_pass(op: TestClient, root: Path) -> None:
+    # Answer 2: the id next to #done closes the task in any project; the
+    # finish-a-task report and evidence that follow must not be refused.
+    from datetime import datetime, timedelta
+    (root / "done.json").write_text('{"since": "2000-01-01T00:00:00"}', encoding="utf-8")
+    at = (datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds")
+    make_chat(root, "ALPHA", A, [("2026-11-20T10:00:00", "work", "ok"), (at, f"#done {GAMMA_TASK}", "closed")])
+    op.app.state.store.rebuild()
+    got = op.get("/api/done-tags", params={"agent_id": A}).json()
+    assert [t["result"] for t in got["tasks"]] == ["moved"], got
+    for verb, body in (("report", {"text": "done it", "outcome": "done"}),
+                       ("evidence", {"items": [{"kind": "note", "text": "ran it"}]}),
+                       ("story", {"request_id": "sr_none", "body": "x"})):
+        r = op.post(f"/api/tasks/{GAMMA_TASK}/{verb}", json={"agent_id": A, **body}, headers=VIA)
+        assert "is not a member of" not in str(r.json().get("detail", "")), (verb, r.text)
+    # Only those: anything else on that task is still refused.
+    for verb, body in (("update", {"status": "doing"}), ("commits", {"shas": ["abc1234"]})):
+        r = op.post(f"/api/tasks/{GAMMA_TASK}/{verb}", json={"agent_id": A, **body}, headers=VIA)
+        assert (r.status_code, r.json()["detail"]) == (403, not_member_task("GAMMA")), verb
+    # Another chat that did not close it is refused the report.
+    other = "cc-bbbb2222"
+    make_chat(root, "ALPHA", other, [("2026-11-20T10:00:00", "work", "ok")])
+    op.app.state.store.rebuild()
+    r = op.post(f"/api/tasks/{GAMMA_TASK}/report", json={"agent_id": other, "text": "x", "outcome": "done"}, headers=VIA)
+    assert r.status_code == 403, r.text
 
 
 def test_the_operator_is_never_refused(op: TestClient) -> None:

@@ -279,7 +279,7 @@ def test_done_notice_shows_confirmed_tasks_and_doubt_with_the_copyable_command(m
     note = capture.format_signals({"commands": ["done"], "done_lookup": ("/sandbox", "cc-test"), "turn_number": 8})
     assert seen == [("/sandbox", "cc-test", 8)]
     assert "Closed tk_closed." in note
-    assert "tk_foreign (another project)" in note
+    assert "tk_foreign (not a project of this agent)" in note
     assert "tk_paste (mentioned outside the explicit list)" in note
     assert "\n#done tk_foreign tk_paste\n" in note
 

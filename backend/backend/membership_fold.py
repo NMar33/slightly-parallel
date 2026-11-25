@@ -61,6 +61,17 @@ SKIP_REASONS: tuple[str, ...] = (
 QUIET_SKIPS: frozenset[str] = frozenset({"join_origin"})
 
 
+LEVEL_WORDS = {1: "home only", 2: "picks by context", 3: "moves tasks"}
+
+
+def summary_text(agent: str, home: str, members: list[str], origin: str, level: int) -> str:
+    """The operator summary (spec nt_27a4fff5 §5), its first three lines: the
+    agent card and the hook's notice after a change both show this one."""
+    return (f"agent {agent}\n"
+            f"home: {home} · member of: {', '.join(members)} · runs from folder: {origin}\n"
+            f"task level: {level} ({LEVEL_WORDS.get(level, '')})")
+
+
 def path(root: str | os.PathLike[str]) -> str:
     """The ledger's path in a data root."""
     return os.path.join(os.fspath(root), LEDGER)

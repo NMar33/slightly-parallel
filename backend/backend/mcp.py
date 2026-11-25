@@ -85,6 +85,7 @@ TOOLS: dict[str, str] = {
     "task_update": "Edit a task. Status is the operator's.",
     "task_report": "Say a task is done, in your opinion.",
     "task_commits": "Link commits that have no Task: line to the task they were made for.",
+    "task_move": "Move a task to another of this chat's projects, keeping its id (task level 3).",
     "task_done": "After #done: what the operator's #done moved, and each task's stretch of the chat; with proposals, offers next tasks.",
     "next_tasks": "After the operator answered the next tasks offered at #done: make the ones they chose by number.",
     "undo_find": "After #undo: the operator's request and the entries it could mean, numbered.",
@@ -503,6 +504,21 @@ class Translator:
                      "shas": {"type": "array", "items": {"type": "string"}, "description": "commit hashes, 7 to 40 hex"},
                  },
                  "required": ["id", "shas"],
+             }},
+            {"name": "task_move",
+             "description": (
+                 "Move a task to another of this chat's projects; it keeps its id, so commits, messages "
+                 "and notes still find it. Only at task level 3 (whoami's level), between projects this "
+                 "chat is a member of, and never a done or archived task. The column stays; the lane "
+                 "stays when the new board has it, else it is cleared; the answer says what changed."
+                 + REPEAT_WHERE),
+             "inputSchema": {
+                 "type": "object",
+                 "properties": {
+                     "id": {"type": "string", "description": "the task"},
+                     "to": {"type": "string", "description": "the project code it moves to"},
+                 },
+                 "required": ["id", "to"],
              }},
             {"name": "task_done",
              "description": (
@@ -1418,6 +1434,9 @@ class Translator:
             return out
         if name == "core_off":
             return self.api.post(f"/api/cores/{_id(args)}/off", {"agent_id": self.identity()["agent_id"]})
+        if name == "task_move":
+            return self.api.post(f"/api/tasks/{_id(args)}/move",
+                                 {"agent_id": self.identity()["agent_id"], "to": str(args.get("to") or "")})
         if name == "task_commits":
             return self.api.post(
                 f"/api/tasks/{_id(args)}/commits",

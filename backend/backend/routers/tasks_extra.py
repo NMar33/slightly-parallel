@@ -531,3 +531,17 @@ def tasks_detail(
         "turns": [t.as_dict() for t in turns],
         "turns_n": len(turns),
     }, etag)
+
+
+@router.post("/api/tasks/{task_id}/move")
+def task_move(task_id: str, body: Any = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    """``{to}``: the task moves to project ``to``, keeping its id
+    (tasklib.move_task). The operator, or an agent at task level 3 that is a
+    member of both projects (MCP ``task_move``)."""
+    from ..tasklib import move_task
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail=f"the body is one object {{to}}, not a {type(body).__name__}")
+    to = body.get("to")
+    if not isinstance(to, str):
+        raise HTTPException(status_code=422, detail="to is one project code, as text")
+    return move_task(store, task_id, to, identity_of(body))

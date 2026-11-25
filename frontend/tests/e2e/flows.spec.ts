@@ -24,6 +24,9 @@ const test = base.extend({
  */
 
 const PROJECT = 'alpha-labs'
+// A chat the demo data recorded in alpha-labs: an agent with no chat writes
+// nothing (tk_d1d25a4d step 3), so the agent's doc version is this chat's.
+const WRITER = 'agent-genesis-2608-01'
 
 /** A title no other test (or earlier run on this server) can share. */
 const unique = (what: string) => `${what} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
@@ -95,7 +98,7 @@ test.describe('core flows', () => {
     // The call the MCP tool doc_version makes: the agent's identity, the via mark.
     const posted = await request.post(`/api/docs/${doc.id}/versions`, {
       headers: { 'X-SP-Via': 'mcp' },
-      data: { agent_id: 'cc-flowwriter', body: '# Launch\n\nFirst draft from the agent.', note: 'first pass' },
+      data: { agent_id: WRITER, body: '# Launch\n\nFirst draft from the agent.', note: 'first pass' },
     })
     expect(posted.status()).toBe(201)
 
@@ -111,7 +114,7 @@ test.describe('core flows', () => {
     await versions.getByRole('button', { name: 'save version' }).click()
     await expect(versions.getByRole('button', { name: 'Open version 2' })).toContainText('pasted from a chat')
     await expect(versions.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Open version 2' }) })).toContainText('you')
-    await expect(versions.getByRole('link', { name: 'cc-flowwriter' })).toHaveAttribute('href', '/agent/cc-flowwriter')
+    await expect(versions.getByRole('link', { name: /agent-genesis/ })).toHaveAttribute('href', `/agent/${WRITER}`)
 
     await versions.getByRole('button', { name: 'Open version 2' }).click()
     const win = page.getByRole('dialog', { name: 'Version 2' })
@@ -120,7 +123,7 @@ test.describe('core flows', () => {
     await expect(win.getByText('First draft from the agent.')).toHaveClass(/line-through/)
 
     const d = await request.get(`/api/docs/${doc.id}`).then((r) => r.json()) as { versions: Array<{ agent_id: string; note: string }> }
-    expect(d.versions.map((v) => [v.agent_id, v.note])).toEqual([['operator', 'pasted from a chat'], ['cc-flowwriter', 'first pass']])
+    expect(d.versions.map((v) => [v.agent_id, v.note])).toEqual([['operator', 'pasted from a chat'], [WRITER, 'first pass']])
   })
 
   test('the task window edits title and priority, and the edit survives a reopen', async ({ page, request }) => {

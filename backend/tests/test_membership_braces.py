@@ -108,11 +108,13 @@ TABLE: list[tuple[str, tuple[str, str, str]]] = [
     ("#task {shopfront} x", ("", "", NOT_SHOPFRONT)),
     ("#task {project:nowhere} x", ("", "", "{project:nowhere}: nowhere is not a project of this agent")),
     ("#task {brand new lane} x", ("", "brand new lane", "")),
+    ("#task {ui2} x", ("", "", "{ui2} is not a lane of merkhet's board — did you mean ui?")),   # a lane's near miss
+    ("#task {writing-tracker} {doc} x", ("", "", "{doc} is not a lane of writing-tracker's board — did you mean docs?")),
+    ("#task {relase} x", ("", "", near("relase", "release"))),                        # an alias's near miss first
     ("#task {" + "a" * 80 + "} x", ("", "a" * 80, "")),                               # 80 characters
     ("#task {" + "a" * 81 + "} x", ("", "", "")),                                    # 81: not a group
     ("#task fix the {writing-tracker} parser", ("", "", "")),                         # a { in the title
     ("#now-todo {writing-tracker} later", (MEMBER, "", "")),
-    ("#now {ui} x and #task {writing-tracker} y", ("", "ui", "")),                    # the #now is the card's
     ("#mute #task {writing-tracker} x", None),                                       # muted: no command
     ("#task {ui} x ###now {writing-tracker} y", (MEMBER, "", "")),                    # ### reads that one
 ]
@@ -135,6 +137,49 @@ def test_the_hook_and_the_server_read_braces_alike(world, text: str, want) -> No
     assert (server["project"], server["lane"], server["refusal"]) == (project, lane, refusal), server
     assert (hook["project"], hook["lane"], hook["refusal"]) == (
         (project or HOME) if not refusal else "", lane, refusal), hook
+
+
+# Each tag reads its own braces (the critic of c1: the #task's were lost).
+KINDS = [
+    ("#now {ui} x and #task {writing-tracker} y", "now", ("", "ui", "")),
+    ("#now {ui} x and #task {writing-tracker} y", "task", (MEMBER, "", "")),
+    ("#task {writing-tracker} y and #now x", "now", ("", "", "")),
+    ("#task {writing-tracker} y and #now x", "task", (MEMBER, "", "")),
+    ("#now-todo {docs} {writing-tracker} x", "task", None),
+]
+
+
+@pytest.mark.parametrize("text,kind,want", KINDS, ids=[f"{k}:{t}" for t, k, _w in KINDS])
+def test_each_tag_reads_its_own_braces(world, text: str, kind: str, want) -> None:
+    c, root = world
+    server = tasklib.task_braces(c.app.state.store, A, text, kind)
+    hook = capture.task_where(root, HOME, A, text, kind=kind)
+    if want is None:
+        assert hook is None and server == tasklib.NO_BRACES
+        return
+    project, lane, refusal = want
+    assert (server["project"], server["lane"], server["refusal"]) == want, server
+    assert (hook["project"], hook["lane"], hook["refusal"]) == ((project or HOME), lane, refusal), hook
+
+
+def test_a_task_beside_a_written_now_goes_where_its_braces_say(world) -> None:
+    c, root = world
+    _say(root, "#now {ui} fix the timeout and #task {writing-tracker} {docs} write it up", minutes_ago=5)
+    c.app.state.store.rebuild()
+    c.get("/api/tasks", params={"project": HOME})            # the server writes the #now card
+    r = _agent_task(c, HOME)
+    assert r.status_code == 403 and "the operator named writing-tracker in braces" in r.json()["detail"], r.text
+    r = _agent_task(c, MEMBER)
+    assert r.status_code == 201, r.text
+    assert (r.json()["metadata"]["project"], r.json()["metadata"]["lane"]) == (MEMBER, "docs")
+
+
+def test_the_hook_notice_names_each_tags_place(world) -> None:
+    _c, root = world
+    cap = capture.TurnCapture(root, HOME, A)
+    out = capture.format_signals(cap.open_turn("#now {ui} fix it and #task {wt} write it up")).splitlines()
+    assert "→ merkhet · lane ui" in next(x for x in out if x.startswith("[slightly-parallel] #now"))
+    assert "→ writing-tracker (" in next(x for x in out if x.startswith("[slightly-parallel] #task"))
 
 
 def _say(root: Path, text: str, minutes_ago: int = 1) -> None:

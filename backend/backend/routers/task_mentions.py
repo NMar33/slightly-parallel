@@ -34,8 +34,12 @@ def tasks_mentions_summary(
         return r
     clauses, params = ["1=1"], []
     if project:
-        clauses.append("project = ?")
-        params.append(project)
+        # The tasks the project's board shows (their project or projects),
+        # named in any chat: a member chat filed elsewhere counts too
+        # (tk_d1d25a4d step 3, note nt_258a7ed7 §7).
+        clauses.append("task_id IN (SELECT id FROM tasks_mutual WHERE project = ? "
+                       "OR list_contains(string_split(COALESCE(projects, ''), ','), ?))")
+        params.extend([project, project])
     rows = store.query(
         "SELECT task_id, COUNT(*) AS n, MAX(at_ts) AS last_at, "
         "arg_max(agent_id, at_ts) AS last_agent, arg_max(role, at_ts) AS last_role "

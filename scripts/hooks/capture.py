@@ -351,16 +351,82 @@ def _projects_on_disk(data_root: Path) -> set[str]:
         return set()
 
 
+def _origins(data_root: Path, project: str, agent: str) -> tuple[str, ...]:
+    """The projects this chat's folders are filed under, as the server reads
+    them (memberships.chats_on_disk): a chat resumed in a second project has
+    two. This hook's own project when chatstore did not load."""
+    if chatstore is None:
+        return (project,)
+    got: list[str] = []
+    for _p, folder in chatstore.folders_of(data_root, agent, has="meta.json"):
+        try:
+            meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        got.append(chatstore.project_of(folder, meta if isinstance(meta, dict) else {}))
+    return tuple(dict.fromkeys(got)) or (project,)
+
+
 def agent_projects(data_root: Path, project: str, agent: str) -> tuple[list[str], str, dict[str, str], set[str]]:
     """(members, home, aliases, codes) of this chat, from the membership
-    ledger and the alias file — the server's fold (membership_fold). A
-    missing file is no rows; one that cannot be read raises."""
+    ledger and the alias file — the server's fold (membership_fold), over
+    the same origins. A missing file is no rows; one that cannot be read
+    raises."""
+    return fold_agent(data_root, project, agent)[:4]  # type: ignore[return-value]
+
+
+def fold_agent(data_root: Path, project: str, agent: str) -> tuple[list[str], str, dict[str, str], set[str], int]:
+    """agent_projects' answer and the task level, from one read and one fold."""
     mf = _membership_fold()
     codes = _projects_on_disk(data_root)
     rows, cut = mf.read(mf.path(data_root))
-    m = mf.fold([r for r in rows if r.get("agent_id") == agent], codes, {agent: (project,)}, cut)
+    m = mf.fold([r for r in rows if r.get("agent_id") == agent], codes,
+                {agent: _origins(data_root, project, agent)}, cut)
     alias_rows, _cut = mf.read(mf.aliases_path(data_root))
-    return m.members(agent) or [project], m.home(agent) or project, mf.aliases(alias_rows, codes), codes
+    return (m.members(agent) or [project], m.home(agent) or project, mf.aliases(alias_rows, codes), codes,
+            m.level(agent))
+
+
+def ledger_stats(data_root: Path) -> list:
+    """One stat of the membership ledger and the alias file: what
+    ``membership_seen`` in meta.json compares (a missing file is None)."""
+    mf = _membership_fold()
+    out: list = []
+    for p in (mf.path(data_root), mf.aliases_path(data_root)):
+        try:
+            st = os.stat(p)
+        except FileNotFoundError:
+            out.append(None)
+            continue
+        except OSError:
+            out.append("unstat")
+            continue
+        out.append([st.st_size, st.st_mtime_ns, st.st_ino])
+    return out
+
+
+def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
+    """The tasks this chat made that it was not told the place of yet:
+    «tk_… → project · lane» on the next turn (note nt_258a7ed7 §6). tasks.csv
+    is read only when its stat moved; the first look marks what is there
+    as told."""
+    try:
+        st = os.stat(data_root / "tasks.csv")
+        sig = [st.st_size, st.st_mtime_ns, st.st_ino]
+    except OSError:
+        meta.setdefault("where_told", [])    # no tasks yet: the first look is done
+        return []
+    if meta.get("tasks_seen") == sig:
+        return []
+    first = "where_told" not in meta
+    told = [t for t in meta.get("where_told") or [] if isinstance(t, str)]
+    mine = [r for r in _read_csv(data_root / "tasks.csv") if (r.get("agent_id") or "") == agent]
+    new = [r for r in mine if r.get("id") and r["id"] not in told]
+    meta["tasks_seen"] = sig
+    meta["where_told"] = (told + [r["id"] for r in new])[-100:]
+    if first:
+        return []
+    return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 
 
 def _board_lanes(data_root: Path, project: str) -> list[str]:
@@ -375,13 +441,14 @@ def _board_lanes(data_root: Path, project: str) -> list[str]:
 
 
 def task_where(data_root: Path, project: str, agent: str, user_text: str,
-               projects: tuple[list[str], str, dict[str, str], set[str]] | None = None) -> dict | None:
+               projects: tuple[list[str], str, dict[str, str], set[str]] | None = None,
+               kind: str = "") -> dict | None:
     """Where the operator's #task / #now goes, read from its braces by the
     server's rule (hookshared.resolve_braces): ``{"project", "lane",
     "refusal"}``, the project the home when none is named; None without a
     command. ``projects``: agent_projects' answer, when the caller has it."""
     text = shared.command_text(user_text or "")
-    hit = shared.pick_task_hit(list(_TASK_CMD_RE.finditer(text)))
+    hit = shared.pick_task_hit(list(_TASK_CMD_RE.finditer(text)), kind)
     if hit is None:
         return None
     members, home, aliases, codes = projects or agent_projects(data_root, project, agent)
@@ -602,16 +669,48 @@ class TurnCapture:
         # caller then keeps its read positions, so the next one reads again).
         self.usage_failed = False
 
-    def _task_where(self, said: str) -> dict | None:
+    def _membership_turn(self, meta: dict, commands: list[str]) -> str | None:
+        """Note nt_258a7ed7 §5: one stat of the ledgers per turn against
+        ``membership_seen``; the fold only on a task command or a change, the
+        stat taken after that read. On a change, the operator summary for
+        this turn's notice. A missing file is the normal state; one that
+        cannot be read writes one failure line and reads as home only."""
+        self._folded: tuple | None = None
+        stats = ledger_stats(self.data_root)
+        seen = meta.get("membership_seen")
+        changed = seen is not None and stats != seen
+        task_cmd = any(c in ("task", "done") or c.startswith("now") for c in commands)
+        if seen is None:
+            meta["membership_seen"] = stats
+        if not changed and not task_cmd:
+            return None
         try:
-            return task_where(self.data_root, self.project, self.agent_name, said)
+            members, home, aliases, codes, level = fold_agent(self.data_root, self.project, self.agent_name)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            record_failure(self.data_root, self.project, self.agent_name, "capture",
+                           f"membership ledger unreadable, this chat reads as home only: {type(exc).__name__}: {exc}")
+            members, home, aliases, codes = [self.project], self.project, {}, _projects_on_disk(self.data_root)
+            level = _membership_fold().DEFAULT_LEVEL
+        # The braces of this turn's command read this fold, not a second one.
+        self._folded = (members, home, aliases, codes)
+        meta["membership_seen"] = ledger_stats(self.data_root)
+        if not changed:
+            return None
+        return _membership_fold().summary_text(self.agent_name, home, members, self.project, level)
+
+    def _task_where(self, said: str) -> dict | None:
+        """Where each tag of the message goes, by its own braces: ``{"now":
+        …, "task": …}`` (a tag the message lacks: None)."""
+        try:
+            projects = getattr(self, "_folded", None) or agent_projects(self.data_root, self.project, self.agent_name)
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             # The ledger cannot be read: the braces read against the home only.
             record_failure(self.data_root, self.project, self.agent_name, "capture",
                            f"membership ledger unreadable, task braces read against the home only: "
                            f"{type(exc).__name__}: {exc}")
-            return task_where(self.data_root, self.project, self.agent_name, said,
-                              ([self.project], self.project, {}, _projects_on_disk(self.data_root)))
+            projects = ([self.project], self.project, {}, _projects_on_disk(self.data_root))
+        return {kind: task_where(self.data_root, self.project, self.agent_name, said, projects, kind)
+                for kind in ("now", "task")}
 
     def _lost(self, what: str, exc: BaseException) -> None:
         """A part of the turn not kept: the turn goes on, and the failure
@@ -879,6 +978,8 @@ class TurnCapture:
         # Tasks the operator made from this chat's messages whose title waits
         # for this agent: told once each, on the chat's next turn.
         titles_owed = [] if quiet or helper else _titles_owed(self.data_root, self.agent_name, meta)
+        membership_summary = None if quiet or helper else self._membership_turn(meta, commands)
+        tasks_made = [] if quiet or helper else _tasks_made(self.data_root, self.agent_name, meta)
         _atomic_write_json(self.meta_path, meta)
         # Messages to this chat no way has taken yet: handed over in this
         # prompt's notice, each once (the ledger's lock; msgledger.py).
@@ -927,6 +1028,8 @@ class TurnCapture:
             "briefs_owed": [] if quiet or helper else _briefs_owed(
                 self.data_root, self.agent_name, turn, "carry-brief" in commands),
             "titles_owed": titles_owed,
+            "membership_summary": membership_summary,
+            "tasks_made": tasks_made,
             # The cores the operator tracks right now: the agent may write a
             # one-line note when work it finishes changes one (corelib.py).
             "cores_tracking": shared.tracked_cores(self.data_root, self.project)
@@ -2122,7 +2225,7 @@ def _done_outcome_notice(outcome: dict) -> str:
         ids = [row["id"] for row in tasks if row["result"] == result]
         if ids:
             lines.append(label + " · " + ", ".join(ids) + ".")
-    reasons = {"mentioned": "mentioned outside the explicit list", "other_project": "another project",
+    reasons = {"mentioned": "mentioned outside the explicit list", "other_project": "not a project of this agent",
                "history": "earlier in this chat"}
     doubt = [f"{row['id']} ({reasons[row['reason']]})" for row in outcome.get("doubt") or []]
     if doubt:
@@ -2186,7 +2289,7 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             outcome = _read_done_outcome(capture_root, agent_id, signals["turn_number"])
             if outcome:
                 notes[-1] += "\n" + _done_outcome_notice(outcome)
-        where = signals.get("task_where")
+        where = (signals.get("task_where") or {}).get("task" if name == "task" else "now")
         if (name == "task" or name.startswith("now")) and where:
             notes[-1] += " " + where_notice(where)
     owed = signals.get("briefs_owed") or []
@@ -2198,6 +2301,14 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             "Write each brief now, before other work: MCP tool carry_brief {message, text}; the text is what the "
             "message says and the context needed to understand it after the chat is compacted (who asked, what for, "
             "what was decided), in a few sentences. It is given back instead of the message.")
+    if signals.get("membership_summary"):
+        notes.append("[slightly-parallel] this chat's projects changed —\n" + signals["membership_summary"])
+    made = signals.get("tasks_made") or []
+    if made:
+        notes.append("[slightly-parallel] where the tasks of your last turn went: "
+                     + "; ".join(f"{t['id']} → {t['project']}" + (f" · lane {t['lane']}" if t.get("lane") else "")
+                                 for t in made)
+                     + ". Say it in your reply if you have not.")
     for w in signals.get("titles_owed") or []:
         whose = "your reply in turn" if w.get("side") == shared.REPLY_SIDE else "the operator's message in turn"
         notes.append(

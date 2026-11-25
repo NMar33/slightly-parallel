@@ -36,7 +36,7 @@ from .file_safety import acquire_flock
 log = logging.getLogger(__name__)
 
 COLUMNS = mf.COLUMNS
-LEVEL_WORDS = {1: "home only", 2: "picks by context", 3: "moves tasks"}
+LEVEL_WORDS = mf.LEVEL_WORDS
 #: The ops the operator's route writes; ``moved`` is the move's alone.
 ROUTE_OPS: tuple[str, ...] = ("join", "leave", "home", "level")
 HOME_WAITS = "moving the home arrives with routing and accounting (steps 3 and 8)"
@@ -455,11 +455,7 @@ def summary(store: Any, agent: dict[str, Any]) -> dict[str, Any]:
     members = m.members(ag) or [origin]
     home = m.home(ag) or origin
     level = m.level(ag)
-    text = (
-        f"agent {ag}\n"
-        f"home: {home} · member of: {', '.join(members)} · runs from folder: {origin}\n"
-        f"task level: {level} ({LEVEL_WORDS[level]})"
-    )
+    text = mf.summary_text(ag, home, members, origin, level)
     return {
         "agent_id": ag, "origin": origin, "home": home, "members": members,
         "joined": [c for c in members if c != origin], "projects": ",".join(members),

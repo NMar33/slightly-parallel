@@ -137,6 +137,17 @@ def test_a_lane_the_board_does_not_have_is_a_new_lane(tmp_path: Path) -> None:
     c.__exit__(None, None, None)
 
 
+def test_a_near_miss_of_a_lane_the_board_has_is_refused_with_its_name(tmp_path: Path) -> None:
+    # {bug} for the board's Bugs is a typo, not a new lane (the critic of c1).
+    root = tmp_path / "data"
+    c = _board(root, "#task {bug} the form accepts an empty trigger_id")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "x", "tags": "ag_bug"})
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"] == "{bug} is not a lane of alpha's board — did you mean Bugs?"
+    c.__exit__(None, None, None)
+
+
 def test_now_starts_the_task_in_doing_in_its_own_lane_today(tmp_path: Path) -> None:
     from datetime import date
     root = tmp_path / "data"

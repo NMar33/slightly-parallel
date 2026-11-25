@@ -478,8 +478,18 @@ def agent_link_create(
             status_code=422, detail=f"style must be one of {', '.join(AGENT_LINK_STYLES)}"
         )
     a, b = _raw_agent(store, frm), _raw_agent(store, to)
-    if a.get("project") != b.get("project"):
+    # Two chats link when they share a project (tk_d1d25a4d step 3, note
+    # nt_258a7ed7 §7): the link is filed in the from-chat's home when they
+    # share it, else in the first project they share.
+    from .. import memberships
+    va, vb = memberships.agent_view(store, frm), memberships.agent_view(store, to)
+    mine = list(va.members) if va is not None and va.members else [str(a.get("project") or "")]
+    theirs = set(vb.members) if vb is not None and vb.members else {str(b.get("project") or "")}
+    shared = [c for c in mine if c and c in theirs]
+    if not shared:
         raise HTTPException(status_code=422, detail="both agents must belong to one project")
+    home = va.home if va is not None else str(a.get("project") or "")
+    link_project = home if home in shared else shared[0]
     note = str(body.get("note") or "").strip()
     if len(note) > 500:
         raise HTTPException(status_code=422, detail="note must be at most 500 characters")
@@ -493,7 +503,7 @@ def agent_link_create(
     lid = _link_id(frm, to, kind)
     row = {
         "id": lid,
-        "project": str(a.get("project") or ""),
+        "project": link_project,
         "from_id": frm,
         "to_id": to,
         "kind": kind,

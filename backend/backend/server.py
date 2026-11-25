@@ -351,7 +351,7 @@ MCP_VIA_HEADERS = (MCP_VIA_HEADER, b"x-merkhet-via")
 from .mcp import TOOLS as _MCP_TOOLS  # noqa: E402 — the one tool list
 
 _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "task_evidence",
-                "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
+                "task_story", "task_move", "interpret", "skill_draft", "artifact_write", "doc_version",
                 "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
                 "task_done", "next_tasks",
                 "core_new", "core_note", "core_attach", "core_off", "publish_attach", "publish_write", "usage_prices_write",
@@ -382,7 +382,7 @@ _MCP_WRITE_PATHS = (
     r"/api/artifacts/[^/]+/write",
     r"/api/docs/[^/]+/versions",
     r"/api/skills/[^/]+/draft",
-    r"/api/tasks/[^/]+/(update|report|evidence|story|commits)",
+    r"/api/tasks/[^/]+/(update|report|evidence|story|commits|move)",
     r"/api/standups/(claim|postpone)",
     r"/api/architecture/page",
     r"/api/map",
@@ -540,9 +540,110 @@ class OperatorCookie:
         await self.app(scope, receive, with_cookie)
 
 
-#: A write on one task, by its id: every verb (update, report, evidence,
-#: story, commits, topic, move …) is checked against the task's project.
-_TASK_WRITE = re.compile(r"/api/tasks/([^/]+)/[^/]+")
+def _task_project(store: ViewStore, task_id: str) -> str | None:
+    row = store.query_one("SELECT project FROM tasks_mutual WHERE id = ?", (task_id,))
+    return None if row is None else str(row.get("project") or "")
+
+
+def _via_task(sql: str) -> "Any":
+    """A row that belongs to a task (its note, link, evidence item): the task's project."""
+    def resolve(store: ViewStore, rid: str) -> str | None:
+        row = store.query_one(sql, (rid,))
+        return None if row is None else _task_project(store, str(row.get("task_id") or ""))
+    return resolve
+
+
+def _link_projects(store: ViewStore, rid: str) -> list[str] | None:
+    """A link joins two tasks: the projects of both."""
+    row = store.query_one("SELECT from_id, to_id FROM task_links_mutual WHERE id = ?", (rid,))
+    if row is None:
+        return None
+    got = [_task_project(store, str(row.get(k) or "")) for k in ("from_id", "to_id")]
+    return [p for p in got if p is not None]
+
+
+def _in_view(view: str) -> "Any":
+    def resolve(store: ViewStore, rid: str) -> str | None:
+        row = store.query_one(f"SELECT project FROM {view} WHERE id = ?", (rid,))
+        return None if row is None else str(row.get("project") or "")
+    return resolve
+
+
+def _core_project(store: ViewStore, rid: str) -> str | None:
+    from .corelib import CORES_FILE
+    from .csvio import read_rows
+    row = next((r for r in read_rows(store.data_root / CORES_FILE) if r.get("id") == rid), None)
+    return None if row is None else str(row.get("project") or "")
+
+
+def _lens_project(store: ViewStore, rid: str, base: str) -> str | None:
+    from .entities import ENTITIES
+    ent = next((e for e in ENTITIES.values() if e.view.removesuffix("_mutual") == base.replace("-", "_")), None)
+    if ent is None or "project" not in ent.columns:
+        return None
+    return _in_view(ent.view)(store, rid)
+
+
+#: The writes on one row by its id, and how the gate finds that row's project
+#: (note nt_258a7ed7 §2: writes by id are checked against the row). Tried in
+#: order; the first pattern that matches decides. A row not found passes: its
+#: router answers 404 (or, for a new id, the create is checked by its body).
+#: Notes' pictures, publishing cards, entry point stops and ways and the lens
+#: updates check their row in their libraries too (memberships.may_write_row).
+_ROW_WRITES: tuple[tuple["re.Pattern[str]", str, Any], ...] = (
+    (re.compile(r"/api/tasks/notes/([^/]+)/.+"), "task",
+     _via_task("SELECT task_id FROM task_notes_mutual WHERE id = ?")),
+    (re.compile(r"/api/tasks/links/([^/]+)/.+"), "task", _link_projects),
+    (re.compile(r"/api/tasks/evidence/([^/]+)/.+"), "task",
+     _via_task("SELECT task_id FROM task_evidence_mutual WHERE id = ?")),
+    (re.compile(r"/api/tasks/([^/]+)/.+"), "task", _task_project),
+    (re.compile(r"/api/cores/([^/]+)/.+"), "core", _core_project),
+    (re.compile(r"/api/docs/([^/]+)/.+"), "document", _in_view("docs_mutual")),
+    (re.compile(r"/api/(visions|rules|problems|entrypoints|artifacts|skills)/([^/]+)/.+"), "",
+     None),
+)
+#: The MCP write paths that name a row by its id and are checked in their
+#: libraries instead (the guard test reads both lists).
+ROW_CHECKED_IN_LIBRARIES: tuple[str, ...] = (
+    "/api/publishing/cards/", "/api/notes/", "/api/entrypoints/",
+)
+
+
+#: What finish-a-task writes after a #done: on a task the operator's #done
+#: closed in this chat, these go through in any project (answer 2,
+#: dc_f6ec18c8: an id next to #done closes a task in any project).
+_DONE_FOLLOWUP = re.compile(r"/api/tasks/([^/]+)/(report|evidence|story)")
+
+
+def closed_here(store: ViewStore, actor: str, path: str) -> bool:
+    """Did the operator's #done in this agent's chat close the task this
+    report, evidence or story is for?"""
+    hit = _DONE_FOLLOWUP.fullmatch(path)
+    if hit is None:
+        return False
+    from . import donelib
+    task_id = urllib.parse.unquote(hit.group(1))
+    return any(r.get("agent_id") == actor and r.get("task_id") == task_id
+               and r.get("result") in donelib.RESOLVED for r in donelib.rows(store))
+
+
+def row_of_write(store: ViewStore, path: str) -> tuple[list[str], str] | None:
+    """``(projects, what)`` of the row a by-id write names (a link: both
+    tasks' projects), or None (no such route, or no such row)."""
+    for pattern, what, resolve in _ROW_WRITES:
+        hit = pattern.fullmatch(path)
+        if hit is None:
+            continue
+        if resolve is None:
+            base, rid = hit.group(1), urllib.parse.unquote(hit.group(2))
+            got = _lens_project(store, rid, base)
+            what = {"entrypoints": "topic"}.get(base, base.rstrip("s"))
+        else:
+            got = resolve(store, urllib.parse.unquote(hit.group(1)))
+        if got is None:
+            return None
+        return (got if isinstance(got, list) else [got]), what
+    return None
 PROJECT_SHAPE = "project is one project code, as text"
 PROJECTS_SHAPE = "projects is project codes: comma-separated text or a list of texts"
 
@@ -573,14 +674,13 @@ def membership_refusal(store: ViewStore, path: str, data: Any, actor: str) -> tu
         ok, line = memberships.may_write(store, actor, code)
         if not ok:
             return 403, line
-    hit = _TASK_WRITE.fullmatch(path)
-    if hit:
-        task_id = urllib.parse.unquote(hit.group(1))
-        row = store.query_one("SELECT project FROM tasks_mutual WHERE id = ?", (task_id,))
-        if row is not None:
-            ok, line = memberships.may_write_row(store, actor, str(row.get("project") or ""), "task")
-            if not ok:
-                return 403, line
+    row = row_of_write(store, path)
+    if row is not None and closed_here(store, actor, path):
+        return None
+    for project in (row[0] if row is not None else []):
+        ok, line = memberships.may_write_row(store, actor, project, row[1] if row else "")
+        if not ok:
+            return 403, line
     return None
 
 

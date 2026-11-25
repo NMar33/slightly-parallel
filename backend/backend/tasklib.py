@@ -369,14 +369,16 @@ LEVEL_ONE = ("agent {agent} may create tasks only in its home {home} (level 1). 
 NO_BRACES: dict[str, str] = {"project": "", "lane": "", "refusal": ""}
 
 
-def task_braces(store: ViewStore, agent: str, message: str) -> dict[str, str]:
+def task_braces(store: ViewStore, agent: str, message: str, kind: str = "") -> dict[str, str]:
     """The project and the lane the braces of the operator's #task / #now
     name (hookshared.resolve_braces, the hook's own rule), for ``agent``:
-    ``{"project", "lane", "refusal"}``; NO_BRACES without a command."""
+    ``{"project", "lane", "refusal"}``; NO_BRACES without a command. Each
+    tag has its own braces: ``kind`` "now" or "task" reads that tag's
+    (``#now {ui} x and #task {writing-tracker} y``)."""
     from . import memberships
-    from .sessions import task_hit
+    from .sessions import TASK_CMD_RE
     text = hookshared.command_text(message or "")
-    m = task_hit(text)
+    m = hookshared.pick_task_hit(list(TASK_CMD_RE.finditer(text)), kind)
     if m is None:
         return dict(NO_BRACES)
     groups = hookshared.task_braces(text[m.end(1):])
@@ -424,8 +426,11 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
         # The #now card is on the board (the agent's or the server's): what
         # the agent writes after it, while that message is still the latest,
         # are ordinary #task cards (the findings of the work), in `agent`.
+        # The #task beside it keeps its own braces (#now {ui} x and #task {wt} y).
+        braces = task_braces(store, agent, message, "task")
         command, named, column, message = "", "", "agent", ""
-    braces = task_braces(store, agent, message) if command else dict(NO_BRACES)
+    else:
+        braces = task_braces(store, agent, message) if command else dict(NO_BRACES)
     if braces["refusal"]:
         raise HTTPException(status_code=403, detail=braces["refusal"])
     if braces["project"] and str(body.get("project") or "").strip() != braces["project"]:
@@ -581,6 +586,15 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     if title_wait and task_id and not out.get("existing"):
         titlelib.open_wait(store.data_root, task_id, str(meta.get("project") or ""), title_wait,
                            str(meta.get("title") or ""))
+    if identity_of(body) not in _HOUSE_ACTORS and task_id and not out.get("existing"):
+        # An agent's task outside its home: the history says where it went
+        # (note nt_258a7ed7 §6), as the answer's `where` and the hook's notice do.
+        from . import memberships
+        view = memberships.agent_view(store, identity_of(body))
+        made_in = str(meta.get("project") or "")
+        if view is not None and view.home and made_in and made_in != view.home:
+            _append_events(store, task_id, identity_of(body), [("created_in", "", f"{made_in} (home {view.home})")])
+            store.rebuild()
     if started_now and not out.get("existing"):
         # The card's history says where it came from: the operator's #now
         # in the chat, and the agent that wrote it down.
@@ -597,3 +611,93 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
         result["ignored"] = ignored
     return create_answer(result, existing=bool(out.get("existing")),
                          warnings=out.get("warnings"))
+
+
+# ---------------------------------------------------------------------------
+# The move (tk_d1d25a4d step 3, note nt_258a7ed7 §3 «The move», level 3)
+# ---------------------------------------------------------------------------
+
+MOVE_LEVEL = 3
+
+
+def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
+    """Move a task to project ``to``, keeping its id. The operator, or an
+    agent at level 3 that is a member of both projects. ``project`` becomes
+    ``to`` and ``projects`` loses the old one, so the card leaves its board;
+    the column and ``md_ref`` stay; the lane stays when a live card in ``to``
+    carries it, else it is cleared; a topic of the old project and a stack
+    in it are let go. The history says «moved from A to B, by …». Refused in
+    one line, writing nothing: no such project, the same project, a done or
+    archived task, an agent below level 3 or not in ``to``."""
+    from . import memberships
+    from .entitylib import project_codes
+    from .entities import ENTITIES
+    from .entrypointlib import TOPICS_FILE, entry_of, topics_by_task
+    from .entities import TASK_TOPIC_COLUMNS
+
+    to = str(to or "").strip()
+    if not to:
+        raise HTTPException(status_code=422, detail="to names the project the task moves to")
+    row = store.query_one("SELECT * FROM tasks_mutual WHERE id = ?", (task_id,))
+    if row is None:
+        raise not_found("task", task_id)
+    old = str(row.get("project") or "")
+    if to not in memberships.existing_codes(store.data_root):
+        raise HTTPException(status_code=404, detail=f"no project «{to}»")
+    if to == old:
+        raise HTTPException(status_code=409, detail=f"{task_id} is in {to} already")
+    if str(row.get("archived_at") or "").strip() or is_done(str(row.get("status") or "")):
+        raise HTTPException(status_code=409, detail=f"{task_id} is done or archived: a closed task is not moved")
+    if actor not in _HOUSE_ACTORS:
+        view = memberships.agent_view(store, actor)
+        if view is None:
+            raise HTTPException(status_code=403, detail=memberships.UNINDEXED.format(agent=actor))
+        if view.level < MOVE_LEVEL:
+            raise HTTPException(status_code=403, detail=(
+                f"agent {actor} may not move tasks (level {view.level}); the operator raises it to "
+                f"level {MOVE_LEVEL} on the agent card"))
+        ok, line = memberships.may_write(store, actor, to)
+        if not ok:
+            raise HTTPException(status_code=403, detail=line)
+    lane = str(row.get("lane") or row.get("assignee") or "").strip()
+    kept_lane = next((x for x in _board_lanes(store, to) if lane and x.lower() == lane.lower()), "")
+    ep_id = topics_by_task(store).get(task_id) or ""
+    topic = entry_of(store, ep_id) if ep_id else None
+    drop_topic = topic is not None and str(topic.get("project") or "") != to
+    stack = str(row.get("stack_id") or "").strip()
+    projects = ",".join([to, *[c for c in project_codes(row.get("projects")) if c not in (old, to)]])
+    ent = ENTITIES["task"]
+
+    def mutate(rows: list[dict[str, str]]) -> bool:
+        target = next((r for r in rows if r.get("id") == task_id), None)
+        if target is None or str(target.get("project") or "") != old:
+            raise HTTPException(status_code=409, detail=f"{task_id} changed while moving; nothing was written")
+        target["project"] = to
+        target["projects"] = projects
+        if lane and not kept_lane:
+            target["lane"] = target["assignee"] = ""
+        if stack:
+            target["stack_id"] = ""
+        return True
+
+    rewrite_rows(store.data_root / ent.csv, ent.columns, mutate)
+    if drop_topic:
+        rewrite_rows(store.data_root / TOPICS_FILE, TASK_TOPIC_COLUMNS,
+                     lambda rs: bool([rs.remove(r) for r in list(rs) if r.get("task_id") == task_id]))
+    by = actor if actor not in _HOUSE_ACTORS else "the operator"
+    _append_events(store, task_id, actor or _DEFAULT_ACTOR, [
+        ("project", old, to),
+        ("moved", "", f"from {old} to {to}, by {by}"),
+    ] + ([("lane", lane, "")] if lane and not kept_lane else [])
+      + ([("stack_id", stack, "")] if stack else []))
+    store.rebuild()
+    said = [f"{task_id} → {to}" + (f" · lane {kept_lane}" if kept_lane else "")]
+    if lane and not kept_lane:
+        said.append(f"its lane {lane} is not on {to}'s board: cleared")
+    if drop_topic:
+        said.append(f"its topic {ep_id} is {old}'s: let go")
+    if stack:
+        said.append(f"its stack {stack} stays in {old}: let go")
+    return {"task_id": task_id, "from": old, "to": to, "lane": kept_lane, "projects": projects,
+            "lane_cleared": bool(lane and not kept_lane), "topic_dropped": drop_topic,
+            "stack_dropped": bool(stack), "where": said[0], "said": "; ".join(said)}

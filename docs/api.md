@@ -328,6 +328,17 @@ The board, its blocks, and everything hung off a task.
   linked commit outside the project's own repository to where it is. The
   task's `work` (GET `/api/tasks/{task_id}/work`) reads the same set, merged
   newest first.
+- `POST /api/tasks/{task_id}/move` — `{to}`: the task moves to project `to`
+  and keeps its id (MCP `task_move`). The operator, or an agent at task level
+  3 that is a member of both projects. `project` becomes `to`, `projects`
+  loses the old project (the card leaves its board), the column and the
+  document stay, the lane stays when a live card of `to` carries it (else it
+  is cleared), a topic of the old project and a stack are let go. The
+  history gets `project` (old → new) and «moved from A to B, by …». Refused
+  in one line, writing nothing: no such project (404), the same project or a
+  done or archived task (409), an agent below level 3 or not a member (403).
+  Answers `task_id`, `from`, `to`, `lane`, `projects`, `lane_cleared`,
+  `topic_dropped`, `stack_dropped`, `where`, `said`.
 - `GET /api/commits/signed?project=&days=7` — per project with a repository:
   commits in the last `days` days, how many carry a `Task:` line (`signed`),
   how many were linked later (`linked`), and the same by the `Agent:` line.

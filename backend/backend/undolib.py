@@ -199,13 +199,19 @@ def candidates(store: ViewStore, agent_id: str) -> dict[str, Any]:
     keeplib.adopt(store)
     promptlib.adopt(store)
     project = req.get("project") or ""
+    # Every project of the chat (tk_d1d25a4d step 3, note nt_258a7ed7 §7):
+    # what it wrote in a member project is a candidate too.
+    from . import memberships
+    view = memberships.agent_view(store, agent_id)
+    codes = list(dict.fromkeys([project, *(view.members if view is not None else [])]))
+    marks = ",".join("?" for _ in codes)
     found: list[dict[str, Any]] = []
     for kind in ("vision", "rule", "problem", "entrypoint", "skill", "artifact", "publish", "prompt", "task"):
         ent = ENTITIES[kind]
         rows = store.query(
-            f"SELECT * FROM {ent.view} WHERE project = ? AND (agent_id = ? OR created_date >= ?) "
+            f"SELECT * FROM {ent.view} WHERE project IN ({marks}) AND (agent_id = ? OR created_date >= ?) "
             "ORDER BY created_date DESC, created_time DESC LIMIT 60",
-            (project, agent_id, _days_ago(2)))
+            (*codes, agent_id, _days_ago(2)))
         for r in rows:
             if kind == "task" and str(r.get("status") or "") not in ("agent", "doing", "todo", "unclassified", "backlog", "next"):
                 continue

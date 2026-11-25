@@ -252,13 +252,19 @@ def task_braces(after_tag: str) -> list[str]:
         pos = m.end()
 
 
-def pick_task_hit(hits: list[Any]) -> Any:
+def pick_task_hit(hits: list[Any], kind: str = "") -> Any:
     """Of a message's #task / #now matches, the one its card is for: the
     #now when there is one (the task this chat starts on; the hook names
-    both, and the agent writes the #task one as well), else the last."""
+    both, and the agent writes the #task one as well), else the last.
+    ``kind`` "now" or "task": that tag's own match (its own braces), or None."""
     if not hits:
         return None
-    return next((h for h in hits if h.group(1).lower().split("-")[0] == "now"), hits[-1])
+    nows = [h for h in hits if h.group(1).lower().split("-")[0] == "now"]
+    if kind == "now":
+        return nows[0] if nows else None
+    if kind == "task":
+        return next((h for h in reversed(hits) if h.group(1).lower() == "task"), None)
+    return nows[0] if nows else hits[-1]
 
 
 def brace_refusal_member(agent: str, code: str, members: list[str]) -> str:
@@ -275,7 +281,8 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
     code or alias (any case) — a member's, else refused; an exact live lane
     of the target project (``lanes_of(code)``, any case), so a real lane beats
     a near miss; a near miss of a code or alias (difflib ratio ≥ 0.8)
-    refused with a hint; anything else a new lane. A name that is both a
+    refused with a hint, then a near miss of a live lane of the target the
+    same way; anything else a new lane. A name that is both a
     project and a live lane, two projects or two lanes are refused. The
     target is the project named, else ``home``. ``project`` is "" when
     none is named; ``refusal`` one line, or ""."""
@@ -325,6 +332,10 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
             if best and difflib.SequenceMatcher(None, low, best).ratio() >= NEAR_MISS:
                 hint = {**{c.lower(): c for c in codes}, **{a.lower(): a for a in aliases}}.get(best, best)
                 return refuse(f"{{{g}}} is not a project of this agent — did you mean {hint}?")
+            # A near miss of a live lane is a typo, not a new lane ({bug} for Bugs).
+            lane = max(live, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
+            if lane and difflib.SequenceMatcher(None, low, lane).ratio() >= NEAR_MISS:
+                return refuse(f"{{{g}}} is not a lane of {target}'s board — did you mean {live[lane]}?")
             lanes.append(g)
     if len(set(projects)) > 1:
         return refuse(f"two projects in braces ({', '.join(dict.fromkeys(projects))}): name one")
