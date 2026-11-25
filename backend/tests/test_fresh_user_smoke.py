@@ -251,6 +251,24 @@ def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeyp
         assert args[args.index("--cd") + 1] == str(folder.resolve())
         entry = next(arg for arg in args if arg.startswith("sandbox_workspace_write.writable_roots="))
         assert json.loads(entry.split("=", 1)[1]) == [str(folder.resolve())]
+        assert 'sandbox_mode="workspace-write"' in args
+        assert "sandbox_workspace_write.network_access=false" in args
+        assert 'approval_policy="never"' in args
+
+
+def test_windows_stub_shell_uses_workspace_permissions(monkeypatch, tmp_path):
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    monkeypatch.syspath_prepend(str(scripts / "fresh_user"))
+    monkeypatch.syspath_prepend(str(scripts / "ci"))
+    from core_mcp import Plan
+    from stub_core import CoreModel
+
+    plan = Plan(tmp_path)
+    plan.start("a plain request", shell=("Get-Content -LiteralPath 'calc.py'",))
+    model = CoreModel(plan, lambda _rule: [], workspace_shell=True)
+    tool, args = model([{"role": "user"}], {"exec_command"})
+    assert tool == "exec_command"
+    assert args == {"cmd": "Get-Content -LiteralPath 'calc.py'"}
 
 
 def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypatch, tmp_path):
@@ -370,89 +388,28 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
 
 
-@pytest.mark.parametrize(("windows", "cli", "offline"), [
-    (True, "codex", False), (True, "codex", True), (False, "codex", False), (True, "opencode", False),
-])
-def test_core_edit_bounds_the_live_windows_codex_turn(monkeypatch, tmp_path, windows, cli, offline):
+def test_windows_codex_core_asks_for_the_same_calculator_edit(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import interactive
     import scenario
     from common import Space
 
-    monkeypatch.setattr(interactive, "WINDOWS", windows)
+    monkeypatch.setattr(interactive, "WINDOWS", True)
     space = Space(tmp_path, 1)
-    state = scenario.State("calc", space.sample, scenario.tools()[cli])
-    prompt = interactive._operator_core_prompt(space, state, scenario.EDIT, offline=offline)
-    live_windows_codex = windows and cli == "codex" and not offline
-    path = (space.sample / "calc.py").resolve().as_posix().replace("'", "''")
-    read = f"Get-Content -LiteralPath '{path}'"
-    assert (read in prompt) is live_windows_codex
-    edit = f"Add-Content -LiteralPath '{path}' -Value @('', 'def sub(a, b):', '    return a - b')"
-    test_path = (space.sample / "test_calc.py").resolve().as_posix().replace("'", "''")
-    tests = f"Set-Content -LiteralPath '{test_path}' -Value "
-    assert (edit in prompt) is live_windows_codex
-    work = interactive._operator_core_prompt(space, state, scenario.WORK, offline=offline)
-    assert (tests in work) is live_windows_codex
-    assert ("For this edit-only turn" in prompt) is live_windows_codex
-    assert ("The next work turn will write tests and commit" in prompt) is live_windows_codex
-    assert ("finish with a status update" in prompt) is live_windows_codex
-    assert ("Do not list the directory or run tests here" in prompt) is live_windows_codex
-    assert len(prompt.splitlines()) == 1
+    state = scenario.State("calc", space.sample, scenario.tools()["codex"])
+    for step in (scenario.EDIT, scenario.WORK):
+        assert interactive._operator_core_prompt(space, state, step) == scenario.step_prompt(space, state, step)
 
 
-def test_windows_core_accepts_only_a_single_read_of_the_installed_contract(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
-    from interactive import ENTER, _core_approval
-
-    root = "C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-fixture"
-    calc = f"Get-Content -LiteralPath '{root}/sample/calc.py'"
-    contract = f"Get-Content -LiteralPath '{root}/slightly-parallel/SLIGHTLY-PARALLEL.md'"
-    keys = []
-    screen = SimpleNamespace(rendered="", send=keys.append)
-    check = _core_approval(screen, "a plain request", command=calc, contract_read=contract)
-
-    def show(command, choice="1. Yes, proceed (y)"):
-        screen.rendered = ("  Would you like to run the following command?\n"
-                           f"  Environment: local\n\n  $ {command}\n\n  › {choice}\n  3. No")
-        return check()
-
-    assert not show(calc)
-    assert not show(contract)
-    assert not show(contract)
-    assert keys == [ENTER, ENTER]
-    assert show(f"{contract}; Get-ChildItem") == "unexpected Codex command approval"
-    assert show(contract, "2. Yes, and don't ask again (p)") == "unexpected Codex command approval"
-    assert keys == [ENTER, ENTER]
-
-
-def test_windows_core_can_approve_the_exact_write_after_a_read_without_a_dialog(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
-    from interactive import ENTER, _core_approval
-
-    path = "C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-fixture/sample/calc.py"
-    read = f"Get-Content -LiteralPath '{path}'"
-    edit = f"Add-Content -LiteralPath '{path}' -Value @('', 'def sub(a, b):', '    return a - b')"
-    frame = ("Would you like to run the following command?\n"
-             f"Environment: local\n\n$ {edit}\n\n› 1. Yes, proceed (y)\n3. No")
-    keys = []
-    check = _core_approval(SimpleNamespace(rendered=frame, send=keys.append), "a plain request",
-                           offline_command=read, command=edit)
-    assert not check()
-    assert not check()
-    assert keys == [ENTER]
-
-
-def test_windows_edit_does_not_confirm_an_unplanned_listing(monkeypatch):
+@pytest.mark.parametrize("command", ["Get-ChildItem -LiteralPath '.'", "Add-Content -LiteralPath 'calc.py' -Value 'data'"])
+def test_windows_edit_never_confirms_shell_escalation(monkeypatch, command):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     from interactive import _core_approval
 
-    path = "C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-fixture/sample"
-    read = f"Get-Content -LiteralPath '{path}/calc.py'"
-    listing = f"Get-ChildItem -LiteralPath '{path}' | Select-Object Name"
     frame = ("Would you like to run the following command?\n"
-             f"Environment: local\n\n$ {listing}\n\n› 1. Yes, proceed (y)\n3. No")
+             f"Environment: local\n\n$ {command}\n\n› 1. Yes, proceed (y)\n3. No")
     keys = []
-    check = _core_approval(SimpleNamespace(rendered=frame, send=keys.append), "a plain request", offline_command=read)
+    check = _core_approval(SimpleNamespace(rendered=frame, send=keys.append), "a plain request")
     assert check() == "unexpected Codex command approval"
     assert keys == []
 

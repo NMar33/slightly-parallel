@@ -268,11 +268,21 @@ def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
         http(space.url + "/api/setup/integrate", {"project_code": "calc", "project_dir": str(space.sample),
                                                  "write_codex_hooks": True, "write_claude_hooks": False})
         policy = Plan(space.root)
-        model = CoreModel(policy, lambda rule: get(space, f"/api/rules?project={rule['project']}")["rules"])
+        model = CoreModel(policy, lambda rule: get(space, f"/api/rules?project={rule['project']}")["rules"],
+                          workspace_shell=os.name == "nt")
         port = _serve(stack, stub_responses.serve(0, str(tmp_path / "stub-core.jsonl"), interactive=True, core=model))
         report = Report()
         result = smoke(space, report, "calc", space.sample, tools()["codex"], "stub-model", space.home,
                        40, core=True, offline_provider=f"http://127.0.0.1:{port}/v1")
+        if output := os.environ.get("SP_INTERACTIVE_ARTIFACTS"):
+            from common import redact_diagnostics
+
+            target = Path(output) / "codex-core"
+            target.mkdir(parents=True, exist_ok=True)
+            for log in (*space.root.glob("terminal-codex-*.log"), policy.trace):
+                if log.is_file():
+                    (target / log.name).write_text(redact_diagnostics(log.read_text(encoding="utf-8", errors="replace")),
+                                                   encoding="utf-8")
         assert result and not report.failed(), [(c.name, c.detail) for c in report.failed()]
         messages = [json.loads(line) for line in policy.trace.read_text(encoding="utf-8").splitlines()]
         assert [row["request"]["params"]["name"] for row in messages] == [
@@ -285,7 +295,3 @@ def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
         assert set(task["fields"]) == {"title", "description", "status", "tags"}
         assert task["fields"]["status"] == "agent"
         assert task["fields"]["description"] == "Verify the disposable calculator task is recorded."
-        if output := os.environ.get("SP_INTERACTIVE_ARTIFACTS"):
-            target = Path(output) / "codex-core"
-            target.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(policy.trace, target / policy.trace.name)

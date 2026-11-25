@@ -192,28 +192,8 @@ def _startup_failure(screen: Screen) -> str:
     return f"L1 {reason}:\n{frame}"
 
 
-def _windows_literal_path(file: Path) -> str:
-    path = file.resolve().as_posix().replace("'", "''")
-    return f"'{path}'"
-
-
-def _windows_file_read(file: Path) -> str:
-    return f"Get-Content -LiteralPath {_windows_literal_path(file)}"
-
-
-def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step, *, offline: bool = False) -> str:
+def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step) -> str:
     message = scenario.step_prompt(space, state, step)
-    if WINDOWS and state.tool.name == "codex" and not offline:
-        if step == scenario.EDIT:
-            calc = state.folder / "calc.py"
-            edit = core_mcp.EDIT_POWERSHELL.format(path=_windows_literal_path(calc))
-            return message + (f" For this edit-only turn, read the known file with `{_windows_file_read(calc)}`"
-                              f" and apply the change with `{edit}`. Run only those exact PowerShell commands, separately."
-                              " Do not use apply_patch. Do not list the directory or run tests here."
-                              " The next work turn will write tests and commit. For now, finish with a status update.")
-        if step == scenario.WORK:
-            tests = core_mcp.TESTS_POWERSHELL.format(path=_windows_literal_path(state.folder / "test_calc.py"))
-            return message + f" Create the test file with exactly this PowerShell command: `{tests}`. Do not use apply_patch."
     if step[0] != "#scan":
         return message
     filename = "scan-payloads.json"
@@ -286,7 +266,7 @@ RULE_INTERPRETATION = core_mcp.RULE_TEXT
 
 
 def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None,
-                   *, command: str = "", offline_command: str = "", contract_read: str = "") -> Callable[[], str]:
+                   *, command: str = "", offline_command: str = "") -> Callable[[], str]:
     expected = {
         "#decision": ("write_entry", {
             "lens": "decision",
@@ -298,7 +278,7 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
     }.get(step)
     handled = ""
     # An earlier command can finish under the sandbox without a dialog.
-    pending = {" ".join(value.split()) for value in (offline_command, contract_read, command) if value}
+    pending = {" ".join(value.split()) for value in (offline_command, command) if value}
 
     def check() -> str:
         nonlocal handled
@@ -400,6 +380,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     if wait_for_prompt:
         args += ["-c", "disable_paste_burst=true"]
     policy = None
+    workspace_shell = WINDOWS and core and tool.name == "codex"
     if core and tool.name == "codex":
         policy = core_mcp.Plan(space.root)
         policy.start("hello")
@@ -409,11 +390,12 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                  "-c", f'{prefix}.default_tools_approval_mode="approve"',
                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
                  "-c", "sandbox_workspace_write.exclude_slash_tmp=true"]
-        if WINDOWS:
+        if workspace_shell:
             # ConPTY's process and Codex's sandboxed shell resolve a scratch
             # directory differently. Give both the exact disposable project.
             project = str(folder.resolve())
-            args += ["--cd", project, "-c", 'sandbox_mode="workspace-write"',
+            args += ["--cd", project, "-c", 'sandbox_mode="workspace-write"', "-c", 'approval_policy="never"',
+                     "-c", "sandbox_workspace_write.network_access=false",
                      "-c", f"sandbox_workspace_write.writable_roots={json.dumps([project])}"]
     if offline_provider:
         args += ["-c", 'model_provider="sp_stub"', "-c", 'model_providers.sp_stub.name="local stub"',
@@ -524,7 +506,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 name, _, check = step
                 if name == "#task":
                     continue
-                message = _operator_core_prompt(space, state, step, offline=bool(offline_provider))
+                message = _operator_core_prompt(space, state, step)
                 approval = None
                 if policy:
                     command = ""
@@ -533,11 +515,10 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     rule = None
                     calls = []
                     if name == "a plain request":
-                        if WINDOWS:
-                            calc = folder / "calc.py"
-                            offline_command = _windows_file_read(calc)
-                            contract_read = _windows_file_read(space.clone / "SLIGHTLY-PARALLEL.md")
-                            command = core_mcp.EDIT_POWERSHELL.format(path=_windows_literal_path(calc))
+                        if workspace_shell and offline_provider:
+                            offline_command = "Get-Content -LiteralPath 'calc.py'"
+                            contract_read = f"Get-Content -LiteralPath '../{space.clone.name}/SLIGHTLY-PARALLEL.md'"
+                            command = core_mcp.EDIT_POWERSHELL.format(path="'calc.py'")
                         elif offline_provider:
                             offline_command = core_mcp.OFFLINE_EDIT
                     elif name == "#rule":
@@ -547,13 +528,17 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         calls = [["interpret", {"$rule_id": {"lens": "rule", "text": RULE_INTERPRETATION}}]]
                         message += f' Call interpret with only lens, the new rule ID and text "{RULE_INTERPRETATION}".'
                     elif name == "the work":
-                        if WINDOWS:
-                            offline_command = core_mcp.TESTS_POWERSHELL.format(path=_windows_literal_path(folder / "test_calc.py"))
+                        if workspace_shell and offline_provider:
+                            offline_command = core_mcp.TESTS_POWERSHELL.format(path="'test_calc.py'")
                         elif offline_provider:
                             offline_command = core_mcp.OFFLINE_TESTS
                         command = ("git add calc.py test_calc.py && git commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
-                        message += f" Run this exact command to stage and commit: {command}"
+                        if workspace_shell:
+                            message += (f" Use commit subject 'Add calculator tests' with trailers 'Task: {state.task}'"
+                                        f" and 'Agent: {state.agent}'.")
+                        else:
+                            message += f" Run this exact command to stage and commit: {command}"
                     elif name == "#decision":
                         fields = {"decision": scenario.DECISION_TEXT, "weight": "normal"}
                         calls = [["write_entry", {"lens": "decision", "fields": fields}]]
@@ -570,8 +555,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                                     + json.dumps(fields) + ". No other MCP calls. Summarize the result in chat.")
                     policy.start(name, calls, rule=rule, shell=tuple(filter(None, (offline_command, contract_read, command))))
 
-                    command_approval = _core_approval(screen, name, command=command, offline_command=offline_command,
-                                                      contract_read=contract_read)
+                    command_approval = (_core_approval(screen, name) if workspace_shell else
+                                        _core_approval(screen, name, command=command, offline_command=offline_command))
 
                     def approval(command_approval=command_approval):
                         return policy_error() or command_approval()

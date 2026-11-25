@@ -6,9 +6,10 @@ from core_mcp import Guard
 
 
 class CoreModel:
-    def __init__(self, plan, rules):
+    def __init__(self, plan, rules, *, workspace_shell=False):
         self.plan = plan
         self.rules = rules
+        self.workspace_shell = workspace_shell
         self.sent_shell = set()
 
     def policy_name(self):
@@ -39,9 +40,10 @@ class CoreModel:
         method = next(tool for tool in tools if tool.startswith("mcp__slightly_parallel_") and tool.endswith("_" + name))
         return method, guard._arguments(template, policy["rule"])
 
-    @staticmethod
-    def _shell(tools, command):
+    def _shell(self, tools, command):
         name = next(tool for tool in tools if tool in ("exec_command", "functions_exec_command",
                                                        "shell_command", "functions_shell_command"))
-        return name, {"command" if name.endswith("shell_command") else "cmd": command,
-                      "sandbox_permissions": "require_escalated", "justification": "Write the calculator fixture."}
+        arguments = {"command" if name.endswith("shell_command") else "cmd": command}
+        if not self.workspace_shell:
+            arguments.update(sandbox_permissions="require_escalated", justification="Write the calculator fixture.")
+        return name, arguments
