@@ -9,9 +9,7 @@ from pathlib import Path
 import yaml
 
 
-MATRIX_LABEL = re.compile(r"\$\{\{\s*matrix\.(\w+)\s*\}\}")
 ACTION_EXPRESSION = re.compile(r"\$\{\{[^}\n]*\}\}")
-WIN32_LABEL = re.compile(r"\bwin32\b")
 BENCHMARK_EXCEPTION = "${{ !inputs.expect_failure }}"
 MASKED_FAILURE = re.compile(r"\|\|\s*(?:true\b|:(?=[\s;}]|$))|(?:^|[;{]|\|\|)\s*exit\s+0\b", re.I)
 BASH_OVERRIDE = re.compile(r"(?:^|[;{])\s*(?:!\s|set\s+\+(?:[a-z]*e[a-z]*\b|o\s+(?:errexit|pipefail)\b))")
@@ -26,32 +24,18 @@ PWSH_OVERRIDE = re.compile(
 PWSH_GUARDS = {"$erroractionpreference = 'stop'", "$psnativecommanduseerroractionpreference = $true"}
 
 
-def runs_on_windows(job: dict) -> bool:
-    runner = job.get("runs-on", "")
-    if isinstance(runner, str) and (reference := MATRIX_LABEL.fullmatch(runner)):
-        axis = reference[1]
-        matrix = job.get("strategy", {}).get("matrix", {})
-        if isinstance(matrix, dict) and isinstance(matrix.get(axis), list):
-            runner = [*matrix[axis], *(row.get(axis, "") for row in matrix.get("include", []))]
-    labels = str(runner).lower()
-    return "windows" in labels or "${{" in labels or WIN32_LABEL.search(labels) is not None
-
-
-def default_shell(block: dict) -> str:
-    return block.get("defaults", {}).get("run", {}).get("shell", "")
-
-
 def unsafe_steps(workflow: dict, *, workflow_name: str = "") -> list[str]:
     problems = []
+    workflow_run = workflow.get("defaults", {}).get("run", {})
     for name, job in workflow.get("jobs", {}).items():
-        on_windows = runs_on_windows(job)
         continue_on_error = job.get("continue-on-error", False)
         benchmark = workflow_name == "terminal-bench.yml" and name == "bench"
         if continue_on_error is not False and not (benchmark and continue_on_error == BENCHMARK_EXCEPTION):
             problems.append(f"{name}: continue-on-error can hide a required job failure")
         if job.get("uses", "").startswith("./"):
             problems.append(f"{name}: review local reusable workflows before using them")
-        inherited = default_shell(job) or default_shell(workflow)
+        # Job run defaults replace the workflow run defaults as a group.
+        job_run = job.get("defaults", {}).get("run", workflow_run)
         for index, step in enumerate(job.get("steps", []), 1):
             label = f"{name} / {step.get('name', index)}"
             if step.get("continue-on-error", False) is not False:
@@ -60,7 +44,7 @@ def unsafe_steps(workflow: dict, *, workflow_name: str = "") -> list[str]:
                 problems.append(f"{label}: review local actions before using them")
             if "run" not in step:
                 continue
-            shell = step.get("shell") or inherited
+            shell = step.get("shell") or job_run.get("shell")
             if shell == "python":
                 continue
             lines = [
@@ -73,7 +57,7 @@ def unsafe_steps(workflow: dict, *, workflow_name: str = "") -> list[str]:
                     continue
                 overrides = PWSH_OVERRIDE
                 lines = lines[2:]
-            elif shell == "bash" or (not shell and not on_windows):
+            elif shell == "bash":
                 overrides = BASH_OVERRIDE
             else:
                 problems.append(f"{label}: use bash, python or guarded pwsh")

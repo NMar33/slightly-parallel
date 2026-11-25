@@ -59,3 +59,15 @@ def test_full_ci_requires_the_offline_codex_core_on_all_systems(os):
     jobs.extend({"name": f"Optional job {index}", "head_sha": sha, "conclusion": "success"} for index in range(28))
     issue = module["problem"]("ci.yml", {"jobs": jobs, "total_count": len(jobs)}, sha)
     assert issue == f"required step did not pass: {job_name} / {step_name} (missing)"
+
+
+def test_pipeline_proof_rejects_a_duplicate_named_step():
+    module = run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "ci" / "release_jobs.py"))
+    workflow = "pipeline-self-test.yml"
+    name, (step,) = next(iter(module["required_jobs"](workflow).items()))
+    sha = "d" * 40
+    payload = {"total_count": 1, "jobs": [
+        {"name": name, "head_sha": sha, "conclusion": "success",
+         "steps": [{"name": step, "conclusion": "failure"}, {"name": step, "conclusion": "success"}]},
+    ]}
+    assert module["problem"](workflow, payload, sha) == f"duplicate required step: {name} / {step}"

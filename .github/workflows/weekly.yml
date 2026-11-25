@@ -43,6 +43,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
       - name: Pipeline probe starts
@@ -80,10 +81,14 @@ jobs:
         run: pip install -r requirements.lock -r requirements-dev.txt
       - name: "The heavy tests (-rs: a skipped test is named)"
         if: ${{ !inputs.expect_failure }}
+        timeout-minutes: 20
+        env:
+          # The Windows CPython traceback timer can crash the worker while dumping a healthy fuzz run.
+          PYTEST_ADDOPTS: ${{ runner.os == 'Windows' && '-o faulthandler_timeout=0' || '' }}
         run: python -m pytest -q -rs --junitxml=pytest.xml tests -m heavy
       - name: Only the skips expected on this system
         if: ${{ !inputs.expect_failure }}
-        run: python ../scripts/ci/check_skips.py pytest.xml
+        run: python ../scripts/ci/check_skips.py pytest.xml --minimum 2
 
   properties:
     # The transcript and JSONL readers' property tests with many more
@@ -97,6 +102,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
       - name: Pipeline probe starts
@@ -213,6 +219,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
       - name: Pipeline probe starts

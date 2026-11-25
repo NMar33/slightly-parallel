@@ -79,19 +79,22 @@ def problem(workflow: str, payload: dict, sha: str) -> str:
     by_name = {job["name"]: job for job in jobs}
     if len(by_name) != len(jobs):
         return "duplicate job names"
-    if workflow == "ci.yml" and len(jobs) != 40:
-        return f"required CI matrix is incomplete: {len(jobs)} jobs, expected 40"
     required = required_jobs(workflow)
-    if workflow != "ci.yml" and len(jobs) != len(required):
-        return f"{workflow}: expected {len(required)} jobs, got {len(jobs)}"
     for name, steps in required.items():
         job = by_name.get(name)
         if job is None:
             return f"required job missing: {name}"
         for step in steps:
             matches = [row.get("conclusion") for row in job.get("steps", []) if row["name"] == step]
+            if len(matches) > 1:
+                return f"duplicate required step: {name} / {step}"
             if matches != ["success"]:
-                return f"required step did not pass exactly once: {name} / {step} ({matches or 'missing'})"
+                conclusion = matches[0] if matches else "missing"
+                return f"required step did not pass: {name} / {step} ({conclusion})"
+    if workflow == "ci.yml" and len(jobs) != 40:
+        return f"required CI matrix is incomplete: {len(jobs)} jobs, expected 40"
+    if workflow != "ci.yml" and len(jobs) != len(required):
+        return f"{workflow}: expected {len(required)} jobs, got {len(jobs)}"
     for name, job in by_name.items():
         if job.get("head_sha") != sha:
             return f"job ran on a different SHA: {name}"

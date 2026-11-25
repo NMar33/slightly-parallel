@@ -256,3 +256,21 @@ def test_codex_checks_use_a_clean_profile_in_a_step_context(workflow, job_id):
     assert rpc["run"].endswith("--expect-signed-out") and server["run"].endswith("--expect-signed-out")
     for step in (setup, rpc, server):
         assert step["env"]["CODEX_HOME"] == "${{ runner.temp }}/sp-signed-out-codex"
+
+
+def test_dispatched_run_is_resolved_from_the_workflow_listing(windows_workflow):
+    class LaggingGitHub(FakeGitHub):
+        def json(self, path, data=None):
+            if path == f"runs/{RUN_ID}":
+                # The run ID exists before all fields from the dispatch reach this endpoint.
+                return {"id": RUN_ID, "status": "queued", "display_title": "Windows"}
+            return super().json(path, data)
+
+    api = LaggingGitHub({"workflow_run_id": RUN_ID}, [])
+    pp.verify(api, PROBE)
+
+
+def test_exact_listing_must_match_the_returned_dispatch_id(windows_workflow):
+    api = FakeGitHub({"workflow_run_id": RUN_ID + 1}, [])
+    with pytest.raises(pp.ProbeError, match="listed probe run 199 does not match dispatch 200"):
+        pp.verify(api, PROBE)

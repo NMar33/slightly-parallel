@@ -254,3 +254,17 @@ def test_queue_recovers_after_holder_is_killed(tmp_path):
         if first.poll() is None:
             first.kill()
             first.wait(timeout=5)
+
+
+def test_windows_weekly_heavy_suite_has_a_runner_deadline():
+    import yaml
+
+    workflow = ROOT / ".github" / "workflows" / "weekly.yml"
+    heavy = yaml.safe_load(workflow.read_text(encoding="utf-8"))["jobs"]["heavy"]
+    step = next(step for step in heavy["steps"] if " -m heavy" in step.get("run", ""))
+    assert step["timeout-minutes"] == 20
+    assert step["env"]["PYTEST_ADDOPTS"] == (
+        "${{ runner.os == 'Windows' && '-o faulthandler_timeout=0' || '' }}"
+    )
+    evidence = next(step for step in heavy["steps"] if step.get("run", "").startswith("python ../scripts/ci/check_skips"))
+    assert evidence["run"].endswith("--minimum 2")

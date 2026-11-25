@@ -51,6 +51,7 @@ jobs:
             python: "3.14"
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
       - name: Pipeline probe starts
@@ -129,6 +130,7 @@ jobs:
         tz: [America/Los_Angeles, Asia/Kolkata]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
       - name: Pipeline probe starts
@@ -193,6 +195,7 @@ jobs:
         at: ["2026-11-30T23:59:58", "2026-12-31T23:59:58", "2026-11-01T01:59:58"]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
       - name: Pipeline probe starts
@@ -277,6 +280,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
       - name: Pipeline probe starts
@@ -566,6 +570,7 @@ jobs:
         node: [20, 22]
     defaults:
       run:
+        shell: bash
         working-directory: frontend
     steps:
       - name: Pipeline probe starts

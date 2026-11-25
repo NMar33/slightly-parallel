@@ -33,6 +33,9 @@ UNREACHABLE = "SP_PIPELINE_UNREACHABLE"
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 LOG_TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z\s+")
 SYSTEM_STEP = {"Set up job", "Complete job"}
+MAX_WORKFLOW_RUN_PAGES = 10
+REQUEST_RETRY_DELAY_S = 5
+RUN_POLL_DELAY_S = 10
 
 
 class ProbeError(Exception):
@@ -171,7 +174,7 @@ class GitHub:
                 # The API may have queued the run before the response was lost.
                 # Resolve it by its unique title instead of dispatching again.
                 return None
-            self.wait(5)
+            self.wait(REQUEST_RETRY_DELAY_S)
 
     def json(self, path: str, data: dict | None = None) -> dict:
         body = self.request(path, data)
@@ -187,7 +190,7 @@ def workflow_run(api: GitHub, probe: Probe, workflow: str) -> dict | None:
     })
     path = f"workflows/{workflow}/runs?{query}"
     matching_runs = []
-    for page in range(1, 11):
+    for page in range(1, MAX_WORKFLOW_RUN_PAGES + 1):
         payload = api.json(f"{path}&page={page}")
         matching_runs.extend(run for run in payload["workflow_runs"] if probe.matches(run, workflow))
         if payload["total_count"] <= 100 * page:
@@ -211,11 +214,9 @@ def verify(api: GitHub, probe: Probe) -> None:
         run_ids[workflow] = result.get("workflow_run_id")
     while run_ids:
         for workflow, dispatched_id in list(run_ids.items()):
-            if dispatched_id is not None:
-                run = api.json(f"runs/{dispatched_id}")
-                require(probe.matches(run, workflow), f"{workflow}: dispatch returned an unrelated run")
-            else:
-                run = workflow_run(api, probe, workflow)
+            # An ID comes back before the run's metadata is indexed. Wait for
+            # the exact title and SHA in the workflow's own listing.
+            run = workflow_run(api, probe, workflow)
             if run is None or run.get("status") != "completed":
                 continue
             run_id = run["id"]
@@ -223,10 +224,10 @@ def verify(api: GitHub, probe: Probe) -> None:
                 run.get("conclusion") == "failure",
                 f"{workflow}: run {run_id} concluded {run.get('conclusion')}, expected failure",
             )
-            listed = workflow_run(api, probe, workflow)
-            if listed is None:
-                continue
-            require(listed["id"] == run_id, f"{workflow}: listed probe run does not match dispatch")
+            require(
+                dispatched_id is None or dispatched_id == run_id,
+                f"{workflow}: listed probe run {run_id} does not match dispatch {dispatched_id}",
+            )
             jobs = check_jobs(workflow, api.json(f"runs/{run_id}/attempts/1/jobs?per_page=100"), probe.sha, run_id)
             for job in jobs:
                 log = api.request(f"jobs/{job['id']}/logs")
@@ -235,7 +236,7 @@ def verify(api: GitHub, probe: Probe) -> None:
             print(f"{workflow}: {len(jobs)} failures proved (run {run_id})", flush=True)
             del run_ids[workflow]
         if run_ids:
-            api.wait(10)
+            api.wait(RUN_POLL_DELAY_S)
 
 
 def main() -> None:

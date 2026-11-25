@@ -144,3 +144,18 @@ def test_unreviewed_local_composite_and_reusable_actions_fail_closed(issues):
         "reuse": {"uses": "./.github/workflows/reuse.yml"},
     }}
     assert len(issues(workflow)) == 2
+
+
+@pytest.mark.parametrize("runner", ["ubuntu-latest", "macos-latest", "windows-latest"])
+def test_job_run_defaults_replace_the_workflow_shell(issues, runner):
+    job = {"runs-on": runner, "defaults": {"run": {"working-directory": "backend"}},
+           "steps": [{"run": "python -m pytest | tee test.log"}]}
+    workflow = {"defaults": {"run": {"shell": "bash"}}, "jobs": {"test": job}}
+    assert issues(workflow)
+    job["defaults"]["run"]["shell"] = "bash"
+    assert issues(workflow) == []
+
+
+@pytest.mark.parametrize("runner", ["ubuntu-latest", "macos-latest", "windows-latest"])
+def test_runner_implicit_shell_is_not_a_fail_fast_contract(issues, runner):
+    assert issues({"jobs": {"test": {"runs-on": runner, "steps": [{"run": "python -m pytest | tee test.log"}]}}})
