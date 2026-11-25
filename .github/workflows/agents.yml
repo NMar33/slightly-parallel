@@ -272,7 +272,9 @@ jobs:
         shell: bash
         env:
           CLI_PACKAGE: ${{ needs.cli-versions.outputs.opencode }}
-        run: npm install -g "$CLI_PACKAGE"
+        run: |
+          python scripts/ci/setup_opencode_ripgrep.py
+          npm install -g "$CLI_PACKAGE"
       - name: ${{ env.SCENARIO == 'canary' && 'One live PTY turn and task (canary)' || format('An agent from clone to its work on the pages ({0}, {1})', env.SCENARIO, env.CHANNEL) }}
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok) }}
         timeout-minutes: 45

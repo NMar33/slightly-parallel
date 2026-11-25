@@ -407,6 +407,7 @@ jobs:
           spec=$(python scripts/ci/agent_packages.py pinned "$CLI")
           npm install -g "$spec"
           if [[ "$CLI" == opencode ]]; then
+            python scripts/ci/setup_opencode_ripgrep.py
             sdk="$RUNNER_TEMP/sp-opencode-sdk"
             npm install --no-audit --no-fund --ignore-scripts --prefix "$sdk" "@opencode-ai/plugin@${spec##*@}"
             echo "SP_OPENCODE_SDK_SEED=$sdk" >> "$GITHUB_ENV"
