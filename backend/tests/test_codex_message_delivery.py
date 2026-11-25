@@ -171,4 +171,5 @@ def test_reserved_before_crash_requires_history_check_before_fallback(delivery):
     msgdeliver.retry_waiting(root)
     assert not state["attempts"]
     assert [r["id"] for r in msgledger.claim_for_hook(root, agent)] == [row["id"]]
+    assert [r["id"] for r in msgledger.inbox(root, agent)["unread"]] == [row["id"]]
     assert not msgledger.inbox(root, agent)["unread"]

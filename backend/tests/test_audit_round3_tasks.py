@@ -82,7 +82,7 @@ def test_task_commits_links_only_commits_that_exist_and_are_the_writers(client: 
     gitwork.forget()
     me = {"agent_id": AGENT}
     r = client.post(f"/api/tasks/{mine}/commits", json={**me, "shas": ["deadbee"]})
-    assert r.status_code == 422 and "not a commit of the project's repository" in r.json()["detail"]
+    assert r.status_code == 422 and "not a commit of the task's repositories" in r.json()["detail"]
     r = client.post(f"/api/tasks/{mine}/commits", json={**me, "shas": [theirs[:7]]})
     assert r.status_code == 422 and "cc-someoneelse" in r.json()["detail"]
     r = client.post(f"/api/tasks/{mine}/commits", json={**me, "shas": [signed]})

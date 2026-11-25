@@ -143,6 +143,21 @@ def test_a_reply_names_the_message_it_answers(client: TestClient) -> None:
     assert r.status_code == 201 and r.json()["message"]["reply_to"] == first["id"]
 
 
+def test_message_card_reads_only_its_thread_and_leaves_the_inbox_unread(client: TestClient, root: Path) -> None:
+    first = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="First")
+    reply = msgledger.add(root, project="alpha", from_agent=WORKER, to_agent=COORD, text="Reply", reply_to=first["id"])
+    follow_up = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="Follow-up", reply_to=reply["id"])
+    msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="Separate conversation")
+    msgledger.add(root, project="alpha", from_agent=OLD, to_agent=COORD, text="Another chat", reply_to=first["id"])
+    before = msgledger.read_rows(root)
+    result = client.get(f"/api/messages/{reply['id']}")
+    assert result.status_code == 200
+    assert result.json()["message"]["text"] == "Reply"
+    assert [m["id"] for m in result.json()["thread"]] == [first["id"], reply["id"], follow_up["id"]]
+    assert msgledger.read_rows(root) == before
+    assert client.get("/api/messages/msg_deadbeef").status_code == 404
+
+
 class _Api(mcp.Api):
     def __init__(self, c: TestClient) -> None:
         super().__init__("http://testserver")
@@ -292,11 +307,11 @@ def _logged(log: Path, want: int, wait: float = 5.0) -> list[str]:
 def test_typed_into_the_live_terminal_once_with_its_marker(term) -> None:
     c, root, work = term
     _, log = _fake_agent(c, root, work, WORKER)
-    r = _send(c, COORD, WORKER, "look at the lock")
+    r = _send(c, COORD, WORKER, "look at the lock\n" + "details " * 300 + "#task")
     assert r.status_code == 201 and r.json()["typed"] and r.json()["delivered_via"] == "terminal", r.text
     m = r.json()["message"]
     lines = _logged(log, 1)
-    assert lines == [f"[SP · from {COORD} · {m['id']}] look at the lock"]
+    assert lines == [msgledger.wake_text(m)]
     assert msgdeliver.retry_waiting(root) == 0
     time.sleep(0.5)
     assert _logged(log, 2, wait=0.5) == lines
@@ -320,7 +335,7 @@ def test_not_typed_over_the_operators_half_typed_line(term) -> None:
         typed = msgdeliver.retry_waiting(root)
     assert typed == 1
     lines = _logged(log, 1)
-    assert len(lines) == 1 and lines[0].endswith("wait for the line")
+    assert lines == [msgledger.wake_text(r.json()["message"])]
     assert msgdeliver.retry_waiting(root) == 0
 
 
@@ -368,7 +383,7 @@ def test_a_chat_whose_hook_runs_elsewhere_gets_nothing_typed_in_the_terminal_its
     # The chat that does run there still gets its own.
     r = _send(c, COORD, WORKER, "for the one in the pane")
     assert r.json()["typed"], r.text
-    assert _logged(log, 1)[0].endswith("for the one in the pane")
+    assert _logged(log, 1) == [msgledger.wake_text(r.json()["message"])]
 
 
 @needs_tmux
@@ -403,7 +418,7 @@ def test_a_terminal_reused_by_a_newer_chat_gets_nothing_for_the_old_one(term) ->
     assert not new_log.exists() and not old_log.exists()
     r = _send(c, COORD, WORKER, "for the new chat")
     assert r.json()["typed"], r.text
-    assert _logged(new_log, 1) == [f"[SP · from {COORD} · {r.json()['message']['id']}] for the new chat"]
+    assert _logged(new_log, 1) == [msgledger.wake_text(r.json()["message"])]
     assert [m["text"] for m in msgledger.claim_for_hook(root, OLD)] == ["for the old chat"]
 
 

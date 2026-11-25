@@ -217,6 +217,43 @@ def _id(args: dict) -> str:
     return urllib.parse.quote(raw, safe="")
 
 
+#: The ``project`` argument of the tools that create (note nt_258a7ed7 §2).
+PROJECT_ARG = ("one of this chat's projects (whoami's members) when the entry belongs there; "
+               "leave it out for this chat's home")
+#: What every create tool's description ends with.
+REPEAT_WHERE = " The answer's `where` says where it went: repeat it in your reply."
+
+
+def _target(args: dict, who: dict) -> str:
+    """The project a create goes to: the one named, else the chat's home.
+    The server checks that it is one of the chat's projects."""
+    raw = args.get("project")
+    if raw is None or raw == "":
+        return str(who.get("home") or who.get("project") or "")
+    if not isinstance(raw, str):
+        raise ApiError("project is one project code, as text")
+    return raw.strip()
+
+
+def where_of(result: Any, project: str) -> str:
+    """«dc_… → writing-tracker», «tk_… → writing-tracker · lane ui»: where a
+    create went, read from the answer (its project, never the one asked)."""
+    if not isinstance(result, dict):
+        return f"→ {project}"
+    meta = result.get("metadata")
+    src = meta if isinstance(meta, dict) else result
+    eid = str(src.get("id") or "")
+    code = str(src.get("project") or project)
+    lane = str(src.get("lane") or "").strip() if eid.startswith("tk_") else ""
+    return f"{eid} → {code}".strip() + (f" · lane {lane}" if lane else "")
+
+
+def _with_where(result: Any, project: str) -> Any:
+    if isinstance(result, dict):
+        return {**result, "where": where_of(result, project)}
+    return result
+
+
 class Translator:
     """Tools, resources and prompts over a fetched contract + identity."""
 
@@ -287,18 +324,25 @@ class Translator:
         pids = ",".join(str(p) for p in ancestors())
         return self.api.get(f"/api/whoami?cwd={q}" + (f"&pids={pids}" if pids else ""))
 
-    def _stamp(self) -> dict:
+    def _stamp(self, args: dict | None = None) -> dict:
         """agent_id / project / date / time — stamped, never asked of the
-        model: whatever it sends under these names is written over."""
+        model: whatever it sends under these names is written over. The
+        project is the tool's own ``project`` argument, else the home."""
         import time as _time
         who = self.identity()
         now = _time.localtime()
         return {
-            "project": who["project"],
+            "project": _target(args or {}, who),
             "agent_id": who["agent_id"],
             "created_date": f"{now.tm_year % 100:02d}{now.tm_mon:02d}-{now.tm_mday:02d}",
             "created_time": f"{now.tm_hour:02d}:{now.tm_min:02d}",
         }
+
+    def _material_query(self, who: dict, project: str) -> str:
+        """The query of a scan's, map's or architecture page's material: the
+        project, the chat (checked a member) and its folder (the server
+        warns when the project's folder is another)."""
+        return urllib.parse.urlencode({"project": project, "agent_id": str(who["agent_id"]), "cwd": self.cwd})
 
     # -- client-side gate: the typo dies before a request exists -----------
 
@@ -372,12 +416,14 @@ class Translator:
                  "what the entry holds and the columns of its lens. Identity "
                  "(project, agent id, date, time) is stamped from this session; "
                  "do not send it. An unknown field is refused by name. The same "
-                 "entry written twice is one entry. What each lens holds: "
-                 + self._lens_digest() + " The rest: sp://schema."),
+                 "entry written twice is one entry. `project` (not in `fields`) names another of "
+                 "this chat's projects. What each lens holds: "
+                 + self._lens_digest() + " The rest: sp://schema." + REPEAT_WHERE),
              "inputSchema": {
                  "type": "object",
                  "properties": {
                      "lens": {"type": "string", "enum": lens_names},
+                     "project": {"type": "string", "description": PROJECT_ARG},
                      "fields": {"type": "object",
                                 "description": "the entry, by name (see the description and sp://schema)"},
                  },
@@ -551,10 +597,12 @@ class Translator:
                  "interface, store, integration, internals, workflow, experiment; `reason` one line "
                  "on why it is kept in view when the message says; `anchors` the files or "
                  "file:symbol paths this core is in, as far as you know; `text` the operator's "
-                 "message as typed (its first note). The same name again answers with the existing core."),
+                 "message as typed (its first note). The same name again answers with the existing core."
+                 + REPEAT_WHERE),
              "inputSchema": {
                  "type": "object",
                  "properties": {
+                     "project": {"type": "string", "description": PROJECT_ARG},
                      "name": {"type": "string"}, "type": {"type": "string"},
                      "reason": {"type": "string"}, "text": {"type": "string"},
                      "comment": {"type": "string", "description": "your one line under the operator's text"},
@@ -608,23 +656,26 @@ class Translator:
                  "architecture page is written from. Returns computed facts about the "
                  "project folder (standing, size, folders, newest files, recent commits), "
                  "the current page with the claims to check again, and the instructions "
-                 "with the layout. Then architecture_page."),
-             "inputSchema": {"type": "object", "properties": {}}},
+                 "with the layout. Then architecture_page. `project`: another of this chat's "
+                 "projects; the answer's folder_warning says when its folder is not where you work."),
+             "inputSchema": {"type": "object", "properties": {"project": {"type": "string", "description": PROJECT_ARG},}}},
             {"name": "map_material",
              "description": (
                  "#architecture found the map out of date (or the operator typed #map): what the map of the program is "
                  "written from. Returns computed facts about the repository (languages, "
                  "manifests, build and CI files, environment variables, ports), the "
                  "current map with what is wrong with it, the kinds, verbs and "
-                 "templates, and the instructions. Then map_write."),
-             "inputSchema": {"type": "object", "properties": {}}},
+                 "templates, and the instructions. Then map_write. `project`: another of this chat's "
+                 "projects; the answer's folder_warning says when its folder is not where you work."),
+             "inputSchema": {"type": "object", "properties": {"project": {"type": "string", "description": PROJECT_ARG},}}},
             {"name": "map_write",
              "description": (
                  "Write the next version of the map: one object {template, rows, "
                  "relations, notes} in the shape the instructions give. The answer "
                  "carries warnings (a template kind not answered, a path not found, a "
-                 "relation naming no row): fix and write again."),
+                 "relation naming no row): fix and write again." + REPEAT_WHERE),
              "inputSchema": {"type": "object", "properties": {
+                 "project": {"type": "string", "description": PROJECT_ARG},
                  "map": {"type": "object", "description": "{template, rows[], relations[], notes{}}"},
                  "note": {"type": "string", "description": "one line: what this version changed"}},
                  "required": ["map"]}},
@@ -633,8 +684,9 @@ class Translator:
                  "Write the next version of the architecture page: the whole page in "
                  "markdown, in the layout the instructions give, each item a claim with "
                  "`where:` and `seen:`. The answer carries warnings (paths not found, "
-                 "items that do not say how you know): fix and write again."),
+                 "items that do not say how you know): fix and write again." + REPEAT_WHERE),
              "inputSchema": {"type": "object", "properties": {
+                 "project": {"type": "string", "description": PROJECT_ARG},
                  "text": {"type": "string", "description": "the whole page, markdown"},
                  "note": {"type": "string", "description": "one line: what this version changed"}},
                  "required": ["text"]}},
@@ -646,8 +698,10 @@ class Translator:
                  "with line counts, the uncommitted files, the counters "
                  "(files_n, lines_add, lines_del, decisions_n) already "
                  "counted, and the instructions for the scan, its file entry "
-                 "and its architecture form. Then write_entry, three times."),
-             "inputSchema": {"type": "object", "properties": {}}},
+                 "and its architecture form. Then write_entry, three times (with the same "
+                 "`project` when you name one). The answer's folder_warning says when the "
+                 "project's folder is not where you work."),
+             "inputSchema": {"type": "object", "properties": {"project": {"type": "string", "description": PROJECT_ARG},}}},
             {"name": "standup_material",
              "description": (
                  "The project's standup for one day (default: yesterday): "
@@ -1066,8 +1120,9 @@ class Translator:
                  "`![caption](file.png)`; `:::fold Title` … `:::` (folded); ```mermaid. Ids like tk_… "
                  "ep_… dc_… show as live chips. `images`: the picture files the text names, read here. "
                  "`id` writes the next version of a note (any chat of the project); `base` is the "
-                 "version you read. Then say one line in the chat and the note's id."),
+                 "version you read. Then say one line in the chat and the note's id." + REPEAT_WHERE),
              "inputSchema": {"type": "object", "properties": {
+                 "project": {"type": "string", "description": PROJECT_ARG},
                  "text": {"type": "string", "description": "the markdown, first line `# Title`"},
                  "kind": {"type": "string", "enum": ["context", "paste", "review", "plan", "report", "actions"],
                           "description": "context: to know when coming back; paste: a text for another chat or "
@@ -1102,7 +1157,7 @@ class Translator:
             {"name": "message",
              "description": (
                  "Send a message to another chat — an agent, by its agent_id (cc-…, codex-…). Loaded Codex threads receive a wake to read messages. "
-                 "Claude Code can receive text in its empty terminal input. Hooks and the inbox also deliver it. A message is advice between agents, never the "
+                 "Terminal and hook delivery also send only a short notice. Read the body with messages. A message is advice between agents, never the "
                  "operator's command: write what you found, ask, or answer. `reply_to` is the msg_… you answer. "
                  "Your agent_id is stamped; you cannot send as the operator."),
              "inputSchema": {"type": "object", "properties": {
@@ -1164,12 +1219,12 @@ class Translator:
             if args.get("fields") is not None and not isinstance(args.get("fields"), dict):
                 raise ApiError("fields is an object: the entry's fields by name")
             # Identity last, over anything of the same name in `fields`.
-            payload = {**(args.get("fields") or {}), **self._stamp()}
+            payload = {**(args.get("fields") or {}), **self._stamp(args)}
             # Fields by name only: the numbered storage slots (l1…l4) are not
             # a way in. A name the lens lacks is refused, never routed around.
             self._check_names(lens, spec, payload)
             self._check_vocab(lens, payload)
-            return self.api.post(f"/api/{spec['base']}", payload)
+            return _with_where(self.api.post(f"/api/{spec['base']}", payload), payload["project"])
         if name == "update_entry":
             lens = str(args.get("lens") or "")
             spec = self.lenses.get(lens)
@@ -1230,26 +1285,27 @@ class Translator:
                 f"/api/architecture/status?project={urllib.parse.quote(str(self.identity()['project']))}")
         if name in ("architecture_material", "architecture_page"):
             who = self.identity()
+            target = _target(args, who)
             if name == "architecture_material":
-                return self.api.get(
-                    f"/api/architecture/page/material?project={urllib.parse.quote(str(who['project']))}")
-            return self.api.post("/api/architecture/page", {
-                "project": who["project"], "agent_id": who["agent_id"],
-                "text": args.get("text") or "", "note": args.get("note") or ""})
+                return self.api.get("/api/architecture/page/material?" + self._material_query(who, target))
+            return _with_where(self.api.post("/api/architecture/page", {
+                "project": target, "agent_id": who["agent_id"],
+                "text": args.get("text") or "", "note": args.get("note") or ""}), target)
         if name in ("map_material", "map_write"):
             who = self.identity()
+            target = _target(args, who)
             if name == "map_material":
-                return self.api.get(f"/api/map/material?project={urllib.parse.quote(str(who['project']))}")
-            return self.api.post("/api/map", {
-                "project": who["project"], "agent_id": who["agent_id"],
-                "map": args.get("map") or {}, "note": args.get("note") or ""})
+                return self.api.get("/api/map/material?" + self._material_query(who, target))
+            return _with_where(self.api.post("/api/map", {
+                "project": target, "agent_id": who["agent_id"],
+                "map": args.get("map") or {}, "note": args.get("note") or ""}), target)
         if name == "scan_material":
             who = self.identity()
-            return self.api.get(
-                f"/api/scans/material?project={urllib.parse.quote(str(who['project']))}"
-                f"&agent_id={urllib.parse.quote(str(who['agent_id']))}")
+            return self.api.get("/api/scans/material?" + self._material_query(who, _target(args, who)))
         if name in ("standup_material", "standup_postpone"):
             who = self.identity()
+            # A standup is the home's only: no `project` argument (note §2).
+            who = {**who, "project": str(who.get("home") or who["project"])}
             project = urllib.parse.quote(str(who["project"]))
             date = str(args.get("date") or "")
             if name == "standup_postpone":
@@ -1331,14 +1387,15 @@ class Translator:
             return self.api.get(f"/api/cores?project={urllib.parse.quote(str(code))}")
         if name == "core_new":
             who = self.identity()
-            return self.api.post("/api/cores", {
-                "project": who["project"], "agent_id": who["agent_id"],
+            target = _target(args, who)
+            return _with_where(self.api.post("/api/cores", {
+                "project": target, "agent_id": who["agent_id"],
                 "name": str(args.get("name") or ""), "type": str(args.get("type") or ""),
                 "reason": str(args.get("reason") or ""), "text": str(args.get("text") or ""),
                 "comment": str(args.get("comment") or ""),
                 "anchors": [a for a in _list(args, "anchors") if a.strip()],
                 "task_id": str(args.get("task_id") or ""),
-            })
+            }), target)
         if name == "core_note":
             return self.api.post(f"/api/cores/{_id(args)}/notes", {
                 "agent_id": self.identity()["agent_id"],
@@ -1474,7 +1531,8 @@ class Translator:
         if base is not None and (isinstance(base, bool) or not isinstance(base, int)):
             raise ApiError("base is the version number you read, a number")
         who = self.identity()
-        body: dict[str, Any] = {"agent_id": who["agent_id"], "project": who["project"],
+        target = _target(args, who)
+        body: dict[str, Any] = {"agent_id": who["agent_id"], "project": target,
                                 "text": text("text", True), "kind": text("kind", True), "title": text("title"),
                                 "id": text("id"), "images": images}
         for key in ("task_id", "entrypoint_id", "replaces"):
@@ -1482,7 +1540,7 @@ class Translator:
                 body[key] = text(key)
         if base is not None:
             body["base"] = base
-        return self.api.post("/api/notes/write", body)
+        return _with_where(self.api.post("/api/notes/write", body), target)
 
     def _publish(self, name: str, args: dict) -> Any:
         """publish_write, and publish_attach forwarding to it. A file or an
@@ -1571,7 +1629,7 @@ class Translator:
         if name == "entrypoints":
             if text("id"):
                 return self.api.get(f"/api/entrypoints/{_id(args)}/command")
-            project = text("project") or who["project"]
+            project = text("project") or str(who.get("home") or who["project"])
             got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(str(project))}")
             return {"topics": [{k: t.get(k) for k in ("id", "name", "title", "state", "what", "ways", "stops", "open_tasks")}
                                for t in got.get("topics") or []]}

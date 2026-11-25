@@ -236,7 +236,7 @@ def test_stops_are_one_message_per_text_and_task_and_shape_checked(world) -> Non
         assert r.status_code == 422, r.text
     # A chat of another project writes nothing on this topic.
     r = c.post(f"/api/entrypoints/{eid}/stops", json={"agent_id": STRANGER, "text": "from BETA"})
-    assert r.status_code == 422 and "this chat is in BETA" in r.json()["detail"]
+    assert r.status_code == 422 and f"agent {STRANGER} is not a member of ALPHA; this topic is ALPHA's" in r.json()["detail"]
     assert c.post("/api/entrypoints/ep_nothere/stops", json={"text": "x"}).status_code == 404
     assert _snapshot(root) == before
     sid = one.json()["stop"]["id"]
@@ -346,12 +346,14 @@ def test_a_status_changed_through_the_generic_update_is_the_state_read_back(worl
     assert c.get("/api/entrypoints/desk?project=ALPHA").json()["topics"][0]["state"] == "active"
 
 
+@pytest.mark.strict_membership
 def test_an_agent_clears_a_task_topic_only_in_its_own_project_and_an_unknown_chat_writes_nothing(world) -> None:
     c, root, eid, tid = world
     assert c.post(f"/api/tasks/{tid}/topic", json={"entrypoint_id": eid}).status_code == 200
     before = _snapshot(root)
+    # The gate refuses a write on a task of a project the chat is not in.
     r = c.post(f"/api/tasks/{tid}/topic", json={"entrypoint_id": "", "agent_id": STRANGER})
-    assert r.status_code == 422 and "this chat is in BETA" in r.json()["detail"]
+    assert r.status_code == 403 and f"agent {STRANGER} is not a member of ALPHA; this task is ALPHA's" in r.json()["detail"]
     r = c.post(f"/api/entrypoints/{eid}/stops", json={"agent_id": "cc-nowhere1", "text": "from nowhere"})
     assert r.status_code == 422 and "not a chat" in r.json()["detail"]
     assert _snapshot(root) == before

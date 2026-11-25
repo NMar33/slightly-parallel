@@ -313,19 +313,15 @@ def _board_lanes(store: ViewStore, project: str) -> list[str]:
 
 
 def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
-    """The lane an agent's card lands in. Named in the message: one the board
-    has, matched without case; else #now's own lane from Settings, and
-    #task's none (the card shows under "unassigned")."""
-    lanes = _board_lanes(store, project)
+    """The lane an agent's card lands in. Named in the message's braces: the
+    board's, matched without case, else a new lane as typed (note
+    nt_258a7ed7 §3: anything that is not a project is a lane); not named:
+    #now's own lane from Settings, and #task's none ("unassigned")."""
     if named:
-        for lane in lanes:
+        for lane in _board_lanes(store, project):
             if lane.lower() == named.lower():
                 return lane
-        refuse_agent(
-            f"the lane {named!r} is not on the board",
-            ("the board's lanes: " + ", ".join(lanes) if lanes else "the board has no lanes yet")
-            + " — ask the operator which, in one line; a new lane is made on the board",
-        )
+        return named
     if command == "now":
         return str(app_settings.load(store.data_root).get("tasks.now_lane") or "Now").strip() or "Now"
     return ""
@@ -366,6 +362,49 @@ def _refuse_in_helper(store: ViewStore, agent: str) -> None:
     )
 
 
+LEVEL_ONE = ("agent {agent} may create tasks only in its home {home} (level 1). "
+             "Name the project in braces, or the operator raises the level on the agent card")
+
+
+NO_BRACES: dict[str, str] = {"project": "", "lane": "", "refusal": ""}
+
+
+def task_braces(store: ViewStore, agent: str, message: str) -> dict[str, str]:
+    """The project and the lane the braces of the operator's #task / #now
+    name (hookshared.resolve_braces, the hook's own rule), for ``agent``:
+    ``{"project", "lane", "refusal"}``; NO_BRACES without a command."""
+    from . import memberships
+    from .sessions import task_hit
+    text = hookshared.command_text(message or "")
+    m = task_hit(text)
+    if m is None:
+        return dict(NO_BRACES)
+    groups = hookshared.task_braces(text[m.end(1):])
+    if not groups:
+        return dict(NO_BRACES)
+    view = memberships.agent_view(store, agent)
+    return hookshared.resolve_braces(
+        groups, agent=agent, home=view.home if view else "", members=list(view.members) if view else [],
+        codes=[pf.code for pf in store.projects], aliases=memberships.alias_map(store),
+        lanes_of=lambda code: _board_lanes(store, code))
+
+
+def _check_level(store: ViewStore, agent: str, body: dict, named: str = "") -> None:
+    """The agent's task level (note nt_258a7ed7 §3): at level 1 its tasks go
+    to its home only — or to the project the operator named in braces
+    (``named``); levels 2 and 3 take any member project (the gate checked
+    membership before the request got here). Refused with one line, 403."""
+    from . import memberships
+    from .entitylib import project_codes
+    view = memberships.agent_view(store, agent)
+    if view is None or view.level != 1:
+        return
+    allowed = {view.home} | ({named} if named else set())
+    codes = [str(body.get("project") or "").strip(), *project_codes(body.get("projects"))]
+    if any(c and c not in allowed for c in codes):
+        raise HTTPException(status_code=403, detail=LEVEL_ONE.format(agent=agent, home=view.home))
+
+
 def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     """Apply the /task contract to an agent's create; return the fields dropped.
 
@@ -386,6 +425,15 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
         # the agent writes after it, while that message is still the latest,
         # are ordinary #task cards (the findings of the work), in `agent`.
         command, named, column, message = "", "", "agent", ""
+    braces = task_braces(store, agent, message) if command else dict(NO_BRACES)
+    if braces["refusal"]:
+        raise HTTPException(status_code=403, detail=braces["refusal"])
+    if braces["project"] and str(body.get("project") or "").strip() != braces["project"]:
+        raise HTTPException(status_code=403, detail=(
+            f"the operator named {braces['project']} in braces: this task goes to {braces['project']}, "
+            f"not {str(body.get('project') or '').strip() or '(none)'} — send project {braces['project']}"))
+    named = braces["lane"]
+    _check_level(store, agent, body, braces["project"])
     status = str(body.get("status") or "").strip() or (column if command == "now" else "agent")
     if command == "now" and status != column:
         refuse_agent(

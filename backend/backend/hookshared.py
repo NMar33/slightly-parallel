@@ -225,6 +225,118 @@ def command_text(text: str) -> str:
     return _LOUD_RE.sub("#", _TAG_HASH_RE.sub("##", text))
 
 
+# ---------------------------------------------------------------------------
+# Braces after #task / #now: the project and the lane (tk_d1d25a4d step 3,
+# note nt_258a7ed7 §3). The hook and the server read them here, both.
+# ---------------------------------------------------------------------------
+
+BRACE_MAX = 80
+_BRACE_RE = re.compile(r"[ \t]*\{([^}\n]{1,%d})\}" % BRACE_MAX)
+NEAR_MISS = 0.8
+PROJECT_PREFIX, LANE_PREFIX = "project:", "lane:"
+
+
+def task_braces(after_tag: str) -> list[str]:
+    """The ``{…}`` groups right after a #task / #now tag, in order: each at
+    most 80 characters on one line, spaces or tabs between them; its words
+    with their spaces collapsed. The first thing that is not a group ends
+    them (``#task {ui} fix {x}`` is one group)."""
+    out: list[str] = []
+    pos = 0
+    text = after_tag or ""
+    while True:
+        m = _BRACE_RE.match(text, pos)
+        if m is None:
+            return out
+        out.append(" ".join(m.group(1).split()))
+        pos = m.end()
+
+
+def pick_task_hit(hits: list[Any]) -> Any:
+    """Of a message's #task / #now matches, the one its card is for: the
+    #now when there is one (the task this chat starts on; the hook names
+    both, and the agent writes the #task one as well), else the last."""
+    if not hits:
+        return None
+    return next((h for h in hits if h.group(1).lower().split("-")[0] == "now"), hits[-1])
+
+
+def brace_refusal_member(agent: str, code: str, members: list[str]) -> str:
+    return (f"agent {agent} is not a member of {code}; its projects: {', '.join(members) or 'none'}. "
+            "The operator adds it on the agent card")
+
+
+def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[str],
+                   codes: list[str], aliases: dict[str, str],
+                   lanes_of: Any) -> dict[str, str]:
+    """``{"project", "lane", "refusal"}`` for the groups of one command.
+
+    Each group, in order: ``{project:x}`` / ``{lane:x}``; an exact project
+    code or alias (any case) — a member's, else refused; an exact live lane
+    of the target project (``lanes_of(code)``, any case), so a real lane beats
+    a near miss; a near miss of a code or alias (difflib ratio ≥ 0.8)
+    refused with a hint; anything else a new lane. A name that is both a
+    project and a live lane, two projects or two lanes are refused. The
+    target is the project named, else ``home``. ``project`` is "" when
+    none is named; ``refusal`` one line, or ""."""
+    import difflib
+
+    by_name: dict[str, str] = {c.lower(): c for c in codes}
+    for alias, code in aliases.items():
+        by_name.setdefault(alias.lower(), code)
+    out = {"project": "", "lane": "", "refusal": ""}
+
+    def refuse(line: str) -> dict[str, str]:
+        return {"project": "", "lane": "", "refusal": line}
+
+    def as_project(name: str) -> str:
+        return by_name.get(name.lower(), "")
+
+    # The target first: a lane is looked up on the board of the project named.
+    named = [g[len(PROJECT_PREFIX):].strip() for g in groups if g.lower().startswith(PROJECT_PREFIX)]
+    named += [g for g in groups if not g.lower().startswith((PROJECT_PREFIX, LANE_PREFIX)) and as_project(g)]
+    target = as_project(named[0]) if named and as_project(named[0]) else home
+    live = {str(x).lower(): str(x) for x in (lanes_of(target) or [])}
+    # A name both a project and a lane: on the board it lands on, or the home's.
+    either = set(live) | ({str(x).lower() for x in (lanes_of(home) or [])} if target != home else set())
+    projects: list[str] = []
+    lanes: list[str] = []
+    for g in groups:
+        low = g.lower()
+        if low.startswith(PROJECT_PREFIX):
+            name = g[len(PROJECT_PREFIX):].strip()
+            code = as_project(name)
+            if not code:
+                return refuse(f"{{{g}}}: {name} is not a project of this agent")
+            projects.append(code)
+        elif low.startswith(LANE_PREFIX):
+            name = g[len(LANE_PREFIX):].strip()
+            if not name:
+                return refuse(f"{{{g}}} names no lane")
+            lanes.append(live.get(name.lower(), name))
+        elif as_project(g):
+            if low in either:
+                return refuse(f"{{{g}}} is a project and a lane: write {{project:{g}}} or {{lane:{g}}}")
+            projects.append(as_project(g))
+        elif low in live:
+            lanes.append(live[low])
+        else:
+            best = max(by_name, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
+            if best and difflib.SequenceMatcher(None, low, best).ratio() >= NEAR_MISS:
+                hint = {**{c.lower(): c for c in codes}, **{a.lower(): a for a in aliases}}.get(best, best)
+                return refuse(f"{{{g}}} is not a project of this agent — did you mean {hint}?")
+            lanes.append(g)
+    if len(set(projects)) > 1:
+        return refuse(f"two projects in braces ({', '.join(dict.fromkeys(projects))}): name one")
+    if len({x.lower() for x in lanes}) > 1:
+        return refuse(f"two lanes in braces ({', '.join(dict.fromkeys(lanes))}): name one")
+    if projects and projects[0] not in members:
+        return refuse(brace_refusal_member(agent, projects[0], members))
+    out["project"] = projects[0] if projects else ""
+    out["lane"] = lanes[0] if lanes else ""
+    return out
+
+
 def plain_text(text: str) -> str:
     """The message for what a command keeps of it (a prompt's body, a
     vision's text): the ``###`` command written as an ordinary one, so it is

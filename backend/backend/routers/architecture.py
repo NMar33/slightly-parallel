@@ -34,7 +34,7 @@ from ..entities import ENTITIES
 from ..file_entries import project_path
 from .deps import (
     create_answer, etag_for, get_store, identity_of, iso_moment, json_response,
-    known_project, maybe_304, not_found,
+    known_project, maybe_304, not_found, material_for,
 )
 
 router = APIRouter()
@@ -530,12 +530,15 @@ def architecture_page_get(
 def architecture_page_material(
     request: Request,
     project: str = Query(...),
+    agent_id: str = Query(""),
+    cwd: str = Query("", description="the asking chat's folder: a warning when the project's is another"),
     store: ViewStore = Depends(get_store),
 ) -> dict:
     """What the next version is written from. MCP: architecture_material."""
     from .. import archpage, projectfacts
 
     code = known_project(store, project)
+    extra = material_for(store, code, agent_id, cwd)
     page = archpage.current(store, code)
     flagged = [
         {"claim": c["text"][:120], "where": c.get("path", ""),
@@ -545,6 +548,7 @@ def architecture_page_material(
     ]
     root = getattr(request.app.state, "prompt_root", None) or Path(__file__).resolve().parents[3]
     return {
+        **extra,
         "project": code,
         "facts": projectfacts.facts(store, code),
         "current_page": ({"n": page["n"], "at": page["at"], "text": page["text"]} if page else None),
@@ -668,16 +672,20 @@ def architecture_status(
 def map_material(
     request: Request,
     project: str = Query(...),
+    agent_id: str = Query(""),
+    cwd: str = Query("", description="the asking chat's folder: a warning when the project's is another"),
     store: ViewStore = Depends(get_store),
 ) -> dict:
     """What the next map is written from. MCP: map_material."""
     from .. import app_settings, repomap
 
     code = known_project(store, project)
+    extra = material_for(store, code, agent_id, cwd)
     cur = repomap.current(store, code)
     root = getattr(request.app.state, "prompt_root", None) or Path(__file__).resolve().parents[3]
     values = app_settings.load(store.data_root)
     return {
+        **extra,
         "project": code,
         "model": str(values.get("map.model") or "opus"),
         "facts": repomap.facts(store, code),

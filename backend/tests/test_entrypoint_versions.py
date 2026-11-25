@@ -174,7 +174,7 @@ def test_another_projects_topic_is_never_offered_and_is_refused_and_nothing_is_w
     assert [t["id"] for t in beta] == [got["id"]] and got["id"] != eid and [t["id"] for t in _topics(c)] == [eid]
     before = _snapshot(root)
     r = _write(c, eid, BETA, SECOND_RECORD)
-    assert r.status_code == 422 and "ALPHA" in r.json()["detail"] and "BETA" in r.json()["detail"]
+    assert r.status_code == 422 and f"agent {BETA} is not a member of ALPHA; this topic is ALPHA's" in r.json()["detail"]
     assert _snapshot(root) == before
     assert c.get(f"/api/entrypoints/{eid}").json()["metadata"]["versions_n"] == 1
 

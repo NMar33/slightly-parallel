@@ -19,8 +19,10 @@ from typing import Any, Callable, Sequence
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
-from .. import archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, nowlib, skilllib, repomap, undolib
+from .. import (archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, memberships, nowlib, skilllib,
+               repomap, undolib)
 from ..csvio import rewrite_rows
+from ..date_utils import InvalidYYMMDD, format_yymm_dd, parse_yymm_dd
 from ..db import ViewStore
 from ..docs_md import build_detail, read_detail, resolve_under
 from ..turns import description_of, parse_task_doc
@@ -28,7 +30,7 @@ from ..entities import ENTITIES, Entity
 from ..file_safety import atomic_write
 from .deps import (
     adopt_when_changed, detail_cached, etag_for, frontmatter_cached,
-    get_store, json_response, maybe_304, parsed_file, refuse_agent, written_by_agent,
+    get_store, identity_of, json_response, maybe_304, parsed_file, refuse_agent, written_by_agent,
 )
 from .integrate import sync_all_rules
 
@@ -301,6 +303,16 @@ def update_entity(
         raise HTTPException(status_code=422, detail="send the body as a JSON object")
     refuse_agent_write(ent, body)
     check_enum_fields(ent.name, body)
+    if ent.name in {"vision", "problem"} and "archived_at" in body:
+        if written_by_agent(body):
+            refuse_agent(f"archiving a {ent.name} is the operator's")
+        stamp = body["archived_at"]
+        try:
+            valid = format_yymm_dd(parse_yymm_dd(stamp)) == stamp
+        except InvalidYYMMDD:
+            valid = False
+        if not valid:
+            raise HTTPException(status_code=422, detail="archived_at must be a valid YYMM-DD date")
     if ent.name in keeplib.KINDS and written_by_agent(body):
         probe = entry_fields.to_slots(ent.name, dict(body), ent.columns)
         if any(k in probe for k in ("l2", "l3", "l4", "body")):
@@ -331,6 +343,11 @@ def update_entity(
                     "(rows from per-project overlay files are read-only)"
                 ),
             )
+        if written_by_agent(body):
+            # update_entry: the row's project is checked (note nt_258a7ed7 §2).
+            ok, line = memberships.may_write_row(store, identity_of(body), str(target.get("project") or ""), ent.name)
+            if not ok:
+                raise HTTPException(status_code=403, detail=line)
         if ent.name in entry_fields.PARTS:
             entry_fields.merge_parts(ent.name, body, read_detail(store.data_root, target.get("md_ref") or "")[2]
                                      if target.get("md_ref") else "")

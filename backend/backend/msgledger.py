@@ -85,9 +85,9 @@ def marker(from_agent: str, msg_id: str) -> str:
     return f"[SP · from {from_agent} · {msg_id}]"
 
 
-def terminal_text(row: dict[str, Any]) -> str:
-    """What is typed into the chat's terminal: the marker, then the text."""
-    return f"{marker(str(row['from_agent']), str(row['id']))} {row.get('text') or ''}"
+def terminal_text(row: dict[str, str]) -> str:
+    """The same notice as on the direct and hook delivery paths."""
+    return wake_text(row)
 
 
 def wrap_stray(row: dict[str, Any], prompt: str) -> str:
@@ -198,6 +198,11 @@ def _deliver(row: dict[str, str], via: str, at: str) -> None:
     row["delivered_at"] = at
 
 
+def _return_terminal_claim(row: dict[str, str]) -> None:
+    read = row["read_at"]
+    _deliver(row, "inbox" if read else "", read)
+
+
 # ---------------------------------------------------------------------------
 # Who takes a message: each once, under the lock
 # ---------------------------------------------------------------------------
@@ -248,11 +253,11 @@ def claim_terminal(data_root: Any, msg_id: str) -> dict[str, str] | None:
 
 
 def release_terminal(data_root: Any, msg_id: str) -> None:
-    """The typing failed: the message waits again (unless it landed meanwhile)."""
+    """Release a failed paste. A body read meanwhile stays delivered."""
     with editing(data_root) as rows:
         row = next((r for r in rows if r["id"] == msg_id), None)
         if row is not None and row["delivered_via"] == "terminal" and not row["landed_at"]:
-            _deliver(row, "", "")
+            _return_terminal_claim(row)
 
 
 def claim_for_hook(data_root: Any, agent_id: str) -> list[dict[str, str]]:
@@ -267,7 +272,6 @@ def claim_for_hook(data_root: Any, agent_id: str) -> list[dict[str, str]]:
             if row["to_agent"] == agent_id and not row["delivered_via"] and (not row["codex_thread"] or row["codex_checked"]):
                 row["codex_thread"] = ""
                 _deliver(row, "hook", at)
-                row["read_at"] = at
                 out.append(dict(row))
     return out
 
@@ -303,7 +307,9 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
             return None
         at = now_local()
         wake = bool(row["codex_thread"] or row["codex_checked"]) or row["delivered_via"] in ("codex", "stop")
-        if wake and prompt.strip() != wake_text(row):
+        submitted = prompt.strip()
+        notice = wake_text(row)
+        if wake and submitted != notice:
             return None
         if row["codex_thread"]:
             _deliver(row, "codex", at)
@@ -312,8 +318,14 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
             _deliver(row, "terminal", at)
         row["landed_at"] = at
         row["landed_turn"] = str(turn) if turn is not None else ""
-        if not wake:
-            row["read_at"] = row["read_at"] or at
+        if submitted == notice:
+            return dict(row)
+        if submitted.startswith(notice):
+            # The terminal notice arrived, with the operator's own input
+            # appended. Leave that prompt to the normal command parser.
+            return None
+        # A legacy terminal delivery carried the body with the marker.
+        row["read_at"] = row["read_at"] or at
         return dict(row)
 
 
@@ -334,19 +346,22 @@ def take_stray(data_root: Any, agent_id: str, prompt: str, turn: int | None = No
         if (row is None or row["to_agent"] == agent_id or row["from_agent"] != sender
                 or row["landed_at"] or row["delivered_via"] != "terminal"):
             return None
-        _deliver(row, "", "")
+        _return_terminal_claim(row)
         note = f"{agent_id} {now_local()}" + (f" turn {turn}" if turn is not None else "")
         row["strayed"] = f"{row['strayed']}; {note}" if row["strayed"] else note
+        notice = wake_text(row)
+        submitted = prompt.strip()
+        if submitted != notice and submitted.startswith(notice):
+            return None  # The operator's own input still goes to the command parser.
         return dict(row)
 
 
 def inbox(data_root: Any, agent_id: str, recent: int = 10) -> dict[str, list[dict[str, str]]]:
     """This chat's messages: the unread ones (marked read now, and taken by
     the inbox when no other way had), then the newest ``recent`` read ones.
-    A message typed into the chat's terminal that has not landed yet is the
-    terminal's: named in ``in_flight`` (no text, not marked read), so it
-    never reaches the chat twice — or, typed into a pane another chat holds,
-    reaches this one only once that chat's hook gives it back."""
+    Terminal pastes now contain a notice only: the inbox supplies their
+    bodies even before the hook confirms the paste landed. A Codex send
+    whose outcome is still uncertain stays in ``in_flight``."""
     if not ledger_path(data_root).exists():
         return {"unread": [], "recent": [], "in_flight": []}
     unread: list[dict[str, str]] = []
@@ -358,7 +373,7 @@ def inbox(data_root: Any, agent_id: str, recent: int = 10) -> dict[str, list[dic
         for row in mine:
             if row["read_at"]:
                 continue
-            if (row["codex_thread"] and not row["codex_checked"]) or (row["delivered_via"] == "terminal" and not row["landed_at"]):
+            if row["codex_thread"] and not row["codex_checked"]:
                 flying.append({k: row[k] for k in ("id", "from_agent", "sent_at", "delivered_at")})
                 continue
             if not row["delivered_via"]:

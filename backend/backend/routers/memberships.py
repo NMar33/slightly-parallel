@@ -156,3 +156,39 @@ def abandon_move(
         raise HTTPException(status_code=503, detail=BUSY) from None
     store.rebuild()
     return out
+
+
+# ---------------------------------------------------------------------------
+# Project aliases (tk_d1d25a4d step 3, note nt_258a7ed7 §3): API only until
+# the settings page has them (step 7).
+# ---------------------------------------------------------------------------
+
+@router.get("/api/project-aliases")
+def project_aliases(store: ViewStore = Depends(get_store)) -> dict:
+    """Every alias the operator's braces may name a project by."""
+    got = memberships.alias_map(store)
+    return {"aliases": [{"alias": a, "project": c} for a, c in sorted(got.items(), key=lambda x: x[0].lower())]}
+
+
+@router.post("/api/projects/{code}/aliases")
+def project_alias_write(
+    code: str,
+    body: Any = Body(...),
+    store: ViewStore = Depends(get_store),
+) -> dict:
+    """``{op: add|remove, alias}``: one short name for the project, unique
+    across every code and alias, any case. The operator's only."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail=f"the body is one object {{op, alias}}, not a {type(body).__name__}")
+    operator_only(body, "Naming a project's aliases", "ask the operator")
+    op, alias = _text(body, "op"), _text(body, "alias")
+    try:
+        row = memberships.write_alias(store.data_root, op, code, alias)
+    except memberships.Refused as r:
+        raise HTTPException(status_code=r.status, detail=r.detail) from None
+    except FileSafetyError:
+        raise HTTPException(status_code=503, detail=BUSY) from None
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        raise HTTPException(status_code=503, detail=(
+            f"the alias file cannot be read ({type(exc).__name__}); nothing was written")) from None
+    return {**project_aliases(store), "row": row}

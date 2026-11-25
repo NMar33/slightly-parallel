@@ -21,18 +21,9 @@ export function place(x: number, y: number, W: number, H: number, w: number, h: 
   return { left, top, width, maxHeight: Math.max(0, h - top - 8), overflowY: 'auto', overscrollBehaviorY: 'contain' }
 }
 
-/**
- * A card of a height not known before it is read: below the point when
- * there is room (or more room than above), else above it; it scrolls
- * inside when taller than the room.
- */
+/** Keep a card and its actions scrollable inside the pane, even before its contents load. */
 export function placeCard(x: number, y: number, W: number, w: number, h: number): CSSProperties {
-  const left = Math.min(Math.max(8, x), Math.max(8, w - W - 8))
-  const width = Math.min(W, Math.max(200, w - 16))
-  const below = h - y - 8
-  const above = y - 28
-  if (below >= 280 || below >= above) return { left, top: y, width, maxHeight: Math.max(120, below) }
-  return { left, bottom: h - y + 20, width, maxHeight: Math.max(120, above) }
+  return place(x, y, W, 280, w, h)
 }
 
 /** The first button of a menu takes the keyboard. */

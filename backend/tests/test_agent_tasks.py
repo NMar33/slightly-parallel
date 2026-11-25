@@ -125,13 +125,15 @@ def test_task_takes_the_lane_the_operator_named_in_braces(tmp_path: Path) -> Non
     c.__exit__(None, None, None)
 
 
-def test_a_lane_the_board_does_not_have_is_refused_with_the_list(tmp_path: Path) -> None:
+def test_a_lane_the_board_does_not_have_is_a_new_lane(tmp_path: Path) -> None:
+    # Braces that name no project and no live lane name a new lane
+    # (tk_d1d25a4d step 3, note nt_258a7ed7 §3; before it, refused).
     root = tmp_path / "data"
     c = _board(root, "#task {ux} the form accepts an empty trigger_id")
     r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
                                    "agent_id": "cc-a", "title": "x", "tags": "ag_bug"})
-    assert r.status_code == 422, r.text
-    assert "'ux'" in r.text and "Bugs" in r.text and "Kanban Board" in r.text and "ask the operator" in r.text
+    assert r.status_code == 201, r.text
+    assert r.json()["metadata"]["lane"] == "ux"
     c.__exit__(None, None, None)
 
 

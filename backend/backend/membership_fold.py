@@ -332,6 +332,50 @@ def _moved_from(r: Mapping[str, Any]) -> str:
     return v[len(MOVED_FROM):].split(MOVED_NOTE, 1)[0].strip() if v.startswith(MOVED_FROM) else ""
 
 
+# ---------------------------------------------------------------------------
+# Project aliases (tk_d1d25a4d step 3, note nt_258a7ed7 §3): short names the
+# operator's braces may use for a project, ``{SP}`` for slightly-parallel.
+# ``<data root>/project_aliases.csv``: ``id, at, project, alias, op, actor``,
+# op ``add`` or ``remove``, append-only like the membership ledger.
+# ---------------------------------------------------------------------------
+
+ALIASES = "project_aliases.csv"
+ALIAS_COLUMNS: tuple[str, ...] = ("id", "at", "project", "alias", "op", "actor")
+ALIAS_OPS: tuple[str, ...] = ("add", "remove")
+
+
+def aliases_path(root: str | os.PathLike[str]) -> str:
+    return os.path.join(os.fspath(root), ALIASES)
+
+
+def aliases(rows: Iterable[Mapping[str, Any]], existing: Iterable[str] | None = None) -> dict[str, str]:
+    """alias → project code, folded in file order. An alias is unique, any
+    case, across every code and alias: an ``add`` of a name taken is skipped
+    (the writer refuses it first; two writers raced), a ``remove`` of one
+    the project does not have too. Projects that no longer exist drop out."""
+    codes = {c.lower() for c in existing} if existing is not None else set()
+    out: dict[str, str] = {}
+    for r in rows:
+        op = str(r.get("op") or "").strip()
+        code = str(r.get("project") or "").strip()
+        alias = str(r.get("alias") or "").strip()
+        if not code or not alias:
+            continue
+        taken = {a.lower(): a for a in out}
+        if op == "add":
+            if alias.lower() in taken or alias.lower() in codes:
+                continue
+            out[alias] = code
+        elif op == "remove":
+            have = taken.get(alias.lower())
+            if have is not None and out.get(have) == code:
+                del out[have]
+    if existing is not None:
+        live = set(existing)
+        out = {a: c for a, c in out.items() if c in live}
+    return out
+
+
 def load(root: str | os.PathLike[str], existing: Iterable[str] | None = None,
          origins: Mapping[str, Any] | None = None) -> Membership:
     """Read and fold the ledger of a data root."""

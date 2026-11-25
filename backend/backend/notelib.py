@@ -42,7 +42,7 @@ import secrets
 from pathlib import Path
 from typing import Any
 
-from . import chatstore, limits
+from . import chatstore, limits, memberships
 from .actors import identity_of, is_agent
 from .csvio import append_row, as_int, read_rows, rewrite_rows
 from .date_utils import now_iso, today_yymm_dd
@@ -652,7 +652,7 @@ def add_image(store: ViewStore, note_id: str, body: Any) -> dict[str, Any]:
     if not is_agent(who):
         raise NoteRefused("agent_id is required: the chat that adds the picture")
     row = _need(store, note_id)
-    _same_project(store, row, who, body)
+    _member_of_row(store, row, who)
     if len(images_of(store, note_id)) >= IMAGES_MAX:
         raise NoteRefused(f"{note_id} holds {IMAGES_MAX} pictures already")
     raw, ext, caption, _name = _decode_image(body, 1)
@@ -663,17 +663,16 @@ def add_image(store: ViewStore, note_id: str, body: Any) -> dict[str, Any]:
                     "or the id on a line of a ```gallery block"}
 
 
-def _agent_project(store: ViewStore, agent: str) -> str:
-    for a in store.agents():
-        if str(a.get("agent_id") or "") == agent:
-            return str(a.get("project") or "")
-    return ""
+def _member_of_row(store: ViewStore, row: dict[str, Any], who: str) -> None:
+    """An agent writes on a note of its member projects only."""
+    ok, line = memberships.may_write_row(store, who, str(row.get("project") or ""), "note")
+    if not ok:
+        raise NoteRefused(line)
 
 
-def _same_project(store: ViewStore, row: dict[str, Any], who: str, body: dict) -> None:
-    mine = _agent_project(store, who) or str(body.get("project") or "")
-    if mine and row.get("project") and mine != row.get("project"):
-        raise NoteRefused(f"{row['id']} is a note of {row['project']}; this chat works in {mine}. Nothing was written")
+def _home(store: ViewStore, agent: str) -> str:
+    view = memberships.agent_view(store, agent)
+    return view.home if view is not None else ""
 
 
 def write(store: ViewStore, body: Any) -> dict[str, Any]:
@@ -684,7 +683,7 @@ def write(store: ViewStore, body: Any) -> dict[str, Any]:
     who = identity_of(body)
     if not is_agent(who):
         raise NoteRefused("agent_id is required: notes are written by an agent's chat through note_write")
-    project = str(body.get("project") or "").strip() or _agent_project(store, who)
+    project = str(body.get("project") or "").strip() or _home(store, who)
     if not project or not chatstore.is_code(project) or not (store.data_root / "projects" / project).is_dir():
         raise NoteRefused(f"project {project or '(none)'} is not one Slightly Parallel knows")
     note_id = _text(body, "id", 44)
@@ -701,7 +700,9 @@ def write(store: ViewStore, body: Any) -> dict[str, Any]:
             raise NoteRefused(f"{note_id} is not a note; leave id out to write a new one")
         if str(row.get("archived_at") or "").strip():
             raise NoteRefused(f"{note_id} is archived by the operator; write a new note instead")
-        _same_project(store, row, who, {"project": project})
+        _member_of_row(store, row, who)
+        # The next version stays in its note's project, whatever the body names.
+        project = str(row.get("project") or "") or project
         kind = kind or kind_of(row)
         task_id = task_id if "task_id" in body else str(row.get("task_id") or "")
         ep_id = ep_id if "entrypoint_id" in body else str(row.get("entrypoint_id") or "")

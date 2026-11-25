@@ -159,6 +159,27 @@ noted writes.
   chat's only folder, two originals, a copy holding writes the original
   lacks, a lock a hook holds in the copy. Answers: `agent_id`, `to`,
   `original`, `trash`, `removed`.
+- `GET /api/project-aliases` — the short names the operator's braces may
+  name a project by (`#task {SP} …`). Answers: `aliases`, each `{alias,
+  project}`. Read from `project_aliases.csv` (`id, at, project, alias, op,
+  actor`), append-only, folded by `membership_fold.aliases`.
+- `POST /api/projects/{code}/aliases` — the operator's only. Body: `op`
+  (`add` or `remove`), `alias` (1–40 letters, digits, `.`, `-`, `_`). An
+  alias is unique, any case, across every project code and every alias;
+  the check and the write are one step under the file's lock. Refused in one
+  line, writing nothing: no such project (404), a name taken (409), not an
+  alias of this project on remove (409), a bad name (422). Answers:
+  `aliases`, `row`. The settings page for them comes later (step 7).
+
+The braces after `#task` / `#now` (any number, any order, each at most 80
+characters: `#now-todo {ui} {writing-tracker} …`) are read by one rule in the
+hook and the server (`hookshared.resolve_braces`): `{project:x}` /
+`{lane:x}`; an exact project code or alias, any case (a project the chat is
+not a member of is refused); an exact live lane of the target board; a near
+miss of a code or alias (difflib ratio ≥ 0.8) refused with a hint; anything
+else a new lane. A name both a project and a lane, two projects or two lanes
+are refused in one line and no card is made. An agent's create on that
+command must send the project the braces named.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
   Answers: `agent_id`, `agent_group`.
 - `POST /api/agents/{agent_id}/rename` — body: `name`, stored as
@@ -217,7 +238,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/goals` · `/api/goals/{id}` · `/api/goals/{id}/update` | `status`, `parent_goal_id`, `sprint_id`, `root_only` | `confidence_pct`, `retro_outcome`, `sprint_id`, `status`, `success_comment`, `time_est` | `children`. **Retired**: the product no longer writes goals; the routes stay so pre-task data still reads, and sprints still join the rows they have |
 | `/api/ideas` · `/api/ideas/{id}` | `tag` | — | `body`. Legacy reader — the library retired in favour of tasks |
 | `/api/notes` · `/api/notes/{id}` | `tag` | — | `body`. Legacy reader |
-| `/api/problems` · `/api/problems/{id}` · `/api/problems/{id}/update` | `tag`, `severity`, `status`, `search` | `resolved_date`, `severity`, `status`, `tags` | see **Kept messages and skills** |
+| `/api/problems` · `/api/problems/{id}` · `/api/problems/{id}/update` | `tag`, `severity`, `status`, `search` | `archived_at` (operator), `resolved_date`, `severity`, `status`, `tags` | see **Kept messages and skills** |
 | `/api/prompt-runs` · `/api/prompt-runs/{id}` · `/api/prompt-runs/{id}/update` | — | `intervention`, `note`, `regression`, `score`, `task_success` | see **Prompts** |
 | `/api/prompts` · `/api/prompts/{id}` · `/api/prompts/{id}/update` | `tag` | `archived_at`, `marks`, `status`, `tags`, `title` | see **Prompts** — the list and detail routes are shadowed |
 | `/api/rules` · `/api/rules/{id}` · `/api/rules/{id}/update` | `tag`, `auto`, `kind`, `severity` (alias `importance`), `status` | `auto`, `kind`, `severity`, `status`, `tags` | see **Kept messages and skills** |
@@ -228,7 +249,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/standups` · `/api/standups/{id}` · `/api/standups/{id}/update` | — | `blockers_n`, `goals_closed_n`, `goals_open_n`, `hours_today` | see **Standups and scans** |
 | `/api/tasks` · `/api/tasks/{id}` · `/api/tasks/{id}/update` | `status`, `assignee`, `priority`, `lane` | see **Tasks** | see **Tasks** |
 | `/api/time-entries` · `/api/time-entries/{id}` · `/api/time-entries/{id}/update` | `goal_id`, `sprint_id`, `running` | `duration_min`, `ended_at`, `goal_id`, `note`, `share_pct`, `sprint_id`, `started_at` | see **Operator-only admin** |
-| `/api/visions` · `/api/visions/{id}` · `/api/visions/{id}/update` | `tag`, `category`, `impact`, `search` | `category`, `effort`, `impact`, `tags` | see **Kept messages and skills** |
+| `/api/visions` · `/api/visions/{id}` · `/api/visions/{id}/update` | `tag`, `category`, `impact`, `search` | `archived_at` (operator), `category`, `effort`, `impact`, `tags` | see **Kept messages and skills** |
 | `/api/entrypoints` · `/api/entrypoints/{id}` · `/api/entrypoints/{id}/update` | `tag`, `status`, `search` | `topic`, `status` (`open`, `closed`), `tags`; an agent changes `topic` and `tags` only | see **Entry points** |
 
 Writes an agent may not make (422 with the reason): `sprints` (the operator
@@ -301,6 +322,12 @@ The board, its blocks, and everything hung off a task.
   agent (MCP `task_commits`) or the operator links commits that carry no
   `Task:` line to this task. Answers `linked` (the new ones) and the task's
   `work`. A commit's own `Task: tk_…` line does the same without a call.
+  A hash is accepted from any repository of the task (`taskwork.task_repos`):
+  its project's, those of the codes in its `projects` and of the projects it
+  moved from, and those of the chats that named it; `repositories` maps each
+  linked commit outside the project's own repository to where it is. The
+  task's `work` (GET `/api/tasks/{task_id}/work`) reads the same set, merged
+  newest first.
 - `GET /api/commits/signed?project=&days=7` — per project with a repository:
   commits in the last `days` days, how many carry a `Task:` line (`signed`),
   how many were linked later (`linked`), and the same by the `Agent:` line.
@@ -556,16 +583,19 @@ One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
   `CODEX_HOME` (default `~/.codex`). It sends a marker asking the chat to
   read its inbox with `turn/start` or, during a turn, `turn/steer`. The
   ledger reserves the wake before sending. An uncertain send is checked in
-  thread history before another path may hand over the text. Claude Code
-  still receives the marked text in its verified, empty terminal input.
-  Waiting messages can be read in the inbox, handed over on the next
-  operator prompt, or announced once at Stop for either client. Answers `{message, delivered_via,
+  thread history before another path may deliver the notice. The notice is
+  also typed into a verified empty terminal input, announced on the next
+  operator prompt or announced once at Stop when supported. The inbox
+  supplies the body. Answers `{message, delivered_via,
   typed, waiting}`.
 - `POST /api/messages/inbox` — `{agent_id}` (the MCP tool `messages`): the
   chat's `unread` messages, marked read now, then its `recent` read ones
   (`?recent=`, default 10).
 - `GET /api/messages?agent_id=&project=&limit=` — the ledger, newest first
   (one chat's sent and received, one project's, or all). No write.
+- `GET /api/messages/{message_id}` — `{message, thread}`. The thread is the
+  connected replies between the same two participants, in ledger order.
+  Returns 404 for an unknown message. Does not mark messages read.
 
 The capture hook reads a prompt that opens with the marker as the sender's
 message only when the ledger holds that id, for this chat, from that
@@ -676,10 +706,13 @@ whose file changed after the version was written.
   Refused without the required headings or with no claim at all. Answers:
   `project` plus `warnings`: paths not found, how many items lack `seen:`,
   words over the budget. The same text twice is one version.
-- `GET /api/architecture/page/material?project=` — what the next version is
+- `GET /api/architecture/page/material?project=&agent_id=&cwd=` — what the next version is
   written from (MCP `architecture_material`). Answers: `project`, `facts`,
   `current_page`, `check_again` (claims not found or changed since), `next`,
   `instructions` — the contract part `architecture-page`.
+  With `agent_id`, a project that is not one of that chat's projects is
+  refused (403, the membership line); with `cwd`, `folder_warning` says when the
+  project's registered folder is not where the chat works (a warning only).
 - `GET /api/architecture/state?project=` — the screening: scans newest
   first, each with its answer.
 
@@ -709,10 +742,13 @@ vocabulary, every relation naming a real row.
   `note`, `template`, `map{rows, relations, notes}`, `changes{added,
   removed}` since the version before, `problems`, `by_kind`), `versions`,
   `kinds`, `verbs`, `templates`, `facts`, `project`.
-- `GET /api/map/material?project=` — what the next version is written from
+- `GET /api/map/material?project=&agent_id=&cwd=` — what the next version is written from
   (MCP `map_material`). Answers: `facts`, `current_map` with its problems,
   the vocabulary, `model` (Settings › Agents), `next`, `instructions` — the
   contract part `map`.
+  With `agent_id`, a project that is not one of that chat's projects is
+  refused (403, the membership line); with `cwd`, `folder_warning` says when the
+  project's registered folder is not where the chat works (a warning only).
 - `POST /api/map` — the whole next version (MCP `map_write`). Body:
   `project`, `agent_id`, `map`, `note?`. Refused for a kind or verb outside
   the vocabulary, an unknown template, over 50 rows or 30 relations. Answers
@@ -918,7 +954,7 @@ more, a normal one its alternatives, a major one also what would undo it.
 - `GET /api/scans/page?limit=` — the scans page in one answer: every scan with
   its text, its file entry (`file`: metadata and the annotated `paths`) and
   the id of its architecture form, plus `architecture` rows and `agents`.
-- `GET /api/scans/material?project=&agent_id=` — MCP `scan_material`: what a
+- `GET /api/scans/material?project=&agent_id=&cwd=` — MCP `scan_material`: what a
   scan is written from (`scanlib.py`). The window is the asking agent's
   own: the commits this chat made since this agent's last scan of the
   project (by the capture hook's stamps) and what is not committed. Another
@@ -1743,7 +1779,22 @@ refusal text read the list from there.
 `GET /api/whoami?cwd=…` resolves the chat identity the capture hook
 breadcrumbs per working directory, so local tools stamp `agent_id` and
 `project` instead of asking the model to copy them. Answers: `agent_id`,
-`project`, `session_id`, `age_min`.
+`project`, `session_id`, `age_min`, and the chat's projects: `home` (where a
+write that names no project goes), `members`, `level` (task rights, 1–3).
+
+Agents write in their member projects only (tk_d1d25a4d step 3). Every agent
+write, through the MCP or over HTTP with `agents.mcp_only` off, is checked at
+the gate: a body's `project` and every code in `projects` must be one of the
+agent's projects, and a write on a task by its id (`/api/tasks/{id}/…`) must
+be on a task of one; otherwise 403 with one line — «agent cc-… is not a
+member of X; its projects: A, B. The operator adds it on the agent card» (or
+«…; this task is X's. …»). An agent Slightly Parallel has no chat of is
+refused. A `project` that is not text, or `projects` that is not text or a
+list of texts, is 422. Writes on other rows by id (`update_entry`, notes,
+publishing cards, topics) check the row's project the same way. The MCP
+create tools (`write_entry`, `note_write`, `core_new`, `map_write`,
+`architecture_page`) take an optional `project` (else the home) and answer
+with `where`: «dc_… → X», «tk_… → X · lane ui»; standups stay in the home.
 
 Both exist for the MCP translator (`python -m backend.mcp`): a stateless
 stdio process that builds its tools from `/api/schema` and forwards every

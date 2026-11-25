@@ -34,6 +34,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -47,7 +48,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from .server_address import DEFAULT_PORT
-from . import __version__, app_settings, backup as backup_engine, logbook
+from . import __version__, app_settings, backup as backup_engine, logbook, memberships
+from .entitylib import project_codes
 from .csvio import DamagedFile
 from .config import Settings, lan_refusal
 from .db import FIXTURES, ViewStore
@@ -538,6 +540,50 @@ class OperatorCookie:
         await self.app(scope, receive, with_cookie)
 
 
+#: A write on one task, by its id: every verb (update, report, evidence,
+#: story, commits, topic, move …) is checked against the task's project.
+_TASK_WRITE = re.compile(r"/api/tasks/([^/]+)/[^/]+")
+PROJECT_SHAPE = "project is one project code, as text"
+PROJECTS_SHAPE = "projects is project codes: comma-separated text or a list of texts"
+
+
+def membership_refusal(store: ViewStore, path: str, data: Any, actor: str) -> tuple[int, str] | None:
+    """Why an agent's write may not go where it names (tk_d1d25a4d step 3,
+    note nt_258a7ed7 §2): ``(status, line)``, or None.
+
+    A create's ``project`` and every code in its ``projects`` must be the
+    agent's member projects (memberships.may_write); a write on a task by
+    its id must be on a task of a member project (the operator's answer 1,
+    dc_f59e2918). Writes on other rows by id are checked in their libraries
+    (memberships.may_write_row)."""
+    if not isinstance(data, dict):
+        return None
+    codes: list[str] = []
+    project = data.get("project")
+    if project not in (None, ""):
+        if not isinstance(project, str):
+            return 422, PROJECT_SHAPE
+        codes.append(project.strip())
+    raw = data.get("projects")
+    if raw not in (None, ""):
+        if not (isinstance(raw, str) or (isinstance(raw, list) and all(isinstance(x, str) for x in raw))):
+            return 422, PROJECTS_SHAPE
+        codes += [c for c in project_codes(raw) if c not in codes]
+    for code in codes:
+        ok, line = memberships.may_write(store, actor, code)
+        if not ok:
+            return 403, line
+    hit = _TASK_WRITE.fullmatch(path)
+    if hit:
+        task_id = urllib.parse.unquote(hit.group(1))
+        row = store.query_one("SELECT project FROM tasks_mutual WHERE id = ?", (task_id,))
+        if row is not None:
+            ok, line = memberships.may_write_row(store, actor, str(row.get("project") or ""), "task")
+            if not ok:
+                return 403, line
+    return None
+
+
 class AgentsViaMcp:
     """Refuse an agent's write that did not come through the MCP translator.
 
@@ -608,9 +654,7 @@ class AgentsViaMcp:
             if not deps.is_agent(actor):
                 await JSONResponse({"detail": MCP_NEEDS_AGENT}, status_code=403)(scope, replay, send)
                 return
-            await self.app(scope, replay, send)
-            return
-        if actor and deps.is_agent(actor) and self._enforced():
+        elif actor and deps.is_agent(actor) and self._enforced():
             # The same status every other refusal of an agent carries
             # (routers/deps.refuse_agent) — this one cannot raise, it is
             # ASGI below FastAPI, so it spells the answer by hand.
@@ -619,12 +663,19 @@ class AgentsViaMcp:
             )
             await resp(scope, replay, send)
             return
-        if not deps.is_agent(actor) and not operator:
+        elif not deps.is_agent(actor) and not operator:
             # A write that names no agent is the operator's, and the
             # operator's pages carry the cookie (OperatorCookie). Anything
             # else on this computer posting as the operator is refused.
             await JSONResponse({"detail": OPERATOR_REFUSAL}, status_code=403)(scope, replay, send)
             return
+        if deps.is_agent(actor):
+            # Every agent writer, through the MCP or (agents.mcp_only off)
+            # over plain HTTP: the projects it names must be its own.
+            refused = membership_refusal(self.app_ref.state.store, path, data, actor)
+            if refused is not None:
+                await JSONResponse({"detail": refused[1]}, status_code=refused[0])(scope, replay, send)
+                return
         await self.app(scope, replay, send)
 
     def _enforced(self) -> bool:

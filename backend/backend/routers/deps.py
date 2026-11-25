@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-from fastapi import Request, Response
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
@@ -117,6 +117,22 @@ def windows_reserved(code: str) -> bool:
     """A name Windows refuses or changes as a folder: a device name (``con``,
     ``COM1``, ``nul.txt``) or one that ends in a dot or a space."""
     return code.split(".", 1)[0].strip().lower() in WINDOWS_DEVICE_NAMES or code.endswith((".", " "))
+
+
+def material_for(store: ViewStore, code: str, agent_id: str, cwd: str) -> dict[str, str]:
+    """What a scan's, a map's or an architecture page's material adds for
+    the agent that asks (tk_d1d25a4d step 3): refused (403) when ``code`` is
+    not one of its projects; ``folder_warning`` when the project's folder is
+    not where it works. Nothing when no agent or no folder is named."""
+    from .. import memberships
+    from ..file_entries import folder_warning
+    agent = str(agent_id or "").strip()
+    if agent and is_agent(agent):
+        ok, line = memberships.may_write(store, agent, code)
+        if not ok:
+            raise HTTPException(status_code=403, detail=line)
+    warning = folder_warning(store, code, str(cwd or "").strip())
+    return {"folder_warning": warning} if warning else {}
 
 
 def known_project(store: ViewStore, project: Any) -> str:

@@ -202,7 +202,7 @@ ENTITIES: dict[str, Entity] = {
                 "tags", "archived_at",
             ),
             ints=("source_turn", "versions_n"),
-            mutable=("category", "impact", "effort", "tags"),
+            mutable=("category", "impact", "effort", "tags", "archived_at"),
         ),
         _e(
             # A publish card: a message the operator tagged #publish — what
@@ -248,7 +248,7 @@ ENTITIES: dict[str, Entity] = {
                 "tags", "archived_at",
             ),
             ints=("source_turn", "versions_n"),
-            mutable=("status", "severity", "resolved_date", "tags"),
+            mutable=("status", "severity", "resolved_date", "tags", "archived_at"),
         ),
         _e(
             "rule", "rules.csv", "rule_details", "rl_",

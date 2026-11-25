@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from .hookshared import (
-    MESSAGE_MARK_RE, NOT_OPERATOR, command_text, message_mark_kinds, plain_text, yymm_dd as _yymm_dd,
+    MESSAGE_MARK_RE, NOT_OPERATOR, command_text, message_mark_kinds, pick_task_hit, plain_text, yymm_dd as _yymm_dd,
 )
 from .task_refs import TASK_REF_RE, task_ids
 
@@ -187,17 +187,20 @@ NOW_COLUMNS = {"": "doing", "doing": "doing", "todo": "todo", "to-do": "todo", "
                "backlog": "backlog", "review": "review", "parked": "parked", "done": "done"}
 
 
+def task_hit(text: str) -> "re.Match[str] | None":
+    """The #task / #now tag a message's card is for: the #now when there is
+    one (the task this chat starts on; the hook names both, and the agent
+    writes the #task one as well), else the last tag."""
+    return pick_task_hit(list(TASK_CMD_RE.finditer(text or "")))
+
+
 def task_command(text: str) -> tuple[str, str, str]:
     """(command, lane, column) of the last #task or #now in an operator's
     message: ("task", "ui", "agent"), ("now", "", "doing"), ("now", "", "todo")
     for #now-todo … or ("", "", "") with neither."""
-    hits = list(TASK_CMD_RE.finditer(text or ""))
-    if not hits:
+    m = task_hit(text)
+    if m is None:
         return "", "", ""
-    # Both in one message ("#now fix it, and #task the docs later"): the
-    # #now is the task this chat starts on, so it is the one the card is
-    # for; the hook names both, and the agent writes the #task one as well.
-    m = next((h for h in hits if h.group(1).lower().split("-")[0] == "now"), hits[-1])
     command, _, suffix = m.group(1).lower().partition("-")
     column = NOW_COLUMNS[suffix] if command == "now" else "agent"
     return command, " ".join((m.group(2) or "").split()), column

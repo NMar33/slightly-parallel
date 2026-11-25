@@ -511,14 +511,22 @@ def task_commits(task_id: str, body: dict = Body(...), store: ViewStore = Depend
     # The hashes name commits of the project's repository (the last 120 days,
     # gitwork.HORIZON_DAYS); an agent links only its own commits ("Only
     # commits you made"), and none already signed for another task.
-    known = {c.sha: c for c in taskwork._repo_log(store, task_id)}
+    # Every repository of the task (taskwork.task_repos): its project's, those
+    # of its other projects and of the projects it moved from, and those of
+    # the chats that named it.
+    log = taskwork.task_repo_log(store, task_id)
+    known = {c.sha: c for c, _repo in log}
+    where = {c.sha: repo for c, repo in log}
+    repos = taskwork.task_repos(store, task_id)
+    own = repos[0] if repos else None
+    elsewhere: dict[str, str] = {}
     if known:
         found: dict[str, str] = {}
         for sha in shas:
             full = next((k for k in known if k.startswith(sha)), None)
             if full is None:
                 raise HTTPException(status_code=422, detail=(
-                    f"{sha[:7]} is not a commit of the project's repository (the last {gitwork.HORIZON_DAYS} days)"))
+                    f"{sha[:7]} is not a commit of the task's repositories (the last {gitwork.HORIZON_DAYS} days)"))
             c = known[full]
             if who != "operator" and c.agent and c.agent != who:
                 raise HTTPException(status_code=422, detail=f"{sha[:7]} was made by {c.agent}, not by this chat")
@@ -526,6 +534,8 @@ def task_commits(task_id: str, body: dict = Body(...), store: ViewStore = Depend
                 raise HTTPException(status_code=422, detail=(
                     f"{sha[:7]} is signed for {', '.join(c.tasks)}: a commit counts for one task"))
             found[sha] = full
+            if own is None or where[full] != own:
+                elsewhere[full[:7]] = str(where[full])
         shas = [found[s] for s in shas]
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
     added = []
@@ -535,7 +545,12 @@ def task_commits(task_id: str, body: dict = Body(...), store: ViewStore = Depend
         if append_if_absent(store.data_root / taskwork.LINKS_FILE, COMMIT_LINK_COLUMNS, row) is None:
             added.append(sha[:7])
     store.rebuild()
-    return {"task_id": task_id, "linked": added, "work": taskwork.task_work(store, task_id)}
+    out: dict[str, Any] = {"task_id": task_id, "linked": added, "work": taskwork.task_work(store, task_id)}
+    if elsewhere:
+        # A commit outside the task's project's own repository: the answer
+        # names where it is (note nt_258a7ed7 §3).
+        out["repositories"] = elsewhere
+    return out
 
 
 @router.get("/api/commits/signed")

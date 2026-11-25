@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import uuid
 from contextlib import contextmanager
@@ -252,6 +253,159 @@ def with_projects(store: Any, rows: list[dict[str, Any]], key: str = "agent_id")
 def skip_counts(store: Any) -> dict[str, int]:
     """The rows the fold skipped, by reason (doctor shows them)."""
     return dict(current(store).skips)
+
+
+# ---------------------------------------------------------------------------
+# Project aliases (note nt_258a7ed7 §3): read per request, written checked
+# ---------------------------------------------------------------------------
+
+ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
+_alias_cache: dict[str, tuple[tuple, dict[str, str]]] = {}
+
+
+def aliases_file(root: str | Path) -> Path:
+    return Path(mf.aliases_path(root))
+
+
+def alias_map(store: Any) -> dict[str, str]:
+    """alias → project for this request, cached on the file and the store.
+    An unreadable file reads as no aliases, logged: the braces then name
+    projects by their codes only."""
+    path = aliases_file(store.data_root)
+    key = (_sig(path), store.view_mtime)
+    hit = _alias_cache.get(str(store.data_root))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        rows, _cut = mf.read(path)
+        got = mf.aliases(rows, {pf.code for pf in store.projects})
+    except (OSError, UnicodeDecodeError) as exc:
+        log.warning("project aliases unreadable (%s): braces name projects by code only", exc)
+        got = {}
+    _alias_cache[str(store.data_root)] = (key, got)
+    return got
+
+
+def write_alias(root: str | Path, op: str, project: str, alias: str, actor: str = "operator") -> dict[str, str]:
+    """Add or remove one alias; checked against the file and the projects on
+    disk under the file's lock (``append_checked``): an alias is unique, any
+    case, across every code and every alias. Raises ``Refused``; nothing is
+    written then."""
+    root = Path(root)
+    if op not in mf.ALIAS_OPS:
+        raise Refused(422, f"op is one of: {', '.join(mf.ALIAS_OPS)}")
+    if not ALIAS_RE.match(alias):
+        raise Refused(422, "an alias is 1–40 letters, digits, dots, dashes or underscores, starting with a letter or digit")
+    row = {"id": "pa_" + uuid.uuid4().hex[:12],
+           "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+           "project": project, "alias": alias, "op": op, "actor": actor}
+    why: list[Refused] = []
+
+    def check(rows: list[dict[str, str]]) -> str | None:
+        existing = existing_codes(root)
+        if project not in existing:
+            why.append(Refused(404, f"no project «{project}»"))
+            return why[-1].detail
+        now = mf.aliases(rows, existing)
+        taken = {a.lower(): (a, c) for a, c in now.items()}
+        if op == "add":
+            if alias.lower() in {c.lower() for c in existing}:
+                why.append(Refused(409, f"«{alias}» is a project's code"))
+            elif alias.lower() in taken:
+                a, c = taken[alias.lower()]
+                why.append(Refused(409, f"«{a}» is an alias of {c} already"))
+        elif taken.get(alias.lower(), ("", ""))[1] != project:
+            why.append(Refused(409, f"«{alias}» is not an alias of {project}"))
+        return why[-1].detail if why else None
+
+    refusal = append_checked(aliases_file(root), mf.ALIAS_COLUMNS, row, check)
+    if refusal:
+        raise why[0] if why else Refused(409, refusal)
+    _alias_cache.pop(str(root), None)
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Who may write where (tk_d1d25a4d step 3, note nt_258a7ed7 §2)
+# ---------------------------------------------------------------------------
+
+NOT_MEMBER = ("agent {agent} is not a member of {project}; its projects: {projects}. "
+              "The operator adds it on the agent card")
+NOT_MEMBER_ROW = ("agent {agent} is not a member of {project}; this {what} is {project}'s. "
+                  "The operator adds it on the agent card")
+UNINDEXED = ("agent {agent} is not a chat Slightly Parallel has recorded; nothing was written. "
+             "Tell the operator")
+
+
+class AgentView:
+    """One agent's projects now: ``members`` (home first when it is the
+    origin), ``home`` and the task ``level``."""
+
+    __slots__ = ("agent", "members", "home", "level")
+
+    def __init__(self, agent: str, members: list[str], home: str, level: int) -> None:
+        self.agent = agent
+        self.members = members
+        self.home = home
+        self.level = level
+
+
+def unrecorded(agent: str) -> AgentView | None:
+    """What an agent with no chat is: nothing (refused). The test suite
+    writes as agents it never recorded everywhere and replaces this
+    (tests/conftest.py); the membership tests keep it (strict_membership)."""
+    return None
+
+
+def agent_view(store: Any, agent: str) -> AgentView | None:
+    """The agent's member projects, home and level, or None when Slightly
+    Parallel has no chat of it: not in the store's index and no chat folder
+    on disk (a chat folder the watcher has not indexed yet counts). Never
+    taken from a request's body."""
+    agent = str(agent or "")
+    if not agent:
+        return None
+    m = current(store)
+    if m.origins(agent):
+        return AgentView(agent, m.members(agent), m.home(agent), m.level(agent))
+    origins = tuple(dict.fromkeys(o for o, _f, _m in chats_on_disk(store.data_root, agent)))
+    if not origins:
+        return unrecorded(agent)
+    try:
+        rows, cut = mf.read(ledger(store.data_root))
+    except (OSError, UnicodeDecodeError) as exc:
+        log.warning("membership ledger unreadable (%s): %s writes in its origin only", exc, agent)
+        rows, cut = [], 0
+    one = mf.fold([r for r in rows if r.get("agent_id") == agent], existing_codes(store.data_root),
+                  {agent: origins}, cut)
+    return AgentView(agent, one.members(agent), one.home(agent), one.level(agent))
+
+
+def may_write(store: Any, agent: str, project: str) -> tuple[bool, str]:
+    """May ``agent`` write a new entry in ``project``? ``(True, "")`` for a
+    member project; ``(False, line)`` otherwise, the line the refusal shows.
+    An agent Slightly Parallel has not recorded is refused."""
+    view = agent_view(store, agent)
+    if view is None:
+        return False, UNINDEXED.format(agent=agent)
+    if project in view.members:
+        return True, ""
+    return False, NOT_MEMBER.format(agent=agent, project=project or "(none)",
+                                    projects=", ".join(view.members) or "none")
+
+
+def may_write_row(store: Any, agent: str, project: str, what: str) -> tuple[bool, str]:
+    """``may_write`` for a write on an existing row (a task, a note, a card,
+    a topic) of ``project``: the refusal names whose row it is. A row with
+    no project passes (nothing to compare)."""
+    if not project:
+        return True, ""
+    view = agent_view(store, agent)
+    if view is None:
+        return False, UNINDEXED.format(agent=agent)
+    if project in view.members:
+        return True, ""
+    return False, NOT_MEMBER_ROW.format(agent=agent, project=project, what=what)
 
 
 # ---------------------------------------------------------------------------

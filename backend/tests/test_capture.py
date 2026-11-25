@@ -552,8 +552,8 @@ def test_evidence_notice_names_the_task(tmp_path):
 
 
 def test_task_and_now_notices_carry_the_lane_the_board_has(root: Path) -> None:
-    """#task {lane} / #now {lane}: the notice names the lane as the board spells
-    it, or says it is not there and lists the board's lanes."""
+    """#task {lane} / #now {lane}: the notice names where the card goes, the
+    lane as the board spells it, or a new lane as typed (note nt_258a7ed7 §3)."""
     import csv
     with open(root / "tasks.csv", "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
@@ -565,15 +565,15 @@ def test_task_and_now_notices_carry_the_lane_the_board_has(root: Path) -> None:
     cap = capture.TurnCapture(root, "alpha", "cc-lane0001")
     now = capture.format_signals(cap.open_turn("#now {bugs} fix the login timeout"))
     line = next(x for x in now.splitlines() if x.startswith("[slightly-parallel] #now"))
-    assert "write-a-task" in line and "status doing" in line and "The lane: Bugs" in line
+    assert "write-a-task" in line and "status doing" in line and "→ alpha · lane Bugs" in line
     cap.complete_turn("ok")
     task = capture.format_signals(cap.open_turn("#task {ux} the form accepts an empty trigger_id"))
     line = next(x for x in task.splitlines() if x.startswith("[slightly-parallel] #task"))
-    assert "'ux' is not on the board" in line and "Bugs, Kanban Board" in line and "Gone" not in line and "Other" not in line
-    assert "ask the operator" in line
-    cap.complete_turn("which lane?")
+    assert "→ alpha · lane ux" in line and "Gone" not in line and "Other" not in line
+    cap.complete_turn("ok")
     plain = capture.format_signals(cap.open_turn("#now fix it"))
-    assert "lane" not in next(x for x in plain.splitlines() if x.startswith("[slightly-parallel] #now")).lower().split("start with")[1]
+    line = next(x for x in plain.splitlines() if x.startswith("[slightly-parallel] #now"))
+    assert "→ alpha (" in line and "· lane" not in line
 
 
 def test_every_answered_turn_stamps_its_start_and_end(root: Path) -> None:

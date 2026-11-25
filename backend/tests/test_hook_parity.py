@@ -197,6 +197,21 @@ def test_the_copied_patterns_are_equal() -> None:
     assert capture._EVIDENCE_RE.flags == sessions.DONE_TAG_RE.flags
 
 
+def test_the_braces_and_the_membership_fold_are_one_copy() -> None:
+    """#task / #now braces (tk_d1d25a4d step 3): the hook reads them with the
+    server's functions, loaded from the same files, and the same pattern
+    picks the tag (tests/test_membership_braces.py runs one table through both)."""
+    from backend import hookshared, membership_fold
+    capture = _hook()
+    for name in ("task_braces", "resolve_braces", "pick_task_hit"):
+        assert getattr(capture.shared, name).__code__.co_code == getattr(hookshared, name).__code__.co_code, name
+    fold = capture._membership_fold()
+    assert Path(fold.__file__).resolve() == Path(membership_fold.__file__).resolve()
+    for name in ("fold", "aliases", "read"):
+        assert getattr(fold, name).__code__.co_code == getattr(membership_fold, name).__code__.co_code, name
+    assert sessions.task_hit("#task {a} x #now {b} y").group(1) == "now"
+
+
 def test_the_shared_module_needs_nothing_but_python() -> None:
     """The hooks load them by path with the operator's own Python: no package
     around them, no third-party import (hookshared; chatstore, where every

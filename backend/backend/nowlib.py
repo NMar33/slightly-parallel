@@ -242,12 +242,19 @@ def _write_card(store: ViewStore, tag: dict) -> str:
     from .tasklib import DESCRIPTION_MAX, _lane_for, create_task
     from .taskevents import append_events
 
+    from .tasklib import task_braces
+
     project, agent = str(tag["project"] or ""), str(tag["agent_id"] or "")
     column = str(tag["column_"] or "doing")
-    try:
-        lane = _lane_for(store, project, "now", str(tag["lane"] or ""))
-    except HTTPException:
-        return ""                        # the agent asks the operator which lane
+    # The braces, once, at adoption (note nt_258a7ed7 §3): a project named
+    # there is where the card goes; a refusal (a near miss, two projects, a
+    # project the chat is not in) makes no card, and the hook's notice of
+    # that turn already said why.
+    braces = task_braces(store, agent, str(tag["body"] or ""))
+    if braces["refusal"]:
+        return ""
+    project = braces["project"] or project
+    lane = _lane_for(store, project, "now", braces["lane"])
     at = as_local(str(tag["at_ts"])) or datetime.now()
     message = str(tag["body"] or "")
     body = {

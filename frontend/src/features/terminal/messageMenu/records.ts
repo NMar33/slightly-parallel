@@ -33,6 +33,24 @@ import type { Topic } from '../../entrypoints/desk/data'
 
 const once = { staleTime: 15_000, retry: false } as const
 
+export interface MessageRecord {
+  id: string
+  from_agent: string
+  to_agent: string
+  text: string
+  sent_at: string
+  delivered_via: string
+  read_at: string
+}
+
+export function useMessageCard(id: string) {
+  return useQuery({
+    queryKey: ['msgmenu', 'message', id],
+    queryFn: ({ signal }) => getJson<{ message: MessageRecord; thread: MessageRecord[] }>(`/api/messages/${encodeURIComponent(id)}`, signal),
+    ...once,
+  })
+}
+
 /* ------------------------------------------------------------ links to the pages */
 
 const hash = (parts: Record<string, string>) =>
@@ -40,6 +58,11 @@ const hash = (parts: Record<string, string>) =>
 
 /** Where each record is on its own page (lib/searchHits' routes, with the page's hash keys). */
 export const pageOf = {
+  task: (id: string) => `/kanban?task=${encodeURIComponent(id)}`,
+  note: (id: string) => `/notes?note=${encodeURIComponent(id)}`,
+  rule: (id: string) => `/rules#${encodeURIComponent(id)}`,
+  vision: (id: string) => `/visions#${encodeURIComponent(id)}`,
+  problem: (id: string) => `/problems#${encodeURIComponent(id)}`,
   decision: (project: string, day: string) => `/decisions#${hash({ project, month: monthOfDay(day), day })}`,
   publish: (project: string) => `/publish#${hash({ project })}`,
   core: (project: string, id: string) => `/architecture#${hash({ project, core: id })}`,
@@ -395,8 +418,7 @@ export class CommitCheck {
 export async function pageAddress(kind: string, id: string, ask: <T>(url: string) => Promise<T> = getJson): Promise<string> {
   const q = encodeURIComponent(id)
   switch (kind) {
-    case 'task': return `/kanban?task=${q}`
-    case 'note': return `/notes?note=${q}`
+    case 'task': case 'note': case 'rule': case 'vision': case 'problem': return pageOf[kind](id)
     case 'decision': { const d = decisionView(await ask<DecisionWire>(`/api/decisions/${q}`)); return pageOf.decision(d.project, d.day) }
     case 'publish': return pageOf.publish((await ask<PublishCardWire>(`/api/publishing/cards/${q}`)).project)
     case 'core': return pageOf.core((await ask<CoreDetail>(`/api/cores/${q}`)).project, id)
