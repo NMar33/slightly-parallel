@@ -134,7 +134,7 @@ test.describe('message menu', () => {
     await expect(fullText).toBeVisible()
     await verifyPreview()
   })
-  for (const size of ['usual', 'narrow'] as const) test(`a right click on a reply in a ${size} window: Pin, task and note ids; Copy only on a line that is no message`, async ({ win, shell, server }) => {
+  for (const size of ['usual', 'narrow'] as const) test(`a right click on a reply in a ${size} window: Pin, task and note ids; Copy only on a line that is no message`, async ({ win, shell, server, paneEvidence: _paneEvidence }) => {
     const { app, page } = win
     await ready(page)
     if (size === 'narrow') {

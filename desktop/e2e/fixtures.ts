@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron, expect, request as http, test as base, type APIRequestContext, type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import { recordPaneEvidence } from './pane-evidence'
 
 /**
  * What every spec of the window's suite stands on:
@@ -126,7 +127,7 @@ export async function expectClickTarget(target: Locator, point: { x: number; y: 
   expect(actual, `pointer at (${point.x}, ${point.y}) hits ${target}`).toBeNull()
 }
 
-export const test = base.extend<{ shell: Shell; win: Win; bare: Win }, { server: Server }>({
+export const test = base.extend<{ shell: Shell; win: Win; bare: Win; paneEvidence: void }, { server: Server }>({
   server: [async ({}, use) => {
     const token = fs.readFileSync(path.join(ROOT, 'data', 'operator.token'), 'utf-8').trim()
     const api = await http.newContext({
@@ -166,6 +167,14 @@ export const test = base.extend<{ shell: Shell; win: Win; bare: Win }, { server:
 
   win: async ({ shell: _shell }, use) => { await withWindow(use) },
   bare: async ({ server: _server }, use) => { await withWindow(use) },
+  paneEvidence: async ({ win, server, shell }, use, testInfo) => {
+    const attach = await recordPaneEvidence(win.page, server.api, shell, testInfo)
+    try {
+      await use()
+    } finally {
+      await attach()
+    }
+  },
 })
 export { expect }
 

@@ -1,6 +1,6 @@
 import { test, expect, echoCalc, expectLine, fullSize, openShell, ready, sessions } from './fixtures'
 
-test('opening a tab on the right keeps the left shell and puts keyboard input in the right shell', async ({ win, shell, server }) => {
+test('opening a tab on the right keeps the left shell and puts keyboard input in the right shell', async ({ win, shell, server, paneEvidence: _paneEvidence }) => {
   const { app, page } = win
   const other = await openShell(server.api, 'right-hand-shell')
   await page.reload()

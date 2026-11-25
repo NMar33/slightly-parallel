@@ -26,10 +26,11 @@ jobs:
     timeout-minutes: 30
     env:
       SP_E2E_NO_BUILD: "1"
+      SP_E2E_PANE_EVIDENCE: ${{ github.ref_name == 'ci-macos-terminal-probe' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.ref_name == 'ci-macos-terminal-probe' && '["macos-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -109,8 +110,15 @@ jobs:
           # disabled_software); macOS's has GPU compositing.
           SP_E2E_NO_GPU: ${{ runner.os == 'Windows' && '1' || '' }}
         run: npm run e2e
+      - name: Repeat the two right-pane transitions on macOS
+        if: ${{ !cancelled() && github.ref_name == 'ci-macos-terminal-probe' && runner.os == 'macOS' }}
+        working-directory: desktop
+        run: |
+          sw_vers
+          tmux -V
+          npm run e2e -- e2e/msgmenu.spec.ts e2e/tab-split.spec.ts --grep 'narrow window|opening a tab on the right' --repeat-each 12 --retries=0 --trace=on --output=e2e/test-results/probe
       - name: Traces and screenshots (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
-        if: failure()
+        if: failure() || github.ref_name == 'ci-macos-terminal-probe'
         uses: actions/upload-artifact@v7
         with:
           name: terminal-window-${{ matrix.os }}
