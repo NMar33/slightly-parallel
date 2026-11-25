@@ -370,8 +370,10 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
 
 
-@pytest.mark.parametrize(("windows", "cli"), [(True, "codex"), (False, "codex"), (True, "opencode")])
-def test_core_edit_points_windows_codex_at_one_exact_read(monkeypatch, tmp_path, windows, cli):
+@pytest.mark.parametrize(("windows", "cli", "offline"), [
+    (True, "codex", False), (True, "codex", True), (False, "codex", False), (True, "opencode", False),
+])
+def test_core_edit_bounds_the_live_windows_codex_turn(monkeypatch, tmp_path, windows, cli, offline):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import interactive
     import scenario
@@ -380,15 +382,21 @@ def test_core_edit_points_windows_codex_at_one_exact_read(monkeypatch, tmp_path,
     monkeypatch.setattr(interactive, "WINDOWS", windows)
     space = Space(tmp_path, 1)
     state = scenario.State("calc", space.sample, scenario.tools()[cli])
-    prompt = interactive._operator_core_prompt(space, state, scenario.EDIT)
+    prompt = interactive._operator_core_prompt(space, state, scenario.EDIT, offline=offline)
+    live_windows_codex = windows and cli == "codex" and not offline
     path = (space.sample / "calc.py").resolve().as_posix().replace("'", "''")
     read = f"Get-Content -LiteralPath '{path}'"
-    assert (read in prompt) is (windows and cli == "codex")
+    assert (read in prompt) is live_windows_codex
     edit = f"Add-Content -LiteralPath '{path}' -Value @('', 'def sub(a, b):', '    return a - b')"
     test_path = (space.sample / "test_calc.py").resolve().as_posix().replace("'", "''")
     tests = f"Set-Content -LiteralPath '{test_path}' -Value "
-    assert (edit in prompt) is (windows and cli == "codex")
-    assert (tests in interactive._operator_core_prompt(space, state, scenario.WORK)) is (windows and cli == "codex")
+    assert (edit in prompt) is live_windows_codex
+    work = interactive._operator_core_prompt(space, state, scenario.WORK, offline=offline)
+    assert (tests in work) is live_windows_codex
+    assert ("For this edit-only turn" in prompt) is live_windows_codex
+    assert ("The next work turn will write tests and commit" in prompt) is live_windows_codex
+    assert ("finish with a status update" in prompt) is live_windows_codex
+    assert ("Do not list the directory or run tests here" in prompt) is live_windows_codex
     assert len(prompt.splitlines()) == 1
 
 
@@ -432,6 +440,21 @@ def test_windows_core_can_approve_the_exact_write_after_a_read_without_a_dialog(
     assert not check()
     assert not check()
     assert keys == [ENTER]
+
+
+def test_windows_edit_does_not_confirm_an_unplanned_listing(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import _core_approval
+
+    path = "C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-fixture/sample"
+    read = f"Get-Content -LiteralPath '{path}/calc.py'"
+    listing = f"Get-ChildItem -LiteralPath '{path}' | Select-Object Name"
+    frame = ("Would you like to run the following command?\n"
+             f"Environment: local\n\n$ {listing}\n\n› 1. Yes, proceed (y)\n3. No")
+    keys = []
+    check = _core_approval(SimpleNamespace(rendered=frame, send=keys.append), "a plain request", offline_command=read)
+    assert check() == "unexpected Codex command approval"
+    assert keys == []
 
 
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:

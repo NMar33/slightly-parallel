@@ -207,8 +207,10 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
         if step == scenario.EDIT:
             calc = state.folder / "calc.py"
             edit = core_mcp.EDIT_POWERSHELL.format(path=_windows_literal_path(calc))
-            return message + (f" Read it with `{_windows_file_read(calc)}` and apply the change with `{edit}`."
-                              " Run those exact PowerShell commands separately. Do not use apply_patch.")
+            return message + (f" For this edit-only turn, read the known file with `{_windows_file_read(calc)}`"
+                              f" and apply the change with `{edit}`. Run only those exact PowerShell commands, separately."
+                              " Do not use apply_patch. Do not list the directory or run tests here."
+                              " The next work turn will write tests and commit. For now, finish with a status update.")
         if step == scenario.WORK:
             tests = core_mcp.TESTS_POWERSHELL.format(path=_windows_literal_path(state.folder / "test_calc.py"))
             return message + f" Create the test file with exactly this PowerShell command: `{tests}`. Do not use apply_patch."
