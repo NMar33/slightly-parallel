@@ -241,3 +241,18 @@ def test_probe_registry_matches_the_exported_workflows():
     excluded = set(exclusions.read_text(encoding="utf-8").splitlines()) if exclusions.is_file() else set()
     exported = {path.name for path in workflow_dir.glob("*.yml") if path.relative_to(repo).as_posix() not in excluded}
     assert set(pp.WORKFLOWS) == exported - {"pipeline-self-test.yml"}
+
+
+@pytest.mark.parametrize("workflow,job_id", [("ci.yml", "codex"), ("weekly.yml", "codex-latest")])
+def test_codex_checks_use_a_clean_profile_in_a_step_context(workflow, job_id):
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    config = yaml.safe_load((root / ".github" / "workflows" / workflow).read_text(encoding="utf-8"))
+    job = config["jobs"][job_id]
+    assert "CODEX_HOME" not in job["env"], "GitHub has no runner context in a job env"
+    setup, rpc, server = job["steps"][-3:]
+    assert "with an empty profile" in setup["name"]
+    assert rpc["run"].endswith("--expect-signed-out") and server["run"].endswith("--expect-signed-out")
+    for step in (setup, rpc, server):
+        assert step["env"]["CODEX_HOME"] == "${{ runner.temp }}/sp-signed-out-codex"
