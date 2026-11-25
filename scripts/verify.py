@@ -115,6 +115,22 @@ def terminal_args() -> list[str]:
     return [*files, "--grep", titles]
 
 
+def signal_process_group(pgid: int, sig: signal.Signals) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # On macOS a group with only zombies can reject a follow-up signal.
+        # A denial for a group with a live member still fails the cleanup.
+        rows = subprocess.check_output(["ps", "-axo", "pgid=,state="],
+                                       text=True, timeout=PROCESS_EXIT_TIMEOUT_S)
+        for row in rows.splitlines():
+            group, state = row.split()
+            if int(group) == pgid and not state.startswith("Z"):
+                raise
+
+
 def stop_process(child: subprocess.Popen) -> None:
     if WINDOWS:
         try:
@@ -123,16 +139,13 @@ def stop_process(child: subprocess.Popen) -> None:
             if child.poll() is None:
                 child.kill()
     else:
+        signal_process_group(child.pid, signal.SIGTERM)
         try:
-            os.killpg(child.pid, signal.SIGTERM)
             child.wait(timeout=PROCESS_EXIT_TIMEOUT_S)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
             pass
         # The parent can already be gone while its descendants still run.
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        signal_process_group(child.pid, signal.SIGKILL)
     child.wait(timeout=PROCESS_EXIT_TIMEOUT_S)
 
 

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
 from threading import Event
+from unittest.mock import Mock
 
 import psutil
 import pytest
@@ -141,6 +143,24 @@ def test_stopping_a_command_also_ends_a_child_that_ignores_term(tmp_path):
             child.wait(timeout=5)
 
 
+@pytest.mark.parametrize("remaining", ["", "  42 Z+\n", "  42 Z+\n  42 S\n"])
+def test_group_kill_permission_is_only_ignored_after_all_members_exit(monkeypatch, remaining):
+    monkeypatch.setattr(runner, "WINDOWS", False)
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
+    kill = Mock(side_effect=[None, PermissionError("Operation not permitted")])
+    monkeypatch.setattr(runner.os, "killpg", kill, raising=False)
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *_args, **_kwargs: f"  43 S\n{remaining}")
+    child = Mock(pid=42)
+
+    if "42 S" in remaining:
+        with pytest.raises(PermissionError, match="Operation not permitted"):
+            runner.stop_process(child)
+    else:
+        runner.stop_process(child)
+        assert child.wait.call_count == 2
+    assert [call.args for call in kill.call_args_list] == [(42, signal.SIGTERM), (42, signal.SIGKILL)]
+
+
 def _queued_command(lock, *args):
     wrapper = (
         "import runpy, sys; from pathlib import Path; "
@@ -188,10 +208,11 @@ def test_queue_timeout_reports_hung_pytest_and_kills_workers_before_handoff(tmp_
                 _queued_command(lock, "--", sys.executable, "-c", follower, str(worker.pid)),
                 cwd=tmp_path, capture_output=True, text=True, timeout=20, check=False,
             )
-            assert first.wait(timeout=5) == 124
-            assert second.returncode == 0 and "next run started" in second.stdout
+            first_status = first.wait(timeout=5)
             log.seek(0)
             output = log.read()
+            assert first_status == 124, output
+            assert second.returncode == 0 and "next run started" in second.stdout, second.stdout + second.stderr
             assert "test_deliberate_queue_hang" in output
             assert "timed out" in output
         finally:
