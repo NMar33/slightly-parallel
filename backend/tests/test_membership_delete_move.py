@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -404,3 +405,155 @@ def test_a_crash_between_rename_and_trash(op: TestClient, root: Path, monkeypatc
     r = delete(op, "ALPHA")
     assert r.status_code == 200, r.text
     assert chatstore.folder(root, "BETA", A).is_dir()
+
+
+# ---------------------------------------------------------------------------
+# The original goes to the trash with no handle open inside it (Windows
+# cannot rename a folder that holds an open file: CI run 45523983400), by
+# one rename, never a copy and a delete
+# ---------------------------------------------------------------------------
+
+def _open_fds_inside(folder: Path) -> list[str] | None:
+    """The paths inside ``folder`` this process holds open, or None where
+    there is no /proc/self/fd to read."""
+    fds = Path("/proc/self/fd")
+    if not fds.is_dir():
+        return None
+    inside = str(folder.resolve()) + os.sep
+    out = []
+    for fd in fds.iterdir():
+        try:
+            target = os.readlink(fd)
+        except OSError:
+            continue
+        if target.startswith(inside):
+            out.append(target)
+    return out
+
+
+def _rename_into_trash(monkeypatch, before=None, fail: bool = False) -> None:
+    """Wrap ``os.rename`` for the rename whose target is under ``.trash``:
+    run ``before(src)`` first, or fail the way Windows does (WinError 5)."""
+    real = os.rename
+
+    def rename(a, b, *rest, **kw):
+        if chatmove.TRASH_DIR in Path(b).parts:
+            if before is not None:
+                before(Path(a))
+            if fail:
+                raise PermissionError(13, "Access is denied", str(a))
+        return real(a, b, *rest, **kw)
+
+    monkeypatch.setattr(os, "rename", rename)
+
+
+def test_no_lock_handle_is_open_when_the_original_goes_to_the_trash(root: Path, monkeypatch) -> None:
+    memberships.write(root, A, "join", "BETA")
+    src = chatstore.folder(root, "ALPHA", A)
+    handles: list = []
+    real_flock = chatmove.acquire_flock
+
+    @contextlib.contextmanager
+    def tracked(path, **kw):
+        with real_flock(path, **kw) as fh:
+            handles.append((Path(path), fh))
+            yield fh
+
+    seen: dict[str, object] = {}
+
+    def look(folder: Path) -> None:
+        seen["open_locks"] = [p.name for p, fh in handles if not fh.closed and p.is_relative_to(folder)]
+        seen["fds"] = _open_fds_inside(folder)
+
+    monkeypatch.setattr(chatmove, "acquire_flock", tracked)
+    _rename_into_trash(monkeypatch, before=look)
+    chatmove.move(root, A, "BETA")
+    assert {p.name for p, _fh in handles} == {f"{n}.lock" for n in chatmove.LOCKED_FILES}
+    assert seen["open_locks"] == [], seen
+    if seen["fds"] is not None:  # the /proc variant, where there is one
+        assert seen["fds"] == [], seen
+    assert not src.exists() and chatstore.folder(root, "BETA", A).is_dir()
+
+
+def test_a_write_between_the_release_and_the_trash_leaves_the_original(root: Path, monkeypatch) -> None:
+    """A hook writes the moment the move lets go of the meta lock (the last
+    one released). The original stays whole where it is, with the write;
+    the target stays; no moved row; the one-line refusal names both
+    folders; the next call is refused (the crash between rename and trash)."""
+    memberships.write(root, A, "join", "BETA")
+    src = chatstore.folder(root, "ALPHA", A)
+    real_flock = chatmove.acquire_flock
+
+    @contextlib.contextmanager
+    def then_write(path, **kw):
+        with real_flock(path, **kw) as fh:
+            yield fh
+        if Path(path).name == "meta.json.lock":
+            with open(src / "chat.md", "a", encoding="utf-8") as out:
+                out.write("\n## Turn 3 written after the release\n")
+
+    monkeypatch.setattr(chatmove, "acquire_flock", then_write)
+    with pytest.raises(chatmove.MoveRefused) as got:
+        chatmove.move(root, A, "BETA")
+    monkeypatch.undo()
+    dst = chatstore.folder(root, "BETA", A)
+    assert str(src) in got.value.detail and str(dst) in got.value.detail
+    assert "\n" not in got.value.detail
+    assert "written after the release" in (src / "chat.md").read_text(encoding="utf-8")
+    assert "written after the release" not in (dst / "chat.md").read_text(encoding="utf-8")
+    assert not (root / ".trash").exists()
+    rows, _ = mf.read(root / mf.LEDGER)
+    assert [x["op"] for x in rows] == ["join"]
+    with pytest.raises(chatmove.MoveRefused) as again:
+        chatmove.move(root, A, "BETA")
+    assert "has a folder in BETA already" in again.value.detail
+
+
+def test_a_failed_rename_to_the_trash_deletes_nothing(root: Path, monkeypatch) -> None:
+    """The rename of the original to the trash fails (Windows: WinError 5).
+    No copy-then-delete fallback: the original keeps every file byte for
+    byte, the target stays, no moved row, the refusal names both folders."""
+    memberships.write(root, A, "join", "BETA")
+    src = chatstore.folder(root, "ALPHA", A)
+    before = tree(src)
+    _rename_into_trash(monkeypatch, fail=True)
+    with pytest.raises(chatmove.MoveRefused) as got:
+        chatmove.move(root, A, "BETA")
+    monkeypatch.undo()
+    dst = chatstore.folder(root, "BETA", A)
+    assert str(src) in got.value.detail and str(dst) in got.value.detail
+    assert "\n" not in got.value.detail
+    assert tree(src) == before
+    assert dst.is_dir()
+    assert not any(p.is_file() for p in (root / ".trash").rglob("*")) if (root / ".trash").exists() else True
+    rows, _ = mf.read(root / mf.LEDGER)
+    assert [x["op"] for x in rows] == ["join"]
+
+
+def test_a_write_after_the_last_look_is_kept_in_the_trash_and_said(op: TestClient, root: Path,
+                                                                    monkeypatch) -> None:
+    """A write lands in the original after the post-release look, in the
+    instant before the rename: the rename takes it whole into the trash.
+    The move is done, and the answer and the moved row say the write is in
+    the trash, not at the target."""
+    post(op, A, op="join", project="BETA")
+
+    def write(src: Path) -> None:
+        with open(src / "chat.md", "a", encoding="utf-8") as fh:
+            fh.write("\n## Turn 3 written before the rename\n")
+
+    _rename_into_trash(monkeypatch, before=write)
+    got = chatmove.move(root, A, "BETA")
+    monkeypatch.undo()
+    dst = chatstore.folder(root, "BETA", A)
+    trashed = Path(got["trash"])
+    assert "written before the rename" in (trashed / "chat.md").read_text(encoding="utf-8")
+    assert "written before the rename" not in (dst / "chat.md").read_text(encoding="utf-8")
+    warn = (f"a write reached the original after the copy; it is kept in .trash/{trashed.name}/, "
+            f"not in projects/BETA/chats/{A}")
+    assert got["warning"] == warn
+    rows, _ = mf.read(root / mf.LEDGER)
+    assert rows[-1]["op"] == "moved" and rows[-1]["value"] == f"moved from ALPHA; {warn}"
+    op.app.state.store.rebuild()
+    assert op.get(f"/api/agents/{A}/membership").json()["members"] == ["BETA"]
+    assert mf.load(root, {"ALPHA", "BETA", "GAMMA"}, {A: "BETA"}).skips == {}

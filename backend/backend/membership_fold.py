@@ -37,6 +37,9 @@ OPS: tuple[str, ...] = ("join", "leave", "home", "level", "moved")
 LEVELS: tuple[int, ...] = (1, 2, 3)
 DEFAULT_LEVEL = 2
 MOVED_FROM = "moved from "
+#: What follows the origin in a ``moved`` value when the move has a warning
+#: (chatmove: a write that went to the trash, not to the target).
+MOVED_NOTE = "; "
 #: The value the delete writes on its ``leave`` rows (project_admin).
 DELETED = "project deleted"
 
@@ -326,7 +329,7 @@ def fold(rows: Iterable[Mapping[str, Any]], existing: Iterable[str] | None = Non
 
 def _moved_from(r: Mapping[str, Any]) -> str:
     v = str(r.get("value") or "").strip()
-    return v[len(MOVED_FROM):].strip() if v.startswith(MOVED_FROM) else ""
+    return v[len(MOVED_FROM):].split(MOVED_NOTE, 1)[0].strip() if v.startswith(MOVED_FROM) else ""
 
 
 def load(root: str | os.PathLike[str], existing: Iterable[str] | None = None,

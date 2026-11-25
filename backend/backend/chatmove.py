@@ -10,17 +10,26 @@ mass move: transcripts stay where they started otherwise.
    running (no turn open in meta.json, no change in the last minute); no hook
    holds any of its locks (a non-blocking try); no folder for the agent at
    the target.
-2. The agent's locks (meta, turns, usage, carried) are held for the whole
-   move, inside the membership ledger's lock.
+2. The agent's locks (meta, turns, usage, carried) are held through step 7,
+   inside the membership ledger's lock (held to the end).
 3. The folder is copied to ``projects/<to>/chats/.incoming-<agent>``,
 4. the copy verified (bytes and sha256 of every file; the turns: ``## Turn``
    headers, turns.jsonl lines, meta ``message_count``),
 5. the original checked again: changed since the copy, the copy goes and
    the move is refused,
 6. ``project`` set to the target in the copy's meta.json (atomic write),
-7. the copy renamed into place,
-8. the original moved to ``.trash/move-<agent>-<stamp>/`` (never deleted),
-9. the ``moved`` row written to the ledger.
+7. the copy renamed into place; then every lock of the chat is released:
+   their ``.lock`` files live inside the original, and Windows renames no
+   folder that holds an open file (CI run 45523983400),
+8. with no handle open inside it, the original checked once more (changed:
+   it stays where it is, the target stays, the move is refused naming both
+   folders), then renamed to ``.trash/move-<agent>-<stamp>/`` by one
+   ``os.rename``: never a copy and a delete, which a failed rename turns
+   into a half-deleted chat. A failed rename leaves the original whole and
+   is refused naming both folders,
+9. the ``moved`` row written to the ledger. A write that reached the
+   original between the last look and the rename went with it into the
+   trash, not to the target: the answer (``warning``) and the row say so.
 
 A failure before 7 leaves the original untouched. One between 7 and 8 leaves
 two folders: the next call finds the target and refuses; a project delete
@@ -31,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import time
 from contextlib import ExitStack
@@ -145,15 +155,53 @@ def _trash(root: Path, folder: Path, agent: str) -> Path:
     """Step 8: the original into the trash, never deleted."""
     dest = root / TRASH_DIR / f"move-{agent}-{datetime.now():%Y%m%d-%H%M%S}"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(folder), str(dest))
+    # One rename (the trash is on the data root's volume). Never shutil.move:
+    # its fallback copies then deletes, and a delete that fails half way
+    # (Windows, a file held open) leaves a half-deleted chat.
+    os.rename(folder, dest)
     return dest
+
+
+def _both(folder: Path, target: Path) -> str:
+    return f"the chat is at {target}; the original is left whole at {folder}"
 
 
 def move(root: str | Path, agent: str, to: str) -> dict[str, Any]:
     """Move the agent's chat folder to ``to``; raise ``MoveRefused`` with a
     one-line reason when it may not, leaving everything as it was."""
     root = Path(root)
-    with memberships.locked(root), ExitStack() as held:
+    with memberships.locked(root):
+        origin, folder, target, before, turns = _copy_in(root, agent, to)
+        # The chat's locks are released: no handle is open inside the original.
+        if fingerprint(folder) != before:                     # step 8
+            raise MoveRefused(409, f"the agent wrote after the copy: {_both(folder, target)}")
+        try:
+            trashed = _trash(root, folder, agent)
+        except OSError as e:
+            raise MoveRefused(500, f"the original could not go to the trash ({e.strerror or e}): "
+                                   f"{_both(folder, target)}") from None
+        warning = ""
+        if fingerprint_bytes(trashed) != fingerprint_bytes_of(before):
+            warning = (f"a write reached the original after the copy; it is kept in "
+                       f"{TRASH_DIR}/{trashed.name}/, not in {target.relative_to(root).as_posix()}")
+        value = f"{mf.MOVED_FROM}{origin}" + (f"{mf.MOVED_NOTE}{warning}" if warning else "")
+        row = memberships.write(root, agent, "moved", to, value, held=True)  # step 9
+    out: dict[str, Any] = {
+        "agent_id": agent, "from": origin, "to": to, "folder": str(target), "trash": str(trashed),
+        "turns": turns, "files": len(before), "row": row,
+        "effects": [e.format(to=to) for e in EFFECTS],
+    }
+    if warning:
+        out["warning"] = warning
+    return out
+
+
+def _copy_in(root: Path, agent: str, to: str) -> tuple[str, Path, Path, dict[str, tuple[int, int, str]],
+                                                         dict[str, int]]:
+    """Steps 1-7 under the chat's locks, released on return; the caller
+    holds the ledger's lock. Returns origin, original, target, the original's
+    fingerprint and the turns."""
+    with ExitStack() as held:
         origin, folder, _meta = _check(root, agent, to)
         for name in LOCKED_FILES:
             try:
@@ -172,8 +220,7 @@ def move(root: str | Path, agent: str, to: str) -> dict[str, Any]:
             # agent writing, not a bad copy.
             if fingerprint(folder) != before:
                 raise MoveRefused(409, WROTE_DURING)
-            want = {k: (v[0], v[2]) for k, v in before.items()}
-            if fingerprint_bytes(copy) != want or turns_of(copy) != turns_of(folder):
+            if fingerprint_bytes(copy) != fingerprint_bytes_of(before) or turns_of(copy) != turns_of(folder):
                 raise MoveRefused(500, "the copy does not match the chat; nothing was moved")
             meta_path = copy / "meta.json"
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -192,15 +239,13 @@ def move(root: str | Path, agent: str, to: str) -> dict[str, Any]:
         turns = turns_of(copy)
         target = chatstore.folder(root, to, agent)
         copy.rename(target)                                   # step 7
-        trashed = _trash(root, folder, agent)                 # step 8
-        row = memberships.write(root, agent, "moved", to, f"{mf.MOVED_FROM}{origin}", held=True)  # step 9
-    return {
-        "agent_id": agent, "from": origin, "to": to, "folder": str(target), "trash": str(trashed),
-        "turns": turns, "files": len(before), "row": row,
-        "effects": [e.format(to=to) for e in EFFECTS],
-    }
+    return origin, folder, target, before, turns
 
 
 def fingerprint_bytes(folder: Path) -> dict[str, tuple[int, str]]:
     """Every file: (size, sha256) — what a copy must match (times differ)."""
-    return {k: (v[0], v[2]) for k, v in fingerprint(folder).items()}
+    return fingerprint_bytes_of(fingerprint(folder))
+
+
+def fingerprint_bytes_of(fp: dict[str, tuple[int, int, str]]) -> dict[str, tuple[int, str]]:
+    return {k: (v[0], v[2]) for k, v in fp.items()}

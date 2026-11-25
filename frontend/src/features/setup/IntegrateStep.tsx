@@ -144,12 +144,15 @@ function useRemovals() {
   // chat holds back. The server refuses a running agent in one line.
   const moveMut = useMutation({
     mutationFn: (m: { agent: string; to: string }) =>
-      postJson<{ agent_id: string; to: string }>(`/api/agents/${encodeURIComponent(m.agent)}/move-chat`, { to: m.to }),
+      postJson<{ agent_id: string; to: string; warning?: string }>(`/api/agents/${encodeURIComponent(m.agent)}/move-chat`, { to: m.to }),
     onSuccess: (r) => {
       toast.success(t('Moved the chat of {agent} to {project}.', { agent: r.agent_id, project: r.to }))
+      // A write that reached the original after the copy went to the trash with it.
+      if (r.warning) toast.warning(r.warning)
       refreshAll()
     },
-    onError: (e: Error) => toast.error(e.message),
+    // A refusal after the copy is in place leaves two folders: show both.
+    onError: (e: Error) => { toast.error(e.message); refreshAll() },
   })
   return { disconnecting, setDisconnecting, deleting, setDeleting, disconnectMut, deleteMut, moveMut }
 }

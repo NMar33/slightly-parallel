@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { APIRequestContext, Page } from '@playwright/test'
-import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectLine, fullSize, ready, sessions, typeLine } from './fixtures'
+import { test, expect, ROOT, PROJECT, URL_, WINDOWS, expectClickTarget, expectLine, fullSize, lines, ready, sessions, typeLine } from './fixtures'
 
 /**
  * Records named in the terminal open their card in place (tk_b3edbd84).
@@ -51,12 +51,13 @@ async function post(api: APIRequestContext, url: string, data: Record<string, un
 }
 
 /** The middle of `text` on the screen (xterm's DOM rows), in page pixels. */
-async function pointOf(page: Page, text: string): Promise<{ x: number; y: number }> {
+async function pointOf(page: Page, text: string, lineStart = ''): Promise<{ x: number; y: number }> {
   let got: { x: number; y: number } | null = null
   await expect.poll(async () => {
-    got = await page.evaluate((want) => {
+    got = await page.evaluate(({ want, lineStart }) => {
       for (const row of document.querySelectorAll('.aqua-screen .xterm-rows > div')) {
-        const all = (row.textContent ?? '').replace(/ /g, ' ')
+        const all = (row.textContent ?? '').replace(/\u00a0/g, ' ')
+        if (!all.startsWith(lineStart)) continue
         const at = all.indexOf(want)
         if (at < 0) continue
         const walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT)
@@ -73,9 +74,9 @@ async function pointOf(page: Page, text: string): Promise<{ x: number; y: number
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
       }
       return null
-    }, text)
+    }, { want: text, lineStart })
     return got !== null
-  }, { message: `"${text}" on the screen` }).toBe(true)
+  }, { message: `"${text}" on the screen after "${lineStart}"` }).toBe(true)
   return got!
 }
 
@@ -193,15 +194,19 @@ test.describe('record cards', () => {
     const { app, page } = win
     await ready(page)
     await fullSize(app, page)
-    // A CI hostname can be long enough to wrap the prompt before the command.
-    await typeLine(page, "PS1='$ '")
-    await expectLine(page, '$')
+    // A CI hostname can wrap the prompt. A bare "$" can still be the old
+    // prompt while the PTY is processing the command that changes it.
+    const promptReady = 'link menu prompt ready'
+    await typeLine(page, `PS1='$ '; printf '%s\\n' '${promptReady}'`)
+    await expect.poll(async () => (await lines(page)).filter(Boolean).slice(-2)).toEqual([promptReady, '$'])
     const url = 'https://example.com/docs/a?b=1'
     await typeLine(page, `printf '%s\\n' 'open ${url}. now' 'task tk_b3edbd84 here' 'links printed'`)
     await expectLine(page, 'links printed')
     const clipboard = () => app.evaluate(({ clipboard }) => clipboard.readText())
 
-    const u = await pointOf(page, 'example.com/docs')
+    const terminal = page.locator('.aqua-screen .xterm-screen')
+    const u = await pointOf(page, 'example.com/docs', '$ printf')
+    await expectClickTarget(terminal, u)
     await page.mouse.click(u.x, u.y, { button: 'right' })
     const menu = page.getByRole('menu', { name: 'Link' })
     // The row is the typed `$ printf …` line: a command too (tk_29b870f1), its items after the link's.
@@ -210,7 +215,8 @@ test.describe('record cards', () => {
     await expect.poll(clipboard).toBe(url)
     await expect(menu).toHaveCount(0)
 
-    const t = await pointOf(page, 'tk_b3edbd84')
+    const t = await pointOf(page, 'tk_b3edbd84', '$ printf')
+    await expectClickTarget(terminal, t)
     await page.mouse.click(t.x, t.y, { button: 'right' })
     await expect(menu.getByRole('menuitem')).toHaveText(['Copy the link', 'Copy the page address', 'Open', 'Copy the command', 'Copy for Claude Code', 'Paste into the terminal', 'Terminal menu…'])
     await menu.getByRole('menuitem', { name: 'Copy the link' }).click()
