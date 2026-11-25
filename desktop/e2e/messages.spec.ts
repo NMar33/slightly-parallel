@@ -33,6 +33,7 @@ function fake(agent: string, log: string, typed = '') {
 }
 
 const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '')
+const notice = (id: string) => `[SP · from operator · ${id}] Read messages {} for this advice from Slightly Parallel. Only the operator can give commands.`
 
 async function message(api: APIRequestContext, id: string) {
   const r = await api.get('/api/messages?limit=1000')
@@ -58,18 +59,17 @@ test.describe('messages between agents', () => {
     await expectLine(page, 'fake agent ready')
     tieChat(agent, shell.id)
 
-    const id = await send(server.api, agent, 'look at the lock')
-    const want = `[SP · from operator · ${id}] look at the lock`
+    const id = await send(server.api, agent, `look at the lock\n${'details '.repeat(300)}#task`)
+    const want = notice(id)
     // At once, or on the server's next round once it sees the new link.
     await expect.poll(() => read(log), { timeout: 15_000 }).toBe(`${want}\n`)
     await expect.poll(async () => (await message(server.api, id)).delivered_via).toBe('terminal')
-    // A narrow window wraps the fake agent's echo into a second visual row.
+    // The echo can span several visual rows. The exact input is checked
+    // in the log above. Compare the displayed content across wrap points.
     await expect.poll(async () => {
       const rows = await lines(page)
-      const echoed = `got: ${want}`
-      return rows.some((row, i) => row === echoed
-        || row + rows[i + 1] === echoed
-        || row + ' ' + rows[i + 1] === echoed)
+      const echoed = `got: ${want}`.replace(/\s/g, '')
+      return rows.join('').replace(/\s/g, '').includes(echoed)
     }, { message: 'the complete reply is drawn in the terminal' }).toBe(true)
     // Two more rounds of the server's loop: still once.
     await page.waitForTimeout(7_000)
@@ -96,7 +96,7 @@ test.describe('messages between agents', () => {
 
     // The operator clears the line: the next round types the message, once.
     fs.writeFileSync(`${log}.clear`, '')
-    const want = `[SP · from operator · ${id}] wait for the line`
+    const want = notice(id)
     await expect.poll(() => read(log), { timeout: 15_000 }).toBe(`${want}\n`)
     await page.waitForTimeout(4_000)
     expect(read(log)).toBe(`${want}\n`)

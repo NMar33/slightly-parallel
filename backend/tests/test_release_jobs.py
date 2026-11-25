@@ -28,6 +28,8 @@ def test_core_gate_requires_both_provider_preflights(bad_provider):
 @pytest.mark.parametrize("missing", [
     "Interactive agent (opencode, windows-latest)",
     "Interactive agent (claude-code, ubuntu-latest, trust dialog)",
+    "Interactive agent (claude-code, macos-latest, trust dialog)",
+    "Interactive agent (claude-code, windows-latest, trust dialog)",
 ])
 def test_full_ci_cannot_release_with_a_missing_interactive_stub_job(missing):
     module = run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "ci" / "release_jobs.py"))

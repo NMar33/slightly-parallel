@@ -9,7 +9,7 @@
  *   copy. Which message a row is comes from match.ts, against the chat's
  *   record. A row that is no recorded message gets Copy only, and says so.
  *   «Меню терминала…» (or Shift + right click) is the screen's own menu.
- * - Ids are links: tk_… opens the task's menu (its card, its column, copy
+ * - Ids are links: tk_… opens the task's card (its column, copy
  *   the id); nt_… opens the note right here, read and acted on in place
  *   (Esc closes); a decision, a Publish card, a core, a skill, an entry
  *   point, a chat's agent id and a commit hash open their card
@@ -35,6 +35,7 @@ import { msgTarget, type MsgRef } from '../../../lib/pins'
 import { useAquaActions } from '../../aqua/app/api'
 import { openWindow, post } from '../../aqua/app/bridge'
 import { detachUrl } from '../../aqua/app/model'
+import { VIEW_COLUMNS } from '../../project/kanban/model'
 import { toNote, useNotesFeed, type WireNote } from '../../notes/page/data'
 import { ServerNoteEnv } from '../../notes/page/ServerEnv'
 import { NoteRead } from '../../notes/render/reader'
@@ -42,12 +43,12 @@ import { getJson } from '../../../lib/getJson'
 import { useQuery } from '@tanstack/react-query'
 import { t, tn } from '../../../i18n/scope/msgmenu'
 import type { ScreenApi, ScreenHooks } from '../Screen'
-import { findIds, type FoundId, type IdKind } from './ids'
-import { AgentCard, CommitCard, CoreCard, DecisionCard, EntryCard, PublishCard, SkillCard, type CardProps } from './IdCards'
+import type { FoundId, IdKind } from './ids'
+import { AgentCard, CommitCard, CoreCard, DecisionCard, EntryCard, KeptCard, MessageCard, PublishCard, SkillCard, type CardProps } from './IdCards'
 import { lineCells } from './cells'
-import { copyId, place, useFirstFocus } from './pop'
-import { CommitCheck, pageAddress } from './records'
-import { linkAt, type TermLink } from './links'
+import { copyId, openPage, place, useFirstFocus } from './pop'
+import { CommitCheck, pageAddress, pageOf } from './records'
+import { findRecordLinks, linkAt, type TermLink } from './links'
 import { blocksOf, messageAt, type Found } from './match'
 import { commandAt, commandSpans, forClaudeCode, type Command } from './commands'
 import { CommandCopy, CommandScanner, type HoverFeed } from './CommandCopy'
@@ -64,7 +65,7 @@ type Open =
   | { kind: 'msg'; x: number; y: number; cx: number; cy: number; state: 'reading' | 'done'; found: Found | null; line: string; link: TermLink | null; cmd: Command | null
       /** The message's rows as fold.ts names them (collapse, expand), and the rows read: «collapse all replies» reads them again. */
       span?: Span | null; rows?: string[] }
-  | { kind: 'id'; x: number; y: number; id: FoundId; card?: boolean }
+  | { kind: 'id'; x: number; y: number; id: FoundId }
 
 /** What the layer hands the screen: its hooks, and where to put the screen's actions. */
 export interface LayerSlot { hooks: ScreenHooks; bind: (api: ScreenApi | null) => void }
@@ -124,12 +125,12 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
 
   const openId = useCallback((id: FoundId, e: { clientX: number; clientY: number }) => {
     const p = at(e)
-    setOpen({ kind: 'id', id, x: p.x, y: p.y + 10, card: id.kind === 'note' })
+    setOpen({ kind: 'id', id, x: p.x, y: p.y + 10 })
   }, [])
 
   /** An id named inside a card: its own card or menu, where the card was. */
   const openRef = useCallback((id: string, kind: IdKind) => {
-    setOpen((o) => ({ kind: 'id', id: { id, kind, start: 0, length: id.length }, x: o?.x ?? 40, y: o?.y ?? 40, card: kind === 'note' }))
+    setOpen((o) => ({ kind: 'id', id: { id, kind, start: 0, length: id.length }, x: o?.x ?? 40, y: o?.y ?? 40 }))
   }, [])
 
   /** The id under a pointer, in whichever xterm it is over. */
@@ -150,7 +151,7 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
     const got = rowAt(e)
     if (!got) return null
     const { text, cells, col } = got
-    return findIds(text).find((f) => col >= cells[f.start]! && col <= cells[f.start + f.length - 1]!
+    return findRecordLinks(text).find((f) => col >= cells[f.start]! && col <= cells[f.start + f.length - 1]!
       && (f.kind !== 'commit' || checkRef.current.known(f.id) === true)) ?? null
   }, [rowAt])
   /** The link under a right click: an id, a web address, a path the editor opens. */
@@ -184,7 +185,7 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
           const line = term.buffer.active.getLine(y - 1)
           if (!line) { callback(undefined); return }
           const { text, cells } = lineCells(line)
-          const found = findIds(text)
+          const found = findRecordLinks(text)
           const links = (fs: FoundId[]) => (fs.length ? fs.map((f) => ({
             range: { start: { x: cells[f.start]! + 1, y }, end: { x: cells[f.start + f.length - 1]! + 1, y } },
             text: f.id,
@@ -257,6 +258,7 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
   }, [open, close])
 
   const { width: w, height: h } = bounds
+  const Card = open?.kind === 'id' ? RECORD_CARDS[open.id.kind] : null
   return (
     <div ref={root} className="relative w-full h-full min-h-0">
       {children(slot)}
@@ -266,28 +268,26 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
         <MsgMenu key={`${open.x}:${open.y}`} open={open} w={w} h={h} agentId={agentId} project={project} record={record} api={api} say={say} close={close}
           onId={(id) => openId(id, { clientX: open.cx, clientY: open.cy })} />
       )}
-      {open?.kind === 'id' && open.id.kind === 'task' && (open.card
-        ? <TaskCard key={open.id.id} open={open} w={w} h={h} say={say} close={close} />
-        : <TaskMenu key={open.id.id} open={open} w={w} h={h} say={say} close={close} onCard={() => setOpen({ ...open, card: true })} />)}
-      {open?.kind === 'id' && open.id.kind === 'note' && <NoteCard key={open.id.id} id={open.id.id} close={close} />}
-      {open?.kind === 'id' && open.id.kind !== 'task' && open.id.kind !== 'note' && <RecordCardOf key={`card:${open.id.id}`} kind={open.id.kind}
-        p={{ id: open.id.id, x: open.x, y: open.y, w, h, project, say, close, onId: openRef }} goTo={goTo} />}
+      {open?.kind === 'id' && Card && <Card key={open.id.id} id={open.id.id} x={open.x} y={open.y} w={w} h={h}
+        project={project} say={say} close={close} onId={openRef} goTo={goTo} />}
     </div>
   )
 }
 
-/** The card of a record that has one (IdCards.tsx); a task and a note have their own above. */
-function RecordCardOf({ kind, p, goTo }: { kind: IdKind; p: CardProps; goTo?: (sid: string) => void }) {
-  switch (kind) {
-    case 'decision': return <DecisionCard {...p} />
-    case 'publish': return <PublishCard {...p} />
-    case 'core': return <CoreCard {...p} />
-    case 'skill': return <SkillCard {...p} />
-    case 'entrypoint': return <EntryCard {...p} />
-    case 'agent': return <AgentCard {...p} goTo={goTo} />
-    case 'commit': return <CommitCard {...p} />
-    default: return null
-  }
+const RECORD_CARDS: Record<IdKind, (props: CardProps & { goTo?: (sid: string) => void }) => ReactNode> = {
+  task: TaskCard,
+  note: NoteCard,
+  decision: DecisionCard,
+  publish: PublishCard,
+  core: CoreCard,
+  skill: SkillCard,
+  entrypoint: EntryCard,
+  agent: AgentCard,
+  commit: CommitCard,
+  message: MessageCard,
+  rule: (p) => <KeptCard {...p} kind="rule" />,
+  vision: (p) => <KeptCard {...p} kind="vision" />,
+  problem: (p) => <KeptCard {...p} kind="problem" />,
 }
 
 /* ------------------------------------------------------------ the message list */
@@ -338,7 +338,8 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
     else if (link!.kind === 'path') api.current?.openPath?.(link!.path)
     else onId(link!.id)
   })
-  const linkRows = link ? 2 + (link.kind === 'id' && link.id.kind !== 'commit' ? 1 : 0) : 0
+  const pageLink = link?.kind === 'id' && link.id.kind !== 'commit' && link.id.kind !== 'message'
+  const linkRows = link ? 2 + (pageLink ? 1 : 0) : 0
   const cmd = open.cmd
   const claude = cmd ? forClaudeCode(cmd) : null
   // A line break pasted where the shell did not ask for bracketed paste would run the lines: not offered then.
@@ -384,7 +385,7 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
         <>
           <div className="lab-list-head"><span className="truncate font-mono" title={link.text}>{link.text}</span></div>
           {row('link-copy', <Link2 size={15} />, t('Copy the link'), copyLink)}
-          {link.kind === 'id' && link.id.kind !== 'commit' && row('link-page', <Globe size={15} />, t('Copy the page address'), copyPage)}
+          {pageLink && row('link-page', <Globe size={15} />, t('Copy the page address'), copyPage)}
           {row('link-open', <ExternalLink size={15} />, t('Open'), openLink)}
           <div className="h-px my-3" style={{ background: 'var(--aq-term-frame, rgba(255,255,255,0.1))' }} />
         </>
@@ -455,31 +456,6 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
 
 /* ------------------------------------------------------------ a task id */
 
-function TaskMenu({ open, w, h, say, close, onCard }: {
-  open: Extract<Open, { kind: 'id' }>; w: number; h: number; say: (s: string) => void; close: () => void; onCard: () => void
-}) {
-  const box = useRef<HTMLDivElement>(null)
-  const id = open.id.id
-  const q = useTask(id, true)
-  const actions = useMessageActions('', '')
-  const status = q.data?.metadata.status ?? ''
-  useFirstFocus(box)
-  return (
-    <div ref={box} className="mm-pop lab-menu lab-list" role="menu" aria-label={id} style={place(open.x, open.y, 256, 150, w, h)}>
-      <div className="lab-list-head">
-        <span className="font-mono">{id}</span>
-        <span className="truncate lab-list-sub">{q.isLoading ? t('Reading the task…') : q.isError ? t('No such task') : q.data?.metadata.title}</span>
-      </div>
-      <button type="button" role="menuitem" className="lab-list-row" onClick={onCard}><ExternalLink size={15} />{t('Open the task')}</button>
-      <Columns id={id} status={status} disabled={!q.data} onMove={(c) => {
-        close()
-        void actions.moveTask(id, c).then(() => say(`${id} → ${c}`), (e: Error) => say(t('Could not do it: {error}', { error: e.message })))
-      }} />
-      <button type="button" role="menuitem" className="lab-list-row" onClick={() => { close(); void copyId(id, say) }}><Copy size={15} />{t('Copy the id')}</button>
-    </div>
-  )
-}
-
 function Columns({ id, status, disabled, onMove }: { id: string; status: string; disabled: boolean; onMove: (c: string) => void }) {
   return (
     <div className="lab-list-row static" role="radiogroup" aria-label={`${t('Column')} ${id}`}>
@@ -492,18 +468,22 @@ function Columns({ id, status, disabled, onMove }: { id: string; status: string;
   )
 }
 
-/** "Open the task": a small card in place of the menu; the column changes in it and it stays. */
-function TaskCard({ open, w, h, say, close }: { open: Extract<Open, { kind: 'id' }>; w: number; h: number; say: (s: string) => void; close: () => void }) {
+function TaskCard({ id, x, y, w, h, say, close }: CardProps) {
   const box = useRef<HTMLDivElement>(null)
-  const id = open.id.id
   const q = useTask(id, true)
   const actions = useMessageActions('', '')
+  const [moving, setMoving] = useState(false)
   const d = q.data
   const status = d?.metadata.status ?? ''
   const desc = (d?.description ?? '').trim()
+  const move = (column: string) => {
+    setMoving(true)
+    void actions.moveTask(id, column).then(() => say(`${id} → ${column}`), (e: Error) => say(t('Could not do it: {error}', { error: e.message })))
+      .finally(() => setMoving(false))
+  }
   useFirstFocus(box)
   return (
-    <div ref={box} className="mm-pop lab-menu lab-list lab-card" role="dialog" aria-label={`${t('Task')} ${id}`} style={place(open.x, open.y, 320, 220, w, h)}>
+    <div ref={box} className="mm-pop lab-menu lab-list lab-card" role="dialog" aria-label={`${t('Task')} ${id}`} style={place(x, y, 320, 260, w, h)}>
       <div className="lab-list-head">
         <span className="font-mono">{id}</span>
         {d && <span className="aq-chip">{d.metadata.project}</span>}
@@ -514,9 +494,15 @@ function TaskCard({ open, w, h, say, close }: { open: Extract<Open, { kind: 'id'
         {desc && <p className="m-0 text-11 leading-snug whitespace-pre-wrap line-clamp-5" style={{ color: 'var(--aq-term-dim)' }}>{desc}</p>}
         {status && !COLUMNS.includes(status as typeof COLUMNS[number]) && <span className="text-11" style={{ color: 'var(--aq-term-dim)' }}>{t('Now in {column}', { column: status })}</span>}
       </div>
-      <Columns id={id} status={status} disabled={!d} onMove={(c) => {
-        void actions.moveTask(id, c).then(() => say(`${id} → ${c}`), (e: Error) => say(t('Could not do it: {error}', { error: e.message })))
-      }} />
+      <Columns id={id} status={status} disabled={!d || moving} onMove={move} />
+      <label className="lab-list-row static">
+        <span>{t('Move to column')}</span>
+        <select aria-label={t('Move to column')} value={status || 'unclassified'} disabled={!d || moving}
+          className="min-w-0 rounded-input bg-surface text-primary" onChange={(event) => move(event.target.value)}>
+          {VIEW_COLUMNS.workflow.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+        </select>
+      </label>
+      <button type="button" className="lab-list-row" onClick={() => { close(); openPage(pageOf.task(id)) }}><ExternalLink size={15} />{t('Open on the board')}</button>
       <button type="button" className="lab-list-row" onClick={() => { void copyId(id, say) }}><Copy size={15} />{t('Copy the id')}</button>
     </div>
   )
@@ -548,7 +534,10 @@ function NoteCard({ id, close }: { id: string; close: () => void }) {
         <div className="shrink-0 flex items-center gap-8 px-14 h-[34px] text-12" style={{ borderBottom: '1px solid var(--border-default)' }}>
           <span className="font-mono text-tertiary">{id}</span>
           <span className="text-11 text-tertiary">{t('Esc closes')}</span>
-          <button type="button" className="ml-auto inline-flex items-center justify-center w-[24px] h-[24px] rounded-input hover:bg-hover" aria-label={t('Close')} onClick={close}><X size={13} /></button>
+          <button type="button" className="ml-auto inline-flex items-center gap-4 rounded-input px-4 hover:bg-hover" onClick={() => { close(); openPage(pageOf.note(id)) }}>
+            <ExternalLink size={13} />{t('Open on the Notes page')}
+          </button>
+          <button type="button" className="inline-flex items-center justify-center w-[24px] h-[24px] rounded-input hover:bg-hover" aria-label={t('Close')} onClick={close}><X size={13} /></button>
         </div>
         <div className="flex-1 min-h-0 overflow-auto px-20 py-16">
           {note ? (

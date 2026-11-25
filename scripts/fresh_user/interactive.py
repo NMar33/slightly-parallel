@@ -33,6 +33,8 @@ COMPOSER_SETTLE_S = 1.0
 PROMPT_PAINT_TIMEOUT_S = 8
 CLAUDE_MCP_QUESTION = "New MCP server found in this project:"
 CLAUDE_MCP_ACCEPTED = "Claude Code accepted the Slightly Parallel MCP server"
+CLAUDE_MCP_MOVE_RETRY_S = 2.0
+CLAUDE_MCP_MOVE_ATTEMPTS = 3
 STARTUP_DIALOGS = {
     "claude-code": (
         (("choosethetextstyle",), "Claude Code default theme accepted"),
@@ -87,6 +89,9 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
     deadline = time.monotonic() + seconds
     ready_since = None
     previous_move = ""
+    previous_mcp_selection = ""
+    next_mcp_move = 0.0
+    mcp_move_attempts = 0
     while time.monotonic() < deadline:
         screen.read()
         if getattr(screen, "exited", False):
@@ -136,16 +141,24 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
             questions = [line for line in lines if line.startswith(CLAUDE_MCP_QUESTION)]
             if questions != [f"{CLAUDE_MCP_QUESTION} slightly-parallel"]:
                 return False
-            selected = [line.removeprefix("❯").strip() for line in lines if line.startswith("❯")]
+            selected = [line[1:].strip() for line in lines if line.startswith(("❯", ">"))]
             if CLAUDE_MCP_ACCEPTED not in answered:
                 if selected == ["Use this MCP server"]:
                     screen.send(ENTER)
                     answered.append(CLAUDE_MCP_ACCEPTED)
                 elif selected in (["Continue without using this MCP server"],
                                   ["Use this and all future MCP servers in this project"]):
-                    if previous_move != selected[0]:
+                    now = time.monotonic()
+                    if previous_mcp_selection != selected[0]:
+                        previous_mcp_selection = selected[0]
+                        next_mcp_move = now
+                        mcp_move_attempts = 0
+                    # A key sent on the dialog's first paint can be ignored.
+                    # Give the selection time to repaint before trying it again.
+                    if now >= next_mcp_move and mcp_move_attempts < CLAUDE_MCP_MOVE_ATTEMPTS:
                         screen.send(UP)
-                        previous_move = selected[0]
+                        next_mcp_move = time.monotonic() + CLAUDE_MCP_MOVE_RETRY_S
+                        mcp_move_attempts += 1
         elif dialog := next((name for signature, name in STARTUP_DIALOGS[tool.name]
                              if all(word in shown for word in signature)), None):
             screen.send(ENTER)
@@ -179,8 +192,16 @@ def _startup_failure(screen: Screen) -> str:
     return f"L1 {reason}:\n{frame}"
 
 
-def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step) -> str:
+def _windows_calc_read(folder: Path) -> str:
+    path = (folder / "calc.py").resolve().as_posix().replace("'", "''")
+    return f"Get-Content -LiteralPath '{path}'"
+
+
+def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step, *, offline: bool = False) -> str:
     message = scenario.step_prompt(space, state, step)
+    if step == scenario.EDIT and WINDOWS and state.tool.name == "codex" and not offline:
+        return message + (f" Read the file first with this exact PowerShell command: `{_windows_calc_read(state.folder)}`."
+                          " Then edit calc.py directly. Do not enumerate files or combine commands.")
     if step[0] != "#scan":
         return message
     filename = "scan-payloads.json"
@@ -489,7 +510,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 name, _, check = step
                 if name == "#task":
                     continue
-                message = _operator_core_prompt(space, state, step)
+                message = _operator_core_prompt(space, state, step, offline=bool(offline_provider))
                 approval = None
                 if policy:
                     command = ""
@@ -498,6 +519,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     calls = []
                     if name == "a plain request" and offline_provider:
                         offline_command = core_mcp.OFFLINE_EDIT
+                    elif name == "a plain request" and WINDOWS:
+                        command = _windows_calc_read(folder)
                     elif name == "#rule":
                         rule = {"project": code, "agent": agent, "before": [
                             row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)

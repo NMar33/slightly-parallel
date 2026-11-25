@@ -119,7 +119,7 @@ def main() -> int:
             # "is the hook installed?" while the contract promised identity.
             _write_breadcrumb(args.data_root, args.project, args.agent, args.session, args.cwd, args.tool or "cli")
         if args.phase == "open":
-            notice = format_signals(cap.open_turn(args.text), args.tool)
+            notice = format_signals(cap.open_turn(args.text, deliver=args.tool == "opencode"), args.tool)
             if notice:
                 print(notice)
         elif args.phase == "complete":

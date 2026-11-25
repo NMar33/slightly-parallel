@@ -23,6 +23,12 @@ describe('ids in a terminal row', () => {
     ])
   })
 
+  it('finds rules, visions, problems and messages in one row', () => {
+    expect(ids('rl_a9306fb1, vs_0123abcd, pb_deadbeef; [SP · from operator · msg_12345678]')).toEqual([
+      ['rule', 'rl_a9306fb1'], ['vision', 'vs_0123abcd'], ['problem', 'pb_deadbeef'], ['message', 'msg_12345678'],
+    ])
+  })
+
   it('finds the agent ids of every tool SP records, and nothing that only looks like one', () => {
     expect(ids('чаты cc-676175ea, codex-9f3e21b0, oc-y0q3vy8m и cursor-0a1b2c3d')).toEqual([
       ['agent', 'cc-676175ea'], ['agent', 'codex-9f3e21b0'], ['agent', 'oc-y0q3vy8m'], ['agent', 'cursor-0a1b2c3d'],

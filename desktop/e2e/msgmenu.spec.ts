@@ -16,7 +16,7 @@ import { test, expect, ROOT, PROJECT, URL_, WINDOWS, echoCalc, expectClickTarget
  * - a right click on a row of the agent's reply opens the list for that
  *   reply; Pin pins it, the pin is in the right sidebar's Pins and its mark
  *   on the reply's first row; tmux never draws its own pane menu;
- * - a click on the task id opens its menu and then its card;
+ * - a click on the task id opens its card;
  * - a click on the note id opens the note, Escape closes it;
  * - a right click on a row that is no message offers Copy only and says so.
  * It runs in tmux and plain terminals (SP_E2E_KEEP=plain).
@@ -86,6 +86,82 @@ async function pointOf(page: Page, text: string): Promise<{ x: number; y: number
 
 test.describe('message menu', () => {
   test.beforeEach(() => { AGENT = `cc-e2em${Math.random().toString(16).slice(2, 6)}` })
+
+  test('a click on a message id opens its body and a click on a rule archives it in place', async ({ win, shell, server }) => {
+    const { page } = win
+    await ready(page)
+    const body = 'Use the handoff log for this run.'
+    const ruleText = `Keep the handoff log for ${AGENT}.`
+    record(shell.id, 'open', 'Check the in-place cards')
+    record(shell.id, 'complete', 'Recorded.')
+    const made = await server.api.post('/api/rules', { data: {
+      project: PROJECT, created_date: '2611-25', created_time: '10:00', l1: ruleText, status: 'active',
+    } })
+    expect(made.status(), await made.text()).toBe(201)
+    const rule = (await made.json()).metadata.id as string
+    const sent = await server.api.post('/api/messages', { data: { to: AGENT, text: body } })
+    expect(sent.status(), await sent.text()).toBe(201)
+    const msg = (await sent.json()).message.id as string
+    const file = path.join(server.dir, `ids-${AGENT}.txt`)
+    fs.writeFileSync(file, `[SP · from operator · ${msg}] Read messages {}\nRule ${rule}\n`)
+    await typeLine(page, printFile(file))
+
+    const messagePoint = await pointOf(page, msg)
+    await expectClickTarget(page.locator('.aqua-screen'), messagePoint)
+    await page.mouse.click(messagePoint.x, messagePoint.y)
+    const message = page.getByRole('dialog', { name: `Agent message ${msg}` })
+    await expect(message.getByText(body)).toBeVisible()
+    await expect(message.getByText('operator', { exact: true })).toBeVisible()
+    await message.getByRole('button', { name: 'Open thread' }).click()
+    await expect(message.getByText('No replies')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(message).toHaveCount(0)
+
+    const rulePoint = await pointOf(page, rule)
+    await expectClickTarget(page.locator('.aqua-screen'), rulePoint)
+    await page.mouse.click(rulePoint.x, rulePoint.y)
+    const card = page.getByRole('dialog', { name: `Rule ${rule}` })
+    await expect(card.getByText(ruleText, { exact: false }).first()).toBeVisible()
+    await card.getByRole('button', { name: 'Archive' }).click()
+    await expect(card.getByText('Archived', { exact: true })).toBeVisible()
+    const detail = await server.api.get(`/api/rules/${rule}`)
+    expect((await detail.json()).metadata.status).toBe('archived')
+  })
+
+  test('a vision can be archived and restored from its terminal card', async ({ win, server }) => {
+    const { page } = win
+    await ready(page)
+    const title = `Vision for ${AGENT}`
+    const made = await server.api.post('/api/visions', { data: {
+      project: PROJECT, created_date: '2611-25', created_time: '10:00', l1: title,
+    } })
+    expect(made.status(), await made.text()).toBe(201)
+    const id = (await made.json()).metadata.id as string
+    const file = path.join(server.dir, `vision-${AGENT}.txt`)
+    fs.writeFileSync(file, `/api/visions/${id}\nVision ${id}\n`)
+    await typeLine(page, printFile(file))
+
+    const address = await pointOf(page, id)
+    await expectClickTarget(page.locator('.aqua-screen'), address)
+    await page.mouse.click(address.x, address.y)
+    await expect(page.getByRole('dialog', { name: `Vision ${id}` })).toHaveCount(0)
+    const recordPoint = await pointOf(page, `Vision ${id}`)
+    await expectClickTarget(page.locator('.aqua-screen'), recordPoint)
+    await page.mouse.click(recordPoint.x, recordPoint.y)
+    const card = page.getByRole('dialog', { name: `Vision ${id}` })
+    await expect(card.getByText(title)).toBeVisible()
+    await card.getByRole('button', { name: 'Archive', exact: true }).click()
+    await card.getByRole('button', { name: 'Cancel' }).click()
+    const current = async () => (await (await server.api.get(`/api/visions/${id}`)).json()).metadata.archived_at
+    expect(await current()).toBeFalsy()
+    await card.getByRole('button', { name: 'Archive', exact: true }).click()
+    await card.getByRole('button', { name: 'Confirm archive' }).click()
+    await expect.poll(current).toMatch(/^\d{4}-\d{2}$/)
+    await card.getByRole('button', { name: 'Restore' }).click()
+    await expect(card.getByRole('button', { name: 'Open on the Visions page' })).toBeEnabled()
+    expect(await current()).toBeFalsy()
+  })
+
   test('the inspector previews long replies in Messages and Pins and lets them expand', async ({ win, shell, server }) => {
     const { app, page } = win
     const ending = 'End of the full inspector reply.'
@@ -222,15 +298,13 @@ test.describe('message menu', () => {
     await page.keyboard.press('Alt+BracketRight')
     await expect(side).toHaveCount(0)
 
-    // 2. The task id: its menu, then its card.
+    // 2. The task id opens its card directly.
     const t = await pointOf(page, task)
     await expectClickTarget(page.locator('.aqua-screen'), t)
     await page.mouse.click(t.x, t.y)
-    const tmenu = page.getByRole('menu', { name: task })
-    await expect(tmenu.getByText('Message menu in the terminal')).toBeVisible()
-    await expect(tmenu.getByRole('menuitemradio', { name: 'doing' })).toHaveAttribute('aria-checked', 'true')
-    await tmenu.getByRole('menuitem', { name: 'Open the task' }).click()
     const card = page.getByRole('dialog', { name: `Task ${task}` })
+    await expect(card.getByText('Message menu in the terminal')).toBeVisible()
+    await expect(card.getByRole('menuitemradio', { name: 'doing' })).toHaveAttribute('aria-checked', 'true')
     await expect(card.getByText('A right click on a message.')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(card).toHaveCount(0)

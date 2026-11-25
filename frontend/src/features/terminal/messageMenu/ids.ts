@@ -9,16 +9,17 @@
  * it is a commit of the terminal's project before it underlines it.
  */
 
-export type IdKind = 'task' | 'note' | 'decision' | 'entrypoint' | 'publish' | 'core' | 'skill' | 'agent' | 'commit'
-
 export interface FoundId { id: string; kind: IdKind; start: number; length: number }
 
-const KIND: Record<string, IdKind> = {
+const KIND = {
   tk: 'task', nt: 'note', dc: 'decision', ep: 'entrypoint', pu: 'publish', cr: 'core', sk: 'skill',
-}
+  rl: 'rule', vs: 'vision', pb: 'problem', msg: 'message',
+} as const
+type Prefix = keyof typeof KIND
+export type IdKind = (typeof KIND)[Prefix] | 'agent' | 'commit'
 
 // Eight hex digits, not part of a longer word: tk_a9306fb1, (tk_a9306fb1), tk_a9306fb1.
-const ID = /(?<![\p{L}\p{N}_])(tk|nt|dc|ep|pu|cr|sk)_[0-9a-f]{8}(?![\p{L}\p{N}_])/gu
+const ID = new RegExp(String.raw`(?<![\p{L}\p{N}_])(${Object.keys(KIND).join('|')})_[0-9a-f]{8}(?![\p{L}\p{N}_])`, 'gu')
 
 // A chat's agent id (backend hookshared.session_key): Claude Code, Codex and
 // Cursor take eight hex digits of the session; OpenCode eight letters or
@@ -68,7 +69,7 @@ export function hashCandidates(text: string): FoundId[] {
 /** Every record named in a row, in the row's order; commit hashes as candidates still to check. */
 export function findIds(text: string): FoundId[] {
   const out: FoundId[] = []
-  for (const m of text.matchAll(ID)) out.push({ id: m[0], kind: KIND[m[1]!]!, start: m.index!, length: m[0].length })
+  for (const m of text.matchAll(ID)) out.push({ id: m[0], kind: KIND[m[1] as Prefix], start: m.index!, length: m[0].length })
   for (const m of text.matchAll(AGENT)) out.push({ id: m[0], kind: 'agent', start: m.index!, length: m[0].length })
   // A hash inside an id or an agent id found above is theirs.
   const taken = (f: FoundId) => out.some((o) => f.start < o.start + o.length && o.start < f.start + f.length)

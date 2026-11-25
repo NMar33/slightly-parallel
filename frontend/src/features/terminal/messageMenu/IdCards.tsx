@@ -8,23 +8,26 @@
  */
 
 import { useState, type CSSProperties, type ReactNode } from 'react'
-import { Copy, CornerDownRight, Download, ExternalLink, FileDiff, GitBranch, MessageSquarePlus, RotateCcw, SquareTerminal, X } from 'lucide-react'
+import { Archive, Check, Copy, CornerDownRight, Download, ExternalLink, FileDiff, GitBranch, MessageSquarePlus, RotateCcw, SquareTerminal, X } from 'lucide-react'
 
 import { Markdown } from '../../../components/Markdown'
 import { writeClipboard } from '../../../lib/useCopy'
 import { getJson, postJson } from '../../../lib/getJson'
+import { entryText } from '../../../lib/entryText'
+import { todayYYMMDD } from '../../../utils/dateUtils'
 import { useAquaActions, useSessions } from '../../aqua/app/api'
 import { openWindow } from '../../aqua/app/bridge'
 import { detachUrl, shownOf } from '../../aqua/app/model'
 import { useTabInfo } from '../../aqua/app/tabs/facts'
 import { coreColor, useCoreWrites } from '../../architecture/cores/data'
 import { chooseCoresMode } from '../../architecture/page/mode'
+import { useKeptRecord, useRestoreKeptRecord, useSetFields } from '../../visions/data'
 import { t, tn } from '../../../i18n/scope/msgmenu'
 import type { IdKind } from './ids'
 import { Action, copyId, DIM, FG, openPage, Part, placeCard, RecordCard } from './pop'
 import {
   coreView, pageOf, useAgentCard, useAgentTasks, useCommit, useCommitDiff, useCoreCard, useDecision, useEntryCard,
-  usePublishCard, useSkillCard,
+  useMessageCard, usePublishCard, useSkillCard,
 } from './records'
 
 export interface CardProps {
@@ -73,6 +76,98 @@ function IdLink({ id, kind, onId, title }: { id: string; kind: IdKind; onId: Car
 const copyRow = (id: string, say: CardProps['say'], label = t('Copy the id')) => (
   <Action icon={<Copy size={15} />} label={label} onClick={() => { void copyId(id, say) }} />
 )
+
+const KEPT_CARDS = {
+  rule: { label: () => t('Rule'), open: () => t('Open on the Rules page'), missing: () => t('No such rule') },
+  vision: { label: () => t('Vision'), open: () => t('Open on the Visions page'), missing: () => t('No such vision') },
+  problem: { label: () => t('Problem'), open: () => t('Open on the Problems page'), missing: () => t('No such problem') },
+}
+
+export function KeptCard(p: CardProps & { kind: keyof typeof KEPT_CARDS }) {
+  const { kind, id } = p
+  const words = KEPT_CARDS[kind]
+  const q = useKeptRecord(kind, id)
+  const write = useSetFields(kind)
+  const restore = useRestoreKeptRecord(kind)
+  const [confirmArchive, setConfirmArchive] = useState(false)
+  const d = q.data
+  const row = d?.metadata
+  const archived = kind === 'rule' ? row?.status === 'archived' : Boolean(row?.archived_at)
+  const held = d ? entryText(d) : null
+  const body = d?.kept?.message || held?.text
+  const busy = write.isPending || restore.isPending || q.isFetching
+  const archive = () => run(p.say, async () => {
+    await write.mutateAsync(kind === 'rule' ? { id, status: 'archived' } : { id, archived_at: todayYYMMDD() })
+    setConfirmArchive(false)
+    p.say(t('Archived'))
+  })
+  const bringBack = () => run(p.say, async () => {
+    await restore.mutateAsync(id)
+    p.say(t('Restored'))
+  })
+  const solve = () => run(p.say, async () => {
+    await write.mutateAsync({ id, status: 'resolved', resolved_date: todayYYMMDD() })
+    p.say(t('Marked as resolved'))
+  })
+  return (
+    <RecordCard label={words.label()} id={id} style={placeCard(p.x, p.y, 380, p.w, p.h)} close={p.close}
+      chips={archived ? <Chip>{t('Archived')}</Chip> : row?.status ? <Chip>{row.status === 'resolved' ? t('Resolved') : row.status}</Chip> : null}
+      actions={<>
+        <Action icon={<ExternalLink size={15} />} label={words.open()} disabled={!row || (kind !== 'rule' && archived)}
+          onClick={() => { p.close(); openPage(pageOf[kind](id)) }} />
+        {kind === 'problem' && row?.status !== 'resolved' && <Action icon={<Check size={15} />} label={t('Mark solved')}
+          disabled={!row || archived || busy || confirmArchive} onClick={solve} />}
+        {confirmArchive ? <>
+          <Action icon={<Archive size={15} />} label={t('Confirm archive')} disabled={busy || archived} onClick={archive} />
+          <Action icon={<X size={15} />} label={t('Cancel')} disabled={busy} onClick={() => setConfirmArchive(false)} />
+        </> : archived && kind !== 'rule'
+          ? <Action icon={<RotateCcw size={15} />} label={t('Restore')} disabled={busy} onClick={bringBack} />
+          : <Action icon={<Archive size={15} />} label={t('Archive')} disabled={!row || archived || busy}
+              onClick={kind === 'rule' ? archive : () => setConfirmArchive(true)} />}
+        {copyRow(id, p.say)}
+      </>}>
+      {!row ? <Status q={q} missing={words.missing()} /> : <>
+        <b className="text-13 leading-snug" style={FG}>{row.l1 || held?.line || id}</b>
+        {body && body !== row.l1 && <p className="m-0 text-12 leading-snug whitespace-pre-wrap" style={FG}>{body}</p>}
+      </>}
+    </RecordCard>
+  )
+}
+
+export function MessageCard(p: CardProps) {
+  const q = useMessageCard(p.id)
+  const [thread, setThread] = useState(false)
+  const m = q.data?.message
+  const status = m?.read_at ? t('Read') : m?.delivered_via ? t('Delivered') : t('Queued')
+  return (
+    <RecordCard label={t('Agent message')} id={p.id} style={placeCard(p.x, p.y, 420, p.w, p.h)} close={p.close}
+      chips={m && <Chip>{status}</Chip>}
+      actions={<>
+        <Action icon={<CornerDownRight size={15} />} label={thread ? t('Hide thread') : t('Open thread')}
+          disabled={!m} onClick={() => setThread(!thread)} />
+        {copyRow(p.id, p.say)}
+      </>}>
+      {!m ? <Status q={q} missing={t('No such message')} /> : <>
+        <div className="flex flex-wrap gap-6 text-11" style={DIM}>
+          <span>{m.from_agent}</span><span aria-hidden="true">→</span><span>{m.to_agent}</span>
+          {m.sent_at && <time dateTime={m.sent_at}>{when(m.sent_at)}</time>}
+        </div>
+        <p className="m-0 text-12 leading-snug whitespace-pre-wrap break-words" style={FG}>{m.text}</p>
+        {thread && <Part title={t('Thread')}>
+          {q.data!.thread.length <= 1 ? <p className="m-0 text-11" style={DIM}>{t('No replies')}</p> : (
+            <ol className="m-0 p-0 list-none flex flex-col gap-8">
+              {q.data!.thread.map((reply) => <li key={reply.id} aria-current={reply.id === p.id || undefined}>
+                <IdLink id={reply.id} kind="message" onId={p.onId} />
+                <span className="ml-6 text-11" style={DIM}>{reply.from_agent}</span>
+                {reply.id !== p.id && <p className="m-0 text-12 whitespace-pre-wrap break-words" style={FG}>{reply.text}</p>}
+              </li>)}
+            </ol>
+          )}
+        </Part>}
+      </>}
+    </RecordCard>
+  )
+}
 
 /* ------------------------------------------------------------ a decision */
 

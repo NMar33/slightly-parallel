@@ -226,6 +226,12 @@ jobs:
           - os: ubuntu-latest
             cli: claude-code
             drive_trust: true
+          - os: macos-latest
+            cli: claude-code
+            drive_trust: true
+          - os: windows-latest
+            cli: claude-code
+            drive_trust: true
     steps:
       - uses: actions/checkout@v7
         with:
@@ -269,6 +275,16 @@ jobs:
         run: |
           python -m pytest -q -s -rs -o addopts='' --junitxml=core.xml tests/test_interactive_agents.py::test_codex_runs_full_core_against_the_local_model
           python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("core.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the offline core must run"'
+      - name: Save the headless OpenCode reply before the process exits
+        if: matrix.cli == 'opencode'
+        shell: bash
+        working-directory: backend
+        timeout-minutes: 6
+        env:
+          SP_REAL_INTERACTIVE: "1"
+        run: |
+          python -m pytest -q -s -rs -o addopts='' --junitxml=headless.xml 'tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[opencode-run]'
+          python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("headless.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the headless OpenCode test must run"'
       - name: Keep the local provider and PTY evidence
         if: always()
         uses: actions/upload-artifact@v7

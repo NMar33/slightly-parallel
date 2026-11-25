@@ -29,7 +29,7 @@ def _serve(stack, server):
     return server.server_address[1]
 
 
-@pytest.mark.parametrize("cli", ["claude-code", "codex", "opencode"])
+@pytest.mark.parametrize("cli", ["claude-code", "codex", "opencode", "opencode-run"])
 def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp_path):
     for folder in (REPO / "scripts" / "ci", REPO / "scripts" / "fresh_user"):
         monkeypatch.syspath_prepend(str(folder))
@@ -37,11 +37,23 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
     import stub_model
     import stub_responses
     from agents import give_login, tools
-    from common import Space, eventually, free_port, get, http, wait_for
+    from common import Space, chatstore, eventually, free_port, get, http, wait_for
     from interactive import CLAUDE_MCP_ACCEPTED, _last_reply, _ready, _wait_for_turn
     from screen import ENTER, Screen, codex_pty_args
     from stages import make_sample
 
+    headless = cli == "opencode-run"
+    if headless:
+        cli = "opencode"
+        adapter = tmp_path / "slow-capture.py"
+        adapter.write_text(
+            "import runpy, sys, time\n"
+            "if sys.argv[sys.argv.index('--phase') + 1] == 'complete':\n"
+            "    time.sleep(2)\n"
+            f"sys.argv[0] = {str(setup._CAPTURE_CLI)!r}\n"
+            "runpy.run_path(sys.argv[0], run_name='__main__')\n", encoding="utf-8",
+        )
+        monkeypatch.setattr(setup, "_CAPTURE_CLI", adapter)
     drive_trust = cli == "claude-code" and os.environ.get("SP_TEST_CLAUDE_TRUST") == "1"
     space = Space(tmp_path, free_port())
     space.home.mkdir()
@@ -117,6 +129,18 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             env.update(ANTHROPIC_API_KEY="sp-local-model-test-credential", OPENCODE_DISABLE_MODELS_FETCH="1")
             env.update(tool.extra_env())
             args += ["--model", model]
+
+        if headless:
+            prompt = "Say hello for sp-stub-hello."
+            turn = tool.say(prompt, model, space, env, 40)
+            assert turn.ok and turn.text == plan.REPLY, turn.error or turn.text
+            agent = f"oc-{tool.session[-8:].lower()}"
+            chat = chatstore.folder(space.data, "cli", agent) / "chat.md"
+            assert _last_reply(chat, prompt) == plan.REPLY
+            assert chat.read_text(encoding="utf-8").count("\n## Turn ") == 1
+            meta = json.loads(chat.with_name("meta.json").read_text(encoding="utf-8"))
+            assert meta["helper_kind"] == "opencode-run"
+            return
 
         terminal = Screen(args, space.sample, env, trace=trace, reply_to_kitty_query=cli != "claude-code")
         stack.callback(terminal.close)

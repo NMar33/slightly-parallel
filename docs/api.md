@@ -207,7 +207,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/goals` · `/api/goals/{id}` · `/api/goals/{id}/update` | `status`, `parent_goal_id`, `sprint_id`, `root_only` | `confidence_pct`, `retro_outcome`, `sprint_id`, `status`, `success_comment`, `time_est` | `children`. **Retired**: the product no longer writes goals; the routes stay so pre-task data still reads, and sprints still join the rows they have |
 | `/api/ideas` · `/api/ideas/{id}` | `tag` | — | `body`. Legacy reader — the library retired in favour of tasks |
 | `/api/notes` · `/api/notes/{id}` | `tag` | — | `body`. Legacy reader |
-| `/api/problems` · `/api/problems/{id}` · `/api/problems/{id}/update` | `tag`, `severity`, `status`, `search` | `resolved_date`, `severity`, `status`, `tags` | see **Kept messages and skills** |
+| `/api/problems` · `/api/problems/{id}` · `/api/problems/{id}/update` | `tag`, `severity`, `status`, `search` | `archived_at` (operator), `resolved_date`, `severity`, `status`, `tags` | see **Kept messages and skills** |
 | `/api/prompt-runs` · `/api/prompt-runs/{id}` · `/api/prompt-runs/{id}/update` | — | `intervention`, `note`, `regression`, `score`, `task_success` | see **Prompts** |
 | `/api/prompts` · `/api/prompts/{id}` · `/api/prompts/{id}/update` | `tag` | `archived_at`, `marks`, `status`, `tags`, `title` | see **Prompts** — the list and detail routes are shadowed |
 | `/api/rules` · `/api/rules/{id}` · `/api/rules/{id}/update` | `tag`, `auto`, `kind`, `severity` (alias `importance`), `status` | `auto`, `kind`, `severity`, `status`, `tags` | see **Kept messages and skills** |
@@ -218,7 +218,7 @@ request instead of N; on tasks it attaches `description`, `turns_n` and
 | `/api/standups` · `/api/standups/{id}` · `/api/standups/{id}/update` | — | `blockers_n`, `goals_closed_n`, `goals_open_n`, `hours_today` | see **Standups and scans** |
 | `/api/tasks` · `/api/tasks/{id}` · `/api/tasks/{id}/update` | `status`, `assignee`, `priority`, `lane` | see **Tasks** | see **Tasks** |
 | `/api/time-entries` · `/api/time-entries/{id}` · `/api/time-entries/{id}/update` | `goal_id`, `sprint_id`, `running` | `duration_min`, `ended_at`, `goal_id`, `note`, `share_pct`, `sprint_id`, `started_at` | see **Operator-only admin** |
-| `/api/visions` · `/api/visions/{id}` · `/api/visions/{id}/update` | `tag`, `category`, `impact`, `search` | `category`, `effort`, `impact`, `tags` | see **Kept messages and skills** |
+| `/api/visions` · `/api/visions/{id}` · `/api/visions/{id}/update` | `tag`, `category`, `impact`, `search` | `archived_at` (operator), `category`, `effort`, `impact`, `tags` | see **Kept messages and skills** |
 | `/api/entrypoints` · `/api/entrypoints/{id}` · `/api/entrypoints/{id}/update` | `tag`, `status`, `search` | `topic`, `status` (`open`, `closed`), `tags`; an agent changes `topic` and `tags` only | see **Entry points** |
 
 Writes an agent may not make (422 with the reason): `sprints` (the operator
@@ -546,16 +546,19 @@ One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
   `CODEX_HOME` (default `~/.codex`). It sends a marker asking the chat to
   read its inbox with `turn/start` or, during a turn, `turn/steer`. The
   ledger reserves the wake before sending. An uncertain send is checked in
-  thread history before another path may hand over the text. Claude Code
-  still receives the marked text in its verified, empty terminal input.
-  Waiting messages can be read in the inbox, handed over on the next
-  operator prompt, or announced once at Stop for either client. Answers `{message, delivered_via,
+  thread history before another path may deliver the notice. The notice is
+  also typed into a verified empty terminal input, announced on the next
+  operator prompt or announced once at Stop when supported. The inbox
+  supplies the body. Answers `{message, delivered_via,
   typed, waiting}`.
 - `POST /api/messages/inbox` — `{agent_id}` (the MCP tool `messages`): the
   chat's `unread` messages, marked read now, then its `recent` read ones
   (`?recent=`, default 10).
 - `GET /api/messages?agent_id=&project=&limit=` — the ledger, newest first
   (one chat's sent and received, one project's, or all). No write.
+- `GET /api/messages/{message_id}` — `{message, thread}`. The thread is the
+  connected replies between the same two participants, in ledger order.
+  Returns 404 for an unknown message. Does not mark messages read.
 
 The capture hook reads a prompt that opens with the marker as the sender's
 message only when the ledger holds that id, for this chat, from that

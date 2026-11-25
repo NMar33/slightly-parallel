@@ -244,7 +244,7 @@ function fakeTerm(text: string): { term: Terminal; links: () => Promise<Array<{ 
 }
 
 describe('ids in the terminal', () => {
-  it('a task id is a link: its menu shows the task, moves its column by the operator\'s route, opens its card', async () => {
+  it('a task id opens its card and moves column through the board route', async () => {
     const r = rig()
     const f = fakeTerm('Готово: tk_a9306fb1, заметка nt_0123abcd')
     document.body.appendChild(f.term.element!)
@@ -252,16 +252,17 @@ describe('ids in the terminal', () => {
     const links = await f.links()
     expect(links.map((l) => [l.text, l.range.start.x, l.range.end.x])).toEqual([['tk_a9306fb1', 9, 19], ['nt_0123abcd', 30, 40]])
     act(() => links[0]!.activate(new MouseEvent('mouseup', { clientX: 50, clientY: 5 })))
-    await waitFor(() => expect(within(menu()).getByText('Меню сообщений в терминале')).toBeTruthy())
-    expect(within(menu()).getByRole('menuitemradio', { name: 'doing' })).toHaveAttribute('aria-checked', 'true')
-    fireEvent.click(within(menu()).getByRole('menuitemradio', { name: 'done' }))
+    const card = await screen.findByRole('dialog', { name: 'Task tk_a9306fb1' })
+    await within(card).findByText('Меню сообщений в терминале')
+    expect(within(card).getByText('Правый щелчок по сообщению.')).toBeTruthy()
+    expect(within(card).getByRole('menuitemradio', { name: 'doing' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(card).getByRole('menuitemradio', { name: 'done' }))
     await waitFor(() => expect(posts).toContainEqual(['/api/tasks/tk_a9306fb1/update', { status: 'done', actor: 'operator' }]))
     await waitFor(() => expect(r.said).toContain('tk_a9306fb1 → done'))
-    act(() => links[0]!.activate(new MouseEvent('mouseup', { clientX: 50, clientY: 5 })))
-    await waitFor(() => expect(menu()).toBeTruthy())
-    fireEvent.click(item('Open the task'))
-    const card = await screen.findByRole('dialog', { name: 'Task tk_a9306fb1' })
-    expect(within(card).getByText('Правый щелчок по сообщению.')).toBeTruthy()
+    const columns = within(card).getByRole('combobox', { name: 'Move to column' })
+    await waitFor(() => expect(columns).toBeEnabled())
+    fireEvent.change(columns, { target: { value: 'review' } })
+    await waitFor(() => expect(posts).toContainEqual(['/api/tasks/tk_a9306fb1/update', { status: 'review', actor: 'operator' }]))
   })
 
   it('a note id opens the note in place; Escape closes it', async () => {

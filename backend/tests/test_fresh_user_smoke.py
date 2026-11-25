@@ -117,8 +117,15 @@ def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_pa
     assert ("--workers=1" in commands[0]) is windows
 
 
-@pytest.mark.parametrize("server", ["slightly-parallel", "unexpected-server"])
-def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding, server):
+@pytest.mark.parametrize(("server", "cursor", "dropped", "moves", "expected"), [
+    ("slightly-parallel", "❯", 0, 2, True),
+    ("slightly-parallel", "❯", 1, 3, True),
+    ("slightly-parallel", "❯", 20, 3, False),
+    ("slightly-parallel", ">", 0, 2, True),
+    ("unexpected-server", ">", 0, 0, False),
+    ("slightly-parallel\nNew MCP server found in this project: unexpected-server", "❯", 0, 0, False),
+])
+def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding, server, cursor, dropped, moves, expected):
     from agents import tools
 
     interactive = scripted_onboarding
@@ -130,26 +137,29 @@ def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding
     class Screen:
         selected = len(choices) - 1
         confirmed = False
+        ignored = dropped
 
         def read(self):
             if self.confirmed:
                 self.text = "Claude Code\n❯\n? for shortcuts"
             else:
-                rows = [f"{'❯' if i == self.selected else ' '} {text}" for i, text in enumerate(choices)]
+                rows = [f"{cursor if i == self.selected else ' '} {text}" for i, text in enumerate(choices)]
                 self.text = f"New MCP server found in this project: {server}\n\n" + "\n".join(rows)
 
         def send(self, key):
             seen.append(key)
             if key == interactive.UP:
+                if self.ignored:
+                    self.ignored -= 1
+                    return
                 self.selected -= 1
             elif key == interactive.ENTER:
                 assert self.selected == 0
                 self.confirmed = True
 
     report = []
-    expected = server == "slightly-parallel"
-    assert interactive._ready(Screen(), tools()["claude-code"], 3, report) is expected
-    assert seen == ([interactive.UP, interactive.UP, interactive.ENTER] if expected else [])
+    assert interactive._ready(Screen(), tools()["claude-code"], 10, report) is expected
+    assert seen == [interactive.UP] * moves + ([interactive.ENTER] if expected else [])
     assert report == (["Claude Code accepted the Slightly Parallel MCP server"] if expected else [])
 
 
@@ -340,6 +350,23 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
         assert plan["scan"]["files_n"] == "COUNTER"
         assert plan["architecture"]["trigger_id"] == "SCAN_ID"
     assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
+
+
+@pytest.mark.parametrize(("windows", "cli"), [(True, "codex"), (False, "codex"), (True, "opencode")])
+def test_core_edit_points_windows_codex_at_one_exact_read(monkeypatch, tmp_path, windows, cli):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    import scenario
+    from common import Space
+
+    monkeypatch.setattr(interactive, "WINDOWS", windows)
+    space = Space(tmp_path, 1)
+    state = scenario.State("calc", space.sample, scenario.tools()[cli])
+    prompt = interactive._operator_core_prompt(space, state, scenario.EDIT)
+    path = (space.sample / "calc.py").resolve().as_posix().replace("'", "''")
+    read = f"Get-Content -LiteralPath '{path}'"
+    assert (read in prompt) is (windows and cli == "codex")
+    assert len(prompt.splitlines()) == 1
 
 
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:

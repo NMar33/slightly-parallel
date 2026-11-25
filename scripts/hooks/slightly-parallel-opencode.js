@@ -7,7 +7,7 @@
  *
  * - `chat.message` — the user's prompt, at the moment it is sent. This is
  *   a named hook: OpenCode awaits it, and it carries the message parts.
- * - `session.idle` — the turn is over. The plugin asks the server for the
+ * - An idle notification, or disposal of a headless run: the plugin asks the server for the
  *   session's messages and takes the last assistant message's text. Bus
  *   events carry message metadata only (`message.updated` has no parts),
  *   so the reply is fetched, not read off the event.
@@ -53,6 +53,7 @@ const HELPER = (typeof process !== 'undefined' && Array.isArray(process.argv) &&
 export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
   const seen = new Set()
   const typed = new Map()
+  const helperTurns = new Map()
   const cwd = directory || ((typeof process !== 'undefined' && process.cwd) ? process.cwd() : '')
 
   const textOf = (parts) =>
@@ -239,6 +240,24 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
     return null
   }
 
+  const complete = async (sessionID) => {
+    const reply = await lastReply(sessionID)
+    const key = 'assistant:' + (reply && reply.id ? reply.id : '')
+    if (reply && reply.id && seen.has(key)) return
+    seen.add(key)
+    const { touched, commit_calls, usage, ...times } = await sessionTimes(sessionID)
+    await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing'],
+      commit_calls ? { times, touched, commit_calls, usage } : { times, touched, usage })
+  }
+
+  const finishHelper = (sessionID) => {
+    if (!helperTurns.has(sessionID)) return
+    if (!helperTurns.get(sessionID)) {
+      helperTurns.set(sessionID, complete(sessionID).finally(() => helperTurns.delete(sessionID)))
+    }
+    return helperTurns.get(sessionID)
+  }
+
   // The standup and map helpers, as subagents on the models Settings give
   // (Settings › Agents, "in OpenCode"). OpenCode's task tool takes no model:
   // a subagent carries its own. "chat", or no setting, defines none — the
@@ -291,6 +310,7 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         const command = typed.get(String(sessionID || ''))
         typed.delete(String(sessionID || ''))
         const text = command || textOf(output && output.parts)
+        if (HELPER && sessionID && text) helperTurns.set(sessionID, null)
         // OpenCode waits for this hook before it sends the prompt: a capture
         // that hangs (a stalled disk) must not hold the prompt. Past the wait
         // the notice is left out; the capture itself still finishes.
@@ -310,23 +330,30 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
     },
     event: async ({ event }) => {
       try {
-        if (!event || event.type !== 'session.idle') return
-        const sessionID = event.properties && event.properties.sessionID
+        const { sessionID, status } = (event && event.properties) || {}
         if (!sessionID) return
-        const reply = await lastReply(sessionID)
-        const key = 'assistant:' + (reply && reply.id ? reply.id : '')
-        if (reply && reply.id && seen.has(key)) return
-        seen.add(key)
-        const times = await sessionTimes(sessionID)
-        const touched = times.touched
-        const commit_calls = times.commit_calls
-        const usage = times.usage
-        delete times.touched
-        delete times.commit_calls
-        delete times.usage
-        await run('complete', sessionID, reply ? reply.text : '', ['--close-if-missing'], commit_calls ? { times, touched, commit_calls, usage } : { times, touched, usage })
+        const idle = event.type === 'session.idle'
+        if (HELPER) {
+          if (idle || (event.type === 'session.status' && status?.type === 'idle')) await finishHelper(sessionID)
+        } else if (idle) {
+          await complete(sessionID)
+        }
       } catch {
         /* never throw into the host */
+      }
+    },
+    dispose: async () => {
+      if (!helperTurns.size) return
+      // OpenCode awaits disposal, while the event bus starts handlers without
+      // awaiting them. Drain each started or undelivered helper turn once.
+      let timeout
+      try {
+        await Promise.race([
+          Promise.allSettled(Array.from(helperTurns.keys(), finishHelper)),
+          new Promise(resolve => { timeout = setTimeout(resolve, OPEN_WAIT_MS) }),
+        ])
+      } finally {
+        clearTimeout(timeout)
       }
     },
   }

@@ -20,6 +20,7 @@ let gets: string[]
 let opened: string[]
 let clip: string[]
 let terminals: Array<Record<string, unknown>>
+let visionArchived: string | undefined
 
 function answer(body: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }))
@@ -45,6 +46,7 @@ const COMMIT = { sha: SHA, short: SHA.slice(0, 7), project: 'harbor', subject: '
 
 beforeEach(() => {
   posts = []; gets = []; opened = []; clip = []; terminals = []
+  visionArchived = undefined
   localStorage.clear()
   resetKept()
   Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (s: string) => { clip.push(s) } }, configurable: true })
@@ -54,11 +56,20 @@ beforeEach(() => {
     if (init?.method === 'POST') {
       const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>
       posts.push([path, body])
+      if (path === '/api/visions/vs_0123abcd/update') visionArchived = String(body.archived_at)
+      if (path === '/api/undo/restore' && body.id === 'vs_0123abcd') visionArchived = undefined
       if (path === '/api/terminal/sessions') return answer({ session: { id: 't-new', label: 'x', project: 'harbor' } })
       return answer({ ok: true })
     }
     gets.push(path)
     if (path === '/api/decisions/dc_0badc0de') return answer(DECISION)
+    if (path === '/api/rules/rl_a9306fb1') return answer({ metadata: { id: 'rl_a9306fb1', l1: 'Keep replies in the inbox', status: 'active' }, l2: 'The rule body' })
+    if (path === '/api/problems/pb_deadbeef') return answer({ metadata: { id: 'pb_deadbeef', l1: 'Prompt lost', status: 'open' }, l2: 'The problem body' })
+    if (path === '/api/visions/vs_0123abcd') return answer({ metadata: { id: 'vs_0123abcd', l1: 'A shared terminal', archived_at: visionArchived }, l2: 'The vision body' })
+    if (path === '/api/messages/msg_12345678') {
+      const message = { id: 'msg_12345678', from_agent: 'cc-676175ea', to_agent: 'codex-9f3e21b0', text: 'The actual message body', delivered_via: 'terminal', read_at: '' }
+      return answer({ message, thread: [message, { ...message, id: 'msg_abcdef01', text: 'The reply' }] })
+    }
     if (path === '/api/publishing/cards/pu_1a2b3c4d') return answer(CARD)
     if (path === '/api/cores/cr_00ff00aa') return answer(CORE)
     if (path === '/api/skills/sk_abcdef01') return answer(SKILL)
@@ -129,6 +140,64 @@ const writes = () => posts.filter(([p]) => p !== '/api/prefs')
 const button = (card: HTMLElement, name: string | RegExp) => within(card).getByRole('button', { name })
 
 describe('the record cards', () => {
+  it('leaves ids inside printed addresses to the address handler', async () => {
+    const r = rig()
+    const row = 'https://example.test/rules#rl_a9306fb1 /api/messages/msg_12345678 vs_0123abcd'
+    const links = await linksOf(r, row)
+    expect(links.map((link) => link.text)).toEqual(['vs_0123abcd'])
+  })
+
+  it('opens a rule, its page, and archives it through the Rules route', async () => {
+    const r = rig()
+    const card = await open(r, 'Rule rl_a9306fb1', 'rl_a9306fb1')
+    await within(card).findByText('Keep replies in the inbox')
+    fireEvent.click(button(card, 'Archive'))
+    await waitFor(() => expect(writes()).toContainEqual(['/api/rules/rl_a9306fb1/update', { actor: 'operator', status: 'archived' }]))
+    const again = screen.queryByRole('dialog') ?? await open(r, 'Rule rl_a9306fb1', 'rl_a9306fb1')
+    fireEvent.click(await within(again).findByRole('button', { name: 'Open on the Rules page' }))
+    expect(opened.at(-1)).toBe(`${window.location.origin}/rules#rl_a9306fb1`)
+  })
+
+  it('shows the message, sender and status, and opens its replies in the card', async () => {
+    const r = rig()
+    const card = await open(r, '[SP · from cc-676175ea · msg_12345678] Read messages', 'msg_12345678')
+    await within(card).findByText('The actual message body')
+    expect(within(card).getByText('cc-676175ea')).toBeTruthy()
+    expect(within(card).getByText('Delivered')).toBeTruthy()
+    fireEvent.click(button(card, 'Open thread'))
+    expect(await within(card).findByText('The reply')).toBeTruthy()
+    expect(writes()).toEqual([])
+  })
+
+  it('archives a vision and resolves a problem through their page routes', async () => {
+    const r = rig()
+    const vision = await open(r, 'Vision vs_0123abcd', 'vs_0123abcd')
+    await within(vision).findByText('A shared terminal')
+    fireEvent.click(button(vision, 'Archive'))
+    expect(writes()).toEqual([])
+    fireEvent.click(button(vision, 'Cancel'))
+    expect(writes()).toEqual([])
+    fireEvent.click(button(vision, 'Archive'))
+    fireEvent.click(button(vision, 'Confirm archive'))
+    await waitFor(() => expect(writes()).toContainEqual([
+      '/api/visions/vs_0123abcd/update', { actor: 'operator', archived_at: expect.stringMatching(/^\d{4}-\d{2}$/) },
+    ]))
+    const restore = await within(vision).findByRole('button', { name: 'Restore' })
+    expect(button(vision, 'Open on the Visions page')).toBeDisabled()
+    await waitFor(() => expect(restore).toBeEnabled())
+    fireEvent.click(restore)
+    await waitFor(() => expect(writes()).toContainEqual(['/api/undo/restore', { id: 'vs_0123abcd', actor: 'operator' }]))
+    await waitFor(() => expect(button(vision, 'Open on the Visions page')).toBeEnabled())
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    const problem = await open(r, 'Problem pb_deadbeef', 'pb_deadbeef')
+    await within(problem).findByText('Prompt lost')
+    fireEvent.click(button(problem, 'Mark solved'))
+    await waitFor(() => expect(writes()).toContainEqual([
+      '/api/problems/pb_deadbeef/update', { actor: 'operator', status: 'resolved', resolved_date: expect.stringMatching(/^\d{4}-\d{2}$/) },
+    ]))
+  })
+
   it('a decision: what was decided, why, the rejected option, weight and day; opens on the Decisions page', async () => {
     const r = rig()
     const card = await open(r, 'Решение dc_0badc0de записано', 'dc_0badc0de')
@@ -178,7 +247,7 @@ describe('the record cards', () => {
     const r = rig()
     const card = await open(r, 'ядро cr_00ff00aa', 'cr_00ff00aa')
     fireEvent.click(await within(card).findByRole('button', { name: 'tk_a9306fb1' }))
-    await waitFor(() => expect(screen.getByRole('menu')).toHaveAccessibleName('tk_a9306fb1'))
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveAccessibleName('Task tk_a9306fb1'))
   })
 
   it('a skill: SKILL.md rendered; installs into the terminal\'s project by the Skills page\'s route', async () => {
@@ -306,7 +375,7 @@ describe('a right click on a link', () => {
     await waitFor(() => expect(opened).toEqual(['https://example.com/a?b=1']))
   })
 
-  it('a task id: copy the id, copy its page\'s address, open its menu', async () => {
+  it('a task id: copy the id, copy its page\'s address, open its card', async () => {
     const r = rig('harbor', '')
     rightClickAt(r, ROW, 'tk_b3edbd84')
     const menu = await screen.findByRole('menu', { name: 'Link' })
@@ -319,7 +388,7 @@ describe('a right click on a link', () => {
     expect(r.said.at(-1)).toBe('Page address copied')
     rightClickAt(r, ROW, 'tk_b3edbd84')
     fireEvent.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Open' }))
-    await waitFor(() => expect(screen.getByRole('menu')).toHaveAccessibleName('tk_b3edbd84'))
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveAccessibleName('Task tk_b3edbd84'))
   })
 
   it('a decision id: its page address is its project\'s and day\'s', async () => {

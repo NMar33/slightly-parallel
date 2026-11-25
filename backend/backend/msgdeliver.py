@@ -3,7 +3,7 @@
 A message waits in the ledger (msgledger.py) until a way takes it. The
 quickest is the chat's own terminal: the capture hook fires only when a
 prompt comes in, so an agent left idle would never hear of it otherwise.
-The server types the message there as one prompt that opens with the
+The server types a short notice there as one prompt that opens with the
 marker, and presses Enter — only when all of this holds:
 
 - the chat has a live terminal in Slightly Parallel's tmux: the capture hook
