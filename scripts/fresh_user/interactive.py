@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -76,6 +78,46 @@ def _last_reply(chat: Path, prompt: str) -> str:
     turn = chat.read_text(encoding="utf-8").rsplit("\n## Turn ", 1)[-1]
     user, _, reply = turn.partition("\n**Agent**: ")
     return reply.strip() if f"\n**User**: {prompt}\n" in user + "\n" else ""
+
+
+def _opencode_turn_evidence(home: Path, session: str) -> dict:
+    """Summarize the failed turn from the disposable CLI profile without exporting its payloads."""
+    path = home / ".local" / "share" / "opencode" / "opencode.db"
+    unavailable = {"state": "unavailable"}
+    try:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)) as database:
+            user = database.execute(
+                "SELECT id FROM message WHERE session_id = ? AND json_extract(data, '$.role') = 'user' "
+                "ORDER BY time_created DESC, id DESC LIMIT 1", (session,),
+            ).fetchone()
+            if user is None:
+                return {"state": "no_user_turn"}
+            messages = list(database.execute(
+                "SELECT id, json_extract(data, '$.finish') IS NOT NULL, json_extract(data, '$.error') IS NOT NULL "
+                "FROM message WHERE session_id = ? AND json_extract(data, '$.parentID') = ? "
+                "AND json_extract(data, '$.role') = 'assistant' ORDER BY time_created DESC, id DESC LIMIT 16",
+                (session, user[0]),
+            ))
+            assistant = []
+            for message, finished, error in reversed(messages):
+                parts = list(database.execute(
+                    "SELECT json_extract(data, '$.type'), json_extract(data, '$.tool'), "
+                    "json_extract(data, '$.state.status'), length(json_extract(data, '$.text')) > 0 "
+                    "FROM part WHERE session_id = ? AND message_id = ? ORDER BY time_created DESC, id DESC LIMIT 16",
+                    (session, message),
+                ))
+                tools = []
+                for part, tool, status, _ in reversed(parts):
+                    if part == "tool":
+                        name = {"slightly-parallel_write_entry": "write_entry", "skill": "skill"}.get(tool, "other")
+                        phase = status if status in {"pending", "running", "completed", "error"} else "unknown"
+                        tools.append({"tool": name, "status": phase})
+                assistant.append({"finished": bool(finished), "error": bool(error),
+                                  "text_emitted": any(kind == "text" and text for kind, _, _, text in parts),
+                                  "tools": tools})
+    except (OSError, ValueError, sqlite3.Error):
+        return unavailable
+    return {"state": "sampled", "assistant": assistant}
 
 
 def _composer(tool: str, text: str, shown: str) -> bool:
@@ -414,6 +456,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     reply = f"sp-reply-{marker}"
     prompt = f"Reply with exactly {reply} on one line. Do not use any tools."
     title = f"sp-task-{marker}"
+    opencode_core_task = core and not one_turn and tool.name == "opencode"
+    task_fields = {"title": title, "description": "Verify the disposable calculator task is recorded.",
+                   "status": "agent", "tags": ["ag_followup"]}
     task_prompt = (f"#task {title}. Use the Slightly Parallel write_entry tool with lens task. "
                    f"Set the title to {title} and tags to [\"ag_followup\"].")
     if one_turn:
@@ -530,14 +575,16 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
         if not one_turn:
             existing = {row.get("id") for row in cards()}
-            if policy:
-                arguments = {"lens": "task", "fields": {
-                    "title": title, "description": "Verify the disposable calculator task is recorded.",
-                    "status": "agent", "tags": ["ag_followup"],
-                }}
-                policy.start("#task", [["write_entry", arguments]])
+            if policy or opencode_core_task:
+                arguments = {"lens": "task", "fields": task_fields}
+                if policy:
+                    policy.start("#task", [["write_entry", arguments]])
                 task_prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool once, "
-                               f"with exactly this JSON argument: {json.dumps(arguments)}. Report the task ID.")
+                               f"with exactly this JSON argument: {json.dumps(arguments)}.")
+                if opencode_core_task:
+                    task_prompt += " Do not call any other tool. Reply with only the returned task ID."
+                else:
+                    task_prompt += " Report the task ID."
             if not type_prompt(task_prompt, "#task"):
                 return None
 
@@ -549,6 +596,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             approve_task = _core_approval(screen, "#task", read_commands=workspace_reads)
             error = (_wait_for_turn(screen, find_task_turn, seconds, approval=lambda: policy_error() or approve_task()) if policy
                      else _wait_for_turn(screen, find_task_turn, seconds))
+            if error == "turn timed out" and tool.name == "opencode":
+                report.notes["OpenCode task timeout"] = _opencode_turn_evidence(space.home, str(session))
             if not report.add(stage, "the operator task turn is captured to completion", not error,
                               f"{error}\n{agent}\n{_screen_tail(screen)}"):
                 return None
@@ -559,6 +608,14 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                           str(initial)[:1000]):
             return None
         task = str(match[0]["id"])
+        if opencode_core_task:
+            saved = get(space, f"/api/tasks/{task}")
+            tags = str((saved.get("metadata") or {}).get("tags", "")).split(",")
+            same_id = _last_reply(chat, task_prompt) == task
+            same_fields = saved.get("description") == task_fields["description"] and "ag_followup" in tags
+            if not report.add(stage, "OpenCode recorded the ID and fields of the created task", same_id and same_fields,
+                              f"Reply ID matches: {same_id}. Description and tag match: {same_fields}."):
+                return None
         if core:
             state = scenario.State(code, folder, tool)
             state.agent, state.task = agent, task

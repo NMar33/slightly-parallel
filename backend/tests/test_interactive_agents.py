@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import uvicorn
 
+from backend import skilllib
 from backend.routers import setup
 from backend.server import create_app
 
@@ -121,6 +122,12 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
         else:
             sdk_seed = os.environ.get("SP_OPENCODE_SDK_SEED")
             tool.prepare_interactive(space, space.sample, env, sdk_seed=Path(sdk_seed) if sdk_seed else None)
+            if not headless:
+                version = skilllib.read_version(app.state.store, skilllib.builtin_id("write-a-task"))
+                assert version is not None, "the shipped write-a-task skill was not seeded"
+                skill = space.sample / ".opencode/skills/write-a-task/SKILL.md"
+                skill.parent.mkdir(parents=True)
+                skill.write_text(version["skill_md"], encoding="utf-8")
             model = "anthropic/claude-sonnet-4-5"
             path = space.sample / "opencode.json"
             config = json.loads(path.read_text(encoding="utf-8"))
@@ -192,9 +199,24 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             prompt("Say hello for sp-stub-hello.")
             verdicts[layer] = "pass"
             layer = "L3"
-            prompt(f"#task {plan.TITLE}. sp-stub-task")
+            marker = "sp-stub-task-skill" if cli == "opencode" else "sp-stub-task"
+            prompt(f"#task {plan.TITLE}. {marker}")
             cards = get(space, "/api/tasks?project=cli")["tasks"]
             assert len(cards) == 1 and cards[0]["title"] == plan.TITLE and cards[0]["agent_id"] == chat.parent.name
+            if cli == "opencode":
+                # At this point there have been only two turns. The task's
+                # Messages requests send back first the MCP result, then both
+                # results in order before the final text captured by prompt().
+                requests = [json.loads(line) for line in model_log.read_text(encoding="utf-8").splitlines()]
+                receipts = [row["tool_results"] for row in requests if row.get("tool_results")]
+                assert len(receipts) == 2, receipts
+                created, loaded = receipts
+                assert len(created) == 1 and len(loaded) == 2 and loaded[:1] == created, receipts
+                assert cards[0]["status"] == "agent"
+                for field in ("id", "title", "agent_id", "status"):
+                    assert f'"{field}": {json.dumps(cards[0][field])}' in created[0], created[0]
+                assert loaded[1].startswith('<skill_content name="write-a-task">'), loaded[1]
+                assert "# Skill: write-a-task" in loaded[1], loaded[1]
             prompt(f"#decision {plan.DECISION} sp-stub-decision")
             decisions = get(space, "/api/decisions?project=cli")["decisions"]
             assert len(decisions) == 1 and decisions[0]["decision_text"] == plan.DECISION

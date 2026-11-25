@@ -1062,3 +1062,117 @@ def test_codex_core_accepts_only_the_exact_local_commit_command(monkeypatch, ope
     assert keys == ([ENTER] if allowed else [])
     if allowed:
         assert not check() and keys == [ENTER]
+
+
+def test_opencode_timeout_keeps_only_latest_turn_statuses(scripted_onboarding, tmp_path):
+    import json
+    import sqlite3
+    from contextlib import closing
+
+    home = tmp_path / "тест ü"
+    database = home / ".local/share/opencode/opencode.db"
+    database.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(database)) as connection:
+        connection.executescript("""
+            CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+            CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+        """)
+        messages = [
+            ("old", "wanted", 1, {"role": "user"}),
+            ("old-answer", "wanted", 2, {"role": "assistant", "parentID": "old", "finish": "stop"}),
+            ("current", "wanted", 3, {"role": "user"}),
+            ("mcp", "wanted", 4, {"role": "assistant", "parentID": "current", "finish": "tool-calls"}),
+            ("skill", "wanted", 5, {"role": "assistant", "parentID": "current"}),
+            ("other", "unrelated", 6, {"role": "user"}),
+        ]
+        connection.executemany("INSERT INTO message VALUES (?, ?, ?, ?)",
+                               [(mid, session, ts, json.dumps(row)) for mid, session, ts, row in messages])
+        parts = [
+            ("write", "mcp", "wanted", 4, {"type": "tool", "tool": "slightly-parallel_write_entry",
+                                           "state": {"status": "completed", "output": "private raw payload"}}),
+            ("skill", "skill", "wanted", 5, {"type": "tool", "tool": "skill", "state": {"status": "running"}}),
+            ("stray", "skill", "unrelated", 6, {"type": "text", "text": "private continuation"}),
+        ]
+        connection.executemany("INSERT INTO part VALUES (?, ?, ?, ?, ?)",
+                               [(pid, mid, sid, ts, json.dumps(row)) for pid, mid, sid, ts, row in parts])
+        connection.commit()
+    assert scripted_onboarding._opencode_turn_evidence(home, "wanted") == {
+        "state": "sampled",
+        "assistant": [
+            {"finished": True, "error": False, "text_emitted": False,
+             "tools": [{"tool": "write_entry", "status": "completed"}]},
+            {"finished": False, "error": False, "text_emitted": False,
+             "tools": [{"tool": "skill", "status": "running"}]},
+        ],
+    }
+    assert scripted_onboarding._opencode_turn_evidence(tmp_path, "wanted") == {"state": "unavailable"}
+
+
+@pytest.mark.parametrize("invalid", ["", "reply ID", "tag", "description"])
+def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onboarding, monkeypatch, tmp_path, invalid):
+    import json
+    import re
+
+    import scenario
+    from common import Report, Space
+
+    interactive = scripted_onboarding
+    space = Space(tmp_path, 1)
+    tool = scenario.tools()["opencode"]
+    agent, task, session = "oc-abcd1234", "tk_abcd1234", "core-session"
+    description = "Verify the disposable calculator task is recorded."
+    chat = space.data / "projects/calc/chats" / agent / "chat.md"
+    chat.parent.mkdir(parents=True)
+    chat.with_name("meta.json").write_text(json.dumps({"session_ref": session}), encoding="utf-8")
+    card = {"id": task, "agent_id": agent, "project": "calc", "status": "agent"}
+    typed = []
+
+    class Screen:
+        rendered = history = ""
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def send(self, value):
+            if value != interactive.ENTER:
+                typed.append(value)
+                return
+            prompt = typed[-1]
+            if prompt.startswith("#task"):
+                card["title"] = prompt.split()[1].rstrip(".")
+                reply = "tk_00000000" if invalid == "reply ID" else task
+            else:
+                reply = re.search(r"sp-reply-[0-9a-f]+", prompt).group()
+            with chat.open("a", encoding="utf-8") as record:
+                record.write(f"\n## Turn {len(typed)}\n**User**: {prompt}\n**Agent**: {reply}\n")
+
+        def close(self):
+            pass
+
+    def get(_space, path):
+        if path.endswith(task):
+            return {"description": "" if invalid == "description" else description,
+                    "metadata": {"tags": "ag_debt" if invalid == "tag" else "ag_followup"}}
+        return {"tasks": [], "agents": [{"agent_id": agent, "session_ref": session}]}
+
+    monkeypatch.setattr(tool, "installed", lambda: True)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+    monkeypatch.setattr(interactive, "WINDOWS", False)
+    monkeypatch.setattr(interactive, "Screen", Screen)
+    monkeypatch.setattr(interactive, "_ready", lambda *_: True)
+    monkeypatch.setattr(interactive, "_wait_for_turn", lambda _screen, check, _seconds: "" if check() else "missing turn")
+    monkeypatch.setattr(interactive, "get", get)
+    monkeypatch.setattr(interactive, "new_task_rows", lambda *_: [card])
+    monkeypatch.setattr(scenario, "CORE", [])
+
+    report = Report()
+    result = interactive.smoke(space, report, "calc", tmp_path, tool, "stub", space.home, 1, core=True)
+    assert bool(result) is not bool(invalid)
+    if invalid:
+        assert report.failed()[-1].name == "OpenCode recorded the ID and fields of the created task"
+    prompt = typed[1]
+    assert "Call the Slightly Parallel write_entry tool once" in prompt
+    assert "Do not call any other tool" in prompt and "only the returned task ID" in prompt
+    args, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{"):])
+    assert args == {"lens": "task", "fields": {"title": card["title"], "description": description,
+                                              "status": "agent", "tags": ["ag_followup"]}}
