@@ -269,7 +269,7 @@ def test_codex_runs_full_core_against_the_local_model(monkeypatch, tmp_path):
                                                  "write_codex_hooks": True, "write_claude_hooks": False})
         policy = Plan(space.root)
         model = CoreModel(policy, lambda rule: get(space, f"/api/rules?project={rule['project']}")["rules"],
-                          workspace_shell=os.name == "nt")
+                          workspace_shell=space.sample if os.name == "nt" else None)
         port = _serve(stack, stub_responses.serve(0, str(tmp_path / "stub-core.jsonl"), interactive=True, core=model))
         report = Report()
         result = smoke(space, report, "calc", space.sample, tools()["codex"], "stub-model", space.home,

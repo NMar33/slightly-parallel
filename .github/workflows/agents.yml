@@ -30,6 +30,10 @@ concurrency:
   group: agents-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   cli-versions:
     name: L0 CLI versions

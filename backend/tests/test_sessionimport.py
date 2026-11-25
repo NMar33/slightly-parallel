@@ -29,11 +29,13 @@ def tokyo(monkeypatch):
     if not hasattr(time, "tzset"):
         yield
         return
-    monkeypatch.setenv("TZ", "Asia/Tokyo")
-    time.tzset()
-    yield
-    monkeypatch.delenv("TZ", raising=False)
-    time.tzset()
+    try:
+        with monkeypatch.context() as zone:
+            zone.setenv("TZ", "Asia/Tokyo")
+            time.tzset()
+            yield
+    finally:
+        time.tzset()
 
 
 def _space(tmp_path: Path) -> tuple[ViewStore, Path, Path, Path]:

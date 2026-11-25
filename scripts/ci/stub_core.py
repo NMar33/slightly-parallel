@@ -6,7 +6,7 @@ from core_mcp import Guard
 
 
 class CoreModel:
-    def __init__(self, plan, rules, *, workspace_shell=False):
+    def __init__(self, plan, rules, *, workspace_shell=None):
         self.plan = plan
         self.rules = rules
         self.workspace_shell = workspace_shell
@@ -44,6 +44,8 @@ class CoreModel:
         name = next(tool for tool in tools if tool in ("exec_command", "functions_exec_command",
                                                        "shell_command", "functions_shell_command"))
         arguments = {"command" if name.endswith("shell_command") else "cmd": command}
-        if not self.workspace_shell:
+        if self.workspace_shell is not None:
+            arguments["workdir"] = str(self.workspace_shell.resolve())
+        else:
             arguments.update(sandbox_permissions="require_escalated", justification="Write the calculator fixture.")
         return name, arguments

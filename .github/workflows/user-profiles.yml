@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   no-node:
     name: Dashboard without Node (${{ matrix.os }})
@@ -55,9 +59,10 @@ jobs:
         with:
           python-version: '3.12'
       - name: Redirect the user and temporary folders to Cyrillic paths
-        shell: pwsh
         run: python scripts/fresh_user/profile.py windows-cyrillic-home
       - name: Record Windows profile coverage
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           Add-Content $env:GITHUB_STEP_SUMMARY 'The redirected Cyrillic home passed. A separate Windows local-account trial exited 1 in run 45097517111. Coverage is the redirected home.'

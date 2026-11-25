@@ -13,6 +13,10 @@ on:
         type: boolean
         default: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   backend:
     if: ${{ !inputs.interactive_only }}
@@ -51,6 +55,9 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies (the pinned versions users get, plus the test tools)
         run: pip install -r requirements.lock -r requirements-dev.txt
+      - name: Windows workflow steps preserve native exit codes
+        if: runner.os == 'Linux' && matrix.python == '3.12'
+        run: python ../scripts/ci/check_windows_shells.py ../.github/workflows
       - name: tmux (the terminal's tmux tests skip without it; Windows has none, its terminal is a ConPTY)
         if: runner.os != 'Windows'
         run: |
@@ -270,7 +277,7 @@ jobs:
           SP_INTERACTIVE_ARTIFACTS: ${{ runner.temp }}/sp-interactive-stub
         run: |
           python -m pytest -q -s -rs -o addopts='' --junitxml=interactive.xml "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
-          python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("interactive.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the real PTY test must run"'
+          python ../scripts/ci/check_skips.py interactive.xml --one-passed
       - name: Run full Codex core through the guarded MCP on a local stub
         if: matrix.cli == 'codex'
         working-directory: backend
@@ -280,7 +287,7 @@ jobs:
           SP_INTERACTIVE_ARTIFACTS: ${{ runner.temp }}/sp-interactive-stub
         run: |
           python -m pytest -q -s -rs -o addopts='' --junitxml=core.xml tests/test_interactive_agents.py::test_codex_runs_full_core_against_the_local_model
-          python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("core.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the offline core must run"'
+          python ../scripts/ci/check_skips.py core.xml --one-passed
       - name: Save the headless OpenCode reply before the process exits
         if: matrix.cli == 'opencode'
         shell: bash
@@ -290,7 +297,7 @@ jobs:
           SP_REAL_INTERACTIVE: "1"
         run: |
           python -m pytest -q -s -rs -o addopts='' --junitxml=headless.xml 'tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[opencode-run]'
-          python -c 'from xml.etree import ElementTree as ET; cases = list(ET.parse("headless.xml").iter("testcase")); assert len(cases) == 1 and cases[0].find("skipped") is None, "the headless OpenCode test must run"'
+          python ../scripts/ci/check_skips.py headless.xml --one-passed
       - name: Keep the local provider and PTY evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -521,6 +528,8 @@ jobs:
       - name: The blank-machine scripts parse (scripts/machine)
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile("scripts/machine/bootstrap.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count) { $errors | Out-String | Write-Error; exit 1 }

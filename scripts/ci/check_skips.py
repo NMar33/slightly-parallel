@@ -7,6 +7,7 @@ not in ALLOWED for this system, naming it. Each allowed reason says why the
 test cannot run here, and where it does run.
 
     python ../scripts/ci/check_skips.py pytest.xml
+    python ../scripts/ci/check_skips.py pytest.xml --one-passed
 """
 
 from __future__ import annotations
@@ -71,6 +72,12 @@ def skipped(path: str) -> list[tuple[str, str]]:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[2] == "--one-passed":
+        cases = list(ET.parse(argv[1]).getroot().iter("testcase"))
+        if len(cases) != 1 or any(cases[0].find(tag) is not None for tag in ("skipped", "failure", "error")):
+            print("Expected exactly one passed test in the JUnit report", file=sys.stderr)
+            return 1
+        return 0
     here = argv[2] if len(argv) > 2 else system()
     found = skipped(argv[1])
     unexpected = [(n, why) for n, why in found

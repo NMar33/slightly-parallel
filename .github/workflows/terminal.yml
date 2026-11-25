@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   window:
     name: Terminal window (${{ matrix.os }})
@@ -59,7 +63,7 @@ jobs:
       - name: "Windows: the ConPTY and the terminal's routes (pywinpty, from requirements.lock)"
         if: runner.os == 'Windows'
         working-directory: backend
-        run: .venv\Scripts\python -m pytest -q -rs -p no:cacheprovider tests/test_conpty.py tests/test_terminal_windows.py tests/test_terminal.py
+        run: .venv/Scripts/python.exe -m pytest -q -rs -p no:cacheprovider tests/test_conpty.py tests/test_terminal_windows.py tests/test_terminal.py
       - name: Frontend build (the server serves it) and the Playwright the suite runs on
         working-directory: frontend
         run: npm ci && npm run build

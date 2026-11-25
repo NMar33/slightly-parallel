@@ -26,6 +26,10 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   machine:
     name: Machine${{ inputs.full && ' full' || '' }} (${{ matrix.os }})
@@ -59,7 +63,10 @@ jobs:
       - name: The kit, Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/machine/bootstrap.ps1 --tools "$env:TOOLS"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -File scripts/machine/bootstrap.ps1 --tools "$env:TOOLS"
       - uses: actions/setup-python@v7
         if: always()
         with:

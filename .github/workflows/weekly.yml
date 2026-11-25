@@ -17,6 +17,10 @@ on:
       - backend/tests/test_real_cli.py
       - scripts/ci/stub_model.py
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   heavy:
     # The write fuzzer and the hooks at once (marker "heavy"), on each system.

@@ -264,11 +264,12 @@ def test_windows_stub_shell_uses_workspace_permissions(monkeypatch, tmp_path):
     from stub_core import CoreModel
 
     plan = Plan(tmp_path)
+    workspace = tmp_path / "sample ü"
     plan.start("a plain request", shell=("Get-Content -LiteralPath 'calc.py'",))
-    model = CoreModel(plan, lambda _rule: [], workspace_shell=True)
+    model = CoreModel(plan, lambda _rule: [], workspace_shell=workspace)
     tool, args = model([{"role": "user"}], {"exec_command"})
     assert tool == "exec_command"
-    assert args == {"cmd": "Get-Content -LiteralPath 'calc.py'"}
+    assert args == {"cmd": "Get-Content -LiteralPath 'calc.py'", "workdir": str(workspace.resolve())}
 
 
 def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypatch, tmp_path):
@@ -388,7 +389,7 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
 
 
-def test_windows_codex_core_asks_for_the_same_calculator_edit(monkeypatch, tmp_path):
+def test_windows_codex_core_tells_the_agent_its_actual_workspace(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import interactive
     import scenario
@@ -398,7 +399,11 @@ def test_windows_codex_core_asks_for_the_same_calculator_edit(monkeypatch, tmp_p
     space = Space(tmp_path, 1)
     state = scenario.State("calc", space.sample, scenario.tools()["codex"])
     for step in (scenario.EDIT, scenario.WORK):
-        assert interactive._operator_core_prompt(space, state, step) == scenario.step_prompt(space, state, step)
+        prompt = interactive._operator_core_prompt(space, state, step)
+        assert prompt.startswith(scenario.step_prompt(space, state, step))
+        assert f"working directory to `{space.sample.resolve()}`" in prompt
+        assert "use absolute paths under that directory" in prompt
+        assert "Get-Content" not in prompt and "Add-Content" not in prompt
 
 
 @pytest.mark.parametrize("command", ["Get-ChildItem -LiteralPath '.'", "Add-Content -LiteralPath 'calc.py' -Value 'data'"])

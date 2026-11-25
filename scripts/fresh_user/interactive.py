@@ -192,8 +192,15 @@ def _startup_failure(screen: Screen) -> str:
     return f"L1 {reason}:\n{frame}"
 
 
+def _powershell_path(file: Path) -> str:
+    return "'" + file.resolve().as_posix().replace("'", "''") + "'"
+
+
 def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step) -> str:
     message = scenario.step_prompt(space, state, step)
+    if WINDOWS and state.tool.name == "codex" and step in (scenario.EDIT, scenario.WORK):
+        message += (f" Set the command working directory to `{state.folder.resolve()}`"
+                    " and use absolute paths under that directory for the calculator files.")
     if step[0] != "#scan":
         return message
     filename = "scan-payloads.json"
@@ -516,9 +523,10 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     calls = []
                     if name == "a plain request":
                         if workspace_shell and offline_provider:
-                            offline_command = "Get-Content -LiteralPath 'calc.py'"
-                            contract_read = f"Get-Content -LiteralPath '../{space.clone.name}/SLIGHTLY-PARALLEL.md'"
-                            command = core_mcp.EDIT_POWERSHELL.format(path="'calc.py'")
+                            calc = _powershell_path(folder / "calc.py")
+                            offline_command = f"Get-Content -LiteralPath {calc}"
+                            contract_read = f"Get-Content -LiteralPath {_powershell_path(space.clone / 'SLIGHTLY-PARALLEL.md')}"
+                            command = core_mcp.EDIT_POWERSHELL.format(path=calc)
                         elif offline_provider:
                             offline_command = core_mcp.OFFLINE_EDIT
                     elif name == "#rule":
@@ -529,10 +537,11 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         message += f' Call interpret with only lens, the new rule ID and text "{RULE_INTERPRETATION}".'
                     elif name == "the work":
                         if workspace_shell and offline_provider:
-                            offline_command = core_mcp.TESTS_POWERSHELL.format(path="'test_calc.py'")
+                            offline_command = core_mcp.TESTS_POWERSHELL.format(path=_powershell_path(folder / "test_calc.py"))
                         elif offline_provider:
                             offline_command = core_mcp.OFFLINE_TESTS
-                        command = ("git add calc.py test_calc.py && git commit -m 'Add calculator tests' "
+                        git = f"git -C {_powershell_path(folder)}" if workspace_shell else "git"
+                        command = (f"{git} add calc.py test_calc.py && {git} commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
                         if workspace_shell:
                             message += (f" Use commit subject 'Add calculator tests' with trailers 'Task: {state.task}'"
