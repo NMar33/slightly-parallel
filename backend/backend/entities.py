@@ -19,6 +19,8 @@ from typing import Any
 
 from dataclasses import dataclass, field
 
+from . import membership_fold as _membership_fold
+
 
 @dataclass(frozen=True)
 class Entity:
@@ -489,6 +491,10 @@ AGENT_LINK_COLUMNS: tuple[str, ...] = (
     "id", "project", "from_id", "to_id", "kind", "style", "note",
     "from_at", "to_at", "created_at", "actor",
 )
+# Which projects an agent is in beyond the one its chat started in, its home
+# and its task level (tk_d1d25a4d): one row per act, folded by
+# membership_fold.py — that module owns the columns, the hooks load it.
+AGENT_MEMBERSHIP_COLUMNS: tuple[str, ...] = _membership_fold.COLUMNS
 AGENT_LINK_KINDS: tuple[str, ...] = ("branch", "subagent", "handoff", "same-work", "relates")
 AGENT_LINK_STYLES: tuple[str, ...] = ("solid", "dashed", "dotted")
 AGENT_LINK_DEFAULT_STYLE: dict[str, str] = {
@@ -694,6 +700,7 @@ LEDGERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("commit_links_mutual", "commit_links.csv", COMMIT_LINK_COLUMNS),
     ("task_links_mutual", "task_links.csv", TASK_LINK_COLUMNS),
     ("agent_links_mutual", "agent_links.csv", AGENT_LINK_COLUMNS),
+    ("agent_memberships_mutual", _membership_fold.LEDGER, AGENT_MEMBERSHIP_COLUMNS),
     ("task_notes_mutual", "task_notes.csv", TASK_NOTE_COLUMNS),
     ("task_evidence_mutual", "task_evidence.csv", TASK_EVIDENCE_COLUMNS),
     ("docs_mutual", "docs.csv", DOC_COLUMNS),

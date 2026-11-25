@@ -114,6 +114,46 @@ def task_membership(home: str, raw: Any) -> str:
     return ",".join(seen)
 
 
+def project_codes(value: Any) -> list[str]:
+    """The codes a comma-separated project list names, in order, once each.
+
+    The one reading of a task's ``projects`` (and of an agent's, tk_d1d25a4d):
+    spaces anywhere are dropped, blanks skipped, case kept. A list is read
+    as its items joined. The SQL twin is ``project_codes_sql``; the
+    TypeScript one frontend/src/lib/projectCodes.ts. One table holds all
+    three to the same answers (testdata/project_codes/table.json)."""
+    if isinstance(value, (list, tuple)):
+        value = ",".join(str(x) for x in value)
+    out: list[str] = []
+    for part in str(value or "").replace(" ", "").split(","):
+        if part and part not in out:
+            out.append(part)
+    return out
+
+
+def project_lists(value: Any, code: str) -> bool:
+    """Whether the project list ``value`` names ``code``, as a whole code:
+    ``seo`` never reads ``seo-fight``."""
+    return bool(code) and code in project_codes(value)
+
+
+def project_codes_sql(column: str) -> str:
+    """SQL that is true when ``column`` lists the code bound to its one
+    ``?``, read as ``project_codes`` reads it. Bind ``project_code_param``.
+
+    ``instr`` and not ``LIKE``: LIKE reads ``_`` and ``%`` in a code as
+    wildcards (``a_b`` matched ``axb``)."""
+    return f"instr(',' || REPLACE(COALESCE(CAST({column} AS VARCHAR), ''), ' ', '') || ',', ?) > 0"
+
+
+def project_code_param(code: str) -> str | None:
+    """The value bound to ``project_codes_sql``: None (matches nothing) for
+    a code no list can name — blank, or holding a comma or a space."""
+    if not code or "," in code or " " in code:
+        return None
+    return f",{code},"
+
+
 def _pre_create_snippet(_store: ViewStore, body: dict) -> None:
     if not body.get("position"):
         body["position"] = "100"

@@ -7,6 +7,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from ..db import ViewStore
+from ..entitylib import project_lists
 from ..entities import is_done
 from .deps import DONE_SQL, etag_for, get_store, json_response, maybe_304
 from .sprints import (
@@ -257,7 +258,7 @@ def _deck_backlog(store: ViewStore, codes: list[str]) -> dict[str, int]:
     return {
         code: sum(
             1 for r in rows
-            if r.get("project") == code or code in str(r.get("projects") or "").split(",")
+            if r.get("project") == code or project_lists(r.get("projects"), code)
         )
         for code in codes
     }

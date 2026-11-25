@@ -28,7 +28,18 @@ import time
 from collections import Counter, deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:
+    from . import chatstore
+else:
+    try:
+        from . import chatstore
+    except ImportError:  # loaded by path (sp.py report): no package
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("sp_chatstore_for_diagnostics", Path(__file__).resolve().parent / "chatstore.py")
+        chatstore = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(chatstore)
 
 DAY = 86400
 SECRETISH = ("token", "secret", "password", "key")
@@ -232,7 +243,7 @@ def data_sizes(data_root: Path) -> list[str]:
             biggest.append((size, os.path.relpath(os.path.join(dirpath, n), root)))
     biggest.sort(reverse=True)
     projects = len([p for p in (root / "projects").iterdir() if p.is_dir()]) if (root / "projects").is_dir() else 0
-    chats = len(list(root.glob("projects/*/chats/*/chat.md")))
+    chats = sum(1 for _ in chatstore.iter_chats(root, has="chat.md", sort=False))
     out = [f"data folder: {_home(str(root))}",
            f"{files} files, {_mb(total)} (without backups), {projects} projects, {chats} chats",
            "largest files:"] + [f"  {_mb(s):>9}  {p}" for s, p in biggest[:8]]

@@ -48,6 +48,8 @@ STAMP = time.strftime("%y%m%d-%H%M")
 #: folder's own time moves with every file put in it.)
 STARTED = time.time()
 OUT = REPO / ".sp" / "machine" / STAMP
+sys.path.insert(0, str(REPO / "backend"))
+from backend import chatstore  # noqa: E402
 
 
 def kill_tree(proc: subprocess.Popen) -> None:
@@ -148,9 +150,11 @@ def bundle(fresh_root: Path | None) -> Path:
     if fresh.is_dir():
         picked += [(p, f"fresh-user/{p.relative_to(fresh)}") for p in
                    [fresh / "report.json", *fresh.glob("logs/*.log"), *fresh.glob("screens/*.png")]]
-    for p in (fresh_root.glob("data/projects/*/chats/*/*") if fresh_root else []):
+    for project, p in ([(pr, e) for pr, _a, f in chatstore.iter_chats(fresh_root / "data", sort=False)
+                        for e in f.glob("*")] if fresh_root else []):
         if p.name in ("meta.json", "work.jsonl"):                        # what the hooks saw, per chat
-            picked.append((p, f"chats/{p.parent.name}/{p.name}"))
+            # chats/<agent>/<file>: the path under the project's folder
+            picked.append((p, p.relative_to(chatstore.project_dir(fresh_root / "data", project)).as_posix()))
     for p in (fresh_root.glob("sample*/notes-*/*") if fresh_root else []):   # the pages the agents built
         if p.suffix in (".html", ".js", ".css", ".md"):
             picked.append((p, f"built/{p.parent.name}/{p.name}"))

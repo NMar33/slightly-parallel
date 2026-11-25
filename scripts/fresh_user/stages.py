@@ -23,7 +23,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from common import PLANTED_KEY, REPO, WINDOWS, Report, Space, eventually, fetch_bytes, get, http, rows, wait_for
+from common import PLANTED_KEY, REPO, WINDOWS, Report, Space, chatstore, eventually, fetch_bytes, get, http, rows, wait_for
 
 COMMAND_TIMEOUT_S = 600
 SERVER_RETRY_DELAY_S = 3
@@ -317,7 +317,7 @@ def yesterday(space: Space, report: Report, code: str) -> bool:
     for asked, answered in turns:
         fire_hook(space, {"hook_event_name": "UserPromptSubmit", "session_id": YESTERDAY_SESSION, "cwd": str(space.sample), "prompt": asked}, days_ago=1)
         fire_hook(space, {"hook_event_name": "Stop", "session_id": YESTERDAY_SESSION, "cwd": str(space.sample), "last_assistant_message": answered}, days_ago=1)
-    chat = space.data / "projects" / code / "chats" / f"cc-{YESTERDAY_SESSION[:8]}" / "chat.md"
+    chat = chatstore.folder(space.data, code, f"cc-{YESTERDAY_SESSION[:8]}") / "chat.md"
     text = chat.read_text(encoding="utf-8") if chat.is_file() else ""
     day = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
     return report.add("wiring", "a chat dated yesterday is captured (for the standup)", text.count(f"· {day}T") >= 3, text[:300])
@@ -357,7 +357,7 @@ def wiring(space: Space, report: Report, code: str) -> None:
     first = fire({"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(space.sample), "prompt": asked})
     report.add(s, "the hook runs on a message", first.returncode == 0, (first.stderr or first.stdout)[-300:])
     report.add(s, "it tells the agent its project and id", f"project {code}" in first.stdout and agent in first.stdout, first.stdout[:300])
-    chat = space.data / "projects" / code / "chats" / agent / "chat.md"
+    chat = chatstore.folder(space.data, code, agent) / "chat.md"
     report.add(s, "the message is in the chat file", chat.is_file() and asked in chat.read_text(encoding="utf-8"), str(chat))
     fire({"hook_event_name": "Stop", "session_id": session, "cwd": str(space.sample),
           "last_assistant_message": "calc.py has one function, add."})
@@ -573,7 +573,7 @@ def server_report(space: Space, report: Report, code: str) -> None:
                       "prompt": f"Keep this in mind: {words}. My key is {in_chat}."}, folder=folder)
     fire_hook(space, {"hook_event_name": "Stop", "session_id": session, "cwd": str(folder),
                       "last_assistant_message": f"Noted: {words}."}, folder=folder)
-    chat = space.data / "projects" / code / "chats" / f"cc-{session[:8]}" / "chat.md"
+    chat = chatstore.folder(space.data, code, f"cc-{session[:8]}") / "chat.md"
     report.add(s, "the planted chat is recorded", chat.is_file() and words in chat.read_text(encoding="utf-8"), str(chat))
     try:
         get(space, f"/api/search?q={words}")
@@ -872,7 +872,7 @@ def failures(space: Space, report: Report, running_port: bool) -> None:
             session = "0dd00000-0000-4000-8000-000000000003"
             asked = "Проверка: прочитай заметки."
             fired = fire_hook(space, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(odd_project), "prompt": asked}, folder=odd_project)
-            chat = odd_data / "projects" / "odd" / "chats" / f"cc-{session[:8]}" / "chat.md"
+            chat = chatstore.folder(odd_data, "odd", f"cc-{session[:8]}") / "chat.md"
             report.add(s, "its hook captures a message in another alphabet", fired.returncode == 0 and chat.is_file() and asked in chat.read_text(encoding="utf-8"),
                        (fired.stderr or fired.stdout)[-300:])
             try:
@@ -932,7 +932,7 @@ def volume(space: Space, report: Report, tasks_n: int = 400, turns_n: int = 1500
     )
     wrote = sh([str(py), "-c", writer, str(space.clone / "scripts" / "hooks"), str(data), long_session,
                 str(target / "repos" / "shopfront"), str(turns_n)], space.clone, env, timeout=DEMO_STRETCH_TIMEOUT_S)
-    chat = data / "projects" / "shopfront" / "chats" / f"cc-{long_session[:8]}" / "chat.md"
+    chat = chatstore.folder(data, "shopfront", f"cc-{long_session[:8]}") / "chat.md"
     size = chat.stat().st_size if chat.is_file() else 0
     report.add(s, f"a chat of {turns_n} turns is captured ({size // 1024} KB)", wrote.returncode == 0 and size > 500_000, (wrote.stderr or wrote.stdout)[-400:])
 
@@ -1064,7 +1064,7 @@ def upgrade(space: Space, report: Report, source: Path, base: str, boot_seconds:
                    f"before {before.get('projects')}/{before.get('agents')}, after {after.get('projects')}/{after.get('agents')}")
         tasks = rows(get(old, "/api/tasks?project=kept"), "tasks")
         report.add(s, "the task is there", any("before the upgrade" in str(t.get("title")) for t in tasks))
-        chat = old.data / "projects" / "kept" / "chats" / f"cc-{session[:8]}" / "chat.md"
+        chat = chatstore.folder(old.data, "kept", f"cc-{session[:8]}") / "chat.md"
         report.add(s, "the chat reads as it was", chat.is_file() and "Hello, before the upgrade." in chat.read_text(encoding="utf-8"))
         info = get(old, "/api/setup/info")
         mine = [i for i in info.get("integrations", []) if i.get("project") == "kept"]
@@ -1092,8 +1092,40 @@ def upgrade(space: Space, report: Report, source: Path, base: str, boot_seconds:
         report.add(s, "#sp after the upgrade: the folder, the contract and the hooks are fine",
                    all(by.get(k, {}).get("status") == "ok" for k in ("folder", "contract", "hooks")),
                    json.dumps({k: by.get(k, {}).get("title") for k in ("folder", "contract", "hooks")})[:300])
+        membership_after_upgrade(old, report, s, session, chat)
     finally:
         stop(proc)
+
+
+def membership_after_upgrade(old: Space, report: Report, s: str, session: str, chat: Path) -> None:
+    """An install from before the membership ledger (tk_d1d25a4d step 2): the
+    chat joins a second project through the API, is listed there, and its
+    next hook turn lands in the folder it always had."""
+    import urllib.error
+    agent = f"cc-{session[:8]}"
+    report.add(s, "the upgraded install starts with no membership ledger", not (old.data / "agent_memberships.csv").exists())
+    second = old.root / "second-app"
+    second.mkdir(exist_ok=True)
+    (second / "app.py").write_text("print('two')\n", encoding="utf-8")
+    http(old.url + "/api/setup/integrate", {"project_code": "second", "project_dir": str(second)})
+    other = "0eae0000-0000-4000-8000-000000000006"  # its own agent id (cc-0eae0000)
+    fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": other, "cwd": str(second), "prompt": "The second project's own chat."}, folder=second)
+    fire_hook(old, {"hook_event_name": "Stop", "session_id": other, "cwd": str(second), "last_assistant_message": "Its own reply."}, folder=second)
+    try:
+        joined = http(old.url + f"/api/agents/{agent}/membership", {"op": "join", "project": "second"})
+    except urllib.error.HTTPError as exc:
+        joined = {"error": exc.code, "detail": exc.read().decode("utf-8", "replace")[:300]}
+    report.add(s, "a join through the API makes the chat a member of a second project",
+               isinstance(joined, dict) and joined.get("members") == ["kept", "second"], json.dumps(joined)[:300])
+    listed = eventually(lambda: [r for r in rows(get(old, "/api/sessions?project=second"), "sessions")
+                                 if r.get("agent_id") == agent] or None, 20) or []
+    report.add(s, "the chat is listed in the second project, filed under its own",
+               bool(listed) and all(r.get("project") == "kept" and r.get("projects") == "kept,second" for r in listed),
+               json.dumps(listed)[:300])
+    fired = fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(old.sample), "prompt": "After the join: filed where it was."}, folder=old.sample)
+    report.add(s, "a hook turn after the join lands where it did before",
+               fired.returncode == 0 and "After the join" in chat.read_text(encoding="utf-8")
+               and not chatstore.folder(old.data, "second", agent).exists(), (fired.stderr or fired.stdout)[-300:])
 
 
 def screens(space: Space, report: Report, moment: str, routes: list[str], out: Path) -> None:

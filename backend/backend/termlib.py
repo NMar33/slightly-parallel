@@ -58,7 +58,7 @@ from typing import Any, Mapping
 from .csvio import read_rows
 from .docs_md import resolve_under
 from .file_safety import edit_json, safe_read_json
-from . import termlog
+from . import chatstore, termlog
 
 log = logging.getLogger("sp.terminal")
 
@@ -1219,7 +1219,8 @@ def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
         return cached_links
     out: dict[str, dict[str, Any]] = {}
     panes: dict[str, dict[str, Any]] | None = None
-    for meta_path in root.glob("projects/*/chats/*/meta.json"):
+    for _p, _a, chat in chatstore.iter_chats(root, has="meta.json", sort=False):
+        meta_path = chat / "meta.json"
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):

@@ -28,6 +28,8 @@ from ..csvio import append_row, rewrite_rows
 from ..date_utils import format_yymm_dd, parse_yymm_dd
 from .. import limits
 from ..db import ViewStore
+from .. import memberships
+from ..entitylib import project_code_param, project_codes_sql, project_lists
 from ..file_safety import edit_json, safe_read_json
 from ..entities import (
     CALENDAR_ENTRY_COLUMNS, CALENDAR_ENTRY_KINDS, CALENDAR_ENTRY_STATUSES,
@@ -189,10 +191,6 @@ def _task_rows(store: ViewStore, project: str, done: dict[str, str] | None = Non
     return _task_rows_by_code(store, [project], done, links)[project]
 
 
-def _lists_code(projects: Any, code: str) -> bool:
-    return f",{code}," in "," + str(projects or "").replace(" ", "") + ","
-
-
 def _task_rows_by_code(
     store: ViewStore, codes: list[str], done: dict[str, str] | None = None, links: list[dict] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
@@ -201,15 +199,13 @@ def _task_rows_by_code(
     valid = [c for c in codes if _CODE.match(c)]
     if not valid:
         return out
-    likes = " OR ".join(
-        "(',' || REPLACE(COALESCE(projects, ''), ' ', '') || ',') LIKE ? ESCAPE '\\'" for _ in valid
-    )
+    likes = " OR ".join(project_codes_sql("projects") for _ in valid)
     rows = _rows(
         store,
         "SELECT id, title, status, priority, assignee, lane, created_date, due_date, today_on, "
         "resurface_on, archived_at, agent_done_at, sprint_id, tags, project, projects "
         f"FROM tasks_mutual WHERE project IN ({_in(valid)}) OR {likes}",
-        tuple(valid) + tuple(f"%,{c.replace('_', chr(92) + '_')},%" for c in valid),
+        tuple(valid) + tuple(project_code_param(c) for c in valid),
     )
     if done is None:
         done = _done_dates(store, {str(r.get("id")) for r in rows})
@@ -218,7 +214,7 @@ def _task_rows_by_code(
     by_task = {str(l.get("task_id")): str(l.get("milestone_id")) for l in links}
     for project in valid:
         for r in rows:
-            if r.get("project") != project and not _lists_code(r.get("projects"), project):
+            if r.get("project") != project and not project_lists(r.get("projects"), project):
                 continue
             status = str(r.get("status") or "unclassified").strip().lower() or "unclassified"
             tid = str(r.get("id"))
@@ -247,12 +243,18 @@ def _sessions_by_code(store: ViewStore, codes: list[str], start: str, end: str, 
     lo, hi = date(2000, 1, 1), date(2099, 12, 31)
     s0 = format_yymm_dd(min(max(date.fromisoformat(start), lo), hi))
     s1 = format_yymm_dd(min(max(date.fromisoformat(end), lo), hi))
+    # LIST: each code's own sessions and its members' (memberships.Listing);
+    # a member's are shown "from" its home and add nothing to the day sums.
+    fold = memberships.current(store)
+    listed = {c: memberships.listing(store, c) for c in codes}
+    joined = sorted({ag for lst in listed.values() for ag in lst.joined})
+    who = f" OR agent_id IN ({_in(joined)})" if joined else ""
     rows = _rows(
         store,
         "SELECT id, project, agent_id, created_date, start_time, end_time, duration_min, turns_n, l1 "
-        f"FROM sessions WHERE project IN ({_in(codes)}) AND created_date >= ? AND created_date <= ? "
+        f"FROM sessions WHERE (project IN ({_in(codes)}){who}) AND created_date >= ? AND created_date <= ? "
         "ORDER BY created_date ASC, start_time ASC",
-        (*codes, s0, s1),
+        (*codes, *joined, s0, s1),
     )
     if rows:
         try:
@@ -262,25 +264,34 @@ def _sessions_by_code(store: ViewStore, codes: list[str], start: str, end: str, 
             for r in rows:
                 r.setdefault("git", {"commits": 0, "files": 0, "add": 0, "del": 0})
     out: dict[str, list[dict[str, Any]]] = {}
-    for project, mine in _by_project(rows, codes).items():
+    for project in codes:
         out[project] = []
-        for r in mine:
+        for r in rows:
+            own = str(r.get("project") or "") == project
+            if not listed[project].has(r.get("project"), r.get("agent_id")):
+                continue
             d = iso(r.get("created_date"))
             if not d:
                 continue
             g = r.get("git") or {}
-            day = _day(days, d)
-            day["sessions"] += 1
-            day["turns"] += int(r.get("turns_n") or 0)
-            day["minutes"] += int(r.get("duration_min") or 0)
-            for k in ("commits", "files", "add", "del"):
-                day[k] += int(g.get(k) or 0)
-            out[project].append({
-                "id": r.get("id"), "agent_id": r.get("agent_id"), "date": d, "project": project,
+            if own:
+                # ACCOUNT: the day's sums are the project's own sessions.
+                day = _day(days, d)
+                day["sessions"] += 1
+                day["turns"] += int(r.get("turns_n") or 0)
+                day["minutes"] += int(r.get("duration_min") or 0)
+                for k in ("commits", "files", "add", "del"):
+                    day[k] += int(g.get(k) or 0)
+            item = {
+                "id": r.get("id"), "agent_id": r.get("agent_id"), "date": d,
+                "project": project if own else str(r.get("project") or ""),
                 "start": r.get("start_time") or "", "end": r.get("end_time") or "",
                 "minutes": int(r.get("duration_min") or 0), "turns": int(r.get("turns_n") or 0),
                 "l1": r.get("l1") or "", "git": {k: int(g.get(k) or 0) for k in ("commits", "files", "add", "del")},
-            })
+            }
+            if not own:
+                item["from"] = fold.home(str(r.get("agent_id") or "")) or str(r.get("project") or "")
+            out[project].append(item)
     return out
 
 
@@ -469,7 +480,9 @@ def calendar_read(
         if t["done"] and start <= t["done"] <= end:
             _day(days, t["done"])["tasks_done"] += 1
     by_code = _sessions_by_code(store, codes, start, end, days)
-    sessions = _merge([by_code[c] for c in codes])
+    # A session read as its own project's wins over its member copy.
+    sessions = _merge([[s for c in codes for s in by_code[c] if not s.get("from")],
+                       [s for c in codes for s in by_code[c] if s.get("from")]])
     _facts_per_day(store, codes, days, start, end)
     entry_rows = _entries_by_code(store, codes, start, end)
     entries = _merge([entry_rows[c] for c in codes])

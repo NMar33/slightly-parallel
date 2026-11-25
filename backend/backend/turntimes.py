@@ -350,13 +350,14 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
     """Time every Claude Code turn the hook did not, from its transcript.
     Rewrites a chat's turns.jsonl only when its answer changed; answers how
     many turns were written."""
+    from . import chatstore
     from .file_safety import acquire_flock, lock_path, replace_file
     from .sessions import parse_turns
 
     claude_dir = claude_dir or Path.home() / ".claude" / "projects"
     written = 0
-    for chat_md in Path(data_root).glob("projects/*/chats/*/chat.md"):
-        folder = chat_md.parent
+    for _p, _a, folder in chatstore.iter_chats(data_root, has="chat.md", sort=False):
+        chat_md = folder / "chat.md"
         try:
             meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):

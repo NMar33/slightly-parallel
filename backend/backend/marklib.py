@@ -129,11 +129,30 @@ def active(store: ViewStore, project: str = "") -> list[dict[str, str]]:
     """The marks in force: one per (kind, target), the newest, none unmarked."""
     rows = [r for r in read_rows(store.data_root / MARKS_CSV) if not (r.get("removed_at") or "")]
     if project:
-        rows = [r for r in rows if (r.get("project") or "") == project]
+        # A mark of a chat (a pin, a carry, a fork, a starred message or
+        # chat) shows in every project that lists the chat; a task's star
+        # stays with the row's project (tk_d1d25a4d).
+        from . import memberships
+        listed = memberships.listing(store, project)
+        rows = [r for r in rows if listed.has(r.get("project"), _chat_of(r))
+                or (r.get("kind") == "task" and (r.get("project") or "") == project)]
     newest: dict[tuple[str, str], dict[str, str]] = {}
     for r in sorted(rows, key=lambda r: r.get("marked_at") or ""):
         newest[(r.get("kind") or "", r.get("target") or "")] = r
     return sorted(newest.values(), key=lambda r: r.get("marked_at") or "", reverse=True)
+
+
+def _chat_of(r: dict[str, str]) -> str:
+    """The chat a mark is on: its agent, named or in its target
+    (``agent#turn``, or the agent itself); "" for a task's star."""
+    kind = r.get("kind") or ""
+    if kind == "task":
+        return ""
+    if kind == "agent":
+        return r.get("target") or ""
+    if r.get("agent_id"):
+        return r.get("agent_id") or ""
+    return (r.get("target") or "").split("#", 1)[0]
 
 
 def mark(store: ViewStore, kind: str, target: str, fields: dict[str, Any]) -> dict[str, str]:

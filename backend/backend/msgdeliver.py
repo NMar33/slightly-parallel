@@ -42,7 +42,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import codexdelivery, msgledger, termlib
+from . import chatstore, codexdelivery, msgledger, termlib
 from .hookshared import process_started
 
 log = logging.getLogger("sp.messages")
@@ -157,13 +157,14 @@ def input_empty(screen: str, tool: str) -> bool:
 def chat_meta(data_root: Path, agent_id: str) -> dict[str, Any] | None:
     if not msgledger.AGENT_RE.match(agent_id or ""):
         return None
-    for p in sorted(Path(data_root).glob(f"projects/*/chats/{agent_id}/meta.json")):
+    for _project, folder in chatstore.folders_of(data_root, agent_id, has="meta.json"):
         try:
-            got = json.loads(p.read_text(encoding="utf-8"))
+            got = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if isinstance(got, dict):
-            got.setdefault("project", p.parent.parent.parent.name)
+            # Present, the meta's project stays as it is (even empty); absent, the folder's.
+            got.setdefault("project", chatstore.project_of(folder, got))
             return got
     return None
 

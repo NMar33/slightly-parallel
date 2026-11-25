@@ -1095,5 +1095,16 @@
   "reply": "ответ",
   "The carried messages were given back to the agent after a context compaction": "Переносимые сообщения были возвращены агенту после сжатия контекста",
   "given back after compaction at {at}": "возвращены после сжатия в {at}",
-  "all marks": "все отметки"
+  "all marks": "все отметки",
+  "from {project}": "из {project}",
+  "chats of this project": "чаты этого проекта",
+  "No chats of this project that day.": "В этот день нет чатов этого проекта.",
+  "from other projects": "из других проектов",
+  "not counted here": "здесь не считаются",
+  "Chats of agents that joined this project: shown here, not counted in the film": "Чаты агентов, которые вступили в этот проект: показаны здесь, в фильме не считаются",
+  "+ {n} chat from other projects": {
+    "one": "+ {n} чат из других проектов",
+    "few": "+ {n} чата из других проектов",
+    "many": "+ {n} чатов из других проектов"
+  }
 }

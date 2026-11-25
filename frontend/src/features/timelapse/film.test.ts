@@ -148,3 +148,18 @@ describe('a long history', () => {
     expect(film.t1).toBe(Date.parse(at(20)))
   })
 })
+
+describe('a member’s sessions (tk_d1d25a4d)', () => {
+  // cc-m started in another project and joined this one: the server lists
+  // its sessions marked `from`, and counts none of them in stats.turns.
+  const member = { id: 's2', agent_id: 'cc-m', start: at(5), end: at(5, 3), turns_n: 50, l1: '', from: 'beta' }
+  const withMember: Source = { ...src, sessions: [...src.sessions, member] }
+
+  it('stand apart from the film: its chats, turns and agents are the project’s own, as stats.turns is', () => {
+    const film = buildFilm(withMember)
+    expect(film.sessions.map((s) => s.id)).toEqual(['s1'])
+    expect(film.members.map((s) => [s.id, s.from])).toEqual([['s2', 'beta']])
+    expect(film.agents).toEqual(['cc-a'])
+    expect(frameAt(film, film.t1).turnsSeen).toBe(withMember.stats.turns)
+  })
+})

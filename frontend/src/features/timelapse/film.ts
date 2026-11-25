@@ -49,7 +49,11 @@ export type Film = {
   lanes: string[]
   laneOf: (lane: string) => number
   agents: string[]
+  /** The project's own sessions: the ones the film plays and counts. */
   sessions: Session[]
+  /** Members' sessions (tk_d1d25a4d), each with its `from`: named beside
+   *  the film, never in its numbers — as the server's stats.turns. */
+  members: Session[]
   marks: Mark[]
   stats: Stats
   git: Git | null
@@ -244,7 +248,13 @@ function inWindow(c: Card, t0: number, t1: number): boolean {
   }) || (ms(c.born) >= t0 && ms(c.born) <= t1)
 }
 
-export function buildFilm(src: Source, options?: Partial<Options>): Film {
+export function buildFilm(source: Source, options?: Partial<Options>): Film {
+  const members = source.sessions.filter((s) => s.from)
+  const src: Source = members.length ? { ...source, sessions: source.sessions.filter((s) => !s.from) } : source
+  return { ...buildOwnFilm(src, options), members }
+}
+
+function buildOwnFilm(src: Source, options?: Partial<Options>): Omit<Film, 'members'> {
   const opts = { ...DEFAULTS, ...options }
   let cards = src.cards.slice().sort((a, b) => ms(a.born) - ms(b.born))
   if (opts.lanes.length) cards = cards.filter((c) => opts.lanes.includes(c.lane))

@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
-from .. import gitwork, produced, sessions
+from .. import gitwork, memberships, produced, sessions
 from ..db import ViewStore
 from .deps import attach_agent, etag_for, get_store, json_response, maybe_304, not_found
 
@@ -71,8 +71,11 @@ def sessions_list(
         clauses.append(f"id IN ({','.join('?' * len(turns_by_session))})")
         params.extend(turns_by_session)
     if project:
-        clauses.append("project = ?")
-        params.append(project)
+        # A LIST reader: the project's own chats and the agents that joined
+        # it (memberships.Listing), read per request.
+        where, more = memberships.listing(store, project).sql()
+        clauses.append(where)
+        params.extend(more)
     if agent_id:
         clauses.append("agent_id = ?")
         params.append(agent_id)
@@ -131,6 +134,7 @@ def sessions_list(
             row["prompt_turns"] = turns
     _attach_produced(store, rows)
     attach_agent(store, rows)
+    rows = memberships.with_projects(store, rows)
     return json_response({"total": len(rows), "sessions": rows}, etag)
 
 

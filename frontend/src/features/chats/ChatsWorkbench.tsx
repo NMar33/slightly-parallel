@@ -30,6 +30,7 @@ import { StarButton } from '../../components/StarButton'
 import { MsgMarkButtons } from '../../components/MsgMarkButtons'
 import { ChatPins } from './ChatPins'
 import { agentLines, gapLabel, ofAgent, producedWords, toSession, type Row } from './data'
+import { listedIn } from '../../lib/projectCodes'
 import { USAGE_PREF_KEY, paneColumns, readChatsPrefs, storeChatsPrefs, type ChatsPrefs } from './prefs'
 
 import { t, tn } from '../../i18n/scope/views'
@@ -112,7 +113,8 @@ export function ChatsWorkbench({ sift, aside, showDays = true, fixedProject, fix
   )
   const { project, month, showMonth, active, days, keys } = useDayBook(fixedProject ? [fixedProject] : known)
 
-  const ofProject = useMemo(() => everything.filter((s) => s.project === project), [everything, project])
+  // A chat shows in every project that lists it (its members too).
+  const ofProject = useMemo(() => everything.filter((s) => listedIn(s, project)), [everything, project])
   const agents = useMemo(() => agentLines(ofProject), [ofProject])
   const star = useMarks()
   const toggleStar = useMarkToggle()

@@ -27,6 +27,8 @@ export interface MsgMark {
   kind: 'pin' | 'carry' | 'carry-brief' | 'fork'
   target: string
   project: string
+  /** Every project that lists the message's chat, origin first (lib/projectCodes). */
+  projects?: string
   agent_id: string
   session_id: string
   turn: number

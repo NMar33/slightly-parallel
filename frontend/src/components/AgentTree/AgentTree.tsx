@@ -6,6 +6,7 @@ import { StarButton } from '../StarButton'
 import { STATE_COLOR, STATE_WORD, showTerminal, terminalOfAgent, useTerminals } from '../../lib/terminal'
 import { StateDot } from '../../features/terminal/parts'
 import { GROUP_COLOR } from '../../lib/groups'
+import { listedIn } from '../../lib/projectCodes'
 import { STAR_COLOR, useMarkToggle, useMarks } from '../../lib/marks'
 import { persistPref, readPref } from '../../lib/uiPrefs'
 import type { SnapshotAgent, SnapshotActivity } from '../../lib/api'
@@ -128,10 +129,17 @@ export function AgentTree({
     return m
   }, [activity])
 
-  const filtered = useMemo(
-    () => (project ? agents.filter((a) => a.project === project) : agents),
-    [agents, project],
-  )
+  // A chat with folders in two projects is two rows of one agent id: in a
+  // project that lists both (one it joined), it is drawn once — its first row.
+  const filtered = useMemo(() => {
+    if (!project) return agents
+    const seen = new Set<string>()
+    return agents.filter((a) => {
+      if (!listedIn(a, project) || seen.has(a.agent_id)) return false
+      seen.add(a.agent_id)
+      return true
+    })
+  }, [agents, project])
 
   const terms = useTerminals().data?.sessions
   const has = useMarks().has

@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from . import chatstore
 from .csvio import append_row, read_rows, rewrite_rows
 from .db import ViewStore
 from .docs_md import resolve_under
@@ -238,8 +239,114 @@ def _sweep_side_ledgers(data_root: Path, trash: Path, code: str, owned: dict[str
         moved["side_folders"] = folders
 
 
+class ProjectHeld(Exception):
+    """Rule 1 of a project delete (tk_d1d25a4d, note nt_9de63b9e §5): the
+    project holds the chat folder of an agent that is a member elsewhere."""
+
+    def __init__(self, code: str, held: list[dict[str, Any]]) -> None:
+        self.code = code
+        self.held = held
+        listed = ", ".join(f"{h['agent_id']} (also in {', '.join(h['also_in'])})" for h in held)
+        first = held[0]
+        self.detail = (
+            f"Project {code} holds chats of agents that are members elsewhere: {listed}. "
+            f"Move the chat of {first['agent_id']} to {first['also_in'][0]}? / "
+            "Make them leave the other projects first?"
+        )
+        super().__init__(self.detail)
+
+
+def memberships_unreadable() -> type[Exception]:
+    from .memberships import LedgerUnreadable
+    return LedgerUnreadable
+
+
+def held_by_project(data_root: Path) -> dict[str, list[dict[str, Any]]]:
+    """Per project, the agents whose chat folder is there and that joined
+    other projects, each with those projects (rule 1 of a delete). One read
+    of the ledger and one walk of the chats for every project; only the
+    metas of agents the ledger names are read."""
+    from . import membership_fold as mf
+    from . import memberships
+    rows, cut = memberships.read_ledger(data_root)
+    named = {str(r.get("agent_id") or "") for r in rows} - {""}
+    if not named:
+        return {}
+    existing = memberships.existing_codes(data_root)
+    folders: dict[str, list[str]] = {}      # agent → the projects of its folders
+    origins: dict[str, list[str]] = {}      # agent → the projects its metas name
+    for proj, agent, folder in chatstore.iter_chats(data_root, has="meta.json"):
+        if agent in named:
+            folders.setdefault(agent, []).append(proj)
+            origin = chatstore.project_of(folder)
+            if origin not in origins.setdefault(agent, []):
+                origins[agent].append(origin)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for agent, projs in folders.items():
+        fold = mf.fold([r for r in rows if r.get("agent_id") == agent], existing,
+                       {agent: tuple(origins[agent])}, cut)
+        for code in dict.fromkeys(projs):
+            also = [c for c in fold.joined(agent) if c != code]
+            if also:
+                out.setdefault(code, []).append({"agent_id": agent, "also_in": also})
+    return out
+
+
+def held_elsewhere(data_root: Path, code: str) -> list[dict[str, Any]]:
+    """``held_by_project`` for one project (the delete calls it under the
+    ledger's lock)."""
+    return held_by_project(data_root).get(code, [])
+
+
+def members_from_elsewhere(data_root: Path, code: str) -> list[str]:
+    """The agents that joined ``code`` from another origin."""
+    from . import membership_fold as mf
+    from . import memberships
+    rows, cut = memberships.read_ledger(data_root)
+    existing = memberships.existing_codes(data_root)
+    out = []
+    for agent in dict.fromkeys(str(r.get("agent_id") or "") for r in rows):
+        if not agent:
+            continue
+        origins = tuple(dict.fromkeys(o for o, _f, _m in memberships.chats_on_disk(data_root, agent)))
+        if code in origins:
+            continue
+        fold = mf.fold([r for r in rows if r.get("agent_id") == agent], existing, {agent: origins}, cut)
+        if code in fold.joined(agent):
+            out.append(agent)
+    return out
+
+
 def delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
-    """Archive everything the project owns; returns what moved and where."""
+    """Archive everything the project owns; returns what moved and where.
+
+    The membership ledger's lock is held from the check through the move to
+    the trash (tk_d1d25a4d): a join of this project waits, then finds it
+    gone; a join elsewhere by one of its chats either lands first, and the
+    delete is refused, or finds the chat gone. Rule 1 refuses the delete
+    while the project holds the chat of an agent that is a member elsewhere
+    (``ProjectHeld``); rule 2 writes a ``leave`` for each member from
+    elsewhere, value «project deleted». The ledger keeps its rows: a
+    restored project re-joins nobody."""
+    from . import membership_fold as mf
+    from . import memberships
+    data_root = store.data_root
+    with memberships.locked(data_root):
+        held = held_elsewhere(data_root, code)
+        if held:
+            raise ProjectHeld(code, held)
+        left = []
+        for agent in members_from_elsewhere(data_root, code):
+            memberships.write(data_root, agent, "leave", code, mf.DELETED, held=True)
+            left.append(agent)
+        out = _delete_project_data(store, code)
+    if left:
+        out["left"] = left
+    return out
+
+
+def _delete_project_data(store: ViewStore, code: str) -> dict[str, Any]:
+    """The archive itself; the caller holds the membership ledger's lock."""
     data_root = store.data_root
     trash = data_root / TRASH_DIR / f"{code}-{_stamp()}"
     trash.mkdir(parents=True, exist_ok=True)
@@ -528,11 +635,19 @@ def known_projects(store: ViewStore) -> list[dict[str, Any]]:
 
     for pf in store.projects:
         bump(pf.code, "chats", 0)
-        chats = pf.chats_dir
+        chats = pf.chats_root
         if chats is not None:
-            bump(pf.code, "chats", sum(1 for d in chats.iterdir() if d.is_dir()))
+            bump(pf.code, "chats", len(chatstore.folders_in(chats)))
     for csv_name in [e.csv for e in ENTITIES.values()] + ["scans.csv"]:
         for r in read_rows(store.data_root / csv_name):
             for code in str(r.get("project") or "").split(","):
                 bump(code.strip(), "rows")
+    # The agents whose chat holds a project back from a delete (rule 1,
+    # tk_d1d25a4d), each with the projects its chat can move to.
+    try:
+        held = held_by_project(store.data_root)
+    except memberships_unreadable():
+        held = {}
+    for entry in codes.values():
+        entry["held"] = held.get(entry["code"], [])
     return sorted(codes.values(), key=lambda c: c["code"])

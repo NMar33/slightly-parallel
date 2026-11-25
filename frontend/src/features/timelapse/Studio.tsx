@@ -29,7 +29,7 @@ import { useLogo } from './logo'
 import { RIVERS } from './rivers'
 import { THEMES, themeById } from './theme'
 
-import { t } from '../../i18n/scope/views'
+import { t, tn } from '../../i18n/scope/views'
 import { toast } from '../../components/primitives'
 
 const EXPORT_SAVED_NOTICE_DURATION_MS = 5000
@@ -302,6 +302,12 @@ export default function Studio({
           <div className="font-mono text-10 text-tertiary">
             {film.cards.length} {t('cards ·')}{' '}{film.sessions.length} {t('chats ·')}{' '}
             {Math.ceil((film.t1 - film.t0) / 86400000)} {t('days')}
+            {film.members.length > 0 && (
+              <div data-testid="timelapse-members" title={t('Chats of agents that joined this project: shown here, not counted in the film')}>
+                {tn(film.members.length, '+ {n} chat from other projects', '+ {n} chats from other projects')}:{' '}
+                {[...new Set(film.members.map((s) => s.from))].map((p) => t('from {project}', { project: p ?? '' })).join(', ')}
+              </div>
+            )}
           </div>
         </Group>
         <Group title={t('timing')}>

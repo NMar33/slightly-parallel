@@ -198,21 +198,24 @@ def test_the_copied_patterns_are_equal() -> None:
 
 
 def test_the_shared_module_needs_nothing_but_python() -> None:
-    """The hooks load it by path with the operator's own Python: no package
-    around it, no third-party import."""
+    """The hooks load them by path with the operator's own Python: no package
+    around them, no third-party import (hookshared; chatstore, where every
+    chat folder's path is built; membership_fold, the one reading of an
+    agent's projects)."""
     import ast
 
-    from backend import hookshared
+    from backend import chatstore, hookshared, membership_fold
 
-    tree = ast.parse(Path(hookshared.__file__).read_text(encoding="utf-8"))
-    names = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names |= {a.name.split(".")[0] for a in node.names}
-        elif isinstance(node, ast.ImportFrom):
-            assert node.level == 0, "a relative import cannot be loaded by path"
-            names.add((node.module or "").split(".")[0])
-    assert names <= set(sys.stdlib_module_names), names - set(sys.stdlib_module_names)
+    for module in (hookshared, chatstore, membership_fold):
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names |= {a.name.split(".")[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                assert node.level == 0, f"{module.__name__}: a relative import cannot be loaded by path"
+                names.add((node.module or "").split(".")[0])
+        assert names <= set(sys.stdlib_module_names), (module.__name__, names - set(sys.stdlib_module_names))
 
 
 def test_the_model_settings_take_a_typed_model_name() -> None:

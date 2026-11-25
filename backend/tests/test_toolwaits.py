@@ -153,3 +153,52 @@ def test_collector_publishes_and_stops_without_server_hooks(tmp_path):
     finally:
         collector.stop()
     assert not collector.process.is_alive()
+
+
+def test_the_waits_land_under_the_chat_folders_project(tmp_path, monkeypatch):
+    """A chat's waits are counted under the project its folder sits in, as
+    summary() filters by it, whatever its meta.json names; a meta project
+    that is not a string does not stop the pass (tk_d1d25a4d)."""
+    import threading
+
+    from backend import chatstore
+
+    transcripts = {}
+    now = datetime.now()
+    for agent, named in (("cc-same0001", "home"), ("cc-other001", "elsewhere"),
+                         ("cc-list0001", ["x"]), ("cc-num00001", 7)):
+        f = chatstore.folder(tmp_path, "home", agent)
+        f.mkdir(parents=True)
+        (f / "meta.json").write_text(json.dumps({"tool": "claude-code", "session_ref": agent, "project": named}))
+        t = tmp_path / "t" / f"{agent}.jsonl"
+        t.parent.mkdir(exist_ok=True)
+        t.write_text(
+            json.dumps({"message": {"content": [{"type": "tool_use", "name": "Bash", "id": agent,
+                                                 "input": {"command": "pytest"}}]},
+                        "timestamp": now.isoformat()}) + "\n"
+            + json.dumps({"message": {"content": [{"type": "tool_result", "tool_use_id": agent, "content": "ok"}]},
+                          "timestamp": (now + timedelta(seconds=40)).isoformat()}) + "\n")
+        transcripts[agent] = t
+    monkeypatch.setattr(tw, "find_transcript", lambda data, tool, *_: transcripts.get(data.get("session_ref")))
+    halt = threading.Event()
+    real_write = tw.atomic_write_json
+
+    def write_then_halt(*args, **kwargs):
+        real_write(*args, **kwargs)
+        halt.set()
+
+    paused = []
+
+    def pause_then_halt(*args, **kwargs):
+        paused.append(args)
+        halt.set()
+
+    monkeypatch.setattr(tw, "atomic_write_json", write_then_halt)
+    monkeypatch.setattr(tw.log, "exception", pause_then_halt)   # one pass, not the next one in an hour
+    tw._collect(tmp_path, halt)
+    assert not paused, f"the pass stopped: {paused}"
+    assert (tmp_path / ".usage/tool-waits.json").exists()
+    db = sqlite3.connect(tmp_path / ".usage/tool-waits.sqlite")
+    got = sorted(db.execute("SELECT project, agent FROM calls").fetchall())
+    db.close()
+    assert got == [("home", a) for a in sorted(transcripts)]

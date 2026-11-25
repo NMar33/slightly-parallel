@@ -11,7 +11,7 @@ import { toast } from 'sonner'
 import { Button, Input } from '../../components/primitives'
 import { postJson } from '../../lib/getJson'
 import { LABEL } from '../promptlib/taskstyle'
-import { postIgnore, postIntegrate, SETUP_INFO_KEY, type IntegrateResult, type Integration, type SetupInfo, type ToolKey } from './data'
+import { postIgnore, postIntegrate, SETUP_INFO_KEY, type HeldChat, type IntegrateResult, type Integration, type SetupInfo, type ToolKey } from './data'
 import { AdapterBadge, Checkbox, ConfirmDialog, Field, IntegrationRow, ResultPanel, StepCard } from './parts'
 import { IntegrateComputer } from './Computer'
 import { t, tn } from '../../i18n/scope/system'
@@ -140,12 +140,48 @@ function useRemovals() {
     },
     onError: (e: Error) => toast.error(e.message),
   })
-  return { disconnecting, setDisconnecting, deleting, setDeleting, disconnectMut, deleteMut }
+  // The one-chat move (tk_d1d25a4d): the way out of a delete that a member's
+  // chat holds back. The server refuses a running agent in one line.
+  const moveMut = useMutation({
+    mutationFn: (m: { agent: string; to: string }) =>
+      postJson<{ agent_id: string; to: string; warning?: string }>(`/api/agents/${encodeURIComponent(m.agent)}/move-chat`, { to: m.to }),
+    onSuccess: (r) => {
+      toast.success(t('Moved the chat of {agent} to {project}.', { agent: r.agent_id, project: r.to }))
+      // A write that reached the original after the copy went to the trash with it.
+      if (r.warning) toast.warning(r.warning)
+      refreshAll()
+    },
+    // A refusal after the copy is in place leaves two folders: show both.
+    onError: (e: Error) => { toast.error(e.message); refreshAll() },
+  })
+  return { disconnecting, setDisconnecting, deleting, setDeleting, disconnectMut, deleteMut, moveMut }
+}
+
+/** The agents whose chats hold a project back from a delete, each with one
+ *  button per project its chat can move to. */
+function HeldChats({ held, moving, onMove }: { held: HeldChat[]; moving: boolean; onMove: (agent: string, to: string) => void }) {
+  return (
+    <div className="flex flex-col gap-6 mt-12" data-testid="held-chats">
+      <span>{t('It holds chats of agents that are members elsewhere. Move each chat to one of its projects, or make the agent leave them first:')}</span>
+      <ul className="flex flex-col gap-6">
+        {held.map((h) => (
+          <li key={h.agent_id} className="flex items-center gap-8 flex-wrap">
+            <code className="text-12">{h.agent_id}</code>
+            {h.also_in.map((p) => (
+              <Button key={p} variant="ghost" size="sm" disabled={moving} onClick={() => onMove(h.agent_id, p)}>
+                {t('Move to {project}', { project: p })}
+              </Button>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 export function IntegrateStep({ info }: { info: SetupInfo }) {
   const { form, set, codeValid, ready, preview, applied, previewMut, applyMut, reintegrate } = useIntegrate()
-  const { disconnecting, setDisconnecting, deleting, setDeleting, disconnectMut, deleteMut } = useRemovals()
+  const { disconnecting, setDisconnecting, deleting, setDeleting, disconnectMut, deleteMut, moveMut } = useRemovals()
   const queryClient = useQueryClient()
   const ignore = (project: string, tool: ToolKey) => postIgnore(project, tool)
     .then(() => {
@@ -153,6 +189,7 @@ export function IntegrateStep({ info }: { info: SetupInfo }) {
       void queryClient.invalidateQueries({ queryKey: ['capture', 'health'] })
     })
     .catch(() => toast.error(t('Could not save that')))
+  const heldOf = (code: string): HeldChat[] => info.data_projects.find((d) => d.code === code)?.held ?? []
   const dataOnly = useMemo(() => {
     const registered = new Set(info.integrations.map((i) => i.project))
     return info.data_projects.filter((d) => !registered.has(d.code))
@@ -372,6 +409,10 @@ export function IntegrateStep({ info }: { info: SetupInfo }) {
             <>
               {t("Moves the project's chats and all its records (scans, decisions, tasks, time entries, …) into")} <code>.trash/</code>{' '}
               {t('in the data folder. To restore them, move the folder back. A sprint shared with other projects is kept, without this project.')}
+              {heldOf(deleting).length > 0 && (
+                <HeldChats held={heldOf(deleting)} moving={moveMut.isPending}
+                  onMove={(agent, to) => moveMut.mutate({ agent, to })} />
+              )}
             </>
           }
           confirmLabel={t('Delete data')}

@@ -1,0 +1,24 @@
+{
+  "_about": "One table for every reader of a comma-separated project list: entitylib.project_codes and project_codes_sql (backend/tests/test_project_codes.py) and the frontend's lib/projectCodes.ts (its .test.ts). 'codes' is what the value reads as; 'has' maps a code to whether the value lists it.",
+  "cases": [
+    {"value": null, "codes": [], "has": {"a": false, "": false}},
+    {"value": "", "codes": [], "has": {"a": false, "": false}},
+    {"value": "a", "codes": ["a"], "has": {"a": true, "A": false, "": false, " a": false}},
+    {"value": "a,b", "codes": ["a", "b"], "has": {"a": true, "b": true, "a,b": false, "ab": false}},
+    {"value": " a , b ", "codes": ["a", "b"], "has": {"a": true, "b": true, " a": false}},
+    {"value": "a,,b", "codes": ["a", "b"], "has": {"": false, "a": true, ",": false}},
+    {"value": ",a,", "codes": ["a"], "has": {"a": true, "": false}},
+    {"value": "a,a, a", "codes": ["a"], "has": {"a": true}},
+    {"value": "seo-fight", "codes": ["seo-fight"], "has": {"seo": false, "seo-fight": true, "fight": false}},
+    {"value": "seo,seo-fight", "codes": ["seo", "seo-fight"], "has": {"seo": true, "seo-fight": true}},
+    {"value": "SEO", "codes": ["SEO"], "has": {"seo": false, "SEO": true}},
+    {"value": "axb", "codes": ["axb"], "has": {"a_b": false, "a%b": false, "axb": true}},
+    {"value": "a_b,a%b", "codes": ["a_b", "a%b"], "has": {"a_b": true, "a%b": true, "axb": false}},
+    {"value": "a\\b", "codes": ["a\\b"], "has": {"a\\b": true, "ab": false}},
+    {"value": "a\tb", "codes": ["a\tb"], "has": {"a\tb": true, "ab": false, "a": false}},
+    {"value": "x y", "codes": ["xy"], "has": {"xy": true, "x y": false, "x": false}},
+    {"value": "проект,café", "codes": ["проект", "café"], "has": {"проект": true, "café": true, "café": false}},
+    {"value": "a'b", "codes": ["a'b"], "has": {"a'b": true}},
+    {"value": ["a", " b", "a"], "codes": ["a", "b"], "has": {"a": true, "b": true}}
+  ]
+}

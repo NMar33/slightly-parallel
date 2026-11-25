@@ -79,6 +79,7 @@ OUT = REPO / "notes" / "feature-map" / "out"
 FRONTEND = REPO / "frontend"
 sys.path.insert(0, str(REPO / "backend"))
 sys.path.insert(0, str(HERE))
+from backend import chatstore  # noqa: E402
 csv.field_size_limit(sys.maxsize)
 
 WARNINGS: list[str] = []
@@ -341,7 +342,8 @@ def helper_chats(root: Path) -> set[str]:
     """Agent ids of helper chats: their "user" messages are written by the
     agent that started the helper, not by the operator."""
     out = set()
-    for m in root.glob("projects/*/chats/*/meta.json"):
+    for _p, _a, chat in chatstore.iter_chats(root, has="meta.json", sort=False):
+        m = chat / "meta.json"
         try:
             meta = json.loads(m.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -481,7 +483,8 @@ def typed_commands(root: Path, cap, today: date) -> dict:
     total, d30n, d7n, helper30 = Counter(), Counter(), Counter(), Counter()
     msgs = {"all": 0, "d30": 0, "d7": 0, "with_command": 0, "with_command30": 0}
     chats = helpers = 0
-    for chat in sorted(root.glob("projects/*/chats/*/chat.md")):
+    for _p, _a, folder in chatstore.iter_chats(root, has="chat.md"):
+        chat = folder / "chat.md"
         meta = {}
         try:
             meta = json.loads((chat.parent / "meta.json").read_text(encoding="utf-8"))
@@ -538,7 +541,7 @@ def flow_counts(root: Path, today: date) -> dict:
     out = {"replies": 0, "usage_rows": 0, "commits": 0, "notes_on_task": 0,
            "interpreted": 0, "core_links": {}, "backups": 0}
     shas = set()
-    for chat in root.glob("projects/*/chats/*"):
+    for _p, _a, chat in chatstore.iter_chats(root, sort=False):
         try:
             meta = json.loads((chat / "meta.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):

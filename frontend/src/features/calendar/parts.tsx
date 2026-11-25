@@ -129,23 +129,41 @@ export function QuickAdd({ project, date, onTask, onOpen, autoFocus = false, cla
 // The day's work — sessions, with the way to each chat
 // ---------------------------------------------------------------------------
 
+/**
+ * The day's chats: the project's own — the ones the day's «N chats» counts —
+ * then, under a line of their own, the chats of agents that joined it from
+ * another project (tk_d1d25a4d), each marked «from <home>» and counted in
+ * none of the day's numbers.
+ */
 export function SessionsOfDay({ sessions, date }: { sessions: CalSession[]; date: string }) {
   const rows = sessions.filter((s) => s.date === date)
   if (rows.length === 0) return <p className="text-11 text-tertiary">{t('No chats that day.')}</p>
+  const own = rows.filter((s) => !s.from)
+  const members = rows.filter((s) => s.from)
+  const item = (s: CalSession) => (
+    <li key={s.id}>
+      <Link to={`/sessions#sel=${encodeURIComponent(s.id)}`} className="flex items-center gap-8 h-32 px-6 rounded-input hover:bg-hover no-underline min-w-0">
+        <span className="text-11 font-mono text-tertiary tabular shrink-0">{s.start}{s.end ? `–${s.end}` : ''}</span>
+        <span className="text-12 text-primary truncate">{s.l1 || s.agent_id}</span>
+        {s.from && <span className="text-10 font-mono text-tertiary shrink-0" data-testid="from-home">{t('from {project}', { project: s.from })}</span>}
+        <span className="ml-auto text-10 font-mono text-tertiary tabular shrink-0">
+          {s.turns} {t('turns')}{s.git.commits ? ` · ${s.git.commits} commits · +${s.git.add} −${s.git.del}` : ''}
+        </span>
+      </Link>
+    </li>
+  )
   return (
-    <ol className="flex flex-col gap-1">
-      {rows.map((s) => (
-        <li key={s.id}>
-          <Link to={`/sessions#sel=${encodeURIComponent(s.id)}`} className="flex items-center gap-8 h-32 px-6 rounded-input hover:bg-hover no-underline min-w-0">
-            <span className="text-11 font-mono text-tertiary tabular shrink-0">{s.start}{s.end ? `–${s.end}` : ''}</span>
-            <span className="text-12 text-primary truncate">{s.l1 || s.agent_id}</span>
-            <span className="ml-auto text-10 font-mono text-tertiary tabular shrink-0">
-              {s.turns} {t('turns')}{s.git.commits ? ` · ${s.git.commits} commits · +${s.git.add} −${s.git.del}` : ''}
-            </span>
-          </Link>
-        </li>
-      ))}
-    </ol>
+    <div className="flex flex-col gap-4">
+      {own.length > 0
+        ? <ol className="flex flex-col gap-1" aria-label={t('chats of this project')}>{own.map(item)}</ol>
+        : <p className="text-11 text-tertiary">{t('No chats of this project that day.')}</p>}
+      {members.length > 0 && (
+        <>
+          <span className="text-10 font-mono text-tertiary">{t('from other projects')} · {t('not counted here')}</span>
+          <ol className="flex flex-col gap-1" aria-label={t('from other projects')}>{members.map(item)}</ol>
+        </>
+      )}
+    </div>
   )
 }
 

@@ -2168,5 +2168,8 @@
   "terminal: the terminal only. window: the terminal window's title row, tabs, sidebars and menus take the scheme's colours too.": "terminal: только терминал. window: строка заголовка, вкладки, боковые панели и меню окна терминала тоже берут цвета схемы.",
   "Terminal program": "Программа в терминале",
   "{program} wants to copy text": "{program} запрашивает запись в буфер обмена",
-  "{program} copied text": "{program} скопировала текст"
+  "{program} copied text": "{program} скопировала текст",
+  "Moved the chat of {agent} to {project}.": "Чат {agent} перенесён в {project}.",
+  "It holds chats of agents that are members elsewhere. Move each chat to one of its projects, or make the agent leave them first:": "В нём лежат чаты агентов, которые состоят и в других проектах. Перенесите каждый чат в один из его проектов или сначала выведите агента из них:",
+  "Move to {project}": "Перенести в {project}"
 }

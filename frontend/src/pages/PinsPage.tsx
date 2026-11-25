@@ -10,6 +10,7 @@ import { EmptyState, ErrorBanner, LoadingSkeleton } from '../components/states'
 import { useHashState } from '../hooks/useHashState'
 import { usePinList, useMsgMarkActions, type ForkState, type MsgMark, type PinList } from '../lib/pins'
 import { projectColor } from '../utils/projectColor'
+import { listedIn, projectCodes, rowProjects } from '../lib/projectCodes'
 import { mentionLabel } from '../features/project/mentions'
 import { MarkGlyph } from '../features/chats/ChatPins'
 import { LABEL, PillGroup } from '../features/promptlib/taskstyle'
@@ -43,8 +44,9 @@ export default function PinsPage() {
   const lists = { pin: usePinList('pin'), carry: usePinList('carry'), fork: usePinList('fork') }
   const cur = lists[list]
   const items = useMemo(() => cur.data?.items ?? [], [cur.data])
-  const projects = useMemo(() => [...new Set(items.map((m) => m.project).filter(Boolean))].sort(), [items])
-  const shown = items.filter((m) => (!project || m.project === project) && matches(m, q))
+  // A mark of a chat's message shows in every project of that chat.
+  const projects = useMemo(() => [...new Set(items.flatMap((m) => projectCodes(rowProjects(m))))].sort(), [items])
+  const shown = items.filter((m) => (!project || listedIn(m, project)) && matches(m, q))
   const act = useMsgMarkActions()
 
   return (

@@ -16,6 +16,8 @@ import { t, tn } from '../../i18n/scope/views'
 export type Row = ProfileSession & {
   agent_id: string
   project: string
+  /** Every project that lists the chat, origin first (lib/projectCodes). */
+  projects?: string
   produced: Record<string, number>
   /** What marked the chat: the saved prompt it came from, a kept message. */
   marks: Record<string, number>
@@ -39,6 +41,7 @@ export function toSession(r: LensRow): Row {
     l1: String(r.l1 ?? '').replace(/<\/?pasted_content[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
     agent_id: String(r.agent_id ?? ''),
     project: String(r.project ?? ''),
+    projects: String(r.projects ?? r.project ?? ''),
     produced: (r.produced as Record<string, number> | undefined) ?? {},
     marks: (r.marks as Record<string, number> | undefined) ?? {},
     tasks: Number(r.tasks ?? 0),

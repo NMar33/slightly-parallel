@@ -13,6 +13,7 @@
  */
 
 import type { SearchHit } from '../../lib/searchHits'
+import { projectCodes, rowProjects } from '../../lib/projectCodes'
 import { t } from '../../i18n/scope/system'
 
 export type FacetGroup = 'kind' | 'project' | 'month' | 'where' | 'role'
@@ -61,14 +62,28 @@ export function monthOf(date: string): string {
   return m ? `20${m[1]}-${m[2]}` : ''
 }
 
+/**
+ * Every value a hit shows in one group. A chat's hit (a turn, the chat) is in
+ * each project that lists the chat — its members too — so it counts under
+ * each of them; every other group has one value.
+ */
+export function facetValues(hit: SearchHit, group: FacetGroup): string[] {
+  if (group === 'project') {
+    const codes = projectCodes(rowProjects(hit))
+    return codes.length ? codes : ['(no project)']
+  }
+  const value = facetValue(hit, group)
+  return value ? [value] : []
+}
+
 /** Does this hit survive every clause? */
 function keeps(hit: SearchHit, clauses: Clause[]): boolean {
   for (const group of GROUPS) {
     const wanted = clauses.filter((c) => c.group === group)
     if (wanted.length === 0) continue
-    const value = facetValue(hit, group)
-    if (!value) return false
-    if (!wanted.some((c) => c.value === value)) return false
+    const values = facetValues(hit, group)
+    if (values.length === 0) return false
+    if (!wanted.some((c) => values.includes(c.value))) return false
   }
   return true
 }
@@ -108,9 +123,9 @@ export function buildFacets(hits: SearchHit[], clauses: Clause[]): Facet[] {
     const base = applyClauses(hits, others)
     const tally = new Map<string, number>()
     for (const h of base) {
-      const value = facetValue(h, group)
-      if (!value) continue
-      tally.set(value, (tally.get(value) ?? 0) + 1)
+      for (const value of facetValues(h, group)) {
+        tally.set(value, (tally.get(value) ?? 0) + 1)
+      }
     }
     if (tally.size === 0) continue
     const values = [...tally.entries()]

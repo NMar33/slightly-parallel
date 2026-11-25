@@ -51,7 +51,18 @@ import time
 from bisect import bisect_right, insort
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from . import chatstore
+else:
+    try:
+        from . import chatstore
+    except ImportError:  # loaded by path (the capture hook's #usage): no package
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("sp_chatstore_for_usagelib", Path(__file__).resolve().parent / "chatstore.py")
+        chatstore = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(chatstore)
 
 USAGE_FILE = "usage.jsonl"
 USAGE_DIR = ".usage"
@@ -1372,7 +1383,7 @@ def _folder_of(src: Any, project: str, agent_id: str) -> tuple[Path, Path | None
                 return root, chat_folder(a)
         return root, None
     root = Path(src)
-    folder = root / "projects" / project / "chats" / agent_id
+    folder = chatstore.folder(root, project, agent_id)
     return root, folder if folder.is_dir() else None
 
 
@@ -1436,11 +1447,7 @@ def usual_day(chats: list[dict[str, Any]], today: date | None = None) -> dict[st
 
 
 def _project_folders(data_root: Path, project: str) -> list[Path]:
-    chats = Path(data_root) / "projects" / project / "chats"
-    try:
-        return sorted(p for p in chats.iterdir() if (p / USAGE_FILE).exists())
-    except OSError:
-        return []
+    return [f for _p, _a, f in chatstore.iter_chats(data_root, project) if (f / USAGE_FILE).exists()]
 
 
 # ---------------------------------------------------------------------------
@@ -1515,7 +1522,7 @@ def usage_block(data_root: Path, project: str, agent_id: str, server_url: str,
     """What #usage prints: this chat, the plan limits, the project's day."""
     data_root = Path(data_root)
     ref = now or _now()
-    folder = folder or data_root / "projects" / project / "chats" / agent_id
+    folder = folder or chatstore.folder(data_root, project, agent_id)
     meta = chat_meta(folder)
     cu = chat_usage(folder / USAGE_FILE)
     tool = _chat_tool(meta, cu)

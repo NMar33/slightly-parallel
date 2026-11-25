@@ -41,7 +41,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from . import capturewatch, sessionimport
+from . import capturewatch, chatstore, sessionimport
 from .csvio import read_rows
 from .file_safety import acquire_flock, atomic_write_json, lock_path
 from .hookshared import HISTORY_SLACK_S, _append_bytes, codex_home, codex_rollout
@@ -375,9 +375,8 @@ def backfill(data_root: Path, claude_root: Path | None = None, codex_dir: Path |
     for code, project_path in paths.items():
         if "/" in code or "\\" in code or code in ("", ".", ".."):
             continue
-        chats = data_root / "projects" / code / "chats"
         try:
-            folders = sorted(p for p in chats.iterdir() if p.is_dir() and not p.is_symlink()) if chats.is_dir() else []
+            folders = chatstore.folders_in(chatstore.chats_root(data_root, code), skip_symlinks=True)
         except OSError:
             continue
         for folder in folders:

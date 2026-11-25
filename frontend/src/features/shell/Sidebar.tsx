@@ -1,4 +1,5 @@
 import { getJson } from '../../lib/getJson'
+import { listedIn } from '../../lib/projectCodes'
 import { Live } from '../../lib/clock'
 import { Link, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -159,7 +160,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                       </div>
                     )}
                   </NavLink>
-                  {snapshot.agents?.some((a) => a.project === p.code) && (
+                  {snapshot.agents?.some((a) => listedIn(a, p.code)) && (
                     <div className="pl-12">
                       <AgentTree
                         agents={snapshot.agents}

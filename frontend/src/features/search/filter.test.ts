@@ -166,3 +166,23 @@ describe('marking the word', () => {
     expect(markParts('', 'map')).toEqual([])
   })
 })
+
+describe('a chat in several projects', () => {
+  // cc-a started in slightly-parallel and joined atlas (tk_d1d25a4d).
+  const member = [
+    turn('cc-a#1.user', { role: 'user', projects: 'slightly-parallel,atlas' }),
+    turn('cc-b#2.agent', { agent_id: 'cc-b' }),
+    hit({ kind: 'architecture', id: 'ar_2', project: 'atlas' }),
+  ]
+
+  it('counts its hits under each project that lists the chat', () => {
+    const project = buildFacets(member, []).find((f) => f.group === 'project')
+    expect(project?.values.map((v) => [v.value, v.count])).toEqual([['atlas', 2], ['slightly-parallel', 2]])
+  })
+
+  it('keeps them under either project', () => {
+    expect(applyClauses(member, [{ group: 'project', value: 'atlas' }]).map((h) => h.id)).toEqual(['cc-a#1.user', 'ar_2'])
+    expect(applyClauses(member, [{ group: 'project', value: 'slightly-parallel' }]).map((h) => h.id))
+      .toEqual(['cc-a#1.user', 'cc-b#2.agent'])
+  })
+})

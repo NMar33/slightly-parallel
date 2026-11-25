@@ -167,6 +167,15 @@ def check(store: ViewStore) -> dict:
                            "filtered boards will not show this row",
                            row_id=str(r.get("id") or ""))
 
+    # 6. Membership rows the fold skipped (membership_fold.SKIP_REASONS):
+    #    each is a row that changes nothing, counted, never raised.
+    from . import memberships
+    from .membership_fold import LEDGER, QUIET_SKIPS
+    for reason, n in sorted(memberships.skip_counts(store).items()):
+        if n and reason not in QUIET_SKIPS:
+            _issue(issues, "warning", "membership-skipped", LEDGER,
+                   f"{n} row(s) skipped: {reason} — they change no agent's projects")
+
     errors = sum(1 for i in issues if i["severity"] == "error")
     warnings = sum(1 for i in issues if i["severity"] == "warning")
     return {

@@ -118,6 +118,9 @@ export interface CalSession {
   turns: number
   l1: string
   git: { commits: number; files: number; add: number; del: number }
+  /** A member's session (an agent that joined this project, tk_d1d25a4d):
+   *  its home. It adds to none of the day's numbers. */
+  from?: string
 }
 
 export interface CalendarPayload {

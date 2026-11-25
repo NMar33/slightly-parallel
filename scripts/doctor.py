@@ -42,6 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 from backend.data_root import home_data_root, named_data_root, read_data_root_env  # noqa: E402
 from backend.server_address import DEFAULT_PORT  # noqa: E402
+from backend import chatstore  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Defaults + constants
@@ -255,10 +256,10 @@ def check_meta_json(root: Path) -> Iterable[Finding]:
     total = 0
     bad = 0
     for project in _iter_projects(root):
-        chats_dir = project / "chats"
-        if not chats_dir.is_dir():
+        chats = chatstore.chats_in(project)
+        if not chats.is_dir():
             continue
-        for meta in chats_dir.rglob("meta.json"):
+        for meta in chats.rglob("meta.json"):
             total += 1
             try:
                 data = json.loads(meta.read_text(encoding="utf-8"))

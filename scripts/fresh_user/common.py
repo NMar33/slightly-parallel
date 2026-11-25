@@ -3,6 +3,7 @@ report, and plain HTTP to the server under test. Standard library only."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import socket
@@ -19,6 +20,19 @@ DOWNLOAD_TIMEOUT_S = 120
 START_PROBE_TIMEOUT_S = 3
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+def _chatstore() -> Any:
+    """Where a chat's folder lives (backend/backend/chatstore.py), by path:
+    this test imports nothing of the backend package."""
+    spec = importlib.util.spec_from_file_location("sp_chatstore_fresh", REPO / "backend" / "backend" / "chatstore.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+chatstore = _chatstore()
 WINDOWS = os.name == "nt"
 #: A key a new user has in their environment, as many do: the server's
 #: report must never show it (stages.server_report).

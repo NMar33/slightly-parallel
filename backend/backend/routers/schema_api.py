@@ -26,7 +26,7 @@ from ..hookshared import process_started, session_key
 from .deps import etag_for, get_store, json_response, maybe_304
 from ..entities import ENTITIES
 from ..tasklib import AGENT_TAGS
-from .. import entry_fields
+from .. import chatstore, entry_fields
 from ..mcp import TOOLS as _MCP_TOOLS
 from ..entitylib import AGENT_CREATE_REFUSED
 from .lenses import ENUM_FIELDS, HEADLINE_REQUIRED, OPERATOR_ONLY
@@ -269,14 +269,15 @@ def _crumb_by_thread(data_root: Path, thread: str) -> dict | None:
     if crumb is not None:
         return crumb
     agent = f"codex-{session_key('codex', thread)}"
-    for meta_path in sorted(data_root.glob(f"projects/*/chats/{agent}/meta.json")):
+    for _project, chat in chatstore.folders_of(data_root, agent, has="meta.json"):
+        meta_path = chat / "meta.json"
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             at = meta_path.stat().st_mtime
         except (OSError, ValueError):
             continue
         if isinstance(meta, dict) and str(meta.get("session_ref") or "").lower() == thread.lower():
-            return {"agent_id": agent, "project": meta.get("project") or meta_path.parents[2].name,
+            return {"agent_id": agent, "project": chatstore.project_of(chat, meta),
                     "session_id": thread, "at": at}
     return None
 

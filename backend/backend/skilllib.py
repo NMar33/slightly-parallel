@@ -36,7 +36,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
 
-from . import frontmatter, keeplib, limits
+from . import chatstore, frontmatter, keeplib, limits
 from .csvio import append_row, read_rows, rewrite_rows
 from .db import ViewStore
 from .docs_md import build_detail, read_detail, resolve_under, safe_ref_part
@@ -973,7 +973,7 @@ def backfill(store: ViewStore, claude_root: Path | None = None) -> dict[str, int
                         continue
                     cwd = os.path.realpath(raw_cwd)
                     project = next((p for p, path in targets if cwd == path or cwd.startswith(path + os.sep)), None)
-                    chat = store.data_root / "projects" / str(project) / "chats" / f"cc-{sid[:8]}"
+                    chat = chatstore.folder(store.data_root, str(project), f"cc-{sid[:8]}")
                     if project is None or not chat.is_dir():
                         continue
                     if chat not in seen:
