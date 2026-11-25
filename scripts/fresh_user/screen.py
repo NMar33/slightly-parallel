@@ -9,33 +9,68 @@ pseudo-console through pywinpty (pip install pywinpty==3.1.0).
 
 from __future__ import annotations
 
+import codecs
 import os
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
-from common import WINDOWS
+from common import WINDOWS, redact_diagnostics
 
 SCREEN_POLL_INTERVAL_S = 0.3
 KEY_PRESS_SETTLE_S = 0.5
 CODEX_PROMPT_TIMEOUT_S = 30
+PTY_CLOSE_TIMEOUT_S = 3
 
 _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|[\x00-\x08\x0e-\x1f]")
 DOWN, ENTER = "\x1b[B", "\r"
+_CURSOR_MODE = re.compile(r"\x1b\[\?1([hl])")
+_CURSOR_ARROWS = {"\x1b[A": "\x1bOA", DOWN: "\x1bOB"}
+KITTY_KEYBOARD_QUERY = "\x1b[?u"
 ROWS, COLS = 45, 160
+SCREEN_HISTORY_CHARS = 1600
 #: What a full-screen program asks its terminal before it draws, and what a
 #: terminal answers: the cursor, the colours, its kind, its keyboard. Left
 #: unanswered, Codex waits; tmux and real terminals answer on their own.
 _REPLIES = {"\x1b[6n": "\x1b[1;1R", "\x1b]10;?": "\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
-            "\x1b]11;?": "\x1b]11;rgb:0000/0000/0000\x1b\\", "\x1b[c": "\x1b[?1;2c", "\x1b[?u": "\x1b[?0u"}
+            "\x1b]11;?": "\x1b]11;rgb:0000/0000/0000\x1b\\", "\x1b[c": "\x1b[?1;2c", KITTY_KEYBOARD_QUERY: "\x1b[?0u"}
+
+
+class TerminalTrace:
+    def __init__(self, path: Path):
+        import pyte
+
+        self.path = path
+        self.frame = pyte.Screen(COLS, ROWS)
+        self.stream = pyte.Stream(self.frame)
+
+    def feed(self, text: str) -> None:
+        self.stream.feed(text)
+
+    @property
+    def rendered(self) -> str:
+        return "\n".join(row.rstrip() for row in self.frame.display).strip("\n")
+
+    def save(self, label: str) -> None:
+        with self.path.open("a", encoding="utf-8") as log:
+            log.write(f"\n--- {label} ---\n{redact_diagnostics(self.rendered)}\n")
 
 
 class Screen:
     """One program on a pseudo-terminal: what it shows so far, and keys to send."""
 
-    def __init__(self, args: list[str], cwd: Path, env: dict[str, str]):
+    def __init__(self, args: list[str], cwd: Path, env: dict[str, str], *, trace: Path | None = None,
+                 reply_to_kitty_query: bool = True):
         self.text = ""
+        self.history = ""
+        self.exited = False
+        self.application_cursor = False
+        self.reply_to_kitty_query = reply_to_kitty_query
+        self._cursor_tail = ""
+        self.trace = TerminalTrace(trace) if trace is not None else None
+        self._decode = codecs.getincrementaldecoder("utf-8")(errors="replace")
         if WINDOWS:
             from winpty import PtyProcess  # type: ignore[import-not-found]
             import threading
@@ -52,6 +87,7 @@ class Screen:
                     try:
                         got = self.proc.read(4096)
                     except Exception:  # noqa: BLE001 — closed: the program ended
+                        self.exited = True
                         return
                     if got:
                         with self._lock:
@@ -75,25 +111,52 @@ class Screen:
             with self._lock:
                 got, self._buf = "".join(self._buf), []
             if got:
-                self._answer(got)
-                self.text += _ANSI.sub("", got)
+                self._receive(got)
             return
         import select
-        while select.select([self.fd], [], [], 0.2)[0]:
+        end = time.monotonic() + SCREEN_POLL_INTERVAL_S
+        while (remaining := end - time.monotonic()) > 0 and select.select([self.fd], [], [], remaining)[0]:
             try:
                 got = os.read(self.fd, 65536)
             except OSError:
+                self.exited = True
                 return
             if not got:
+                self.exited = True
                 return
-            text = got.decode("utf-8", "replace")
-            self._answer(text)
-            self.text += _ANSI.sub("", text)
+            self._receive(self._decode.decode(got))
+
+    def _receive(self, text: str) -> None:
+        controls = self._cursor_tail + text
+        if modes := _CURSOR_MODE.findall(controls):
+            self.application_cursor = modes[-1] == "h"
+        self._cursor_tail = controls[-4:]
+        self._answer(text)
+        if self.trace is not None:
+            self.trace.feed(text)
+        self.text += _ANSI.sub("", text)
+
+    @property
+    def rendered(self) -> str:
+        return self.trace.rendered if self.trace is not None else self.text
+
+    def save_frame(self, label: str) -> None:
+        if self.trace is not None:
+            self.trace.save(label)
 
     def _answer(self, got: str) -> None:
         for asked, said in _REPLIES.items():
-            if asked in got:
-                self._write(said)
+            if asked not in got:
+                continue
+            # ConPTY handles OSC color queries. Injecting our own OSC into
+            # its input writes the response as text in the CLI composer.
+            if WINDOWS and asked.startswith("\x1b]"):
+                continue
+            # A late Kitty reply can insert a literal 'u' into Claude's
+            # composer. Use its legacy keyboard fallback in this PTY.
+            if asked == KITTY_KEYBOARD_QUERY and not self.reply_to_kitty_query:
+                continue
+            self._write(said)
 
     def wait_for(self, words: str, seconds: float) -> bool:
         """Until the screen shows these words. A full-screen program moves the
@@ -102,14 +165,16 @@ class Screen:
         want = re.sub(r"\s", "", words)
         while time.time() < end:
             self.read()
-            if want in re.sub(r"\s", "", self.text):
+            if want in re.sub(r"\s", "", self.rendered):
                 return True
             time.sleep(SCREEN_POLL_INTERVAL_S)
         return False
 
     def send(self, keys: str) -> None:
+        self.save_frame("before input")
+        self.history = (self.history + "\n" + self.text.rstrip())[-SCREEN_HISTORY_CHARS:]
         self.text = ""  # what comes after this key
-        self._write(keys)
+        self._write(_CURSOR_ARROWS.get(keys, keys) if self.application_cursor else keys)
         time.sleep(KEY_PRESS_SETTLE_S)
 
     def _write(self, keys: str) -> None:
@@ -120,29 +185,105 @@ class Screen:
 
     def close(self) -> None:
         if WINDOWS:
-            try:
-                self.proc.terminate(force=True)
-            except Exception:  # noqa: BLE001 — gone already
-                pass
+            self._close_windows()
+            return
+        if self.fd is None:
             return
         import signal
+
+        def leader_running() -> bool:
+            try:
+                return os.waitpid(self.pid, os.WNOHANG)[0] == 0
+            except ChildProcessError:
+                return False
+
+        def group_running() -> bool:
+            try:
+                os.killpg(self.pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+
         try:
-            os.kill(self.pid, signal.SIGTERM)
-            os.waitpid(self.pid, 0)
-        except (ProcessLookupError, ChildProcessError, OSError):
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(self.pid, sig)
+                except ProcessLookupError:
+                    # close() can run before the child has entered its PTY session.
+                    if leader_running():
+                        os.kill(self.pid, sig)
+                deadline = time.monotonic() + PTY_CLOSE_TIMEOUT_S
+                while leader_running() or group_running():
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(SCREEN_POLL_INTERVAL_S)
+                else:
+                    break
+        except (ChildProcessError, OSError):
             pass
+        finally:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+
+    def _close_windows(self) -> None:
+        import psutil
+
+        command = ["taskkill", "/PID", str(self.proc.pid), "/T"]
+
+        def taskkill(args: list[str]) -> None:
+            try:
+                subprocess.run(args, capture_output=True, timeout=PTY_CLOSE_TIMEOUT_S)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+        running = []
         try:
-            os.close(self.fd)
+            root = psutil.Process(self.proc.pid)
+        except psutil.NoSuchProcess:
+            root = None
+        else:
+            try:
+                running = root.children(recursive=True)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            running.append(root)
+        if running:
+            taskkill(command)
+            _, running = psutil.wait_procs(running, timeout=PTY_CLOSE_TIMEOUT_S)
+        if running:
+            if root in running:
+                taskkill([*command, "/F"])
+            # Retain process identities from before the gentle stop. Children
+            # can survive an exited parent, so taskkill /T alone can miss them.
+            for process in running:
+                try:
+                    process.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            _, running = psutil.wait_procs(running, timeout=PTY_CLOSE_TIMEOUT_S)
+        try:
+            self.proc.close(force=bool(running))
         except OSError:
             pass
+
+
+def codex_pty_args(binary: str = "codex") -> list[str]:
+    # The background server would outlive the disposable folder. Windows CI
+    # chooses the normal non-admin sandbox before the first-run setup prompt.
+    args = [binary, "--no-daemon", "-c", "check_for_update_on_startup=false"]
+    if WINDOWS:
+        args += ["-c", 'windows.sandbox="unelevated"']
+    return args
 
 
 def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 60) -> tuple[bool, str]:
     """Open Codex in the folder, trust the folder and its hooks on Codex's own
     screen, and check that Codex saved the hooks' trust. Answers (done, what
     the screen showed last)."""
-    # --no-daemon: Codex's background server would outlive the test's folder.
-    screen = Screen(["codex", "--no-daemon"], folder, env)
+    screen = Screen(codex_pty_args(), folder, env)
     try:
         if screen.wait_for("Trust this folder", seconds):
             screen.send(ENTER)

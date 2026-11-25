@@ -3,9 +3,9 @@
 ``POST /api/messages`` sends one (``{to, text, reply_to?}``): an agent's
 write comes through the MCP tool ``message`` (``agent_id`` stamped), the
 operator's from Slightly Parallel's own page (no agent: ``from`` is
-``operator``). It is typed into the chat's terminal at once when that is
-safe, and otherwise waits for the next try, the chat's next prompt (the
-hook's notice) or its inbox.
+``operator``). A notice is typed into the chat's terminal when that is
+safe, and otherwise waits for the next try or the chat's next prompt. The
+body is read through the inbox.
 
 ``POST /api/messages/inbox`` (``{agent_id}``, the MCP tool ``messages``)
 answers the chat's unread messages and marks them read, then its newest
@@ -105,3 +105,28 @@ def listing(request: Request, agent_id: str = Query(""), project: str = Query(""
         rows = [r for r in rows if r["project"] == project]
     rows.sort(key=lambda r: (r["sent_at"], r["id"]), reverse=True)
     return {"total": len(rows), "messages": rows[:limit]}
+
+
+@router.get("/api/messages/{message_id}")
+def detail(request: Request, message_id: str) -> dict[str, Any]:
+    """Read one message and its reply thread without marking them read."""
+    rows = msgledger.read_rows(_root(request))
+    message = next((row for row in rows if row["id"] == message_id), None)
+    if message is None:
+        raise HTTPException(status_code=404, detail="No such message")
+    participants = {message["from_agent"], message["to_agent"]}
+    conversation = {row["id"]: row for row in rows if {row["from_agent"], row["to_agent"]} == participants}
+    neighbors: dict[str, list[str]] = {}
+    for row in conversation.values():
+        parent = row["reply_to"]
+        if parent in conversation:
+            neighbors.setdefault(parent, []).append(row["id"])
+            neighbors.setdefault(row["id"], []).append(parent)
+    visited = {message_id}
+    pending = [message_id]
+    while pending:
+        for related in neighbors.get(pending.pop(), []):
+            if related not in visited:
+                visited.add(related)
+                pending.append(related)
+    return {"message": message, "thread": [row for key, row in conversation.items() if key in visited]}

@@ -6,7 +6,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import socket
+import string
 import time
 import urllib.error
 import urllib.request
@@ -18,6 +20,8 @@ OPERATOR_COOKIE_TIMEOUT_S = 10
 API_REQUEST_TIMEOUT_S = 30
 DOWNLOAD_TIMEOUT_S = 120
 START_PROBE_TIMEOUT_S = 3
+BOARD_SETTLE_S = 2
+BOARD_POLL_S = 0.2
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -37,6 +41,85 @@ WINDOWS = os.name == "nt"
 #: A key a new user has in their environment, as many do: the server's
 #: report must never show it (stages.server_report).
 PLANTED_KEY = "sk-proj-freshPlanted7f3a91c0e5b24d68aa"
+# Codex needs this for redaction only. Consume it before any subprocess starts.
+_DIAGNOSTIC_OPENAI_KEY = os.environ.pop("SP_DIAGNOSTIC_OPENAI_KEY", "")
+_KEY_ALPHABET = frozenset(string.ascii_letters + string.digits + "_-")
+_ROW_DECORATION = r"[ \t│║▌›>⎿|+#]*"
+_ROW_LABEL = r"(?:(?:[0-9]{1,8}|-)[ \t]+|(?!(?i:sk)-)[A-Za-z][A-Za-z0-9_]{0,7}-(?=\S))"
+_ROW_PREFIX = re.compile(r"(?m)^" + _ROW_DECORATION + _ROW_LABEL)
+_NEXT_ROW = r"\r?\n" + _ROW_DECORATION + r"(?:" + _ROW_LABEL + r")?"
+_DIAGNOSTIC_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_DIAGNOSTIC_KEY = re.compile(
+    r"(?im)(?<![\w-])sk-(?:"
+    # A PTY can wrap the prefix, the marker, or the suffix onto another row.
+    r"(?:[a-z0-9]+(?:\r?\n[ \t]*[a-z0-9]+)?-)*[ \t]*(?:\r?\n[ \t]*)?"
+    r"(?:…+|\.{2,}|\*{2,})[ \t]*[\w-]*"
+    r"(?:\r?\n[ \t]*[\w-]+(?=[ \t]*(?:[│║][ \t]*)?$))?"
+    r"|(?:ant|proj|svcacct|admin|live|test)-[a-z0-9_-]+|[a-z0-9_]{20,})"
+)
+_MASKED_KEY_ECHO = re.compile(
+    r"(?i)(?<![\w-])sk-[a-z0-9_-]*(?:\*(?:" + _NEXT_ROW + r")?){2,}"
+    r"[ \t]*[a-z0-9_-]{0,4}(?![a-z0-9_-])"
+)
+_WRAPPED_KEY_PREFIX = re.compile(
+    r"(?i)(?<![\w-])(?:" + "|".join(
+        (r"(?:" + _NEXT_ROW + r")?").join(map(re.escape, "sk-" + kind + "-"))
+        for kind in ("ant", "proj", "svcacct", "admin", "live", "test")
+    ) + r")"
+)
+_BILLING_ERROR = re.compile(
+    r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota|billing_hard_limit_reached"
+    r"|quota\s+exceeded\.\s*check\s+your\s+plan\s+and\s+billing\s+details"
+    r"|exceeded\s+your\s+current\s+quota)\b", re.IGNORECASE,
+)
+
+
+def is_provider_billing_failure(text: str) -> bool:
+    return bool(_BILLING_ERROR.search(text))
+
+
+def _known_key_spans(text: str, known_key: str) -> list[tuple[int, int]]:
+    keys = {known_key, _DIAGNOSTIC_OPENAI_KEY, os.environ.get("ANTHROPIC_API_KEY", ""),
+            os.environ.get("OPENAI_API_KEY", "")} - {""}
+    if not keys:
+        return []
+    needles = {"".join(ch for ch in key if ch in _KEY_ALPHABET)
+               for key in keys | {key[-20:] for key in keys if len(key) >= 20}} - {""}
+    alphabet_positions = [i for i, ch in enumerate(text) if ch in _KEY_ALPHABET]
+    projections = [alphabet_positions]
+    if "\n" in text:
+        label_positions = {i for label in _ROW_PREFIX.finditer(text) for i in range(*label.span())}
+        if label_positions:
+            projections.append([i for i in alphabet_positions if i not in label_positions])
+    spans = []
+    for positions in projections:
+        compact = "".join(text[i] for i in positions)
+        for needle in needles:
+            start = compact.find(needle)
+            while start != -1:
+                spans.append((positions[start], positions[start + len(needle) - 1] + 1))
+                start = compact.find(needle, start + len(needle))
+    return spans
+
+
+def redact_diagnostics(text: str, known_key: str = "") -> str:
+    text = _DIAGNOSTIC_ANSI.sub("", text)
+    spans = _known_key_spans(text, known_key)
+    spans.extend(match.span() for pattern in (_DIAGNOSTIC_KEY, _MASKED_KEY_ECHO)
+                 for match in pattern.finditer(text))
+    clean, end = [], 0
+    for start, stop in sorted(spans):
+        if start >= end:
+            clean.extend((text[end:start], "[redacted]"))
+        end = max(end, stop)
+    clean.append(text[end:])
+    return "".join(clean)
+
+
+def contains_diagnostic_key(text: str) -> bool:
+    text = _DIAGNOSTIC_ANSI.sub("", text)
+    return bool(_known_key_spans(text, "") or _WRAPPED_KEY_PREFIX.search(text)
+                or _DIAGNOSTIC_KEY.search(text) or _MASKED_KEY_ECHO.search(text))
 
 
 @dataclass
@@ -55,19 +138,36 @@ class Report:
     checks: list[Check] = field(default_factory=list)
     notes: dict[str, Any] = field(default_factory=dict)
 
+    @staticmethod
+    def console_detail(detail: str) -> str:
+        if not detail:
+            return ""
+        return "See the audited report artifact." if os.environ.get("GITHUB_ACTIONS") == "true" else detail
+
     def add(self, stage: str, name: str, ok: bool, detail: str = "", soft: bool = False) -> bool:
+        stage, name = redact_diagnostics(stage), redact_diagnostics(name)
+        detail = redact_diagnostics(detail)
         self.checks.append(Check(stage, name, bool(ok), detail, soft))
         mark = "ok  " if ok else ("soft" if soft else "FAIL")
-        print(f"  [{mark}] {name}" + (f" — {detail}" if detail and not ok else ""), flush=True)
+        print(f"  [{mark}] {name}" + (f" — {self.console_detail(detail)}" if detail and not ok else ""), flush=True)
         return bool(ok)
 
     def failed(self) -> list[Check]:
         return [c for c in self.checks if not c.ok and not c.soft]
 
     def write(self, path: Path) -> None:
+        def scrub(value: Any) -> Any:
+            if isinstance(value, str):
+                return redact_diagnostics(value)
+            if isinstance(value, dict):
+                return {scrub(key): scrub(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [scrub(item) for item in value]
+            return value
+
         path.write_text(json.dumps({
             "passed": not self.failed(),
-            "notes": self.notes,
+            "notes": scrub(self.notes),
             "checks": [c.__dict__ for c in self.checks],
         }, indent=2), encoding="utf-8")
 
@@ -105,6 +205,8 @@ class Space:
         # Codex finds its home through the system on Windows, not USERPROFILE:
         # CODEX_HOME is what both the server under test and Codex read.
         env["CODEX_HOME"] = str(self.home / ".codex")
+        # Keep the installed CLI version for the duration of a test run.
+        env["DISABLE_AUTOUPDATER"] = "1"
         env["FRESH_PLANTED_API_KEY"] = PLANTED_KEY
         env.update(HOME=str(self.home), SP_PORT=str(self.port), SHELL="/bin/sh",
                    # git in the sample project and in the clone needs an author
@@ -189,3 +291,16 @@ def eventually(read, seconds: float = 20):
         time.sleep(1)
         got = read()
     return got
+
+
+def new_task_rows(space: Space, code: str, known: set[str], seconds: float = BOARD_SETTLE_S) -> list[dict]:
+    """Collect new cards while the file watcher catches up after the CLI has exited."""
+    deadline = time.monotonic() + seconds
+    seen: dict[str, dict] = {}
+    while True:
+        for row in rows(get(space, f"/api/tasks?project={code}"), "tasks"):
+            if row["id"] not in known:
+                seen[row["id"]] = row
+        if time.monotonic() >= deadline:
+            return list(seen.values())
+        time.sleep(BOARD_POLL_S)

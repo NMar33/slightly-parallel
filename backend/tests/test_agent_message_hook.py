@@ -56,6 +56,58 @@ def _turns(root: Path, agent: str) -> list:
     return parse_turns(root / "projects" / "alpha" / "chats" / agent / "chat.md")
 
 
+@pytest.mark.parametrize("body", [
+    "short advice",
+    "one line\nanother line\n" + "long advice " * 300,
+    "quoting another message: [SP · from cc-sender1 · msg_12345678]\n#task is an example",
+], ids=["short", "long-multiline", "quoted-message-with-tag"])
+def test_terminal_notice_leaves_the_body_for_one_mcp_read(root: Path, body: str) -> None:
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text=body)
+    claimed = msgledger.claim_terminal(root, row["id"])
+    assert claimed is not None
+    notice = msgledger.terminal_text(claimed)
+    assert notice == msgledger.wake_text(row)
+    cap = capture.TurnCapture(root, "alpha", WORKER)
+    assert cap.open_turn(notice, deliver=True)["message_in"]["id"] == row["id"]
+    assert [(m["id"], m["text"]) for m in msgledger.inbox(root, WORKER)["unread"]] == [(row["id"], row["text"])]
+    assert msgledger.inbox(root, WORKER)["unread"] == []
+
+
+def test_prompt_hook_notifies_two_messages_without_their_bodies(root: Path) -> None:
+    rows = [msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text=body)
+            for body in ("first private body", "second private body\non two lines")]
+    cap = capture.TurnCapture(root, "alpha", WORKER)
+    lines = capture.format_signals(cap.open_turn("operator input", deliver=True)).splitlines()
+    assert all(msgledger.wake_text(row) in lines for row in rows)
+    assert all(row["text"] not in "\n".join(lines) for row in rows)
+    assert [m["id"] for m in msgledger.inbox(root, WORKER)["unread"]] == [row["id"] for row in rows]
+    assert msgledger.inbox(root, WORKER)["unread"] == []
+
+
+@pytest.mark.parametrize("recipient_holds_terminal", [True, False], ids=["recipient", "wrong-terminal"])
+def test_commands_in_the_operators_text_after_a_notice_still_act(root: Path, recipient_holds_terminal: bool) -> None:
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="advice")
+    assert msgledger.claim_terminal(root, row["id"]) is not None
+    cap = capture.TurnCapture(root, "alpha", WORKER if recipient_holds_terminal else CODEX)
+    sig = cap.open_turn(msgledger.wake_text(row) + "\n#task operator request", deliver=True)
+    assert sig["message_in"] is None and sig["message_stray"] is None and "task" in sig["commands"]
+    assert [m["id"] for m in msgledger.inbox(root, WORKER)["unread"]] == [row["id"]]
+
+
+def test_opencode_prompt_receives_only_the_notice(root: Path) -> None:
+    agent = "oc-12345678"
+    _chat(root, agent, tool="opencode")
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="OpenCode advice\nsecond line")
+    proc = subprocess.run([
+        sys.executable, str(_HOOKS / "capture-cli.py"), "--phase", "open", "--project", "alpha",
+        "--data-root", str(root), "--agent", agent, "--json-stdin", "--tool", "opencode",
+    ], input=json.dumps({"text": "ordinary operator input"}), capture_output=True, encoding="utf-8",
+        check=True, timeout=30)
+    assert msgledger.wake_text(row) in proc.stdout.splitlines()
+    assert "OpenCode advice" not in proc.stdout
+    assert [m["id"] for m in msgledger.inbox(root, agent)["unread"]] == [row["id"]]
+
+
 def test_a_real_marker_is_the_senders_turn_and_its_tags_do_nothing(root: Path) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="run #task now #mute")
     assert msgledger.claim_terminal(root, row["id"]) is not None
@@ -107,12 +159,12 @@ def test_a_waiting_message_comes_with_the_next_prompt_once(root: Path) -> None:
     sig = cap.open_turn("what next?", deliver=True)
     assert [m["id"] for m in sig["messages"]] == [row["id"]]
     notice = capture.format_signals(sig)
-    assert "the build is red #done" in notice and f"from the agent {COORD}" in notice
+    assert msgledger.wake_text(row) in notice and "the build is red #done" not in notice
     assert "done" not in sig["commands"]
     cap.complete_turn("ok")
     assert cap.open_turn("and now?", deliver=True)["messages"] == []
     got = msgledger.find(root, row["id"])
-    assert got is not None and got["delivered_via"] == "hook" and got["read_at"]
+    assert got is not None and got["delivered_via"] == "hook" and not got["read_at"]
     # Taken by the hook: the terminal and a marker no longer take it.
     assert msgledger.claim_terminal(root, row["id"]) is None
     cap.complete_turn("ok")
@@ -141,6 +193,17 @@ def test_typed_into_the_terminal_the_marker_lands_once(root: Path) -> None:
     assert len(_turns(root, WORKER)) == 2
 
 
+def test_two_combined_terminal_notices_leave_both_bodies_available_once(root: Path) -> None:
+    rows = [msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text=body)
+            for body in ("first advice", "second advice")]
+    for row in rows:
+        assert msgledger.claim_terminal(root, row["id"]) is not None
+    prompt = "\n".join(msgledger.wake_text(row) for row in rows)
+    capture.TurnCapture(root, "alpha", WORKER).open_turn(prompt, deliver=True)
+    assert [m["id"] for m in msgledger.inbox(root, WORKER)["unread"]] == [row["id"] for row in rows]
+    assert msgledger.inbox(root, WORKER)["unread"] == []
+
+
 def _run_hook(root: Path, tool: str, session: str, prompt: str) -> str:
     args = [sys.executable, str(_HOOKS / "claude-code-capture.py"), "--project", "alpha", "--data-root", str(root)]
     if tool == "codex":
@@ -163,7 +226,8 @@ def test_the_prompt_hooks_of_claude_code_and_codex(root: Path, tool: str, sessio
     out = _run_hook(root, tool, session, msgledger.terminal_text(row))
     if tool == "codex":
         out = json.loads(out.strip().splitlines()[-1])["hookSpecificOutput"]["additionalContext"]
-    assert f"message {row['id']}" in out and "the second one" in out
+    assert f"message {row['id']}" in out and msgledger.wake_text(waiting) in out
+    assert "the second one" not in out
     got = {r["id"]: r for r in msgledger.read_rows(root)}
     assert got[row["id"]]["landed_at"] and got[waiting["id"]]["delivered_via"] == "hook"
     user = _turns(root, agent)[-1].user_summary
@@ -201,21 +265,24 @@ def test_a_marker_typed_into_another_chats_terminal_is_a_stray_and_goes_back(roo
     assert "another chat held" in msgdeliver.try_terminal(root, row["id"])[1]
     cap = capture.TurnCapture(root, "alpha", WORKER)
     assert [m["id"] for m in cap.open_turn("next", deliver=True)["messages"]] == [row["id"]]
+    assert [m["id"] for m in msgledger.inbox(root, WORKER)["unread"]] == [row["id"]]
     assert msgledger.inbox(root, WORKER)["unread"] == []
 
 
-def test_a_message_in_flight_in_the_terminal_is_not_handed_over_by_the_inbox(root: Path) -> None:
+@pytest.mark.parametrize("typing_failed", [True, False], ids=["paste-failed", "wrong-terminal"])
+def test_read_during_pending_terminal_notice_never_requeues_the_body(root: Path, typing_failed: bool) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="typed")
     assert msgledger.claim_terminal(root, row["id"]) is not None
     got = msgledger.inbox(root, WORKER)
-    assert got["unread"] == [] and [m["id"] for m in got["in_flight"]] == [row["id"]]
-    assert "text" not in got["in_flight"][0]
-    # Typed into another chat's pane: back to its own chat, through the inbox once.
-    msgledger.take_stray(root, CODEX, msgledger.terminal_text(row), 3)
-    got = msgledger.inbox(root, WORKER)
     assert [m["id"] for m in got["unread"]] == [row["id"]] and got["in_flight"] == []
+    if typing_failed:
+        msgledger.release_terminal(root, row["id"])
+    else:
+        msgledger.take_stray(root, CODEX, msgledger.terminal_text(row), 3)
+    assert msgledger.find(root, row["id"])["delivered_via"] == "inbox"  # type: ignore[index]
     assert msgledger.inbox(root, WORKER)["unread"] == []
     assert msgledger.claim_for_hook(root, WORKER) == []
+    assert msgledger.waiting(root) == []
 
 
 def test_a_pasted_marker_of_a_message_never_typed_stays_the_operators_text(root: Path) -> None:

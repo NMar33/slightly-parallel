@@ -20,6 +20,7 @@ See scripts/fresh_user/README.md.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import tempfile
@@ -31,13 +32,51 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scenario  # noqa: E402
 import stages  # noqa: E402
-from agents import tools  # noqa: E402
-from common import REPO, Report, Space, free_port, http  # noqa: E402
+from helper_smoke import helper_smoke  # noqa: E402
+from interactive import SmokeResult, smoke  # noqa: E402
+from agents import Codex, tools  # noqa: E402
+from common import REPO, Report, Space, free_port, get, http, redact_diagnostics, wait_for  # noqa: E402
 
 FREE = ["install", "pages", "setup", "wiring", "backup", "report", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
 PAID = ["agent", "parallel"]
 ALL = ["install", "pages", "setup", "wiring", "agent", "parallel", "backup", "report", "terminal", "failures", "disconnect", "restart", "background", "dev", "volume", "upgrade"]
 OUT = REPO / ".sp" / "fresh-user"
+
+
+def canary(space: Space, report: Report, args: argparse.Namespace, names: list[str], started: float) -> int:
+    """One turn through the installed CLI, Setup integration, and the task board."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        passed = os.environ.get("SP_AGENT_PREFLIGHT_RESULT") == "success"
+        if not report.add("canary", "L0 provider preflight", passed):
+            report.notes["canary layers"] = dict.fromkeys(("L1", "L2", "L3"), "blocked by L0")
+            return finish(space, report, args, started, None)
+    proc = None
+    try:
+        space.data.mkdir(parents=True)
+        stages.make_sample(space)
+        proc = stages.start(space, [sys.executable, "-m", "backend.server"], "canary-server.log", {
+            "SP_DATA_ROOT": str(space.data), "SP_SANDBOX": "1", "SP_EXAMPLE": "0",
+        }, cwd=REPO / "backend")
+        if report.add("canary", "the local server answers", wait_for(space, "/api/health", 30, lambda: proc.poll() is None)):
+            known = tools()
+            http(space.url + "/api/setup/integrate", {"project_code": "calc", "project_dir": str(space.sample),
+                "write_claude_hooks": False, "write_claude_statusline": False,
+                **{known[name].integrate_flag: True for name in names}})
+            for name in names:
+                smoke(space, report, "calc", space.sample, known[name], args.model, Path.home(),
+                      args.turn_seconds, one_turn=True)
+            totals = get(space, "/api/usage?project=calc&range=today").get("totals", {})
+            if totals.get("new", 0) or totals.get("output", 0) or totals.get("cache", 0):
+                report.notes["model_cost"] = {key: totals.get(key) for key in ("cost_usd", "unpriced")}
+    except Exception as error:  # noqa: BLE001 — report the failure without leaking exception text
+        report.add("canary", "the canary finishes", False, type(error).__name__)
+    except BaseException:
+        try:
+            stages.stop(proc)
+        finally:
+            stages.cleanup(space, args.keep)
+        raise
+    return finish(space, report, args, started, None, proc)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-agent", action="store_true", help=f"leave out the stages that start a real agent ({', '.join(PAID)})")
     ap.add_argument("--tools", default="claude-code", help="agent tools: claude-code, codex, opencode")
     ap.add_argument("--model", default="sonnet", help="sonnet, haiku or opus; or a model name passed to the tool as is")
-    ap.add_argument("--scenario", default="full", choices=sorted(scenario.SCENARIOS), help="core: 8 messages; full: the standup and every command; site: a small page built with #now, then #task, #scan, #sp, #done")
+    ap.add_argument("--scenario", default="full", choices=[*sorted(scenario.SCENARIOS), "smoke", "canary"],
+                    help="canary: one interactive task, no install or browser; smoke: two turns and a helper; core: release checks")
     ap.add_argument("--agent-runs", type=int, default=1, help="run the agent chat this many times, each in a new project")
     ap.add_argument("--source", default=str(REPO), help="the repository folder to clone")
     ap.add_argument("--upgrade-from", default="", help="the commit an upgrade starts from (default: the newest v* tag, else 5 commits back)")
@@ -54,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot-seconds", type=int, default=1200, help="how long the first start may take")
     ap.add_argument("--turn-seconds", type=int, default=900, help="how long one agent turn may take")
     args = ap.parse_args(argv)
+    if args.no_agent and args.scenario == "canary":
+        ap.error("the canary requires an agent; choose a different scenario with --no-agent")
 
     wanted = [x.strip() for x in args.stages.split(",") if x.strip()]
     names = [x.strip() for x in args.tools.split(",") if x.strip()]
@@ -63,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
         ap.error(f"unknown stage or tool: {bad_names}")
     if args.no_agent:
         wanted = [x for x in wanted if x not in PAID]
+    interactive = args.scenario in ("smoke", "core")
+    if interactive:
+        wanted = [x for x in wanted if x != "parallel"]
     on = lambda stage: stage in wanted  # noqa: E731
 
     # Resolved: on macOS the temp folder is /var/…, a link to /private/var/…, and the server names folders resolved.
@@ -74,12 +119,17 @@ def main(argv: list[str] | None = None) -> int:
     space = Space(Path(tempfile.mkdtemp(prefix=prefix)).resolve(), free_port())
     report = Report()
     report.notes["root"] = str(space.root)          # scripts/machine/run.py takes the built page from here
+    if on("agent") or on("parallel") or args.scenario == "canary":
+        report.notes["cli_versions"] = {name: known[name].version() for name in names}
+        print(f"agent CLI versions: {report.notes['cli_versions']}", flush=True)
     code, second = "calc", "notes"
     shots = space.root / "screens"
     started = time.time()
     print(f"fresh-user test in {space.root} on port {space.port}", flush=True)
+    if args.scenario == "canary":
+        return canary(space, report, args, names, started)
     proc = None
-    states: list[scenario.State] = []
+    states: list[scenario.State | SmokeResult] = []
     try:
         print("\ninstall", flush=True)
         proc = stages.install(space, report, Path(args.source), args.boot_seconds)
@@ -121,18 +171,34 @@ def main(argv: list[str] | None = None) -> int:
                         stages.sh(["git", "commit", "-qm", "first commit"], folder, space.env())
                         http(space.url + "/api/setup/integrate", {"project_code": this, "project_dir": str(folder)})
                     print(f"\nagent · {n} · {args.model} · {args.scenario}" + (f" · run {i + 1} of {args.agent_runs}" if args.agent_runs > 1 else ""), flush=True)
+                    if interactive:
+                        result = smoke(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds,
+                                       core=args.scenario == "core")
+                        if result is not None:
+                            states.append(result)
+                            helper = tools()[n]
+                            if isinstance(helper, Codex):
+                                # The operator smoke proved that the real CLI trusted and ran these hooks.
+                                helper.hooks_trusted = True
+                            helper_smoke(space, report, this, folder, helper, args.model, Path.home(), args.turn_seconds, result.agent)
+                        continue
                     plan = args.scenario if i == 0 else ("core" if args.scenario == "full" else args.scenario)
                     stage = "" if i == 0 else f"agent:{n}:run{i + 1}"
                     st = scenario.run(space, report, this, folder, tools()[n], args.model, Path.home(), args.turn_seconds, plan, stage)
                     if st:
                         states.append(st)
+            if interactive:
+                totals = get(space, f"/api/usage?project={code}&range=today").get("totals", {})
+                if totals.get("new", 0) or totals.get("output", 0) or totals.get("cache", 0):
+                    report.notes["model_cost"] = {k: totals.get(k) for k in ("cost_usd", "unpriced")}
             if states:
                 st = states[0]
-                stages.screens(space, report, "3-after-agent", [
+                routes = [f"/project/{code}#tasks", f"/agent/{st.agent}"] if interactive else [
                     "/", f"/project/{code}", f"/project/{code}#tasks", f"/project/{code}#activity", f"/agent/{st.agent}",
                     "/kanban", "/chats", "/scans", "/standups", "/decisions", "/rules", "/visions", "/problems",
                     "/skills", "/artifacts", "/architecture", "/files", "/stats", "/important", "/time",
-                ], shots)
+                ]
+                stages.screens(space, report, "3-after-agent", routes, shots)
         if on("parallel") and not report.failed():
             print(f"\nparallel · {names[0]}", flush=True)
             scenario.parallel(space, report, (code, space.sample), (second, second_folder), names[0], args.model, Path.home(), args.turn_seconds)
@@ -189,33 +255,43 @@ def main(argv: list[str] | None = None) -> int:
             if base and stages.sh(["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"], Path(args.source)).returncode == 0:
                 stages.upgrade(space, report, Path(args.source), base, args.boot_seconds)
             else:
-                # A fresh repository, or a shallow clone: nothing earlier to install first.
-                report.add("upgrade", f"no earlier commit to upgrade from: {base or 'the only release tag is HEAD'}", False, soft=True)
+                report.add("upgrade", f"no earlier commit to upgrade from: {base or 'the only release tag is HEAD'}", False)
     finally:
-        stages.stop(proc)
-        stages.sh(stages.sp_sh("down"), space.clone, space.env()) if (space.clone / "sp.py").is_file() else None
+        aborted = sys.exc_info()[0] is not None
+        try:
+            stages.stop(proc)
+            if (space.clone / "sp.py").is_file():
+                stages.sh(stages.sp_sh("down"), space.clone, space.env())
+        except BaseException:
+            aborted = True
+            raise
+        finally:
+            if aborted:
+                stages.cleanup(space, args.keep)
     return finish(space, report, args, started, shots)
 
 
-def finish(space: Space, report: Report, args: argparse.Namespace, started: float, shots: Path, proc=None) -> int:
-    stages.stop(proc)
-    OUT.mkdir(parents=True, exist_ok=True)
-    if shots.is_dir():
-        shutil.rmtree(OUT / "screens", ignore_errors=True)
-        shutil.copytree(shots, OUT / "screens")
-    # The browser runs' and the servers' own logs, beside the report: a CI run keeps only this folder.
-    logs = OUT / "logs"
-    shutil.rmtree(logs, ignore_errors=True)
-    logs.mkdir(parents=True, exist_ok=True)
-    for log in space.root.glob("*.log"):
-        shutil.copy2(log, logs / log.name)
-    # The upgrade stage's install has a folder of its own.
-    for log in (space.root / "upgrade").glob("*.log"):
-        shutil.copy2(log, logs / f"upgrade-{log.name}")
-    report.notes["seconds"] = round(time.time() - started)
-    report.notes["folder"] = str(space.root) if args.keep else "removed"
-    report.write(OUT / "report.json")
-    stages.cleanup(space, args.keep)
+def finish(space: Space, report: Report, args: argparse.Namespace, started: float, shots: Path | None, proc=None) -> int:
+    try:
+        stages.stop(proc)
+        OUT.mkdir(parents=True, exist_ok=True)
+        if shots is not None and shots.is_dir():
+            shutil.rmtree(OUT / "screens", ignore_errors=True)
+            shutil.copytree(shots, OUT / "screens")
+        # The browser runs' and the servers' own logs, beside the report: a CI run keeps only this folder.
+        logs = OUT / "logs"
+        shutil.rmtree(logs, ignore_errors=True)
+        logs.mkdir(parents=True, exist_ok=True)
+        for directory, prefix in ((space.root, ""), (space.root / "upgrade", "upgrade-")):
+            for log in directory.glob("*.log"):
+                (logs / f"{prefix}{log.name}").write_text(
+                    redact_diagnostics(log.read_text(encoding="utf-8", errors="replace")), encoding="utf-8",
+                )
+        report.notes["seconds"] = round(time.time() - started)
+        report.notes["folder"] = str(space.root) if args.keep else "removed"
+        report.write(OUT / "report.json")
+    finally:
+        stages.cleanup(space, args.keep)
 
     bad = report.failed()
     soft = [c for c in report.checks if not c.ok and c.soft]
@@ -240,7 +316,7 @@ def finish(space: Space, report: Report, args: argparse.Namespace, started: floa
     print(f"\n{len(report.checks) - len(bad) - len(soft)} passed, {len(bad)} failed, {len(soft)} soft · {report.notes['seconds']} s"
           f"\nreport: {OUT / 'report.json'} · pictures: {OUT / 'screens'}", flush=True)
     for c in bad:
-        print(f"  FAIL {c.stage}: {c.name}\n      {c.detail}", flush=True)
+        print(f"  FAIL {c.stage}: {c.name}\n      {report.console_detail(c.detail)}", flush=True)
     for c in soft:
         print(f"  soft {c.stage}: {c.name}", flush=True)
     return 1 if bad else 0

@@ -61,7 +61,13 @@ nvm install 22 >/dev/null && nvm use 22 >/dev/null
 
 # ---------------------------------------------------------------- the agents
 say "Claude Code, Codex and OpenCode"
-npm install -g --silent @anthropic-ai/claude-code @openai/codex opencode-ai
+packages=(@anthropic-ai/claude-code @openai/codex opencode-ai)
+if [[ -n ${SP_LOCAL:-} && -n ${SP_AGENT_CHANNEL:-} ]]; then
+  specs=$("$PY" "$DEST/scripts/ci/agent_packages.py" "$SP_AGENT_CHANNEL")
+  packages=()
+  while IFS= read -r spec; do packages+=("$spec"); done <<< "$specs"
+fi
+npm install -g --silent "${packages[@]}"
 
 if [[ -n $QUIET ]]; then
   say "No login prompts: the keys come from the environment"
@@ -89,4 +95,4 @@ git -C "$DEST" config user.email >/dev/null || git config --global user.email "m
 git -C "$DEST" config user.name >/dev/null || git config --global user.name "Machine Test"
 say "Running everything (about an hour). Leave it be."
 cd "$DEST"
-"$HOME/.local/bin/python3.14" scripts/machine/run.py "$@"
+uv run --no-project --python "$PY" --with-requirements scripts/fresh_user/requirements-pty.txt scripts/machine/run.py "$@"

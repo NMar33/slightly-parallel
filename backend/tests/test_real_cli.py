@@ -14,7 +14,6 @@ Code, and the weekly one with the newest); elsewhere it is skipped by name.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
@@ -42,13 +41,12 @@ def _port() -> int:
         return s.getsockname()[1]
 
 
-def _stub(log: Path):
-    spec = importlib.util.spec_from_file_location("stub_model", REPO / "scripts" / "ci" / "stub_model.py")
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+def _stub(log: Path, monkeypatch):
+    monkeypatch.syspath_prepend(str(REPO / "scripts" / "ci"))
+    import stub_model
+
     port = _port()
-    server = mod.serve(port, str(log))
+    server = stub_model.serve(port, str(log))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, port
 
@@ -83,7 +81,7 @@ def test_claude_code_records_the_turn_and_writes_through_mcp(tmp_path: Path, mon
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read())
 
-    stub, stub_port = _stub(tmp_path / "model.jsonl")
+    stub, stub_port = _stub(tmp_path / "model.jsonl", monkeypatch)
     try:
         call("POST", "/api/setup/integrate", {"project_code": "cli", "project_dir": str(work)})
         env = {k: v for k, v in os.environ.items() if not k.startswith(("ANTHROPIC_", "CLAUDE"))}

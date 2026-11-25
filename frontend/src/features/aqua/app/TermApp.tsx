@@ -67,7 +67,7 @@ import { t, tn } from '../../../i18n/scope/aqua'
 const CLOCK_REFRESH_INTERVAL_MS = 30_000
 const CHAT_LAYOUT_SETTLE_MS = 260
 const NOTICE_DURATION_MS = 2600
-const WINDOW_GROW_ACK_TIMEOUT_MS = 500
+const WINDOW_RESIZE_ACK_TIMEOUT_MS = 500
 
 type Status = NonNullable<ReturnType<typeof useTerminalStatus>['data']>
 
@@ -371,7 +371,12 @@ function AquaWindow({ status }: { status: Status }) {
   const wanted = widths(at)
   const [pendingNativeW, setPendingNativeW] = useState<number | null>(null)
   const growWait = useRef<ReturnType<typeof setTimeout>>()
-  useEffect(() => { setPendingNativeW(null) }, [vp.w])
+  useEffect(() => {
+    // A resize from an earlier toggle can arrive after the next one starts.
+    // Only the current destination confirms the pending request.
+    const actualWidth = window.innerWidth
+    setPendingNativeW((pending) => pending === vp.w && pending === actualWidth ? null : pending)
+  }, [vp.w])
   useEffect(() => () => clearTimeout(growWait.current), [])
   const nativeFrameW = sidebarMode === 'inward' ? vp.w : pendingNativeW ?? vp.w
   const { lw, rw } = native ? fitSidebarWidths(nativeFrameW, wanted.lw, wanted.rw) : wanted
@@ -391,13 +396,13 @@ function AquaWindow({ status }: { status: Status }) {
 
   function growWindow(left: number, right: number) {
     if (!left && !right) return
-    // Keep the terminal wide during outward growth. A window manager can
-    // decline a resize, in which case the viewport gives the panels room.
-    if (left + right > 0) setPendingNativeW((prev) => (prev ?? window.innerWidth) + left + right)
-    else setPendingNativeW(null)
+    // Use the destination width as soon as the panels change. During a
+    // shrink, drawing at the old native width briefly expands the live PTY.
+    // If the compositor declines the change, the timeout uses the real width.
+    setPendingNativeW((prev) => Math.max(termW, (prev ?? window.innerWidth) + left + right))
     post({ op: 'grow', left, right })
     clearTimeout(growWait.current)
-    growWait.current = setTimeout(() => setPendingNativeW(null), WINDOW_GROW_ACK_TIMEOUT_MS)
+    growWait.current = setTimeout(() => setPendingNativeW(null), WINDOW_RESIZE_ACK_TIMEOUT_MS)
   }
 
   const changeSidebarMode = (mode: SidebarMode) => {

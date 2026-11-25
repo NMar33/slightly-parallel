@@ -20,7 +20,7 @@ ALL = {LINUX, MAC, WIN}
 
 # (reason pattern, systems where it may skip): runs on the others.
 ALLOWED: list[tuple[str, set[str]]] = [
-    (r"a Unix pty", {WIN}),                      # the Windows pty: tests/test_conpty.py
+    (r"a Unix pty|Unix PTY process groups", {WIN}),  # Windows coverage: tests/test_conpty.py and test_agent_screen.py
     (r"ConPTY is Windows only", {LINUX, MAC}),
     (r"a symlink needs privileges on Windows", {WIN}),
     (r"tmux is not (installed|on this machine)|no tmux on Windows", {WIN}),
@@ -40,6 +40,7 @@ ALLOWED: list[tuple[str, set[str]]] = [
     (r"restore needs tarfile's data filter", ALL),
     (r"the real CLI runs in its own CI job", ALL),   # tests/test_real_cli.py, job real-cli   # Python before 3.12
     (r"the real Codex runs in its own CI job", ALL),   # tests/test_real_codex.py, job real-cli
+    (r"the pinned interactive CLI CI job owns this check", ALL),  # test_interactive_agents.py
     # Probes of the real stores in this user's home (test_injected_prompts.py,
     # test_queued_messages.py): they read the newest transcript the installed
     # Claude Code, Codex or OpenCode wrote, to catch a format change the

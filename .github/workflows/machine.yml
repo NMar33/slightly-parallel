@@ -6,6 +6,7 @@
 # (real agents on three systems): by hand, or on a push to the ci-machine
 # branch (a dispatch needs the file on the default branch first).
 name: Machine
+run-name: ${{ inputs.full && 'Machine (full)' || 'Machine (standard)' }}
 
 on:
   push:
@@ -27,7 +28,7 @@ permissions:
 
 jobs:
   machine:
-    name: Machine (${{ matrix.os }})
+    name: Machine${{ inputs.full && ' full' || '' }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -37,12 +38,15 @@ jobs:
     env:
       SP_LOCAL: "1"
       SP_NONINTERACTIVE: "1"
+      SP_AGENT_CHANNEL: pinned
       SP_ARCHIVE_DIR: ${{ github.workspace }}/.sp/archive
       # Every agent on Linux; on macOS and Windows Claude Code alone, unless full.
       TOOLS: ${{ (inputs.full || matrix.os == 'ubuntu-latest') && 'claude-code,codex,opencode' || 'claude-code' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      CODEX_MODEL: ${{ vars.CODEX_MODEL }}      # empty: Codex's own default
+      SP_CLAUDE_MODEL: claude-haiku-5-5
+      CODEX_MODEL: gpt-6-luna
+      SP_OPENCODE_MODEL: openai/gpt-6-luna
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,13 +60,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/machine/bootstrap.ps1 --tools "$env:TOOLS"
-      - name: The archive it made
+      - uses: actions/setup-python@v7
         if: always()
+        with:
+          python-version: "3.12"
+      - name: Check the Machine archive before upload
+        id: artifact-audit
+        if: always()
+        shell: bash
+        env:
+          AUDITED_ARCHIVES: ${{ runner.temp }}/sp-audited-machine
+        run: python scripts/ci/guard_agent_artifacts.py --machine .sp/archive "$AUDITED_ARCHIVES"
+      - name: Report CLI version and model cost
+        if: always() && steps.artifact-audit.outcome == 'success'
+        env:
+          SP_AGENT_COST_LIMIT_USD: '1.00'
+        run: python scripts/ci/agent_summary.py .sp/fresh-user/report.json
+      - name: The audited Machine archive
+        if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: machine-${{ matrix.os }}
-          # Only the archive: run.py cut the secrets out of it. The raw step
-          # logs are not uploaded; a bootstrap failure shows in this job's log.
-          path: .sp/archive/sp-machine-*.zip
+          path: ${{ runner.temp }}/sp-audited-machine/sp-machine-*.zip
           if-no-files-found: warn
           retention-days: 14

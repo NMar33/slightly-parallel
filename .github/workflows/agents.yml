@@ -1,18 +1,21 @@
-# A real agent at work, on every system: the fresh-user test with Claude
-# Code, Codex and OpenCode on cheap models (scripts/fresh_user, the "core" scenario,
-# eight messages). It costs money, so it runs by hand and once a week, never
-# on a push. It needs the repository secrets ANTHROPIC_API_KEY and
-# OPENAI_API_KEY (Codex and OpenCode); a tool whose key is missing is
-# skipped. The OpenAI model is the repository variable CODEX_MODEL (empty:
-# Codex's own default; OpenCode then runs gpt-6-luna).
+# Live provider checks: daily one-turn canary, weekly core, and a pinned
+# core run for a release. No live model jobs run on pushes.
 name: Agents
+run-name: Agents (${{ github.event_name == 'schedule' && (github.event.schedule == '0 5 * * *' && 'canary' || 'core') || inputs.scenario || 'core' }}, ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }})
 
 on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: "core (8 messages) or full (19)"
+        description: "core (release), canary (one turn), smoke (two turns), full (diagnostics), preflight (API only)"
+        type: choice
+        options: [smoke, core, full, preflight, canary]
         default: core
+      channel:
+        description: "Pinned CLI versions for a release, or latest for compatibility"
+        type: choice
+        options: [pinned, latest]
+        default: pinned
       tools:
         description: "JSON list of tools"
         default: '["claude-code", "codex", "opencode"]'
@@ -20,29 +23,130 @@ on:
         description: "JSON list of systems"
         default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
   schedule:
-    - cron: "0 5 * * 1"
+    - cron: "0 5 * * *"
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: agents-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
 
 jobs:
+  cli-versions:
+    name: L0 CLI versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      claude-code: ${{ steps.packages.outputs.claude-code }}
+      codex: ${{ steps.packages.outputs.codex }}
+      opencode: ${{ steps.packages.outputs.opencode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Record the CLI package versions
+        id: packages
+        shell: bash
+        env:
+          CHANNEL: ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }}
+        run: |
+          echo '### L0 CLI versions' >> "$GITHUB_STEP_SUMMARY"
+          python scripts/ci/agent_packages.py "$CHANNEL" --github-output "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  preflight:
+    name: L0 ${{ matrix.provider }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [anthropic, openai]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check provider access, authentication and model errors
+        timeout-minutes: 1
+        env:
+          ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_MODEL: gpt-6-luna
+        run: python scripts/ci/agent_preflight.py --provider ${{ matrix.provider }} --output preflight/${{ matrix.provider }}.json
+      - name: Check the L0 report before upload
+        id: artifact-audit
+        if: always()
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-l0
+        run: python scripts/ci/guard_agent_artifacts.py preflight/${{ matrix.provider }}.json "$AUDITED_ARTIFACTS"
+      - name: Show the audited L0 report
+        if: always() && steps.artifact-audit.outcome == 'success'
+        shell: python
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          AUDITED_REPORT: ${{ runner.temp }}/sp-audited-l0/${{ matrix.provider }}.json
+        run: |
+          import os
+          from pathlib import Path
+          report = Path(os.environ['AUDITED_REPORT'])
+          if report.is_file():
+              text = report.read_text(encoding='utf-8')
+              print(text, end='')
+              with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+                  summary.write(f"### L0 {os.environ['PROVIDER']}\n\n```json\n{text}```\n")
+      - name: Keep the L0 report
+        if: always() && steps.artifact-audit.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: l0-${{ matrix.provider }}
+          path: ${{ runner.temp }}/sp-audited-l0/
+          if-no-files-found: ignore
+
   agent:
+    needs: [preflight, cli-versions]
+    if: always() && !cancelled() && inputs.scenario != 'preflight'
     name: ${{ matrix.tool }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        # The schedule has no inputs: then every system and tool.
-        os: ${{ fromJSON(inputs.systems || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+        # The one-turn canary always runs on Linux. Core covers all three systems by default.
+        os: ${{ fromJSON((github.event.schedule == '0 5 * * *' || inputs.scenario == 'canary') && '["ubuntu-latest"]' || inputs.systems || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
         tool: ${{ fromJSON(inputs.tools || '["claude-code", "codex", "opencode"]') }}
     env:
       PYTHONIOENCODING: utf-8
+      CHANNEL: ${{ github.event_name == 'schedule' && 'latest' || inputs.channel || 'pinned' }}
+      SCENARIO: ${{ github.event_name == 'schedule' && (github.event.schedule == '0 5 * * *' && 'canary' || 'core') || inputs.scenario || 'core' }}
+      DISABLE_AUTOUPDATER: "1"
     steps:
+      - name: Report a blocked agent run
+        if: needs.preflight.result != 'success' || needs.cli-versions.result != 'success'
+        run: |
+          echo 'L1 startup, L2 capture, L3 MCP and L4 reply are blocked by L0. See the provider jobs.'
+          exit 1
       - name: The key for this tool
         id: key
         shell: bash
         env:
-          KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || secrets.OPENAI_API_KEY }}
+          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [ -n "$KEY" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else echo "No key for ${{ matrix.tool }}: skipped."; fi
+          KEY="$OPENAI_KEY"
+          if [ "${{ matrix.tool }}" = claude-code ]; then KEY="$ANTHROPIC_KEY"; fi
+          if [ -z "$KEY" ]; then echo "No key for ${{ matrix.tool }}." >&2; exit 1; fi
+          echo "ok=1" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         if: steps.key.outputs.ok
         with:
@@ -61,56 +165,81 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: The browser the test drives
-        if: steps.key.outputs.ok
+        if: steps.key.outputs.ok && env.SCENARIO != 'canary'
         working-directory: frontend
         run: npm ci && npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
+      - name: Backend dependencies for the one-turn canary
+        if: steps.key.outputs.ok && env.SCENARIO == 'canary'
+        working-directory: backend
+        run: python -m pip install -r requirements.lock
+      - name: PTY renderer and Windows ConPTY driver
+        if: steps.key.outputs.ok
+        run: python -m pip install -r scripts/fresh_user/requirements-pty.txt
       - name: Claude Code
         if: steps.key.outputs.ok && matrix.tool == 'claude-code'
-        run: npm install -g @anthropic-ai/claude-code
+        shell: bash
+        env:
+          CLI_PACKAGE: ${{ needs.cli-versions.outputs.claude-code }}
+        run: npm install -g "$CLI_PACKAGE"
       - name: Codex, logged in with the key
         if: steps.key.outputs.ok && matrix.tool == 'codex'
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLI_PACKAGE: ${{ needs.cli-versions.outputs.codex }}
         run: |
-          npm install -g @openai/codex
+          npm install -g "$CLI_PACKAGE"
           # The login lands in ~/.codex/auth.json, which the test copies into its own home.
           printenv OPENAI_API_KEY | codex login --with-api-key
-          # The test answers Codex's trust screen through a pseudo-terminal: Windows needs pywinpty for it.
-          if [ "$RUNNER_OS" = "Windows" ]; then python -m pip install pywinpty; fi
       - name: OpenCode
         if: steps.key.outputs.ok && matrix.tool == 'opencode'
-        run: npm install -g opencode-ai
-      - name: An agent from clone to its work on the pages
-        if: steps.key.outputs.ok
         shell: bash
         env:
-          # Claude Code and OpenCode take their key from the environment; Codex has its login file.
+          CLI_PACKAGE: ${{ needs.cli-versions.outputs.opencode }}
+        run: npm install -g "$CLI_PACKAGE"
+      - name: ${{ env.SCENARIO == 'canary' && 'One live PTY turn and task (canary)' || format('An agent from clone to its work on the pages ({0}, {1})', env.SCENARIO, env.CHANNEL) }}
+        if: steps.key.outputs.ok
+        timeout-minutes: 45
+        shell: bash
+        env:
+          # Codex uses its login file. The test harness uses the key to redact diagnostics.
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
           OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
+          SP_DIAGNOSTIC_OPENAI_KEY: ${{ matrix.tool == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_MODEL: gpt-6-luna
+          SP_AGENT_PREFLIGHT_RESULT: ${{ needs.preflight.result }}
         run: |
-          model=haiku
-          if [ "${{ matrix.tool }}" = "codex" ]; then model="${{ vars.CODEX_MODEL }}"; fi
-          if [ "${{ matrix.tool }}" = "opencode" ]; then model="openai/${{ vars.CODEX_MODEL || 'gpt-6-luna' }}"; fi
-          python scripts/fresh_user/run.py --tools ${{ matrix.tool }} --scenario "${{ inputs.scenario || 'core' }}" \
-            --stages install,setup,wiring,agent ${model:+--model "$model"}
-      - name: The failed checks, with their detail (on failure)
-        if: failure() && steps.key.outputs.ok
-        shell: python
-        run: |
-          import json
-          from pathlib import Path
-          report = Path(".sp/fresh-user/report.json")
-          if not report.is_file():
-              print("no report: the run stopped before the install stage ended")
-          else:
-              for c in json.loads(report.read_text(encoding="utf-8")).get("checks", []):
-                  if not c.get("ok"):
-                      print(f"[{c.get('stage')}] {c.get('name')}\n    {c.get('detail', '')[-4000:]}")
-      - name: Keep the report and the pictures
+          model=claude-haiku-5-5
+          if [ "${{ matrix.tool }}" = "codex" ]; then model="$CODEX_MODEL"; fi
+          if [ "${{ matrix.tool }}" = "opencode" ]; then model="openai/$CODEX_MODEL"; fi
+          budget=900
+          if [ "$SCENARIO" != full ]; then budget=120; fi
+          if [ "$SCENARIO" = canary ]; then budget=45; fi
+          python scripts/fresh_user/run.py --tools ${{ matrix.tool }} --scenario "$SCENARIO" \
+            --stages install,setup,wiring,agent --turn-seconds "$budget" ${model:+--model "$model"}
+      - name: Check the agent report and logs before upload
+        id: artifact-audit
         if: always() && steps.key.outputs.ok
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.tool != 'claude-code' && secrets.OPENAI_API_KEY || '' }}
+          AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-agent
+        run: python scripts/ci/guard_agent_artifacts.py .sp/fresh-user "$AUDITED_ARTIFACTS"
+      - name: Where to find failure details
+        if: failure() && steps.artifact-audit.outcome == 'success'
+        run: echo 'See the audited report and logs artifact for available failure details.'
+      - name: Report CLI version and model cost
+        if: always() && steps.artifact-audit.outcome == 'success'
+        shell: bash
+        env:
+          AUDITED_REPORT: ${{ runner.temp }}/sp-audited-agent/report.json
+          SP_AGENT_COST_LIMIT_USD: ${{ env.SCENARIO == 'canary' && '0.10' || ((env.SCENARIO == 'core' || env.SCENARIO == 'smoke') && '1.00' || '') }}
+        run: python scripts/ci/agent_summary.py "$AUDITED_REPORT"
+      - name: Keep the audited report and logs
+        if: always() && steps.artifact-audit.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: agent-${{ matrix.tool }}-${{ matrix.os }}
-          path: .sp/fresh-user/
-          include-hidden-files: true
+          path: ${{ runner.temp }}/sp-audited-agent/
+          if-no-files-found: ignore

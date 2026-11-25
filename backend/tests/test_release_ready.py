@@ -8,7 +8,9 @@ one); gh is a stub that answers from files and logs what it was asked.
 
 from __future__ import annotations
 
+import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -31,6 +33,12 @@ if [[ $1 == run && $2 == list ]]; then
   exit 0
 fi
 if [[ $1 == api ]]; then
+  if [[ $* == *'/attempts/1/jobs?'* ]]; then
+    path=${*: -1}
+    path=${path%/attempts*}
+    cat "$FAKE_GH/jobs_${path##*/}"
+    exit $?
+  fi
   id=${2##*/}
   cat "$FAKE_GH/attempt_$id" 2>/dev/null || echo 1
   exit 0
@@ -63,10 +71,25 @@ def world(tmp_path):
     bin_dir.mkdir()
     (bin_dir / "gh").write_text(GH)
     (bin_dir / "gh").chmod(0o755)
+    sha = _git(publish, "rev-parse", "HEAD")
+    required_jobs = runpy.run_path(str(SCRIPT.parent / "ci" / "release_jobs.py"))["required_jobs"]
 
     def run(**workflows: str) -> subprocess.CompletedProcess:
         for name, line in workflows.items():
-            (fake / name.replace("_", "-").replace("-yml", ".yml")).write_text(line + "\n")
+            filename = name.replace("_", "-").replace("-yml", ".yml")
+            (fake / filename).write_text(line + "\n")
+            if filename == "terminal-bench.yml":
+                continue
+            path = fake / f"jobs_{line.split()[0]}"
+            if not path.exists():
+                matrix = required_jobs(filename)
+                if filename == "ci.yml":
+                    matrix.update({f"CI job {i}": () for i in range(28 - len(matrix))})
+                path.write_text(json.dumps({"total_count": len(matrix), "jobs": [
+                    {"name": job, "head_sha": sha, "conclusion": "success",
+                     "steps": [{"name": step, "conclusion": "success"} for step in steps]}
+                    for job, steps in matrix.items()
+                ]}))
         env = {**git_env(), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                "FAKE_GH": str(fake), "SP_PUBLISH": str(publish), "SP_PUBLISH_REPO": "o/r"}
         return subprocess.run(["bash", str(SCRIPT), "ci-windows", "v9.9.9"], env=env,
@@ -77,10 +100,23 @@ def world(tmp_path):
 
 
 def test_both_green_prints_the_release_commands(world) -> None:
-    r = world(ci_yml="11 completed success", terminal_yml="22 completed success")
+    r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
+              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
     assert r.returncode == 0, r.stderr
-    assert "CI run 11 and Terminal window run 22 passed" in r.stdout
+    assert "CI run 11 passed" in r.stdout and "Machine full run 55 passed" in r.stdout
     assert "git tag -a v9.9.9" in r.stdout
+
+
+def test_release_selects_full_workflow_profiles_for_the_candidate(world) -> None:
+    r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
+              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+    assert r.returncode == 0, r.stderr
+    rows = (world.fake / "calls").read_text(encoding="utf-8").splitlines()
+    for workflow, profile in (("ci.yml", "CI (full)"), ("agents.yml", "Agents (core, pinned)"),
+                              ("machine.yml", "Machine (full)")):
+        invocation = next(line for line in rows if line.startswith("run list") and f"--workflow {workflow} " in line)
+        assert f'.displayTitle == "{profile}"' in invocation
+        assert "--commit " in invocation
 
 
 def test_a_red_window_stops_the_release(world) -> None:
@@ -110,8 +146,54 @@ def test_a_window_green_only_on_a_rerun_does_not_count(world) -> None:
     assert "Terminal window run 22" in r.stderr and "attempt 2" in r.stderr
 
 
+def test_a_candidate_without_an_agents_run_cannot_release(world) -> None:
+    r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
+              weekly_yml="33 completed success", machine_yml="55 completed success")
+    assert r.returncode == 1
+    assert "no Agents run for" in r.stderr
+    assert "git tag" not in r.stdout
+
+
+def test_machine_cannot_release_without_measuring_all_model_costs(world) -> None:
+    expected = dict(ci_yml="11 completed success", terminal_yml="22 completed success",
+                    weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+    assert world(**expected).returncode == 0
+    machine = world.fake / "jobs_55"
+    page = json.loads(machine.read_text())
+    job = page["jobs"][0]
+    job["steps"] = [step for step in job["steps"] if step["name"] != "Report CLI version and model cost"]
+    machine.write_text(json.dumps(page))
+    r = world(**expected)
+    assert r.returncode == 1
+    assert "Report CLI version and model cost" in r.stderr
+
+
 def test_the_bench_never_gates(world) -> None:
     r = world(ci_yml="11 completed success", terminal_yml="22 completed success",
+              weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success",
               terminal_bench_yml="33 completed failure")
     assert r.returncode == 0, r.stderr
     assert "terminal-bench.yml" not in (world.fake / "calls").read_text()
+
+
+@pytest.mark.parametrize("variant", ["one tool", "no key", "smoke instead of core", "different SHA"])
+def test_green_workflow_with_incomplete_agents_evidence_is_blocked(world, variant) -> None:
+    expected = dict(ci_yml="11 completed success", terminal_yml="22 completed success",
+                    weekly_yml="33 completed success", agents_yml="44 completed success", machine_yml="55 completed success")
+    assert world(**expected).returncode == 0
+    agents_file = world.fake / "jobs_44"
+    page = json.loads(agents_file.read_text())
+    if variant == "one tool":
+        page["jobs"] = page["jobs"][:3]
+        page["total_count"] = 3
+    elif variant == "no key":
+        page["jobs"][0]["steps"][0]["conclusion"] = "skipped"
+    elif variant == "smoke instead of core":
+        page["jobs"][0]["steps"][0]["name"] = "An agent from clone to its work on the pages (smoke, pinned)"
+    else:
+        page["jobs"][0]["head_sha"] = "a" * 40
+    agents_file.write_text(json.dumps(page))
+    r = world(**expected)
+    assert r.returncode == 1
+    assert "Agents run 44" in r.stderr
+    assert "git tag" not in r.stdout

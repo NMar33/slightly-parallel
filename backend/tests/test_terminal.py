@@ -224,7 +224,7 @@ def test_tmux_mouse_bindings_select_without_copying(tmp_path: Path) -> None:
     root = tmp_path / "data"
     root.mkdir()
     try:
-        termlib.tmux(root, "new-session", "-d", "-s", "mk-probe", "printf 'selected text\\n'; sleep 30")
+        termlib.tmux(root, "new-session", "-d", "-s", "mk-probe", "sleep 1; printf 'selected text\\n'; exec cat")
         for table in ("copy-mode", "copy-mode-vi"):
             keys = termlib.tmux(root, "list-keys", "-T", table).stdout
             assert "MouseDragEnd1Pane" not in keys
@@ -232,6 +232,7 @@ def test_tmux_mouse_bindings_select_without_copying(tmp_path: Path) -> None:
             assert all("copy-pipe" not in line for line in keys.splitlines()
                        if "DoubleClick1Pane" in line or "TripleClick1Pane" in line)
         assert not termlib.copy_selection(root, "probe")
+        assert "selected text" in _wait_screen(root, "probe", "selected text")
         termlib.tmux(root, "copy-mode", "-t", "mk-probe")
         for key in ("history-top", "start-of-line", "begin-selection", "end-of-line"):
             termlib.tmux(root, "send-keys", "-X", "-t", "mk-probe", key)
@@ -272,7 +273,8 @@ def _pane_state(root: Path, sid: str, log: Path) -> str:
 
 
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
-def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch) -> None:
+@pytest.mark.parametrize("early_query", [False, True])
+def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch, early_query) -> None:
     c, root, _ = env
     _on(c)
     sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
@@ -280,8 +282,11 @@ def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch)
     argv = termlib.attach_argv(root, sid)
     # Model a slow tmux client that flushes the tty before drawing. If input
     # arrives early, select wakes immediately and the flush discards it.
+    query = "os.write(1, b'\\x1b[6n'); " if early_query else ""
     startup = (
         "import os, select, sys, termios; "
+        "mode = termios.tcgetattr(0); mode[3] |= termios.ICANON; termios.tcsetattr(0, termios.TCSANOW, mode); "
+        f"{query}"
         "select.select([0], [], [], 1); "
         "termios.tcflush(0, termios.TCIFLUSH); "
         "os.execvp(sys.argv[1], sys.argv[1:])"
@@ -293,6 +298,50 @@ def test_first_socket_input_survives_tmux_initializing_its_tty(env, monkeypatch)
         ws.send_text(json.dumps({"type": "input", "data": "printf '%s%s\\n' sp-early- input\r"}))
         screen = _wait_screen(root, sid, "sp-early-input")
         assert "sp-early-input" in screen, screen
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+@pytest.mark.parametrize("enable_raw", [True, False])
+def test_first_socket_input_reaches_a_client_that_goes_raw_after_its_only_frame(env, monkeypatch, enable_raw) -> None:
+    from backend.routers import terminal
+
+    c, _, work = env
+    _on(c)
+    sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
+    armed = work / "enable-raw"
+    received = work / "received-input"
+    startup = """
+import os
+from pathlib import Path
+import sys
+import time
+import tty
+
+os.write(1, b'only frame before raw mode')
+while not Path(sys.argv[1]).exists():
+    time.sleep(0.01)
+tty.setraw(0)
+out = Path(sys.argv[2])
+temp = out.with_suffix('.tmp')
+temp.write_bytes(os.read(0, 4096))
+temp.replace(out)
+"""
+    monkeypatch.setattr(termlib, "attach_argv", lambda *_: [sys.executable, "-c", startup, str(armed), str(received)])
+    monkeypatch.setattr(terminal, "TMUX_INPUT_READY_TIMEOUT_S", 1)
+    token = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={token}") as ws:
+        assert ws.receive_bytes() == b"only frame before raw mode"
+        ws.send_json({"type": "input", "data": "first input", "typed": True})
+        if not enable_raw:
+            assert ws.receive()["code"] == 4500
+            assert not received.exists()
+            return
+        armed.touch()
+        deadline = time.monotonic() + 2
+        while not received.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert received.is_file(), "the first input was never written after the client's raw-mode transition"
+        assert received.read_bytes() == b"first input"
 
 
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
@@ -591,6 +640,52 @@ def _wait_screen(root: Path, sid: str, text: str, timeout: float = 5.0) -> str:
             return got
         time.sleep(0.1)
     return _screen(root, sid)
+
+
+@needs_tmux
+@pytest.mark.parametrize("apply_resize", [True, False])
+def test_tmux_input_after_resize_waits_for_the_shells_actual_size(env, monkeypatch, apply_resize: bool) -> None:
+    from threading import Event
+
+    from backend.routers import terminal
+
+    c, root, work = env
+    _on(c)
+    sid = _open(c)["id"]
+    target = termlib.PREFIX + sid
+    # Tmux may redraw at the outer size before resizing the shell's own tty.
+    # Hold its inner width manually until the test releases it.
+    window = termlib.tmux(root, "resize-window", "-t", target, "-x", "63", "-y", "33")
+    assert window.returncode == 0, window.stderr
+    size_file = work / "typed-size"
+    pending = shlex.quote(str(size_file.with_suffix(".pending")))
+    command = f"stty size > {pending} && mv {pending} {shlex.quote(str(size_file))}\r"
+    delivered = Event()
+    writes = []
+    write = terminal.PtySession.write
+
+    def observe_write(session, data):
+        if session.session_id == sid and data == command.encode():
+            writes.append(data)
+            delivered.set()
+        return write(session, data)
+
+    monkeypatch.setattr(terminal.PtySession, "write", observe_write)
+    token = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={token}&cols=63&rows=33") as ws:
+        ws.receive_bytes()
+        ws.send_json({"type": "resize", "cols": 128, "rows": 33})
+        ws.send_json({"type": "input", "data": command, "typed": True})
+        assert not delivered.wait(0.15), "input reached the shell before its tty was resized"
+        if apply_resize:
+            window = termlib.tmux(root, "resize-window", "-t", target, "-x", "128", "-y", "33")
+            assert window.returncode == 0, window.stderr
+        assert delivered.wait(2), "input was lost while waiting for the pane"
+        deadline = time.monotonic() + 2
+        while not size_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert size_file.read_text(encoding="utf-8").split() == ["33", "128" if apply_resize else "63"]
+        assert writes == [command.encode()]
 
 
 @needs_tmux

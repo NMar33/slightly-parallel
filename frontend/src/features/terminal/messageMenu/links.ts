@@ -17,6 +17,7 @@ export type TermLink =
 
 // http(s) up to a space or a quote; the punctuation that ends a sentence is not the address's.
 const URL_RE = /\bhttps?:\/\/[^\s"'<>`]+/gi
+const RELATIVE_ADDRESS_RE = /(?<![\w/])\/(?=[a-z0-9#?])[^\s"'<>`]+/gi
 
 export function findUrls(text: string): Array<{ text: string; start: number; length: number }> {
   const out: Array<{ text: string; start: number; length: number }> = []
@@ -35,6 +36,11 @@ export function findUrls(text: string): Array<{ text: string; start: number; len
   return out
 }
 
+export function findRecordLinks(text: string, urls = findUrls(text)): FoundId[] {
+  const addresses = [...urls, ...[...text.matchAll(RELATIVE_ADDRESS_RE)].map((m) => ({ start: m.index!, length: m[0].length }))]
+  return findIds(text).filter((id) => !addresses.some(({ start, length }) => id.start >= start && id.start < start + length))
+}
+
 /**
  * The link at character `at` of a row: an id first (a commit only when
  * `commitOk` says it is one), then a web address, then a printed path
@@ -43,9 +49,7 @@ export function findUrls(text: string): Array<{ text: string; start: number; len
 export function linkAt(text: string, at: number, opts: { commitOk: (sha: string) => boolean; paths: boolean }): TermLink | null {
   const on = (f: { start: number; length: number }) => at >= f.start && at < f.start + f.length
   const urls = findUrls(text)
-  const id = findIds(text).find((f) => on(f) && (f.kind !== 'commit' || opts.commitOk(f.id))
-    // An id inside an address (…/tasks/tk_…) is the address's.
-    && !urls.some((u) => f.start >= u.start && f.start < u.start + u.length))
+  const id = findRecordLinks(text, urls).find((f) => on(f) && (f.kind !== 'commit' || opts.commitOk(f.id)))
   if (id) return { kind: 'id', text: id.id, start: id.start, length: id.length, id }
   const url = urls.find(on)
   if (url) return { kind: 'url', ...url }

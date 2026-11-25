@@ -15,7 +15,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "check_skips.p
 @pytest.mark.parametrize("system, expected", [("Windows", 0), ("Linux", 1), ("Darwin", 1)])
 def test_the_windows_only_skips_are_reported_by_platform(tmp_path: Path, system: str, expected: int) -> None:
     suite = ET.Element("testsuite")
-    for reason in ("no tmux on Windows", "requires Unix sockets", "a bash script, run on Linux and macOS"):
+    for reason in ("no tmux on Windows", "requires Unix sockets", "a bash script, run on Linux and macOS",
+                   "Unix PTY process groups"):
         case = ET.SubElement(suite, "testcase", classname="sample", name=reason)
         ET.SubElement(case, "skipped", message=reason)
     report = tmp_path / "pytest.xml"

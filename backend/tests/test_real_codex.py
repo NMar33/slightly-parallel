@@ -15,7 +15,6 @@ elsewhere it is skipped by name.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shutil
@@ -43,13 +42,12 @@ def _port() -> int:
         return s.getsockname()[1]
 
 
-def _stub(log: Path):
-    spec = importlib.util.spec_from_file_location("stub_responses", REPO / "scripts" / "ci" / "stub_responses.py")
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+def _stub(log: Path, monkeypatch):
+    monkeypatch.syspath_prepend(str(REPO / "scripts" / "ci"))
+    import stub_responses
+
     port = _port()
-    server = mod.serve(port, str(log))
+    server = stub_responses.serve(port, str(log))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, port
 
@@ -60,7 +58,7 @@ def _toml(s: str) -> str:
     return f"'{s}'"
 
 
-def test_codex_exec_is_recorded_as_a_helper_of_the_chat_that_started_it(tmp_path: Path) -> None:
+def test_codex_exec_is_recorded_as_a_helper_of_the_chat_that_started_it(tmp_path: Path, monkeypatch) -> None:
     codex = shutil.which("codex")
     if not codex:
         need("the codex CLI (npm i -g @openai/codex)")
@@ -68,7 +66,7 @@ def test_codex_exec_is_recorded_as_a_helper_of_the_chat_that_started_it(tmp_path
     for d in (root / "projects", work, home):
         d.mkdir(parents=True)
     (root / "integrations.csv").write_text(f"project,path,created_date\ncx,{work},2611-11\n", encoding="utf-8")
-    stub, port = _stub(tmp_path / "model.jsonl")
+    stub, port = _stub(tmp_path / "model.jsonl", monkeypatch)
     notify = [sys.executable, str(REPO / "scripts" / "hooks" / "codex-capture.py"), "--data-root", str(root)]
     (home / "config.toml").write_text("\n".join([
         'model = "stub-model"',

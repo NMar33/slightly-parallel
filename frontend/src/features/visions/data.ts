@@ -66,6 +66,7 @@ export interface VisionRow {
   // Rules and problems share the shape and add their own fields.
   /** Rule: active · off. Problem: open · resolved. */
   status?: string | null
+  archived_at?: string | null
   /** Rule: "yes" when it reaches every agent in every project. */
   auto?: string | null
   /** Problem: high · medium · low. */
@@ -119,7 +120,7 @@ export function useVisions(project = '') {
   return useKept('vision', project)
 }
 
-type KeptDetail = EntryDetailLike & { metadata: VisionRow; kept?: Kept }
+export type KeptDetail = EntryDetailLike & { metadata: VisionRow; kept?: Kept }
 
 /** The row's own fields are in the key, so a switch or a status change refetches the detail. */
 const detailKey = (listKey: string, r: VisionRow) =>
@@ -207,13 +208,36 @@ export function useSetFields(kind: KeptKind) {
   const qc = useQueryClient()
   const { base, list } = KIND_BASE[kind]
   return useMutation({
-    mutationFn: ({ id, ...fields }: { id: string } & Partial<Pick<VisionRow, 'status' | 'auto' | 'severity' | 'resolved_date'>>) =>
+    mutationFn: ({ id, ...fields }: { id: string } & Partial<Pick<VisionRow, 'status' | 'auto' | 'severity' | 'resolved_date' | 'archived_at'>>) =>
       postJson(`${base}/${id}/update`, { ...fields, actor: 'operator' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [list] })
       void qc.invalidateQueries({ queryKey: ['lens', list] })
       // A rule's change rewrites the written blocks, so their states change too.
       if (kind === 'rule') void qc.invalidateQueries({ queryKey: ['integrate'] })
+    },
+  })
+}
+
+export function useKeptRecord(kind: KeptKind, id: string) {
+  const { base, list } = KIND_BASE[kind]
+  return useQuery({
+    queryKey: [list, 'record', id],
+    queryFn: ({ signal }) => getJson<KeptDetail>(`${base}/${encodeURIComponent(id)}`, signal),
+    retry: false,
+  })
+}
+
+export function useRestoreKeptRecord(kind: KeptKind) {
+  const qc = useQueryClient()
+  const { list } = KIND_BASE[kind]
+  return useMutation({
+    mutationFn: (id: string) => postJson('/api/undo/restore', { id, actor: 'operator' }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: [list] }),
+        qc.invalidateQueries({ queryKey: ['lens', list] }),
+      ])
     },
   })
 }

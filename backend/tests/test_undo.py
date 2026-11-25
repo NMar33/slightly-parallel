@@ -42,6 +42,28 @@ VS = keep_id("vision", "alpha", AGENT, 1)
 RL = keep_id("rule", "alpha", AGENT, 1)
 
 
+@pytest.mark.parametrize("kind,base", [("vision", "visions"), ("problem", "problems")])
+def test_only_the_operator_can_archive_a_kept_record_from_its_card(env, kind, base) -> None:
+    c, _ = env
+    fields = {"status": "open", "severity": "low"} if kind == "problem" else {}
+    made = c.post(f"/api/{base}", json={"created_date": "2611-25", "created_time": "10:00", "project": "alpha",
+                                         "agent_id": "operator", "l1": f"A {kind} for the terminal card", **fields})
+    assert made.status_code == 201, made.text
+    entry_id = made.json()["metadata"]["id"]
+    assert entry_id in [row["id"] for row in c.get(f"/api/{base}").json()[base]]
+    url = f"/api/{base}/{entry_id}/update"
+    stamp = "2611-25"
+    assert c.post(url, json={"actor": "operator", "archived_at": "2026-11-25"}).status_code == 422
+    assert c.post(url, json={"actor": "operator", "archived_at": "2602-30"}).status_code == 422
+    assert c.post(url, json={"actor": "operator", "agent_id": AGENT, "archived_at": stamp}).status_code == 422
+    assert not c.get(f"/api/{base}/{entry_id}").json()["metadata"].get("archived_at")
+    result = c.post(url, json={"actor": "operator", "archived_at": stamp})
+    assert result.status_code == 200 and result.json()["metadata"]["archived_at"] == stamp
+    assert entry_id not in [row["id"] for row in c.get(f"/api/{base}").json()[base]]
+    assert c.post("/api/undo/restore", json={"actor": "operator", "id": entry_id}).status_code == 200
+    assert entry_id in [row["id"] for row in c.get(f"/api/{base}").json()[base]]
+
+
 @pytest.mark.parametrize("text,kinds", [
     ("#undo the paste", {"ask"}), ("#UNDO-yes", {"yes"}), ("ok #undo-yes.", {"yes"}),
     ("##undo", set()), ("#undone", set()), ("#undo-yes-please", set()), ("x#undo", set()),
