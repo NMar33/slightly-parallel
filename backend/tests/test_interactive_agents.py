@@ -119,7 +119,8 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             args += ["--session-id", tool.session, "--mcp-config", ".mcp.json", "--permission-mode", "default",
                      "--allowedTools", "mcp__slightly-parallel"]
         else:
-            tool.prepare_interactive(space, space.sample, env)
+            sdk_seed = os.environ.get("SP_OPENCODE_SDK_SEED")
+            tool.prepare_interactive(space, space.sample, env, sdk_seed=Path(sdk_seed) if sdk_seed else None)
             model = "anthropic/claude-sonnet-4-5"
             path = space.sample / "opencode.json"
             config = json.loads(path.read_text(encoding="utf-8"))

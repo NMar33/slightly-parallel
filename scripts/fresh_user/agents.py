@@ -229,17 +229,28 @@ class OpenCode(Tool):
         # overwrite OpenCode's Windows PTY before the composer is detected.
         return {"OPENCODE_DISABLE_AUTOUPDATE": "1", "NODE_NO_WARNINGS": "1"}
 
-    def prepare_interactive(self, space: Space, folder: Path, env: dict[str, str]) -> None:
+    def prepare_interactive(self, space: Space, folder: Path, env: dict[str, str], *, sdk_seed: Path | None = None) -> None:
         """Install the SDK before the CLI starts drawing, in the disposable profile only."""
-        npm = shutil.which("npm")
-        if not npm:
+        version = self.version()
+        npm = shutil.which("npm") if sdk_seed is None else None
+        if sdk_seed is None and not npm:
             raise RuntimeError("OpenCode's plugin SDK requires npm")
-        package = f"@opencode-ai/plugin@{self.version()}"
+        if sdk_seed is not None:
+            metadata = sdk_seed / "node_modules" / "@opencode-ai" / "plugin" / "package.json"
+            if json.loads(metadata.read_text(encoding="utf-8")).get("version") != version:
+                raise RuntimeError("OpenCode plugin SDK version does not match the CLI")
+        package = f"@opencode-ai/plugin@{version}"
         config = space.home / ".config"
         for prefix in (config / "opencode", folder / ".opencode"):
             prefix.mkdir(parents=True, exist_ok=True)
-            subprocess.run([npm, "install", "--no-audit", "--no-fund", "--ignore-scripts", "--prefix", str(prefix), package],
-                           env=space.env(), check=True, timeout=OPENCODE_SDK_INSTALL_TIMEOUT_S, capture_output=True)
+            if sdk_seed is not None:
+                shutil.copytree(sdk_seed / "node_modules", prefix / "node_modules", dirs_exist_ok=True)
+                for name in ("package.json", "package-lock.json"):
+                    shutil.copy2(sdk_seed / name, prefix / name)
+            else:
+                assert npm is not None
+                subprocess.run([npm, "install", "--no-audit", "--no-fund", "--ignore-scripts", "--prefix", str(prefix), package],
+                               env=space.env(), check=True, timeout=OPENCODE_SDK_INSTALL_TIMEOUT_S, capture_output=True)
         exclude = folder / ".git" / "info" / "exclude"
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a", encoding="utf-8") as ignored:

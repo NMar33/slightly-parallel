@@ -501,6 +501,33 @@ def test_opencode_prepares_the_pinned_plugin_before_the_interactive_tty(monkeypa
     assert "/.opencode/node_modules/" in excludes
 
 
+@pytest.mark.parametrize("version", ["1.19.3", "1.19.4"])
+def test_opencode_local_model_uses_only_a_matching_preinstalled_sdk(monkeypatch, tmp_path, version):
+    import json
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import agents
+    from common import Space
+
+    seed = tmp_path / "pinned-sdk"
+    sdk = seed / "node_modules" / "@opencode-ai" / "plugin" / "package.json"
+    sdk.parent.mkdir(parents=True)
+    sdk.write_text(json.dumps({"version": version}), encoding="utf-8")
+    (seed / "package.json").write_text("{}", encoding="utf-8")
+    (seed / "package-lock.json").write_text("{}", encoding="utf-8")
+    tool = agents.tools()["opencode"]
+    monkeypatch.setattr(tool, "version", lambda: "1.19.3")
+    monkeypatch.setattr(agents.subprocess, "run", lambda *_args, **_kw: pytest.fail("the fixture invoked npm"))
+    space = Space(tmp_path / "scratch", 1)
+    if version != "1.19.3":
+        with pytest.raises(RuntimeError, match="plugin SDK version"):
+            tool.prepare_interactive(space, space.sample, {}, sdk_seed=seed)
+        return
+    tool.prepare_interactive(space, space.sample, {}, sdk_seed=seed)
+    for prefix in (space.home / ".config" / "opencode", space.sample / ".opencode"):
+        assert (prefix / sdk.relative_to(seed)).read_text(encoding="utf-8") == sdk.read_text(encoding="utf-8")
+        assert (prefix / "package-lock.json").is_file()
+
+
 @pytest.mark.parametrize(("menu", "name"), [
     ("Do you want to use this API key?", "Claude Code API key confirmation"),
     ("Trust this folder? Trust and continue", "Codex project folder trust"),
