@@ -39,11 +39,11 @@ _REPLIES = {"\x1b[6n": "\x1b[1;1R", "\x1b]10;?": "\x1b]10;rgb:ffff/ffff/ffff\x1b
 
 
 class TerminalTrace:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, columns: int = COLS):
         import pyte
 
         self.path = path
-        self.frame = pyte.Screen(COLS, ROWS)
+        self.frame = pyte.Screen(columns, ROWS)
         self.stream = pyte.Stream(self.frame)
 
     def feed(self, text: str) -> None:
@@ -62,20 +62,20 @@ class Screen:
     """One program on a pseudo-terminal: what it shows so far, and keys to send."""
 
     def __init__(self, args: list[str], cwd: Path, env: dict[str, str], *, trace: Path | None = None,
-                 reply_to_kitty_query: bool = True):
+                 reply_to_kitty_query: bool = True, columns: int = COLS):
         self.text = ""
         self.history = ""
         self.exited = False
         self.application_cursor = False
         self.reply_to_kitty_query = reply_to_kitty_query
         self._cursor_tail = ""
-        self.trace = TerminalTrace(trace) if trace is not None else None
+        self.trace = TerminalTrace(trace, columns) if trace is not None else None
         self._decode = codecs.getincrementaldecoder("utf-8")(errors="replace")
         if WINDOWS:
             from winpty import PtyProcess  # type: ignore[import-not-found]
             import threading
             self.proc = PtyProcess.spawn([shutil.which(args[0]) or args[0], *args[1:]], cwd=str(cwd), env=env,
-                                         dimensions=(ROWS, COLS))
+                                         dimensions=(ROWS, columns))
             self.fd = None
             # pywinpty's read blocks until there is output: a thread reads, so
             # every wait keeps its time limit when the program shows nothing.
@@ -103,7 +103,7 @@ class Screen:
                 os.chdir(cwd)
                 os.execvpe(args[0], args, {**env, "TERM": "xterm-256color"})
             # A new pseudo-terminal is 0 by 0: a full-screen program draws nothing in it.
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, columns, 0, 0))
             self.pid, self.fd = pid, fd
 
     def read(self) -> None:

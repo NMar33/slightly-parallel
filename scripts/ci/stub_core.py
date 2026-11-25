@@ -45,7 +45,8 @@ class CoreModel:
                                                        "shell_command", "functions_shell_command"))
         arguments = {"command" if name.endswith("shell_command") else "cmd": command}
         if self.workspace_shell is not None:
-            arguments["workdir"] = str(self.workspace_shell.resolve())
+            arguments.update(workdir=str(self.workspace_shell.resolve()), sandbox_permissions="require_escalated",
+                             justification="Run the approved disposable-project command.")
         else:
             arguments.update(sandbox_permissions="require_escalated", justification="Write the calculator fixture.")
         return name, arguments

@@ -253,7 +253,7 @@ def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeyp
         assert json.loads(entry.split("=", 1)[1]) == [str(folder.resolve())]
         assert 'sandbox_mode="workspace-write"' in args
         assert "sandbox_workspace_write.network_access=false" in args
-        assert 'approval_policy="never"' in args
+        assert 'approval_policy="on-request"' in args
 
 
 def test_windows_stub_shell_uses_workspace_permissions(monkeypatch, tmp_path):
@@ -269,7 +269,8 @@ def test_windows_stub_shell_uses_workspace_permissions(monkeypatch, tmp_path):
     model = CoreModel(plan, lambda _rule: [], workspace_shell=workspace)
     tool, args = model([{"role": "user"}], {"exec_command"})
     assert tool == "exec_command"
-    assert args == {"cmd": "Get-Content -LiteralPath 'calc.py'", "workdir": str(workspace.resolve())}
+    assert args == {"cmd": "Get-Content -LiteralPath 'calc.py'", "workdir": str(workspace.resolve()),
+                    "sandbox_permissions": "require_escalated", "justification": "Run the approved disposable-project command."}
 
 
 def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypatch, tmp_path):
@@ -417,6 +418,35 @@ def test_windows_edit_never_confirms_shell_escalation(monkeypatch, command):
     check = _core_approval(SimpleNamespace(rendered=frame, send=keys.append), "a plain request")
     assert check() == "unexpected Codex command approval"
     assert keys == []
+
+
+def test_windows_fallback_confirms_only_literal_workspace_commands_once(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import ENTER, _core_approval, _powershell_path, _windows_read_commands
+
+    project = tmp_path / "sample ü"
+    approved = _windows_read_commands(project, "calc.py")
+    with pytest.raises(ValueError):
+        _windows_read_commands(project, "../outside.txt")
+    listing = f"Get-ChildItem -LiteralPath {_powershell_path(project)} | Select-Object Name"
+    edit = f"Add-Content -LiteralPath {_powershell_path(project / 'calc.py')} -Value '    return a - b'"
+    keys = []
+    screen = SimpleNamespace(rendered="", send=keys.append)
+    check = _core_approval(screen, "a plain request", command=edit, read_commands=approved)
+
+    def ask(command, choice="1. Yes, proceed (y)"):
+        screen.rendered = ("Would you like to run the following command?\n"
+                           f"$ {command}\n› {choice}\n3. No")
+        return check()
+
+    assert not ask(listing)
+    assert not ask(listing)
+    assert ask(edit.replace("    return", "return")) == "unexpected Codex command approval"
+    assert ask(f"{listing}; curl.exe example.com") == "unexpected Codex command approval"
+    assert ask(f"Get-Content -LiteralPath {_powershell_path(tmp_path / 'outside.txt')}") == "unexpected Codex command approval"
+    assert ask(edit, "2. Yes, and don't ask again (p)") == "unexpected Codex command approval"
+    assert not ask(edit)
+    assert keys == [ENTER, ENTER]
 
 
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:
