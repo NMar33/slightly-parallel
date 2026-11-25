@@ -217,10 +217,13 @@ def playwright(space: Space, report: Report, stage: str, name: str, args: list[s
     if not (FRONTEND / "node_modules" / "@playwright").is_dir():
         return report.add(stage, name, False, "Playwright is not installed here: cd frontend && npm install && npx playwright install chromium")
     env = {**os.environ, "SP_E2E_URL": space.url, **(extra or {})}
-    # The Windows runner ran out of network buffers during the route walk.
-    # Limit concurrent browser contexts while keeping all routes and assertions.
-    workers = ["--workers=1"] if WINDOWS and PAGE_WALK_SPEC in args else []
-    p = sh([NPX, "playwright", "test", *args, *workers, "--reporter=line"], FRONTEND, env, timeout=BROWSER_TEST_TIMEOUT_S)
+    options = []
+    if WINDOWS and PAGE_WALK_SPEC in args:
+        # Reuse one browser context per theme/language, including the asset
+        # cache. Three complete walks can otherwise exhaust Windows buffers.
+        env["SP_E2E_PAGE_WALK_BATCH"] = "1"
+        options = ["--workers=1", "--retries=0"]
+    p = sh([NPX, "playwright", "test", *args, *options, "--reporter=line"], FRONTEND, env, timeout=BROWSER_TEST_TIMEOUT_S)
     out = (p.stdout + p.stderr).strip()
     spec = next((a for a in reversed(args) if a.endswith(".ts")), "run").split("/")[-1].removesuffix(".spec.ts")
     (space.root / f"playwright-{stage.replace(':', '-')}-{spec}.log").write_text(out, encoding="utf-8")

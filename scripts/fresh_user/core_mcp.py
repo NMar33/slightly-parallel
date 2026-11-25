@@ -19,9 +19,9 @@ RULE_CAPTURE_TIMEOUT_S = 4
 OFFLINE_EDIT = r"printf '\ndef sub(a, b):\n    return a - b\n' >> calc.py"
 OFFLINE_TESTS = (r"printf 'from calc import add, sub\n\ndef test_calc():\n"
                  r"    assert add(2, 3) == 5\n    assert sub(3, 2) == 1\n' > test_calc.py")
-OFFLINE_EDIT_POWERSHELL = "Add-Content -LiteralPath 'calc.py' -Value @('', 'def sub(a, b):', '    return a - b')"
-OFFLINE_TESTS_POWERSHELL = ("Set-Content -LiteralPath 'test_calc.py' -Value @('from calc import add, sub', '', "
-                           "'def test_calc():', '    assert add(2, 3) == 5', '    assert sub(3, 2) == 1')")
+EDIT_POWERSHELL = "Add-Content -LiteralPath {path} -Value @('', 'def sub(a, b):', '    return a - b')"
+TESTS_POWERSHELL = ("Set-Content -LiteralPath {path} -Value @('from calc import add, sub', '', "
+                    "'def test_calc():', '    assert add(2, 3) == 5', '    assert sub(3, 2) == 1')")
 
 
 def scan_fields(counters):

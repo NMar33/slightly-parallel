@@ -71,23 +71,58 @@ function fill(route: string, v: Ids): string {
     .replace(/:id/g, 'x')
 }
 
+const BATCH = process.env.SP_E2E_PAGE_WALK_BATCH === '1'
+
+function walk(routes: string[], suffix = '', prepare?: (page: Page) => Promise<void>,
+  verify?: (page: Page, url: string, route: string) => Promise<void>): void {
+  async function check(page: Page, problems: string[], route: string, values: Ids): Promise<void> {
+    const url = fill(route, values)
+    problems.length = 0
+    await page.goto(url, { waitUntil: 'domcontentloaded' })
+    // Long enough for the page's first data to arrive and draw.
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
+    await expect(page.getByTestId('crash-screen')).toHaveCount(0)
+    expect(problems, `in ${url}${suffix}`).toEqual([])
+    await verify?.(page, url, route)
+  }
+
+  if (BATCH) {
+    test(`all ${routes.length} routes${suffix}`, async ({ page, request }) => {
+      test.setTimeout(180_000)
+      ids ??= lookup(request)
+      const values = await ids
+      await prepare?.(page)
+      const { problems } = watch(page)
+      const failures: unknown[] = []
+      for (const route of routes) {
+        try {
+          await test.step(`${route}${suffix}`, () => check(page, problems, route, values))
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      console.log(`Checked ${routes.length} routes${suffix}; ${failures.length} failed.`)
+      if (failures.length) throw failures[0]
+    })
+    return
+  }
+
+  for (const route of routes) {
+    test(`${route}${suffix}`, async ({ page, request }) => {
+      ids ??= lookup(request)
+      const values = await ids
+      await prepare?.(page)
+      await check(page, watch(page).problems, route, values)
+    })
+  }
+}
+
 test.describe('every page opens', () => {
   test('the route list was read', () => {
     expect(ROUTES.length).toBeGreaterThan(30)
   })
 
-  for (const route of ROUTES) {
-    test(route, async ({ page, request }) => {
-      ids ??= lookup(request)
-      const url = fill(route, await ids)
-      const { problems } = watch(page)
-      await page.goto(url, { waitUntil: 'domcontentloaded' })
-      // Long enough for the page's first data to arrive and draw.
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
-      await expect(page.getByTestId('crash-screen')).toHaveCount(0)
-      expect(problems, `in ${url}`).toEqual([])
-    })
-  }
+  walk(ROUTES)
 })
 
 /**
@@ -100,21 +135,13 @@ const DARK_ROUTES = ['/', '/kanban', '/chats', '/calendar', '/visions', '/rules'
 
 test.describe('the dark theme opens', () => {
   test.use({ colorScheme: 'dark' })
-  for (const route of DARK_ROUTES) {
-    test(`${route} in dark`, async ({ page, request }) => {
-      ids ??= lookup(request)
-      const url = fill(route, await ids)
-      await page.addInitScript(() => { try { localStorage.setItem('sp-theme', 'dark') } catch { /* fine */ } })
-      const { problems } = watch(page)
-      await page.goto(url, { waitUntil: 'domcontentloaded' })
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
-      await expect(page.getByTestId('crash-screen')).toHaveCount(0)
-      expect(problems, `in ${url} (dark)`).toEqual([])
-      // The theme really applied: the app ground is the dark base, not white.
-      const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
-      expect(bg, `body ground in ${url}`).not.toBe('rgb(255, 255, 255)')
-    })
-  }
+  walk(DARK_ROUTES, ' in dark', (page) => page.addInitScript(() => {
+    try { localStorage.setItem('sp-theme', 'dark') } catch { /* fine */ }
+  }), async (page, url) => {
+    // The theme really applied: the app ground is the dark base, not white.
+    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
+    expect(bg, `body ground in ${url}`).not.toBe('rgb(255, 255, 255)')
+  })
 })
 
 /**
@@ -127,32 +154,35 @@ const CYRILLIC = /[А-Яа-яЁё]/
 const DATA_TITLE = /^\/(agent|prompts|project)\b|:id|:code/
 
 test.describe('every page opens in Russian', () => {
-  for (const route of ROUTES) {
-    test(`${route} in Russian`, async ({ page, request }) => {
-      ids ??= lookup(request)
-      const url = fill(route, await ids)
-      // The language is a preference the server keeps for every tab. Answered
-      // here, in this page only: a Russian choice written to the shared test
-      // server would turn the English tests running beside these Russian.
+  walk(ROUTES, ' in Russian', async (page) => {
+    // Keep the Russian setting local to this page. Playwright routing turns
+    // off HTTP caching, so for a batch intercept only the preference fetch.
+    if (!BATCH) {
       await page.route('**/api/prefs', (r) => (r.request().method() === 'GET'
         ? r.fulfill({ json: { prefs: { 'sp-lang': 'ru' } } })
         : r.fulfill({ json: { ok: true } })))
-      await page.addInitScript(() => { try { localStorage.setItem('sp-lang', 'ru') } catch { /* fine */ } })
-      const { problems } = watch(page)
-      await page.goto(url, { waitUntil: 'domcontentloaded' })
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
-      await expect(page.getByTestId('crash-screen')).toHaveCount(0)
-      expect(problems, `in ${url} (ru)`).toEqual([])
-      const nav = await page.locator('nav').first().locator('a').allInnerTexts()
-      const english = nav.map((s) => s.trim()).filter((s) => s && !CYRILLIC.test(s))
-      expect(english, `sidebar entries not in Russian on ${url}`).toEqual([])
-      if (!DATA_TITLE.test(route)) {
-        const h1 = page.locator('main h1, h1').first()
-        if (await h1.count()) {
-          const title = (await h1.innerText()).trim()
-          if (title) expect(title, `page title on ${url}`).toMatch(CYRILLIC)
-        }
+    }
+    await page.addInitScript((cachedWalk) => {
+      try { localStorage.setItem('sp-lang', 'ru') } catch { /* fine */ }
+      if (!cachedWalk) return
+      const fetchReal = window.fetch.bind(window)
+      window.fetch = (input, init) => {
+        const target = new URL(input instanceof Request ? input.url : String(input), location.href)
+        if (target.origin !== location.origin || target.pathname !== '/api/prefs') return fetchReal(input, init)
+        const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
+        return Promise.resolve(Response.json(method.toUpperCase() === 'GET' ? { prefs: { 'sp-lang': 'ru' } } : { ok: true }))
       }
-    })
-  }
+    }, BATCH)
+  }, async (page, url, route) => {
+    const nav = await page.locator('nav').first().locator('a').allInnerTexts()
+    const english = nav.map((s) => s.trim()).filter((s) => s && !CYRILLIC.test(s))
+    expect(english, `sidebar entries not in Russian on ${url}`).toEqual([])
+    if (!DATA_TITLE.test(route)) {
+      const h1 = page.locator('main h1, h1').first()
+      if (await h1.count()) {
+        const title = (await h1.innerText()).trim()
+        if (title) expect(title, `page title on ${url}`).toMatch(CYRILLIC)
+      }
+    }
+  })
 })

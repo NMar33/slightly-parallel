@@ -192,16 +192,26 @@ def _startup_failure(screen: Screen) -> str:
     return f"L1 {reason}:\n{frame}"
 
 
-def _windows_file_read(file: Path) -> str:
+def _windows_literal_path(file: Path) -> str:
     path = file.resolve().as_posix().replace("'", "''")
-    return f"Get-Content -LiteralPath '{path}'"
+    return f"'{path}'"
+
+
+def _windows_file_read(file: Path) -> str:
+    return f"Get-Content -LiteralPath {_windows_literal_path(file)}"
 
 
 def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step, *, offline: bool = False) -> str:
     message = scenario.step_prompt(space, state, step)
-    if step == scenario.EDIT and WINDOWS and state.tool.name == "codex" and not offline:
-        return message + (f" Read the file first with this exact PowerShell command: `{_windows_file_read(state.folder / 'calc.py')}`."
-                          " Then edit calc.py directly. Do not enumerate files or combine commands.")
+    if WINDOWS and state.tool.name == "codex" and not offline:
+        if step == scenario.EDIT:
+            calc = state.folder / "calc.py"
+            edit = core_mcp.EDIT_POWERSHELL.format(path=_windows_literal_path(calc))
+            return message + (f" Read it with `{_windows_file_read(calc)}` and apply the change with `{edit}`."
+                              " Run those exact PowerShell commands separately. Do not use apply_patch.")
+        if step == scenario.WORK:
+            tests = core_mcp.TESTS_POWERSHELL.format(path=_windows_literal_path(state.folder / "test_calc.py"))
+            return message + f" Create the test file with exactly this PowerShell command: `{tests}`. Do not use apply_patch."
     if step[0] != "#scan":
         return message
     filename = "scan-payloads.json"
@@ -285,24 +295,18 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
         "#rule": ("interpret", {"lens": "rule", "text": RULE_INTERPRETATION}),
     }.get(step)
     handled = ""
-    commands = tuple(filter(None, (offline_command, command)))
-    command_index = 0
-    contract_pending = " ".join(contract_read.split())
+    # An earlier command can finish under the sandbox without a dialog.
+    pending = {" ".join(value.split()) for value in (offline_command, contract_read, command) if value}
 
     def check() -> str:
-        nonlocal handled, command_index, contract_pending
+        nonlocal handled
         if shell := _COMMAND_APPROVAL.search(screen.rendered):
             if shell.group() == handled:
                 return ""
             shown = " ".join(shell["command"].split())
-            if shell["choice"].strip() != "1. Yes, proceed (y)":
+            if shown not in pending or shell["choice"].strip() != "1. Yes, proceed (y)":
                 return "unexpected Codex command approval"
-            if contract_pending and shown == contract_pending:
-                contract_pending = ""
-            elif command_index < len(commands) and shown == " ".join(commands[command_index].split()):
-                command_index += 1
-            else:
-                return "unexpected Codex command approval"
+            pending.remove(shown)
             handled = shell.group()
             screen.send(ENTER)
             return ""
@@ -526,16 +530,14 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     contract_read = ""
                     rule = None
                     calls = []
-                    if name == "a plain request" and offline_provider:
+                    if name == "a plain request":
                         if WINDOWS:
-                            offline_command = _windows_file_read(folder / "calc.py")
+                            calc = folder / "calc.py"
+                            offline_command = _windows_file_read(calc)
                             contract_read = _windows_file_read(space.clone / "SLIGHTLY-PARALLEL.md")
-                            command = core_mcp.OFFLINE_EDIT_POWERSHELL
-                        else:
+                            command = core_mcp.EDIT_POWERSHELL.format(path=_windows_literal_path(calc))
+                        elif offline_provider:
                             offline_command = core_mcp.OFFLINE_EDIT
-                    elif name == "a plain request" and WINDOWS:
-                        command = _windows_file_read(folder / "calc.py")
-                        contract_read = _windows_file_read(space.clone / "SLIGHTLY-PARALLEL.md")
                     elif name == "#rule":
                         rule = {"project": code, "agent": agent, "before": [
                             row["id"] for row in scenario.listed(space, "/api/rules", "rules", state)
@@ -543,8 +545,10 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         calls = [["interpret", {"$rule_id": {"lens": "rule", "text": RULE_INTERPRETATION}}]]
                         message += f' Call interpret with only lens, the new rule ID and text "{RULE_INTERPRETATION}".'
                     elif name == "the work":
-                        if offline_provider:
-                            offline_command = core_mcp.OFFLINE_TESTS_POWERSHELL if WINDOWS else core_mcp.OFFLINE_TESTS
+                        if WINDOWS:
+                            offline_command = core_mcp.TESTS_POWERSHELL.format(path=_windows_literal_path(folder / "test_calc.py"))
+                        elif offline_provider:
+                            offline_command = core_mcp.OFFLINE_TESTS
                         command = ("git add calc.py test_calc.py && git commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
                         message += f" Run this exact command to stage and commit: {command}"

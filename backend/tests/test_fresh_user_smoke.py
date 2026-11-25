@@ -119,15 +119,18 @@ def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_pa
     monkeypatch.setattr(stages, "WINDOWS", windows)
     commands = []
 
-    def shell(args, *_args, **_kwargs):
-        commands.append(args)
+    def shell(args, _cwd, env, **_kwargs):
+        commands.append((args, env.get("SP_E2E_PAGE_WALK_BATCH")))
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(stages, "sh", shell)
     stages.pages(Space(tmp_path, 8010), Report())
     assert len(commands) == 1
-    assert "tests/e2e/every-page.spec.ts" in commands[0]
-    assert ("--workers=1" in commands[0]) is windows
+    args, reuse = commands[0]
+    assert "tests/e2e/every-page.spec.ts" in args
+    assert ("--workers=1" in args) is windows
+    assert reuse == ("1" if windows else None)
+    assert ("--retries=0" in args) is windows
 
 
 @pytest.mark.parametrize(("server", "cursor", "dropped", "moves", "expected"), [
@@ -381,6 +384,11 @@ def test_core_edit_points_windows_codex_at_one_exact_read(monkeypatch, tmp_path,
     path = (space.sample / "calc.py").resolve().as_posix().replace("'", "''")
     read = f"Get-Content -LiteralPath '{path}'"
     assert (read in prompt) is (windows and cli == "codex")
+    edit = f"Add-Content -LiteralPath '{path}' -Value @('', 'def sub(a, b):', '    return a - b')"
+    test_path = (space.sample / "test_calc.py").resolve().as_posix().replace("'", "''")
+    tests = f"Set-Content -LiteralPath '{test_path}' -Value "
+    assert (edit in prompt) is (windows and cli == "codex")
+    assert (tests in interactive._operator_core_prompt(space, state, scenario.WORK)) is (windows and cli == "codex")
     assert len(prompt.splitlines()) == 1
 
 
@@ -407,6 +415,23 @@ def test_windows_core_accepts_only_a_single_read_of_the_installed_contract(monke
     assert show(f"{contract}; Get-ChildItem") == "unexpected Codex command approval"
     assert show(contract, "2. Yes, and don't ask again (p)") == "unexpected Codex command approval"
     assert keys == [ENTER, ENTER]
+
+
+def test_windows_core_can_approve_the_exact_write_after_a_read_without_a_dialog(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from interactive import ENTER, _core_approval
+
+    path = "C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-fixture/sample/calc.py"
+    read = f"Get-Content -LiteralPath '{path}'"
+    edit = f"Add-Content -LiteralPath '{path}' -Value @('', 'def sub(a, b):', '    return a - b')"
+    frame = ("Would you like to run the following command?\n"
+             f"Environment: local\n\n$ {edit}\n\n› 1. Yes, proceed (y)\n3. No")
+    keys = []
+    check = _core_approval(SimpleNamespace(rendered=frame, send=keys.append), "a plain request",
+                           offline_command=read, command=edit)
+    assert not check()
+    assert not check()
+    assert keys == [ENTER]
 
 
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:
