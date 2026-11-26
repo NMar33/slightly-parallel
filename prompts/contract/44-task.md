@@ -6,7 +6,9 @@ enabled: true
 command: #task <hint> | Write the task the user is pointing at, from the conversation, into the `agent` column, for later; `#task {lane} …` names the board lane (section 4)
 command: #now <text> | Title the task this chat starts on; the server keeps the operator's message as its text, in `doing`, in the lane for #now or the one in braces; then do the work; `#done` closes it (section 4)
 command: #now-todo <text> | Title the operator's message; the server files it, as written, in To do (also `-next`, `-backlog`, `-review`, `-parked`, `-done`, `-doing`); not started in this chat (section 4)
-brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `task_update` changes the title, text and day only of a task you created; on the operator's or another agent's, add a comment. `{lane}` after the tag names the board lane; the server sets it. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
+command: #think <tk_… or with #now / #task> | Nothing to write — the server marks the task as the operator's to think through: never start, move or finish it; comment, note and ask instead (section 4)
+command: #think-off <tk_…> | Nothing to write — the server removes the think mark; with no task named, ask which
+brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `task_update` changes the title, text and day only of a task you created; on the operator's or another agent's, add a comment. `{lane}` after the tag names the board lane; the server sets it. `#think` marks a task as the operator's to think through: never start, move or finish it; comment and ask instead. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
 ---
 
 **Agent task — `#task <hint>` / `#now <text>` → `write_entry {lens: "task"}`.**
@@ -33,6 +35,21 @@ and when the work happens:
   write it, say so in one line, and go on with what the chat was doing.
   `#now-next`, `#now-backlog`, `#now-review`, `#now-parked` and
   `#now-done` file it in those columns; `#now-doing` is `#now`.
+
+**A task to think through — `#think`, `#think-off`.** A task marked
+«think» is one the operator thinks through himself. `#think` beside
+`#now`, `#now-todo` or `#task` marks the card that message makes (write
+it as usual; the server sets the mark); `#think tk_…` marks the ids
+written right beside the tag, never others in the message;
+`#think-off tk_…` removes the mark. With no task named, ask which, in one
+line. While the mark is on, the server refuses your status, lane and
+assignee changes, your `task_report`, an archive of the task and a move
+to another project, with a reason that names the mark. You may still read it, comment
+(`task_update {id, comment}`), add notes, evidence and links, gather
+context, propose options and ask the operator. Only the operator removes
+the mark: the badge's × on the board or in the task window, or
+`#think-off`. The operator's own `#done` closes it and clears the mark;
+your `task_report` after it goes through.
 
 **A task made from a message — the notice `#task-title`.** The operator
 can make a task from one message of this chat (the terminal's message

@@ -57,6 +57,11 @@ _DIAGNOSTIC_KEY = re.compile(
     r"(?:\r?\n[ \t]*[\w-]+(?=[ \t]*(?:[│║][ \t]*)?$))?"
     r"|(?:ant|proj|svcacct|admin|live|test)-[a-z0-9_-]+|[a-z0-9_]{20,})"
 )
+_GITHUB_INSTALLATION_KEY = re.compile(
+    r"(?<![\w-])" + (r"(?:" + _NEXT_ROW + r")?").join("ghs_")
+    + r"(?:" + (r"(?:[A-Za-z0-9](?:" + _NEXT_ROW + r")?){35}[A-Za-z0-9](?![A-Za-z0-9])")
+    + r"|[A-Za-z0-9]{20,})"
+)
 _MASKED_KEY_ECHO = re.compile(
     r"(?i)(?<![\w-])sk-[a-z0-9_-]*(?:\*(?:" + _NEXT_ROW + r")?){2,}"
     r"[ \t]*[a-z0-9_-]{0,4}(?![a-z0-9_-])"
@@ -105,7 +110,7 @@ def _known_key_spans(text: str, known_key: str) -> list[tuple[int, int]]:
 def redact_diagnostics(text: str, known_key: str = "") -> str:
     text = _DIAGNOSTIC_ANSI.sub("", text)
     spans = _known_key_spans(text, known_key)
-    spans.extend(match.span() for pattern in (_DIAGNOSTIC_KEY, _MASKED_KEY_ECHO)
+    spans.extend(match.span() for pattern in (_DIAGNOSTIC_KEY, _MASKED_KEY_ECHO, _GITHUB_INSTALLATION_KEY)
                  for match in pattern.finditer(text))
     clean, end = [], 0
     for start, stop in sorted(spans):
@@ -119,7 +124,8 @@ def redact_diagnostics(text: str, known_key: str = "") -> str:
 def contains_diagnostic_key(text: str) -> bool:
     text = _DIAGNOSTIC_ANSI.sub("", text)
     return bool(_known_key_spans(text, "") or _WRAPPED_KEY_PREFIX.search(text)
-                or _DIAGNOSTIC_KEY.search(text) or _MASKED_KEY_ECHO.search(text))
+                or _DIAGNOSTIC_KEY.search(text) or _MASKED_KEY_ECHO.search(text)
+                or _GITHUB_INSTALLATION_KEY.search(text))
 
 
 @dataclass

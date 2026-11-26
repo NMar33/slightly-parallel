@@ -7,6 +7,7 @@ import { Button, Input } from '../../components/primitives'
 import { LABEL } from '../promptlib/taskstyle'
 import { agentLabel, toolOf } from '../../utils/agentLabel'
 import { fetchGroups, useAgentEdits } from './links'
+import { MembershipEditor } from './MembershipEditor'
 
 import { t } from '../../i18n/scope/views'
 const NO_GROUPS: string[] = []
@@ -133,6 +134,7 @@ export function AgentEditDialog({
           <p className="text-11 text-tertiary">
             {t('Both are labels. Grouped lanes sit together on the timeline under the group\'s name; the id stays the key everywhere.')}
           </p>
+          <MembershipEditor agentId={agent.agent_id} />
           <div className="flex items-center gap-8 justify-end">
             <Button variant="ghost" size="sm" type="button" onClick={onClose}>{t('Cancel')}</Button>
             <Button

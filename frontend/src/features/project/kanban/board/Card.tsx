@@ -13,7 +13,7 @@ import { formatStamp } from '../../../../utils/dateUtils'
 import { mentionWho } from '../../mentions'
 import { type Turn } from '../../../tasks/turns'
 import { ReleaseButton } from '../ReleasePrompt'
-import { CopyButton } from '../parts'
+import { CopyButton, ThinkBadge } from '../parts'
 import { DEFAULT_MODAL_PREFS, SELECTION, ageBucket, isQuickWin, isToday, normalizeStatus, taskText } from '../model'
 import type { Axis, Folded, Glow, LinkInfo, MentionSummary, TaskRow } from '../model'
 import type { GridProps } from './types'
@@ -30,7 +30,7 @@ import { t, tn } from '../../../../i18n/scope/project'
  */
 export const TaskCard = memo(function TaskCard({
   task, compact, showDesc, copyMode, onEdit, onRelease, showProject, mention, axes, notesN, evidenceN, agedSince,
-  link, linksMode, armed, glow, shadow, onHover, onArm, onTarget, onOpenTask, onImportant,
+  link, linksMode, armed, glow, shadow, onHover, onArm, onTarget, onOpenTask, onImportant, onThinkOff,
   today, onToggleToday, selectedIndex, onSelect,
 }: {
   task: TaskRow
@@ -63,6 +63,8 @@ export const TaskCard = memo(function TaskCard({
   shadow?: boolean
   /** Star or unstar the task (★ important — the `remember` field). */
   onImportant?: (t: TaskRow, next: boolean) => void
+  /** Remove the operator's «think» mark (the badge's ×). */
+  onThinkOff?: (t: TaskRow) => void
   /** Absent when hovering could not light anything — no state is touched. */
   onHover?: (id: string, on: boolean) => void
   onArm?: (id: string) => void
@@ -241,6 +243,7 @@ export const TaskCard = memo(function TaskCard({
         {onImportant
           ? <StarButton on={task.remember === 'yes'} onToggle={(next) => onImportant(task, next)} what={t('this task')} quiet size={11} />
           : task.remember === 'yes' && <span className="text-11 leading-none" style={{ color: STAR_COLOR }} title={t('Important')} aria-label={t('Important')}>★</span>}
+        {task.think_at && <ThinkBadge at={task.think_at} onClear={onThinkOff ? () => onThinkOff(task) : undefined} />}
         {returned && (
           <span className="text-10 font-mono rounded-pill px-6 py-1" style={{ color: 'var(--status-purple)', backgroundColor: 'color-mix(in srgb, var(--status-purple) 14%, transparent)' }} title={t('Returned on schedule · {date}', { date: String(task.resurfaced_at).slice(0, 10) })}>
             {t('↩ returned')}

@@ -37,6 +37,8 @@ def test_claude_onboarding_reaches_the_prompt(scripted_onboarding, dialog, keys,
         text = ""
         keys = []
         frames = deque([dialog])
+        if "use this API key" in dialog:
+            frames.append("Do you want to use this API key? ❯ Yes No (recommended)")
         if "I trust this folder" in dialog:
             frames.extend([dialog, "1. No, exit\n❯ 2. Yes, I trust this folder"])
         frames.append("❯ Try writing a test\nctrl+g to edit in VS Code")
@@ -133,15 +135,14 @@ def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_pa
     assert ("--retries=0" in args) is windows
 
 
-@pytest.mark.parametrize(("server", "cursor", "dropped", "moves", "expected"), [
+@pytest.mark.parametrize(("server", "cursor", "drop_move", "moves", "expected"), [
     ("slightly-parallel", "❯", 0, 2, True),
-    ("slightly-parallel", "❯", 1, 3, True),
-    ("slightly-parallel", "❯", 20, 3, False),
+    ("slightly-parallel", "❯", 1, 1, False),
     ("slightly-parallel", ">", 0, 2, True),
     ("unexpected-server", ">", 0, 0, False),
     ("slightly-parallel\nNew MCP server found in this project: unexpected-server", "❯", 0, 0, False),
 ])
-def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding, server, cursor, dropped, moves, expected):
+def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding, server, cursor, drop_move, moves, expected):
     from agents import tools
 
     interactive = scripted_onboarding
@@ -153,9 +154,15 @@ def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding
     class Screen:
         selected = len(choices) - 1
         confirmed = False
-        ignored = dropped
+        pending = 0
+        paints = 0
 
         def read(self):
+            self.paints += 1
+            if self.pending:
+                self.pending -= 1
+                if self.pending == 0 and not drop_move:
+                    self.selected -= 1
             if self.confirmed:
                 self.text = "Claude Code\n❯\n? for shortcuts"
             else:
@@ -163,19 +170,18 @@ def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding
                 self.text = f"New MCP server found in this project: {server}\n\n" + "\n".join(rows)
 
         def send(self, key):
-            seen.append(key)
+            seen.append((key, self.paints))
             if key == interactive.UP:
-                if self.ignored:
-                    self.ignored -= 1
-                    return
-                self.selected -= 1
+                self.pending = 3
             elif key == interactive.ENTER:
                 assert self.selected == 0
                 self.confirmed = True
 
     report = []
     assert interactive._ready(Screen(), tools()["claude-code"], 10, report) is expected
-    assert seen == [interactive.UP] * moves + ([interactive.ENTER] if expected else [])
+    assert [key for key, _ in seen] == [interactive.UP] * moves + ([interactive.ENTER] if expected else [])
+    if seen:
+        assert seen[0][1] >= 6
     assert report == (["Claude Code accepted the Slightly Parallel MCP server"] if expected else [])
 
 
@@ -199,9 +205,10 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(sc
     class Screen:
         text = ""
         keys = []
-        frames = deque(["› Ask Codex to do anything · ? for shortcuts", "Folder access. Trust this folder? Trust and continue",
-                        "› 1. Review hooks 2. Trust all and continue", "1. Review hooks › 2. Trust all and continue",
-                        "› Ask Codex to do anything · ? for shortcuts"])
+        frames = deque(["› Ask Codex to do anything · ? for shortcuts"]
+                       + ["Trust this folder?\n› 1. Trust and continue\n  2. Back to Agent Command Center"] * 5
+                       + ["› 1. Review hooks 2. Trust all and continue", "1. Review hooks › 2. Trust all and continue",
+                          "› Ask Codex to do anything · ? for shortcuts"])
 
         def read(self):
             if self.frames:
@@ -219,6 +226,25 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(sc
     assert answered == ["Codex project folder trusted", "Codex project hooks trusted"]
 
 
+def test_codex_folder_trust_ignores_unselected_and_partial_rows(scripted_onboarding):
+    from agents import tools
+
+    interactive = scripted_onboarding
+    keys = []
+    frames = iter(
+        ["Trust this folder?\n  1. Trust and continue"]
+        + ["Trust this folder?\n  1. Trust and continue\n› 2. Back to Agent Command Center"] * 5
+        + ["Trust this folder?\n› 1. Trust and continue\n  2. Back to Agent Command Center"] * 5
+        + ["› Ask Codex to do anything · ? for shortcuts"]
+    )
+    screen = SimpleNamespace(text="", send=keys.append)
+    screen.read = lambda: setattr(screen, "text", next(frames, screen.text))
+    answered = []
+    assert interactive._ready(screen, tools()["codex"], 3, answered)
+    assert keys == [interactive.UP, interactive.ENTER]
+    assert answered == ["Codex project folder trusted"]
+
+
 @pytest.mark.parametrize("windows", [True, False])
 def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeypatch, tmp_path, windows):
     import json
@@ -234,7 +260,13 @@ def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeyp
     monkeypatch.setattr(interactive, "give_login", lambda *_: True)
     monkeypatch.setattr(screen, "WINDOWS", windows)
     monkeypatch.setattr(interactive, "WINDOWS", windows, raising=False)
-    monkeypatch.setattr(interactive, "_ready", lambda *_: False)
+    startup_budgets = []
+
+    def no_composer(_screen, _tool, seconds, *_):
+        startup_budgets.append(seconds)
+        return False
+
+    monkeypatch.setattr(interactive, "_ready", no_composer)
     args = []
 
     def fake_screen(command, *_args, **_kwargs):
@@ -244,7 +276,8 @@ def test_fresh_user_launches_codex_with_the_non_admin_sandbox_on_windows(monkeyp
     monkeypatch.setattr(interactive, "Screen", fake_screen)
     folder = tmp_path / "sample ü"
     folder.mkdir()
-    interactive.smoke(Space(tmp_path, 8124), Report(), "calc", folder, tool, "stub", tmp_path, 1, core=True)
+    interactive.smoke(Space(tmp_path, 8124), Report(), "calc", folder, tool, "stub", tmp_path, 900, core=True)
+    assert startup_budgets == [60]
     assert ('windows.sandbox="unelevated"' in args) is windows
     assert "--dangerously-bypass-approvals-and-sandbox" not in args
     if windows:
@@ -295,12 +328,12 @@ def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypa
         def __init__(self, command, *_args, **_kwargs):
             commands.extend(command)
 
-        def send(self, value):
+        def send(self, value, **_kwargs):
             if value == interactive.ENTER:
                 assert events[-1][0] == "painted"
             events.append(("send", value))
 
-        def wait_for(self, value, timeout):
+        def wait_for(self, value, timeout, **_kwargs):
             assert events == [("send", value)]
             assert timeout > 0
             events.append(("painted", value))
@@ -358,7 +391,7 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
         def __init__(self, *args, columns, **kwargs):
             self.columns = columns
 
-        def send(self, line):
+        def send(self, line, **_kwargs):
             if line != interactive.ENTER:
                 typed.append(line)
                 return
@@ -372,7 +405,7 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
             with chat.open("a", encoding="utf-8") as record:
                 record.write(f"\n## Turn {len(submitted)}\n**User**: {prompt}\n**Agent**: {reply_text}\n")
 
-        def wait_for(self, value, _timeout):
+        def wait_for(self, value, _timeout, **_kwargs):
             self.rendered = value
             if value.startswith("Write the tests"):
                 self.rendered = value[:self.columns] if paint_work else value[:30]
@@ -732,7 +765,7 @@ def test_canary_reports_startup_capture_and_task_verdicts(monkeypatch, tmp_path,
         def __init__(self, *args, **kwargs):
             pass
 
-        def send(self, line):
+        def send(self, line, **_kwargs):
             if line != interactive.ENTER:
                 inputs.append(line)
                 return
@@ -740,6 +773,9 @@ def test_canary_reports_startup_capture_and_task_verdicts(monkeypatch, tmp_path,
             card["title"] = re.search(r"sp-task-[0-9a-f]+", prompt).group()
             reply = re.search(r"sp-reply-[0-9a-f]+", prompt).group()
             chat.write_text(f"# Chat\n## Turn 1\n**User**: {prompt}\n**Agent**: {reply}\n", encoding="utf-8")
+
+        def wait_for(self, line, _timeout, **_kwargs):
+            return line == inputs[-1]
 
         def close(self):
             pass
@@ -1137,7 +1173,7 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
         def __init__(self, *_args, **_kwargs):
             pass
 
-        def send(self, value):
+        def send(self, value, **_kwargs):
             if value != interactive.ENTER:
                 typed.append(value)
                 return
@@ -1149,6 +1185,9 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
                 reply = re.search(r"sp-reply-[0-9a-f]+", prompt).group()
             with chat.open("a", encoding="utf-8") as record:
                 record.write(f"\n## Turn {len(typed)}\n**User**: {prompt}\n**Agent**: {reply}\n")
+
+        def wait_for(self, line, _timeout, **_kwargs):
+            return line == typed[-1]
 
         def close(self):
             pass
@@ -1180,3 +1219,89 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
     args, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{"):])
     assert args == {"lens": "task", "fields": {"title": card["title"], "description": description,
                                               "status": "agent", "tags": ["ag_followup"]}}
+
+
+def test_composer_waits_for_the_next_ready_frame_without_one_second_delay(scripted_onboarding):
+    from agents import tools
+
+    screen = SimpleNamespace(rendered="Claude Code\n❯ Try a test\n? for shortcuts", read=lambda: None)
+    assert scripted_onboarding._ready(screen, tools()["claude-code"], 0.7, [])
+
+
+def test_claude_theme_waits_for_the_selected_row_and_confirms_once(scripted_onboarding):
+    from agents import tools
+
+    title = "Choose the text style that looks best with your terminal"
+    selected = f"{title}\n❯ ✔ Auto (match terminal)\n    Dark mode"
+    frames = iter((title, selected, selected, "Claude Code\n❯ Try a test\n? for shortcuts"))
+    accepted = []
+    screen = SimpleNamespace(text="", send=lambda key: accepted.append((key, screen.text)))
+    screen.read = lambda: setattr(screen, "text", next(frames, screen.text))
+    answered = []
+    assert scripted_onboarding._ready(screen, tools()["claude-code"], 3, answered)
+    assert accepted == [(scripted_onboarding.ENTER, selected)]
+    assert answered == ["Claude Code default theme accepted"]
+
+
+@pytest.mark.parametrize(("extra", "closing", "matches"), [("", "b482", True), ("extra\n", "b482", False), ("", "wrong", False)])
+def test_capture_matches_the_entire_original_claude_paste(scripted_onboarding, tmp_path, extra, closing, matches):
+    prompt = "#task A long pasted prompt"
+    chat = tmp_path / "chat.md"
+    chat.write_text(
+        f'## Turn 1\n**User**: \n\n<pasted_content id="b482">\n{extra}{prompt}\n'
+        f'</pasted_content id="{closing}">\n**Agent**: done\n',
+        encoding="utf-8",
+    )
+    assert scripted_onboarding._last_reply(chat, prompt) == ("done" if matches else "")
+
+
+def test_claude_folder_trust_tolerates_partial_frames_and_does_not_move_twice(scripted_onboarding):
+    from agents import tools
+
+    interactive = scripted_onboarding
+    keys = []
+    frames = iter((
+        "Accessing workspace:\n  No, exit\n  Yes, I trust this folder",
+        "Accessing workspace:\n  > No, exit\n  Yes, I trust this folder",
+        "Accessing workspace /tmp/sample:\n  > No, exit\n  Yes, I trust this folder\nEsc to cancel",
+        "Accessing workspace /tmp/sample:\n  No, exit\n  > Yes, I trust this folder",
+        "Claude Code\n❯ Try writing a test\n? for shortcuts",
+    ))
+    screen = SimpleNamespace(text="", send=keys.append)
+    screen.read = lambda: setattr(screen, "text", next(frames, screen.text))
+    answered = []
+    assert interactive._ready(screen, tools()["claude-code"], 3, answered)
+    assert keys == [interactive.DOWN, interactive.ENTER]
+    assert answered == ["Claude Code project folder trusted"]
+
+
+def test_codex_waits_before_confirming_the_first_paint_of_folder_trust(scripted_onboarding):
+    from agents import tools
+
+    interactive = scripted_onboarding
+    paints = 0
+    keys = []
+    menu = "Trust this folder?\n› 1. Trust and continue\n  2. Back to Agent Command Center"
+    screen = SimpleNamespace(text=menu)
+
+    def read():
+        nonlocal paints
+        paints += 1
+        if keys:
+            screen.text = "› Ask Codex to do anything · ? for shortcuts"
+
+    screen.read = read
+    screen.send = lambda key: keys.append((key, paints))
+    assert interactive._ready(screen, tools()["codex"], 3, [])
+    assert len(keys) == 1 and keys[0][0] == interactive.ENTER and keys[0][1] >= 4
+
+
+def test_capture_checks_a_claude_paste_with_literal_text_after_the_envelope(scripted_onboarding, tmp_path):
+    chat = tmp_path / "chat.md"
+    chat.write_text(
+        '## Turn 1\n**User**: \n\n<pasted_content id="b482">\n#task The exact original \n'
+        '</pasted_content id="b482">\nvisible tail\n**Agent**: done\n',
+        encoding="utf-8",
+    )
+    assert scripted_onboarding._last_reply(chat, "#task The exact original visible tail") == "done"
+    assert scripted_onboarding._last_reply(chat, "#task The exact original wrong tail") == ""

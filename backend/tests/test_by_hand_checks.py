@@ -83,11 +83,17 @@ def test_a_codex_that_starts_a_child_and_never_answers_leaves_nothing(tmp_path: 
     got = codexlimits.read(timeout=5, exe=exe)
     assert got["cause"] == "no answer in 5 s"
     child = int((tmp_path / "child.pid").read_text())
+    def stopped():
+        try:
+            return psutil.Process(child).status() == psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            return True
+
     for _ in range(50):
-        if not psutil.pid_exists(child) or psutil.Process(child).status() == psutil.STATUS_ZOMBIE:
+        if stopped():
             break
         time.sleep(0.1)
-    assert not psutil.pid_exists(child) or psutil.Process(child).status() == psutil.STATUS_ZOMBIE
+    assert stopped()
     assert _left(str(tmp_path / "fake_codex.py")) == []
 
 

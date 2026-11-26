@@ -53,7 +53,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import limits
+from . import limits, memberships
 from .actors import identity_of, is_agent
 from .csvio import append_if_absent, append_row, as_int, read_rows, rewrite_rows
 from .date_utils import as_local, iso_moment, now_iso
@@ -354,24 +354,15 @@ def _last_turn(store: ViewStore, agent: str) -> int:
     return best
 
 
-def _agent_project(store: ViewStore, agent: str) -> str:
-    for a in store.agents():
-        if str(a.get("agent_id") or "") == agent:
-            return str(a.get("project") or "")
-    return ""
-
-
-def _same_project(store: ViewStore, row: dict[str, Any], who: str) -> None:
-    """An agent writes on a topic of its own chat's project only."""
+def _member_of_row(store: ViewStore, row: dict[str, Any], who: str, what: str = "topic") -> None:
+    """An agent writes on a topic (or a task) of its member projects only."""
     if not is_agent(who):
         return
-    mine = _agent_project(store, who)
-    if not mine:
-        raise EntryRefused(f"{who} is not a chat Slightly Parallel has recorded in a project; nothing was written")
-    if mine != str(row.get("project") or ""):
-        raise EntryRefused(
-            f"{row['id']} is a topic of {row.get('project')}; this chat is in {mine}. "
-            "Write on a topic of this chat's project")
+    from .entitylib import project_codes
+    ok, line = memberships.may_write_row(store, who, str(row.get("project") or ""), what,
+                                         also=project_codes(row.get("projects")))
+    if not ok:
+        raise EntryRefused(line)
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +474,7 @@ def may_write_record(store: ViewStore, row: dict[str, Any], who: str) -> dict[st
     """The command an agent's version answers. Refused for a topic of
     another project, and for a chat other than the one the operator typed
     the topic's last #entrypoint in."""
-    _same_project(store, row, who)
+    _member_of_row(store, row, who)
     last = last_command(store, row)
     if last.get("agent_id") != who:
         raise EntryRefused(
@@ -574,7 +565,7 @@ def add_stop(store: ViewStore, ep_id: str, body: Any) -> dict[str, Any]:
     text = _text(body, "text", STOP_MAX, required=True)
     task_id = _text(body, "task_id", 40)
     who = identity_of(body) or "operator"
-    _same_project(store, row, who)
+    _member_of_row(store, row, who)
     if task_id and topics_by_task(store).get(task_id) != ep_id:
         raise EntryRefused(f"{task_id} is not a task of {ep_id}: set its topic first (task_topic)")
     turn = _last_turn(store, who) if is_agent(who) else 0
@@ -618,7 +609,7 @@ def put_way(store: ViewStore, ep_id: str, body: Any) -> dict[str, Any]:
     row = _need(store, ep_id)
     way = checked_way(body.get("way"))
     who = identity_of(body) or "operator"
-    _same_project(store, row, who)
+    _member_of_row(store, row, who)
     way_id = _text(body, "id", 40)
     now = now_iso()
     current = ways_of(store, ep_id)
@@ -703,7 +694,7 @@ def add_shot(store: ViewStore, ep_id: str, body: Any) -> dict[str, Any]:
     body = _body(body)
     row = _need(store, ep_id)
     who = identity_of(body) or "operator"
-    _same_project(store, row, who)
+    _member_of_row(store, row, who)
     way_id = _text(body, "way_id", 40, required=True)
     if not any(w.get("id") == way_id for w in ways_of(store, ep_id)):
         raise EntryRefused(f"{way_id} is not a way in of {ep_id}")
@@ -846,10 +837,11 @@ def set_task_topic(store: ViewStore, task_id: str, body: Any) -> dict[str, Any]:
         row = _need(store, ep_id)
         if not in_project(task, str(row.get("project") or "")):
             raise EntryRefused(f"{ep_id} is a topic of {row.get('project')}; {task_id} is in {task.get('project')}")
-        _same_project(store, row, who)
+        _member_of_row(store, row, who)
     elif is_agent(who):
         # Clearing: the task's own project stands in for the topic's.
-        _same_project(store, {"id": task_id, "project": str(task.get("project") or "")}, who)
+        _member_of_row(store, {"id": task_id, "project": str(task.get("project") or ""),
+                               "projects": str(task.get("projects") or "")}, who, "task")
     rec = {"id": _mint("tt_", task_id), "task_id": task_id, "entrypoint_id": ep_id, "at": now_iso(), "actor": who}
     def mutate(rows: list[dict[str, str]]) -> bool:
         # One step under the lock, the file's creation included: two calls
@@ -1072,13 +1064,15 @@ def chat_turns(store: ViewStore, row: dict[str, str], tasks: list[dict[str, Any]
     from .taskwork import _filing_turns
     project = str(row.get("project") or "")
     agents = {str(a.get("agent_id") or ""): a for a in store.agents()}
+    # The chats of the topic's project, its members included (memberships.Listing).
+    listed = memberships.listing(store, project)
     want: dict[str, dict[int, list[str]]] = {}
 
     def add(agent: str, n: int, why: str) -> None:
         if not agent or not is_agent(agent) or n <= 0:
             return
         a = agents.get(agent)
-        if a is None or str(a.get("project") or "") != project:
+        if a is None or not listed.has(a.get("project"), agent):
             return
         want.setdefault(agent, {}).setdefault(n, [])
         if why not in want[agent][n]:
@@ -1115,7 +1109,7 @@ def chat_turns(store: ViewStore, row: dict[str, str], tasks: list[dict[str, Any]
     needed = set(want) | {a for a, _, _, _ in timed if a and is_agent(a)}
     for agent in needed:
         a = agents.get(agent)
-        if a is None or str(a.get("project") or "") != project:
+        if a is None or not listed.has(a.get("project"), agent):
             continue
         path = chat_path(store, agent)
         try:
@@ -1196,8 +1190,10 @@ def context(store: ViewStore, ep_id: str, *, now: datetime | None = None) -> dic
     for r in donelib.rows(store):
         if r.get("result") in donelib.RESOLVED and r.get("task_id"):
             done_rows[str(r["task_id"])] = r
+    listed = memberships.listing(store, project)
+
     def _ours(agent: str) -> str:
-        return agent if agent and project_of.get(agent) == project else ""
+        return agent if agent and agent in project_of and listed.has(project_of[agent], agent) else ""
 
     open_tasks, done_tasks = [], []
     for t in tasks:

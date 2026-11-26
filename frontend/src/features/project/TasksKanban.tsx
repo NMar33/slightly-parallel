@@ -66,7 +66,7 @@ export function TasksKanban({
   const boardProjects = board ? board.projects : [projectCode]
   const multi = boardProjects.length > 1
   const sw = useBoardSwitches()
-  const { showDesc, copyMode, onlyRemembered, onlyToday } = sw
+  const { showDesc, copyMode, onlyRemembered, onlyToday, onlyThink } = sw
   // Descriptions are needed both to show them and to copy them.
   const needsBodies = showDesc || copyMode
   // Everything the board reads, from the app's query cache (kanban/boardData):
@@ -108,7 +108,7 @@ export function TasksKanban({
   const day = useDayPlan({ tasks, setTasks, patchMany, bump })
   const { today, todayTasks, toggleToday } = day
   const cols = useBoardColumns({
-    boardKey, tasks, todayTasks, today, statusSince, sprintFilter, onlyRemembered, onlyToday,
+    boardKey, tasks, todayTasks, today, statusSince, sprintFilter, onlyRemembered, onlyToday, onlyThink,
   })
   const { view, setView, sorts, setSort, columns, columnKeyOf, tasksByStatus } = cols
   const sel = useSelection({ tasks, today, columnKeyOf, patchMany, setArchived })
@@ -152,14 +152,20 @@ export function TasksKanban({
     setTasks((cur) => cur.map((t) => (t.id === task.id ? { ...t, remember: next ? 'yes' : '' } : t)))
     markToggle(next, 'task', task.id, { project: task.project })
   }
+  // The «think» badge's ×: only the operator removes the mark.
+  const thinkOff = async (task: TaskRow) => {
+    setTasks((cur) => cur.map((t) => (t.id === task.id ? { ...t, think_at: '', think_by: '' } : t)))
+    await postJson(`/api/tasks/${encodeURIComponent(task.id)}/update`, { think: false, actor: OPERATOR_ACTOR }).catch(fail)
+    bump()
+  }
   /**
    * The cards' handlers, one stable function each. TaskCard is memoized,
    * and a fresh closure per card per render would make every card redraw
    * whenever the board does. The ref carries the latest board state, so
    * the functions themselves never have to change identity.
    */
-  const cardOps = useRef({ toggleImportant, toggleToday, targetPicked: lk.targetPicked, tasks })
-  cardOps.current = { toggleImportant, toggleToday, targetPicked: lk.targetPicked, tasks }
+  const cardOps = useRef({ toggleImportant, thinkOff, toggleToday, targetPicked: lk.targetPicked, tasks })
+  cardOps.current = { toggleImportant, thinkOff, toggleToday, targetPicked: lk.targetPicked, tasks }
   const { setHoverId, setLinkSource } = lk
   const onCardHover = useCallback((id: string, on: boolean) => setHoverId(on ? id : null), [setHoverId])
   const onCardArm = useCallback((id: string) => setLinkSource((cur) => (cur === id ? null : id)), [setLinkSource])
@@ -172,6 +178,7 @@ export function TasksKanban({
   const onCardRelease = useCallback((t: TaskRow) => setReleaseTask(t), [])
   const onCardToday = useCallback((t: TaskRow) => { void cardOps.current.toggleToday(t) }, [])
   const onCardImportant = useCallback((t: TaskRow, next: boolean) => cardOps.current.toggleImportant(t, next), [])
+  const onCardThinkOff = useCallback((t: TaskRow) => { void cardOps.current.thinkOff(t) }, [])
   /** The wiring every render of a card gets — home card, stack queue,
    *  archive, today copy — so they all hover, light, link and star alike.
    *  Every handler is one of the stable per-board functions (the card says
@@ -181,6 +188,7 @@ export function TasksKanban({
    *  today copy: it lights up but lines stay on the home card. */
   const linkProps = (task: TaskRow, shadow = false) => ({
     onImportant: onCardImportant,
+    onThinkOff: onCardThinkOff,
     link: linkInfo[task.id],
     linksMode,
     armed: linkSource === task.id,

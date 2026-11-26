@@ -101,7 +101,20 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
     for r in ledger:
         bounds.setdefault(r.get("agent_id") or "", []).append(as_int(r.get("turn")))
     tasks = {str(t["id"]): t for t in store.query(
-        "SELECT id, project, title, status, archived_at FROM tasks_mutual")}
+        "SELECT id, project, projects, title, status, archived_at FROM tasks_mutual")}
+    # A task is local to the chat when it is in one of the chat's projects,
+    # by its project or its projects (tk_d1d25a4d step 3, note nt_258a7ed7
+    # §3 «#done»). An id next to the tag closes in any project (answer 2).
+    from . import memberships
+    from .entitylib import project_codes
+    member_of: dict[str, set[str]] = {}
+
+    def is_local(agent: str, tid: str, home: str) -> bool:
+        if agent not in member_of:
+            view = memberships.agent_view(store, agent)
+            member_of[agent] = set(view.members) if view is not None and view.members else {home}
+        t = tasks[tid]
+        return bool({str(t.get("project") or ""), *project_codes(t.get("projects"))} & member_of[agent])
     mentions: dict[str, list[tuple[int, str, str]]] = {}
     # A tool or incoming SP message can be stored in the chat's User block.
     # Only real operator turns have a fingerprint in turn_prints.
@@ -137,8 +150,8 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         named = [x for x in direct if x in tasks]
         window = [m for m in mentions.get(agent, []) if prev < m[0] <= turn]
         before = [tid for at, tid, role in window if at < turn and role == "user"]
-        local = next((tid for tid in reversed(before) if tasks[tid]["project"] == project), "")
-        foreign = {tid for tid in mentioned if tid in tasks and tasks[tid]["project"] != project}
+        local = next((tid for tid in reversed(before) if is_local(agent, tid, project)), "")
+        foreign = {tid for tid in mentioned if tid in tasks and not is_local(agent, tid, project)}
         # Foreign examples do not change which local task the chat was on.
         # In the DNS report, the paste repeated that same local task as well.
         fallback = not direct and (not mentioned or bool(foreign) and set(mentioned) <= foreign | {local})
@@ -153,7 +166,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
         }
         for tid in before:
             if tid not in named and tid != local:
-                reason = "doubt_history" if tasks[tid]["project"] == project else "doubt_project"
+                reason = "doubt_history" if is_local(agent, tid, project) else "doubt_project"
                 doubtful.setdefault(tid, reason)
         if not named:
             rid = _id(agent, turn, "")
@@ -242,6 +255,11 @@ def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str
                 if r.get(stamp):
                     ch.append((stamp, r[stamp], ""))
                     r[stamp] = ""
+            # The operator closed it: the «think» mark is over, and the
+            # agent's report after #done is not refused (thinklib).
+            if r.get("think_at"):
+                ch.append(("think", r["think_at"], "think mark cleared by #done"))
+                r["think_at"] = r["think_by"] = ""
             # The stack advances and a repeating task re-arms, as on the board.
             # Their events wait for the rewrite to land: a refused rewrite
             # (a damaged file, a Windows replace that gave up) must not

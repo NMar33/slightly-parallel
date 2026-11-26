@@ -225,6 +225,233 @@ def command_text(text: str) -> str:
     return _LOUD_RE.sub("#", _TAG_HASH_RE.sub("##", text))
 
 
+# ---------------------------------------------------------------------------
+# #think — the operator's think mark (thinklib.py applies it)
+# ---------------------------------------------------------------------------
+
+#: ``#think`` and ``#think-off``; ``#thinking`` and ``##think`` are text.
+THINK_TAG_RE = re.compile(r"(?<![\w#])#think(?![\w-])", re.IGNORECASE)
+THINK_OFF_TAG_RE = re.compile(r"(?<![\w#])#think-off(?![\w-])", re.IGNORECASE)
+#: A task id as the server reads one (task_refs.py); the parity test holds them equal.
+_THINK_ID_RE = re.compile(r"\b(tk_[a-z0-9][a-z0-9_-]{2,40})(?:\.\d{1,3})?\b")
+#: What may stand between the tag and its ids, and between two ids.
+_THINK_GAP_RE = re.compile(r"[\s,;:/()\[\]{}]*(?:(?:and|и)[\s,;:/()\[\]{}]+)?", re.IGNORECASE)
+
+
+def think_targets(command: str, creates: bool = False) -> dict[str, list[str]]:
+    """The tasks each of ``#think`` and ``#think-off`` names in a message as
+    the commands read it (command_text): only the ids written beside the
+    tag — the list after it, else the one right before it — as #done reads
+    them. An id elsewhere in the message (a pasted log, an earlier mention)
+    is never taken: a tag with none beside it names no task, and the card a
+    #now / #task in the message makes carries the mark instead (``creates``
+    says so to the caller; it does not widen the ids). An id named by both
+    tags goes to the one written later. A kind not in the message is not a
+    key. The hook's notice and the server read the message by this one rule."""
+    del creates  # the card's mark is the creator's business (tasklib, nowlib)
+    ids = list(_THINK_ID_RE.finditer(command or ""))
+    found: dict[str, tuple[int, str]] = {}   # id → (position of its tag, kind)
+    kinds: list[str] = []
+    for kind, rx in (("think", THINK_TAG_RE), ("think-off", THINK_OFF_TAG_RE)):
+        tags = list(rx.finditer(command or ""))
+        if not tags:
+            continue
+        kinds.append(kind)
+        for tag in tags:
+            named: list[str] = []
+            edge = tag.end()
+            for m in ids:
+                if m.start() < edge:
+                    continue
+                if not _THINK_GAP_RE.fullmatch(command[edge:m.start()]):
+                    break
+                named.append(m.group(1))
+                edge = m.end()
+            if not named:
+                # The list after the tag is its list; else the ids right before it.
+                edge = tag.start()
+                for m in reversed(ids):
+                    if m.end() > edge:
+                        continue
+                    if not _THINK_GAP_RE.fullmatch(command[m.end():edge]):
+                        break
+                    named.append(m.group(1))
+                    edge = m.start()
+            for tid in named:
+                if tid not in found or found[tid][0] < tag.start():
+                    found[tid] = (tag.start(), kind)
+    out: dict[str, list[str]] = {k: [] for k in kinds}
+    for tid, (_pos, kind) in sorted(found.items(), key=lambda kv: kv[1][0]):
+        out[kind].append(tid)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Braces after #task / #now: the project and the lane (tk_d1d25a4d step 3,
+# note nt_258a7ed7 §3). The hook and the server read them here, both.
+# ---------------------------------------------------------------------------
+
+BRACE_MAX = 80
+_BRACE_RE = re.compile(r"[ \t]*\{([^}\n]{1,%d})\}" % BRACE_MAX)
+NEAR_MISS = 0.8
+PROJECT_PREFIX, LANE_PREFIX = "project:", "lane:"
+
+
+def task_braces(after_tag: str) -> list[str]:
+    """The ``{…}`` groups right after a #task / #now tag, in order: each at
+    most 80 characters on one line, spaces or tabs between them; its words
+    with their spaces collapsed. The first thing that is not a group ends
+    them (``#task {ui} fix {x}`` is one group)."""
+    out: list[str] = []
+    pos = 0
+    text = after_tag or ""
+    while True:
+        m = _BRACE_RE.match(text, pos)
+        if m is None:
+            return out
+        out.append(" ".join(m.group(1).split()))
+        pos = m.end()
+
+
+def pick_task_hit(hits: list[Any], kind: str = "") -> Any:
+    """Of a message's #task / #now matches, the one its card is for: the
+    #now when there is one (the task this chat starts on; the hook names
+    both, and the agent writes the #task one as well), else the last.
+    ``kind`` "now" or "task": that tag's own match (its own braces), or None."""
+    if not hits:
+        return None
+    nows = [h for h in hits if h.group(1).lower().split("-")[0] == "now"]
+    if kind == "now":
+        return nows[0] if nows else None
+    if kind == "task":
+        return next((h for h in reversed(hits) if h.group(1).lower() == "task"), None)
+    return nows[0] if nows else hits[-1]
+
+
+#: A lane's numbered or suffixed sibling: «phase-2» beside «phase-1»,
+#: «sprint2» beside «sprint1», «bugs-ux» beside «bugs-ui».
+_LANE_STEM_RE = re.compile(r"^(.+?)(?:[-_. ]?[0-9]+|[-_. ][^-_. ]{1,3})$")
+
+
+def _lane_variant(a: str, b: str) -> bool:
+    """Two lane names that differ only in a trailing number or a short
+    suffix after a separator: a sibling lane, never a typo of the other."""
+    ma, mb = _LANE_STEM_RE.match(a), _LANE_STEM_RE.match(b)
+    return ma is not None and mb is not None and ma.group(1) == mb.group(1)
+
+
+def brace_refusal_member(agent: str, code: str, members: list[str]) -> str:
+    return (f"agent {agent} is not a member of {code}; its projects: {', '.join(members) or 'none'}. "
+            "The operator adds it on the agent card")
+
+
+def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[str],
+                   codes: list[str], aliases: dict[str, str],
+                   lanes_of: Any) -> dict[str, str]:
+    """``{"project", "lane", "refusal"}`` for the groups of one command.
+
+    Each group, in order: ``{project:x}`` / ``{lane:x}``; an exact project
+    code or alias (any case) — a member's, else refused; an exact live lane
+    of the target project (``lanes_of(code)``, any case), so a real lane beats
+    a near miss; a near miss of a code or alias (difflib ratio ≥ 0.8)
+    refused with a hint, then a near miss of a live lane of the target the
+    same way; anything else a new lane. Two projects or two lanes are
+    refused. A lane the braces leave unclear — a near miss of a live lane, a
+    name that is both a project and a live lane — is no refusal: that group
+    is passed over (a both-name is no target either: the other groups read
+    the home's board), the card is written at once from the message (in the
+    default lane — a lane another group named is dropped too — and the home
+    unless another group names a project), and ``ask`` holds what the
+    agent asks the operator afterwards, the unclear groups joined
+    (tk_970d6b2d: a refused #now card was lost). The target is the project
+    named, else ``home``. ``project`` is "" when none is named; ``refusal``
+    and ``ask`` one line each, or ""."""
+    import difflib
+
+    by_name: dict[str, str] = {c.lower(): c for c in codes}
+    for alias, code in aliases.items():
+        by_name.setdefault(alias.lower(), code)
+    out = {"project": "", "lane": "", "refusal": "", "ask": ""}
+    asks: list[str] = []
+
+    def refuse(line: str) -> dict[str, str]:
+        return {"project": "", "lane": "", "refusal": line, "ask": ""}
+
+    def as_project(name: str) -> str:
+        return by_name.get(name.lower(), "")
+
+    # A bare name both a project and a lane — a lane of the home's board or
+    # of that project's own — names no target: the other groups are read
+    # against the board the card lands on without it.
+    home_live = {str(x).lower(): str(x) for x in (lanes_of(home) or [])}
+
+    def both(g: str) -> str:
+        """The lane's spelling when the bare group ``g`` is a project and a lane, else ""."""
+        low = g.lower()
+        if low.startswith((PROJECT_PREFIX, LANE_PREFIX)) or not as_project(g):
+            return ""
+        own = {str(x).lower(): str(x) for x in (lanes_of(as_project(g)) or [])}
+        return home_live.get(low) or own.get(low, "")
+
+    # The target first: a lane is looked up on the board of the project named.
+    named = [g[len(PROJECT_PREFIX):].strip() for g in groups if g.lower().startswith(PROJECT_PREFIX)]
+    named += [g for g in groups if not g.lower().startswith((PROJECT_PREFIX, LANE_PREFIX))
+              and as_project(g) and not both(g)]
+    target = as_project(named[0]) if named and as_project(named[0]) else home
+    live = {str(x).lower(): str(x) for x in (lanes_of(target) or [])}
+    # Or a lane on the board it lands on.
+    either = {**home_live, **live}
+    projects: list[str] = []
+    lanes: list[str] = []
+    for g in groups:
+        low = g.lower()
+        if low.startswith(PROJECT_PREFIX):
+            name = g[len(PROJECT_PREFIX):].strip()
+            code = as_project(name)
+            if not code:
+                return refuse(f"{{{g}}}: {name} is not a project of this agent")
+            projects.append(code)
+        elif low.startswith(LANE_PREFIX):
+            name = g[len(LANE_PREFIX):].strip()
+            if not name:
+                return refuse(f"{{{g}}} names no lane")
+            lanes.append(live.get(name.lower(), name))
+        elif as_project(g):
+            spelt = both(g) or either.get(low, "")
+            if spelt:
+                asks.append(f"{{{g}}} is both a project and a lane — did you mean project {as_project(g)} "
+                            f"or lane {spelt}? (to name one: {{project:{g}}} or {{lane:{g}}})")
+                continue
+            projects.append(as_project(g))
+        elif low in live:
+            lanes.append(live[low])
+        else:
+            best = max(by_name, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
+            if best and difflib.SequenceMatcher(None, low, best).ratio() >= NEAR_MISS:
+                hint = {**{c.lower(): c for c in codes}, **{a.lower(): a for a in aliases}}.get(best, best)
+                return refuse(f"{{{g}}} is not a project of this agent — did you mean {hint}?")
+            # A near miss of a live lane is a typo, not a new lane ({bug} for Bugs).
+            close = [n for n in live if not _lane_variant(low, n)]
+            lane = max(close, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
+            if lane and difflib.SequenceMatcher(None, low, lane).ratio() >= NEAR_MISS:
+                asks.append(f"{{{g}}} is not a lane of {target}'s board — did you mean {live[lane]}, "
+                            f"or a new lane {g}? (to name a new one: {{lane:{g}}})")
+                continue
+            lanes.append(g)
+    if len(set(projects)) > 1:
+        return refuse(f"two projects in braces ({', '.join(dict.fromkeys(projects))}): name one")
+    if len({x.lower() for x in lanes}) > 1:
+        return refuse(f"two lanes in braces ({', '.join(dict.fromkeys(lanes))}): name one")
+    if projects and projects[0] not in members:
+        return refuse(brace_refusal_member(agent, projects[0], members))
+    out["project"] = projects[0] if projects else ""
+    # An ask sends the card to the default lane, as the ask says: a lane
+    # another group named is not kept beside it (the operator answers).
+    out["lane"] = lanes[0] if lanes and not asks else ""
+    out["ask"] = " Also: ".join(asks)
+    return out
+
+
 def plain_text(text: str) -> str:
     """The message for what a command keeps of it (a prompt's body, a
     vision's text): the ``###`` command written as an ordinary one, so it is

@@ -161,10 +161,13 @@ def test_the_chats_agent_titles_the_now_card_and_no_other_agent_does(env) -> Non
     assert c.get(f"/api/tasks/{card['id']}").json()["metadata"]["title"] == "Import: look again"
 
 
-def test_a_lane_the_board_lacks_is_left_to_the_agent(env) -> None:
+def test_a_lane_the_board_lacks_is_a_new_lane(env) -> None:
+    # Braces that name no project and no live lane name a new lane
+    # (tk_d1d25a4d step 3, note nt_258a7ed7 §3; before it, no card).
     c, root = env
-    _chat(root, [(_at(-5), "#now {nowhere} build it", "which lane?")])
-    assert _cards(c) == []
+    _chat(root, [(_at(-5), "#now {nowhere} build it", "on it")])
+    cards = _cards(c)
+    assert len(cards) == 1 and cards[0]["lane"] == "nowhere"
 
 
 def test_done_closes_the_card_the_server_wrote(env) -> None:

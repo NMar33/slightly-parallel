@@ -35,6 +35,7 @@ WRITTEN_BY_READS = {
     # where it got to (nowlib, donelib).
     "now.json": "the #now adoption's state",
     "done.json": "the #done adoption's state",
+    "think.json": "the #think adoption's state (thinklib)",
     # Kept by the Usage page for the Stop hook and for the next visit
     # (docs/logging.md).
     ".usage/units.json": "what one dollar takes of the limit, read by the hook",
@@ -149,7 +150,7 @@ def test_a_read_never_writes_over_a_file_it_could_not_read(tmp_path: Path) -> No
     of them byte for byte as it was."""
     root = tmp_path / "data"
     shutil.copytree(FIXTURES, root)
-    spoilt = [root / n for n in ("now.json", "done.json", "boards.json", "examples.json",
+    spoilt = [root / n for n in ("now.json", "done.json", "think.json", "boards.json", "examples.json",
                                  "skill_installs.json", ".usage/units.json", ".usage/insights.json")]
     spoilt += sorted((root / "projects").glob("*/chats/*/meta.json"))
     for f in spoilt:

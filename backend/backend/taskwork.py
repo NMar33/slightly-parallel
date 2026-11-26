@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from . import gitwork, sessions
@@ -318,15 +319,58 @@ def _links(store: ViewStore) -> dict[str, set[str]]:
     return out
 
 
-def _repo_log(store: ViewStore, task_id: str) -> list[gitwork.Commit]:
-    """The commits of the task's project's repository (read once per HEAD)."""
+def task_repos(store: ViewStore, task_id: str) -> list[Path]:
+    """Every repository a task's commits may be in (tk_d1d25a4d step 3,
+    note nt_258a7ed7 §3): its project's first, then those of the codes in its
+    ``projects``, of the projects it was moved from (its history's
+    ``project`` rows), and of the chats that named it (the git repository of
+    each chat's folder). Each once, by its resolved path."""
+    from .entitylib import project_codes
     from .file_entries import project_repo
+    from .sessions import chat_path
 
-    row = store.query_one("SELECT project FROM tasks_mutual WHERE id = ?", (task_id,))
-    repo = project_repo(store, str((row or {}).get("project") or "")) if row else None
-    if repo is None:
+    row = store.query_one("SELECT project, projects FROM tasks_mutual WHERE id = ?", (task_id,))
+    if row is None:
         return []
-    try:
-        return gitwork.commits(repo)
-    except Exception:  # noqa: BLE001 — git is best effort
-        return []
+    codes = [str(row.get("project") or ""), *project_codes(row.get("projects"))]
+    codes += [str(r.get("old_value") or "") for r in store.query(
+        "SELECT old_value FROM task_events_mutual WHERE task_id = ? AND field = 'project' ORDER BY timestamp",
+        (task_id,))]
+    repos: list[Path] = []
+    for code in dict.fromkeys(c for c in codes if c):
+        repo = project_repo(store, code)
+        if repo is not None:
+            repos.append(repo)
+    for r in store.query("SELECT DISTINCT agent_id FROM task_mentions WHERE task_id = ? ORDER BY agent_id", (task_id,)):
+        chat = chat_path(store, str(r.get("agent_id") or ""))
+        repo = gitwork.repo_for_chat(chat) if chat is not None else None
+        if repo is not None:
+            repos.append(repo)
+    out: dict[str, Path] = {}
+    for repo in repos:
+        try:
+            key = str(repo.resolve())
+        except OSError:
+            key = str(repo)
+        out.setdefault(key, repo)
+    return list(out.values())
+
+
+def task_repo_log(store: ViewStore, task_id: str) -> list[tuple[gitwork.Commit, Path]]:
+    """The commits of every repository of the task (task_repos), each read
+    once per HEAD, merged newest first; a commit in two of them (a clone)
+    once, with the first repository that has it."""
+    seen: dict[str, tuple[gitwork.Commit, Path]] = {}
+    for repo in task_repos(store, task_id):
+        try:
+            got = gitwork.commits(repo)
+        except Exception:  # noqa: BLE001 — git is best effort
+            continue
+        for c in got:
+            seen.setdefault(c.sha, (c, repo))
+    return sorted(seen.values(), key=lambda cr: cr[0].at, reverse=True)
+
+
+def _repo_log(store: ViewStore, task_id: str) -> list[gitwork.Commit]:
+    """The commits of the task's repositories (task_repo_log), newest first."""
+    return [c for c, _repo in task_repo_log(store, task_id)]

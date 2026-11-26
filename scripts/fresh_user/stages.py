@@ -20,10 +20,12 @@ import signal
 import subprocess
 import time
 import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
-from common import PLANTED_KEY, REPO, WINDOWS, Report, Space, chatstore, eventually, fetch_bytes, get, http, rows, wait_for
+from common import API_REQUEST_TIMEOUT_S, PLANTED_KEY, REPO, WINDOWS, Report, Space, chatstore, eventually, fetch_bytes, get, http, rows, wait_for
 
 COMMAND_TIMEOUT_S = 600
 SERVER_RETRY_DELAY_S = 3
@@ -518,6 +520,19 @@ def _contents(space: Space) -> dict[str, list]:
     return {"projects": projects, "chats": chats, "tasks": tasks}
 
 
+def _said(exc: Exception) -> str:
+    """A failed request as the server put it: «HTTP Error 409: Conflict —
+    <its detail>», not the bare status (a Windows restore 409 said nothing)."""
+    import urllib.error
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            detail = json.loads(exc.read() or b"{}").get("detail", "")
+        except (ValueError, OSError, AttributeError):
+            detail = ""
+        return f"{exc} — {detail}" if detail else str(exc)
+    return str(exc)
+
+
 def backup_restore(space: Space, report: Report, code: str) -> None:
     """Settings › Backups › Back up now, the archive downloaded, then
     restored into a new data folder: the projects, chats and tasks are there.
@@ -562,7 +577,7 @@ def backup_restore(space: Space, report: Report, code: str) -> None:
         report.add(s, "the data check finds nothing damaged", not get(space, "/api/health").get("load_errors"),
                    json.dumps(get(space, "/api/health").get("load_errors"))[:300])
     except Exception as exc:
-        report.add(s, "it restores into the new data folder", False, str(exc)[:300])
+        report.add(s, "it restores into the new data folder", False, _said(exc)[:300])
     finally:
         http(space.url + "/api/setup/data-root", {"path": str(space.data)})
     report.add(s, "the server is back on the data folder Setup chose", get(space, "/api/health").get("data_root") == str(space.data))
@@ -1136,6 +1151,62 @@ def membership_after_upgrade(old: Space, report: Report, s: str, session: str, c
     report.add(s, "a hook turn after the join lands where it did before",
                fired.returncode == 0 and "After the join" in chat.read_text(encoding="utf-8")
                and not chatstore.folder(old.data, "second", agent).exists(), (fired.stderr or fired.stdout)[-300:])
+    routing_after_upgrade(old, report, s, session, agent, second)
+
+
+def _says(out: str | None, text: str) -> bool:
+    """The hook's notice holds ``text``, printed as is or inside JSON."""
+    out = out or ""
+    return text in out or json.dumps(text)[1:-1] in out
+
+
+def _mcp_post(url: str, body: dict) -> tuple[int, Any]:
+    """A write as the MCP translator sends it (the agent stamped, the mark set)."""
+    import urllib.error
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "X-SP-Via": "mcp"})
+    try:
+        with urllib.request.urlopen(req, timeout=API_REQUEST_TIMEOUT_S) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b"{}")
+
+
+def routing_after_upgrade(old: Space, report: Report, s: str, session: str, agent: str, second: Path) -> None:
+    """tk_d1d25a4d step 3 (note nt_258a7ed7 §8): the joined chat's task goes to
+    the member project, its `Task:` commit is the task's, the hook notice
+    names where the task went, and #done closes it."""
+    said = fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(old.sample),
+                           "prompt": "#task {second} check the second app"}, folder=old.sample)
+    report.add(s, "the hook's notice names the member project the braces name",
+               said.returncode == 0 and _says(said.stdout, "→ second"), (said.stdout or said.stderr)[-400:])
+    status, made = _mcp_post(old.url + "/api/tasks", {"agent_id": agent, "project": "second",
+                                                      "title": "Check the second app", "tags": "ag_bug"})
+    tid = str(((made or {}).get("metadata") or {}).get("id") or "")
+    report.add(s, "the agent's task goes to the member project",
+               status == 201 and tid and made["metadata"].get("project") == "second", json.dumps(made)[:300])
+    status, refused = _mcp_post(old.url + "/api/tasks", {"agent_id": agent, "project": "nowhere",
+                                                         "title": "x", "tags": "ag_bug"})
+    report.add(s, "a project the chat is not in is refused in one line", status == 403, json.dumps(refused)[:300])
+    fire_hook(old, {"hook_event_name": "Stop", "session_id": session, "cwd": str(old.sample),
+                    "last_assistant_message": f"Filed {tid} → second."}, folder=old.sample)
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    sh(["git", "init", "-q", "-b", "main"], second, env)
+    sh(["git", "add", "app.py"], second, env)
+    sh(["git", "commit", "-q", "-m", f"check the second app\n\nTask: {tid}\nAgent: {agent}"], second, env)
+    work = eventually(lambda: [c for c in rows(get(old, f"/api/tasks/{tid}/work").get("work") or {}, "commit_list")
+                               if c.get("how") == "signed"] or None, 20) or []
+    report.add(s, "its Task: commit in the member project's repository is the task's", bool(work), json.dumps(work)[:300])
+    told = fire_hook(old, {"hook_event_name": "UserPromptSubmit", "session_id": session, "cwd": str(old.sample),
+                           "prompt": f"#done {tid}"}, folder=old.sample)
+    report.add(s, "the next notice says where the task went",
+               _says(told.stdout, f"{tid} → second"), (told.stdout or told.stderr)[-400:])
+    fire_hook(old, {"hook_event_name": "Stop", "session_id": session, "cwd": str(old.sample),
+                    "last_assistant_message": "Closed."}, folder=old.sample)
+    done = eventually(lambda: [t for t in rows(get(old, f"/api/done-tags?agent_id={agent}"), "tasks")
+                               if t.get("id") == tid and t.get("result") == "moved"] or None, 20) or []
+    report.add(s, "#done with its id closes the task in the member project", bool(done), json.dumps(done)[:300])
 
 
 def screens(space: Space, report: Report, moment: str, routes: list[str], out: Path) -> None:

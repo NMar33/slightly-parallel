@@ -85,7 +85,8 @@ def test_one_identity_for_both_gates(client: TestClient):
     r = client.post("/api/tasks", json={"created_date": "2609-17", "created_time": "12:02", "project": "alpha",
                                         "agent_id": "operator", "actor": "cc-abc12345",
                                         "title": "sneaky", "status": "done"})
-    assert r.status_code == 422 and "agent" in r.text
+    # Refused as the agent's (it has no captured chat, so no #now to read).
+    assert r.status_code == 422 and "cc-abc12345" in r.text and "not captured" in r.text
     r = client.post("/api/tasks", json={"created_date": "2609-17", "created_time": "12:02", "project": "alpha",
                                         "agent_id": "cc-abc12345", "actor": "cc-abc12345", "title": "honest",
                                         "tags": "ag_followup"})

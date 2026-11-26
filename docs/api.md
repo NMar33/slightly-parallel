@@ -138,6 +138,10 @@ noted writes.
   chat move write (`project deleted`, `moved from …`), `op: moved`, a field
   of the wrong shape (422 naming it). 503 while a delete or a move holds the
   ledger. Answers: the GET's fields and `row`, the row written.
+  A leave and an agent's write that race: a write whose membership check
+  starts after the `leave` row is in the ledger is refused; one checked while
+  the agent was still a member counts, even when it lands after the leave
+  (tests/test_membership_race.py).
 - `POST /api/agents/{agent_id}/move-chat` — the operator's only. Body: `to`,
   one of the agent's member projects other than its origin. Moves the chat
   folder there (copy, verify bytes, sha256 and turns, set `project` in the
@@ -159,6 +163,27 @@ noted writes.
   chat's only folder, two originals, a copy holding writes the original
   lacks, a lock a hook holds in the copy. Answers: `agent_id`, `to`,
   `original`, `trash`, `removed`.
+- `GET /api/project-aliases` — the short names the operator's braces may
+  name a project by (`#task {SP} …`). Answers: `aliases`, each `{alias,
+  project}`. Read from `project_aliases.csv` (`id, at, project, alias, op,
+  actor`), append-only, folded by `membership_fold.aliases`.
+- `POST /api/projects/{code}/aliases` — the operator's only. Body: `op`
+  (`add` or `remove`), `alias` (1–40 letters, digits, `.`, `-`, `_`). An
+  alias is unique, any case, across every project code and every alias;
+  the check and the write are one step under the file's lock. Refused in one
+  line, writing nothing: no such project (404), a name taken (409), not an
+  alias of this project on remove (409), a bad name (422). Answers:
+  `aliases`, `row`. The settings page for them comes later (step 7).
+
+The braces after `#task` / `#now` (any number, any order, each at most 80
+characters: `#now-todo {ui} {writing-tracker} …`) are read by one rule in the
+hook and the server (`hookshared.resolve_braces`): `{project:x}` /
+`{lane:x}`; an exact project code or alias, any case (a project the chat is
+not a member of is refused); an exact live lane of the target board; a near
+miss of a code or alias (difflib ratio ≥ 0.8) refused with a hint; anything
+else a new lane. A name both a project and a lane, two projects or two lanes
+are refused in one line and no card is made. An agent's create on that
+command must send the project the braces named.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
   Answers: `agent_id`, `agent_group`.
 - `POST /api/agents/{agent_id}/rename` — body: `name`, stored as
@@ -280,6 +305,14 @@ The board, its blocks, and everything hung off a task.
   refused, naming the creator. `comment` is open to every agent on any
   task. The one exception is the waiting title of a task made from a
   message (above).
+  `think: true | false` sets or removes the operator's think mark (the
+  columns `think_at`, `think_by`; `#think` / `#think-off` in a chat do the
+  same). An agent sending `think` is refused. While the mark is on, an
+  agent's change of `status`, `lane` or `assignee`, its
+  `POST /api/tasks/{task_id}/report`, its archive and its move to another
+  project are refused with a reason that names the mark; comments, notes, evidence and links stay
+  open. The operator is never refused; the operator's `#done` closes the
+  task and clears the mark.
 - `POST /api/tasks/{task_id}/turn` — the next round of instruction. Body:
   `text`, `actor`, `created_date`, `created_time`. Answers: `task`, `turn`,
   `turns`, `description`, `ref`.
@@ -301,6 +334,27 @@ The board, its blocks, and everything hung off a task.
   agent (MCP `task_commits`) or the operator links commits that carry no
   `Task:` line to this task. Answers `linked` (the new ones) and the task's
   `work`. A commit's own `Task: tk_…` line does the same without a call.
+  A hash is accepted from any repository of the task (`taskwork.task_repos`):
+  its project's, those of the codes in its `projects` and of the projects it
+  moved from, and those of the chats that named it; `repositories` maps each
+  linked commit outside the project's own repository to where it is. The
+  task's `work` (GET `/api/tasks/{task_id}/work`) reads the same set, merged
+  newest first.
+- `POST /api/tasks/{task_id}/move` — `{to}`: the task moves to project `to`
+  and keeps its id (MCP `task_move`). The operator, or an agent at task level
+  3 that is a member of both projects. `project` becomes `to`, `projects`
+  loses the old project (the card leaves its board), the column and the
+  document stay, the lane stays when a live card of `to` carries it (else it
+  is cleared), a topic of the old project, a stack (its next card becomes
+  the head), a sprint and milestone links are let go, and its notes,
+  evidence, story requests and story images move with it. The
+  history gets `project` (old → new) and «moved from A to B, by …». Refused
+  in one line, writing nothing, the most general reason first: no such
+  project (404), the same project (409); an agent below level 3 or not a
+  member (403); a done or archived task (409); for an agent, a task with the
+  operator's think mark (422, naming the mark; the operator's move keeps
+  the mark). Answers `task_id`, `from`, `to`, `lane`, `projects`, `lane_cleared`,
+  `topic_dropped`, `stack_dropped`, `sprint_dropped`, `milestones_dropped`, `where`, `said`.
 - `GET /api/commits/signed?project=&days=7` — per project with a repository:
   commits in the last `days` days, how many carry a `Task:` line (`signed`),
   how many were linked later (`linked`), and the same by the `Agent:` line.
@@ -679,10 +733,13 @@ whose file changed after the version was written.
   Refused without the required headings or with no claim at all. Answers:
   `project` plus `warnings`: paths not found, how many items lack `seen:`,
   words over the budget. The same text twice is one version.
-- `GET /api/architecture/page/material?project=` — what the next version is
+- `GET /api/architecture/page/material?project=&agent_id=&cwd=` — what the next version is
   written from (MCP `architecture_material`). Answers: `project`, `facts`,
   `current_page`, `check_again` (claims not found or changed since), `next`,
   `instructions` — the contract part `architecture-page`.
+  With `agent_id`, a project that is not one of that chat's projects is
+  refused (403, the membership line); with `cwd`, `folder_warning` says when the
+  project's registered folder is not where the chat works (a warning only).
 - `GET /api/architecture/state?project=` — the screening: scans newest
   first, each with its answer.
 
@@ -712,10 +769,13 @@ vocabulary, every relation naming a real row.
   `note`, `template`, `map{rows, relations, notes}`, `changes{added,
   removed}` since the version before, `problems`, `by_kind`), `versions`,
   `kinds`, `verbs`, `templates`, `facts`, `project`.
-- `GET /api/map/material?project=` — what the next version is written from
+- `GET /api/map/material?project=&agent_id=&cwd=` — what the next version is written from
   (MCP `map_material`). Answers: `facts`, `current_map` with its problems,
   the vocabulary, `model` (Settings › Agents), `next`, `instructions` — the
   contract part `map`.
+  With `agent_id`, a project that is not one of that chat's projects is
+  refused (403, the membership line); with `cwd`, `folder_warning` says when the
+  project's registered folder is not where the chat works (a warning only).
 - `POST /api/map` — the whole next version (MCP `map_write`). Body:
   `project`, `agent_id`, `map`, `note?`. Refused for a kind or verb outside
   the vocabulary, an unknown template, over 50 rows or 30 relations. Answers
@@ -921,7 +981,7 @@ more, a normal one its alternatives, a major one also what would undo it.
 - `GET /api/scans/page?limit=` — the scans page in one answer: every scan with
   its text, its file entry (`file`: metadata and the annotated `paths`) and
   the id of its architecture form, plus `architecture` rows and `agents`.
-- `GET /api/scans/material?project=&agent_id=` — MCP `scan_material`: what a
+- `GET /api/scans/material?project=&agent_id=&cwd=` — MCP `scan_material`: what a
   scan is written from (`scanlib.py`). The window is the asking agent's
   own: the commits this chat made since this agent's last scan of the
   project (by the capture hook's stamps) and what is not committed. Another
@@ -1746,7 +1806,22 @@ refusal text read the list from there.
 `GET /api/whoami?cwd=…` resolves the chat identity the capture hook
 breadcrumbs per working directory, so local tools stamp `agent_id` and
 `project` instead of asking the model to copy them. Answers: `agent_id`,
-`project`, `session_id`, `age_min`.
+`project`, `session_id`, `age_min`, and the chat's projects: `home` (where a
+write that names no project goes), `members`, `level` (task rights, 1–3).
+
+Agents write in their member projects only (tk_d1d25a4d step 3). Every agent
+write, through the MCP or over HTTP with `agents.mcp_only` off, is checked at
+the gate: a body's `project` and every code in `projects` must be one of the
+agent's projects, and a write on a task by its id (`/api/tasks/{id}/…`) must
+be on a task of one; otherwise 403 with one line — «agent cc-… is not a
+member of X; its projects: A, B. The operator adds it on the agent card» (or
+«…; this task is X's. …»). An agent Slightly Parallel has no chat of is
+refused. A `project` that is not text, or `projects` that is not text or a
+list of texts, is 422. Writes on other rows by id (`update_entry`, notes,
+publishing cards, topics) check the row's project the same way. The MCP
+create tools (`write_entry`, `note_write`, `core_new`, `map_write`,
+`architecture_page`) take an optional `project` (else the home) and answer
+with `where`: «dc_… → X», «tk_… → X · lane ui»; standups stay in the home.
 
 Both exist for the MCP translator (`python -m backend.mcp`): a stateless
 stdio process that builds its tools from `/api/schema` and forwards every

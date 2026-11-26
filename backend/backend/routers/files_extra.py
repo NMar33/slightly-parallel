@@ -258,6 +258,9 @@ def _top_files(file_totals: dict[str, dict[str, Any]], limit: int) -> list[dict[
     )[:limit]
 
 
+ANY_PROJECT = "*any project*"  # not a project code (chatstore.PROJECT_CODE_RE)
+
+
 def _sessions_by_lane(store: ViewStore) -> dict[tuple[str, str, str], list[dict]]:
     """Every session under (project, agent, day), earliest first: one read
     for the heatmap, which asked once per file entry."""
@@ -267,6 +270,9 @@ def _sessions_by_lane(store: ViewStore) -> dict[tuple[str, str, str], list[dict]
     ):
         key = (str(r.get("project") or ""), str(r.get("agent_id") or ""), str(r.get("created_date") or ""))
         out.setdefault(key, []).append(r)
+        # Under (agent, day) too: a member chat filed in another project
+        # writes a checkpoint here (tk_d1d25a4d step 3, note nt_258a7ed7 §7).
+        out.setdefault((ANY_PROJECT, key[1], key[2]), []).append(r)
     return out
 
 
@@ -279,7 +285,7 @@ def _session_for(
     else the day's first session."""
     if not (project and agent_id and date):
         return ""
-    rows = lanes.get((project, agent_id, str(date)), [])
+    rows = lanes.get((project, agent_id, str(date)), []) or lanes.get((ANY_PROJECT, agent_id, str(date)), [])
     if not rows:
         return ""
     chosen = rows[0]

@@ -88,6 +88,36 @@ def project_path(store: ViewStore, project: str) -> Path | None:
     return None
 
 
+FOLDER_WARNING = "folder {path} is not where you work ({cwd}) — check you can read its files"
+
+
+def _same_place(p: Path) -> str:
+    import os
+    try:
+        p = p.resolve()
+    except OSError:
+        pass
+    return os.path.normcase(str(p))
+
+
+def folder_warning(store: ViewStore, project: str, cwd: str) -> str:
+    """A scan, a map or an architecture page of ``project`` written from a
+    chat that works in another folder (tk_d1d25a4d step 3, note nt_258a7ed7
+    §2): the warning its material carries, or "". A warning, never a
+    refusal. The same folder spelled another way (a link, a trailing
+    separator, a drive letter's case) is the same folder; a subfolder of
+    the project's folder is inside it."""
+    path = project_path(store, project)
+    given = given_path(cwd) if cwd else None
+    if path is None or given is None:
+        return ""
+    where, here = _same_place(path), _same_place(given)
+    import os
+    if here == where or here.startswith(where.rstrip(os.sep) + os.sep):
+        return ""
+    return FOLDER_WARNING.format(path=path, cwd=cwd)
+
+
 def _is_repo(path: Path) -> bool:
     return bool(git(path, "rev-parse", "--is-inside-work-tree"))
 

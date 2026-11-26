@@ -9,13 +9,17 @@ import { Settings2 } from 'lucide-react'
 import { IconButton } from '../../../../components/primitives'
 import { PrefChip, PrefRow } from '../../../../components/Prefs'
 import { ReleaseButton } from '../ReleasePrompt'
+import { ThinkBadge } from '../parts'
 import { AXES, MODAL_SECTIONS } from '../model'
 import type { ChainMode, ModalDescSize, ModalPrefs, ModalWidth, TaskRow } from '../model'
 import { t } from '../../../../i18n/scope/project'
 
-export function EditorHeader({ isEdit, existingTask, onRelease, tuning, setTuning, onClose }: {
+export function EditorHeader({ isEdit, existingTask, thinkAt, onThinkOff, onRelease, tuning, setTuning, onClose }: {
   isEdit: boolean
   existingTask?: TaskRow | null
+  /** The operator's «think» mark, as the window holds it; '' when off. */
+  thinkAt?: string
+  onThinkOff?: () => void
   onRelease?: (task: TaskRow) => void
   tuning: boolean
   setTuning: (fn: (v: boolean) => boolean) => void
@@ -30,6 +34,9 @@ export function EditorHeader({ isEdit, existingTask, onRelease, tuning, setTunin
         <span className="text-11 text-tertiary font-mono">
           {existingTask.id}
         </span>
+      )}
+      {isEdit && existingTask && thinkAt && (
+        <span className="self-center"><ThinkBadge at={thinkAt} onClear={onThinkOff} /></span>
       )}
       {isEdit && existingTask && (
         <ReleaseButton task={existingTask} size={20} className="ml-auto"

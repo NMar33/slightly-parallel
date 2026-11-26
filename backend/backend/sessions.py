@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from .hookshared import (
-    MESSAGE_MARK_RE, NOT_OPERATOR, command_text, message_mark_kinds, plain_text, yymm_dd as _yymm_dd,
+    MESSAGE_MARK_RE, NOT_OPERATOR, command_text, message_mark_kinds, pick_task_hit, plain_text, yymm_dd as _yymm_dd,
 )
 from .task_refs import TASK_REF_RE, task_ids
 
@@ -94,6 +94,9 @@ class Session:
     # Turns carrying #now — the task the chat starts on; nowlib.py writes the
     # card when the agent did not.
     now_tags: list[dict] = field(default_factory=list)
+    # Turns tagged #think / #think-off — the operator's think mark on a
+    # task; thinklib.py applies them.
+    think_tags: list[dict] = field(default_factory=list)
     # The agent's working minutes, the minutes it waited on the person, and
     # whether every turn's end was known ("exact") or one was estimated.
     agent_min: int = 0
@@ -187,17 +190,20 @@ NOW_COLUMNS = {"": "doing", "doing": "doing", "todo": "todo", "to-do": "todo", "
                "backlog": "backlog", "review": "review", "parked": "parked", "done": "done"}
 
 
+def task_hit(text: str) -> "re.Match[str] | None":
+    """The #task / #now tag a message's card is for: the #now when there is
+    one (the task this chat starts on; the hook names both, and the agent
+    writes the #task one as well), else the last tag."""
+    return pick_task_hit(list(TASK_CMD_RE.finditer(text or "")))
+
+
 def task_command(text: str) -> tuple[str, str, str]:
     """(command, lane, column) of the last #task or #now in an operator's
     message: ("task", "ui", "agent"), ("now", "", "doing"), ("now", "", "todo")
     for #now-todo … or ("", "", "") with neither."""
-    hits = list(TASK_CMD_RE.finditer(text or ""))
-    if not hits:
+    m = task_hit(text)
+    if m is None:
         return "", "", ""
-    # Both in one message ("#now fix it, and #task the docs later"): the
-    # #now is the task this chat starts on, so it is the one the card is
-    # for; the hook names both, and the agent writes the #task one as well.
-    m = next((h for h in hits if h.group(1).lower().split("-")[0] == "now"), hits[-1])
     command, _, suffix = m.group(1).lower().partition("-")
     column = NOW_COLUMNS[suffix] if command == "now" else "agent"
     return command, " ".join((m.group(2) or "").split()), column
@@ -534,6 +540,30 @@ def _dones_of(
     return out
 
 
+def _thinks_of(
+    session_id: str, project: str, agent_id: str, block: list[Turn]
+) -> list[dict]:
+    """One row per user turn and kind (#think, #think-off): the tasks it
+    names — the ids written beside the tag, as #done reads them, else every
+    id in the message when it makes no task — and whether it makes one
+    (#now, #task: that card carries the mark from its creation)."""
+    from .hookshared import think_targets
+    out: list[dict] = []
+    for t in block:
+        text = _operator_text(t)
+        if not text or "#think" not in text.lower():
+            continue
+        command = command_text(text)
+        creates = bool(task_command(command)[0])
+        for kind, named in think_targets(command, creates).items():
+            out.append({
+                "kind": kind, "project": project, "agent_id": agent_id, "session_id": session_id,
+                "turn": t.number, "at": t.at.strftime("%Y-%m-%dT%H:%M:%S"),
+                "tasks": ",".join(named), "creates": "1" if creates else "",
+            })
+    return out
+
+
 def _nows_of(
     session_id: str, project: str, agent_id: str, block: list[Turn], answered_later: bool = False
 ) -> list[dict]:
@@ -797,6 +827,7 @@ def _close(
         important_tags=_importants_of(sid, project, agent_id, block) + _message_marks_of(sid, project, agent_id, block),
         done_tags=_dones_of(sid, project, agent_id, block),
         now_tags=_nows_of(sid, project, agent_id, block, answered_later),
+        think_tags=_thinks_of(sid, project, agent_id, block),
     )
 
 

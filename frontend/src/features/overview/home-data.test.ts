@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { YEAR_LIMIT, countsOf, dayCurve, period, streak, usualDay, yearGrid, yearOf, type YearSession } from './home-data'
+import {
+  RATIO_FLOOR_MIN, YEAR_LIMIT, countsOf, dayCurve, layerValues, period, ratioOf, stepsOf, streak, usualDay, yearGrid, yearOf, yourMinutes,
+  type YearSession,
+} from './home-data'
 import { formatYYMMDD } from '../../utils/dateUtils'
 
 const NOW = new Date(2026, 9, 12, 15, 0)
@@ -66,5 +69,52 @@ describe('the home page numbers', () => {
     const y = yearOf(full)
     expect(y.truncated).toBe(true)
     expect(y.days.get(day(0))).toHaveLength(YEAR_LIMIT)
+  })
+
+  it('your time merges overlapping and nested sessions so parallel chats count once', () => {
+    expect(yourMinutes([s({ start_time: '10:00', duration_min: 60 }), s({ start_time: '10:30', duration_min: 60 })])).toBe(90)
+    expect(yourMinutes([s({ start_time: '10:00', duration_min: 120 }), s({ start_time: '10:30', duration_min: 15 })])).toBe(120)
+    expect(yourMinutes([s({ start_time: '14:00', duration_min: 30 }), s({ start_time: '10:00', duration_min: 30 })])).toBe(60)
+    expect(yourMinutes([s({ start_time: '10:00', duration_min: 30 }), s({ start_time: '10:30', duration_min: 30 })])).toBe(60)
+  })
+
+  it('your time stops at midnight, skips empty sessions and is 0 for an empty day', () => {
+    expect(yourMinutes([s({ start_time: '23:30', duration_min: 90 })])).toBe(30)
+    expect(yourMinutes([s({ start_time: '10:00', duration_min: 0 }), s({ start_time: '11:00' })])).toBe(0)
+    expect(yourMinutes([])).toBe(0)
+  })
+
+  it('your time is capped at a whole day', () => {
+    expect(yourMinutes([s({ start_time: '00:00', duration_min: 2000 }), s({ start_time: '12:00', duration_min: 600 })])).toBe(1440)
+  })
+
+  it('the ratio is empty below 30 minutes of your time', () => {
+    expect(ratioOf(120, RATIO_FLOOR_MIN - 1)).toBe(0)
+    expect(ratioOf(120, 0)).toBe(0)
+    expect(ratioOf(48, RATIO_FLOOR_MIN)).toBeCloseTo(1.6)
+  })
+
+  it('a day has a value on every layer', () => {
+    const v = layerValues([
+      s({ start_time: '10:00', duration_min: 60, agent_min: 90, git: { add: 100 } }),
+      s({ start_time: '10:30', duration_min: 60, agent_min: 54, git: { add: 20 } }),
+    ])
+    expect(v).toEqual({ agent: 144, you: 90, ratio: 1.6, lines: 120 })
+    expect(layerValues([])).toEqual({ agent: 0, you: 0, ratio: 0, lines: 0 })
+  })
+
+  it('a session past midnight counts the same share of agent and your time in the ratio', () => {
+    const v = layerValues([s({ start_time: '23:00', duration_min: 180, agent_min: 170 })])
+    expect(v.you).toBe(60)
+    expect(v.agent).toBe(170)
+    expect(v.ratio).not.toBeCloseTo(2.8)
+    expect(v.ratio).toBeCloseTo(170 / 180)
+  })
+
+  it('steps a layer by its own quantiles, empty days at 0', () => {
+    const step = stepsOf([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect([0, 1, 4, 6, 7, 8].map(step)).toEqual([0, 1, 2, 3, 3, 4])
+    expect(stepsOf([0, 0])(0)).toBe(0)
+    expect(stepsOf([0.5, 1.6])(1.6)).toBe(4)
   })
 })

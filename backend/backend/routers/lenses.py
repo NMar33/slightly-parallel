@@ -19,7 +19,8 @@ from typing import Any, Callable, Sequence
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
-from .. import archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, nowlib, skilllib, repomap, undolib
+from .. import (archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, memberships, nowlib, skilllib,
+               repomap, thinklib, undolib)
 from ..csvio import rewrite_rows
 from ..date_utils import InvalidYYMMDD, format_yymm_dd, parse_yymm_dd
 from ..db import ViewStore
@@ -29,7 +30,7 @@ from ..entities import ENTITIES, Entity
 from ..file_safety import atomic_write
 from .deps import (
     adopt_when_changed, detail_cached, etag_for, frontmatter_cached,
-    get_store, json_response, maybe_304, parsed_file, refuse_agent, written_by_agent,
+    get_store, identity_of, json_response, maybe_304, parsed_file, refuse_agent, written_by_agent,
 )
 from .integrate import sync_all_rules
 
@@ -342,6 +343,11 @@ def update_entity(
                     "(rows from per-project overlay files are read-only)"
                 ),
             )
+        if written_by_agent(body):
+            # update_entry: the row's project is checked (note nt_258a7ed7 §2).
+            ok, line = memberships.may_write_row(store, identity_of(body), str(target.get("project") or ""), ent.name)
+            if not ok:
+                raise HTTPException(status_code=403, detail=line)
         if ent.name in entry_fields.PARTS:
             entry_fields.merge_parts(ent.name, body, read_detail(store.data_root, target.get("md_ref") or "")[2]
                                      if target.get("md_ref") else "")
@@ -503,6 +509,7 @@ def _register(ent: Entity) -> None:
             # task on the board's next read.
             adopt_when_changed(store, "now", nowlib.adopt)
             adopt_when_changed(store, "done", donelib.adopt)
+            adopt_when_changed(store, "think", thinklib.adopt)
         qp = request.query_params
         clauses, params, fingerprint = _list_filters(specs, qp)
         if ent.name in undolib.HIDDEN_BY_DATE:

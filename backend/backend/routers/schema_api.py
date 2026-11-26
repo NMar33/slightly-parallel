@@ -26,7 +26,7 @@ from ..hookshared import process_started, session_key
 from .deps import etag_for, get_store, json_response, maybe_304
 from ..entities import ENTITIES
 from ..tasklib import AGENT_TAGS
-from .. import chatstore, entry_fields
+from .. import chatstore, entry_fields, memberships
 from ..mcp import TOOLS as _MCP_TOOLS
 from ..entitylib import AGENT_CREATE_REFUSED
 from .lenses import ENUM_FIELDS, HEADLINE_REQUIRED, OPERATOR_ONLY
@@ -312,7 +312,7 @@ def whoami(
                 f"cannot tell which Codex chat is calling: thread {thread[:80]} has no captured "
                 "chat (its first message not recorded yet, or capture not set up here). "
                 "Tell the user, and write nothing as an agent."))
-        return _identity(crumb, "thread")
+        return _with_membership(store, _identity(crumb, "thread"))
     crumb, source = None, ""
     for path in dict.fromkeys((breadcrumb_path(store.data_root, cwd), _raw_breadcrumb_path(store.data_root, cwd))):
         crumb, source = _crumb_by_process(path.with_suffix(""), pids)
@@ -349,7 +349,19 @@ def whoami(
                 "set up or failing here. Tell the user, and write nothing as an agent."
             ),
         )
-    return _identity(crumb, source)
+    return _with_membership(store, _identity(crumb, source))
+
+
+def _with_membership(store: ViewStore, who: dict) -> dict:
+    """whoami's answer with the chat's projects (tk_d1d25a4d step 3): its
+    ``home`` (where a write that names no project goes), its ``members``
+    and its task ``level``. A chat not recorded yet is its folder's project."""
+    view = memberships.agent_view(store, who["agent_id"])
+    if view is None or not view.members:
+        home, members, level = who["project"], [who["project"]] if who["project"] else [], 2
+    else:
+        home, members, level = view.home or who["project"], list(view.members), view.level
+    return {**who, "home": home, "members": members, "level": level}
 
 
 def _identity(crumb: dict, source: str) -> dict:

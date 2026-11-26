@@ -121,3 +121,21 @@ def test_numbered_rows_can_continue_a_key_across_several_lines(monkeypatch):
             clean = redact_diagnostics(wrapped)
             assert "[redacted]" in clean and not contains_diagnostic_key(clean), (width, column)
             assert re.sub(r"(?m)^\d+ ", "", clean).replace("\n", "").endswith("keep"), (width, column)
+
+
+@pytest.mark.parametrize("split", ["none", "sgr", "row"])
+def test_artifacts_reject_github_installation_tokens_and_diagnostics_redact_them(tmp_path, split):
+    module = run_path(str(SCRIPT))
+    from common import redact_diagnostics
+
+    token = "ghs_" + "Ab0" * 12
+    if split == "sgr":
+        token = token[:2] + "\x1b[31m" + token[2:]
+    elif split == "row":
+        token = token[:13] + "\n▌ " + token[13:]
+    source = tmp_path / "report.json"
+    source.write_text(json.dumps({"diagnostic": f"token = {token}. keep"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="credential"):
+        module["stage_artifacts"](source, tmp_path / "staged")
+    assert not (tmp_path / "staged").exists()
+    assert redact_diagnostics(f"token = {token}. keep") == "token = [redacted]. keep"

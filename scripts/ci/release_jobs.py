@@ -62,7 +62,34 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
                 "One turn: the hooks record it, the MCP server writes a decision (scripts/ci/stub_model.py; no tokens)",),
         }.items()}
     if workflow == "ci.yml":
+        backend_steps = (
+            "Run tests (-rs: a skipped test is named, never silent)",
+            "Only the skips expected on this system (scripts/ci/check_skips.py: a new skip fails, named)",
+        )
+        frontend_steps = ("Build (typecheck-gated)", "Unit tests")
+        zones = ("America/Los_Angeles", "Asia/Kolkata")
+        clocks = ("2026-11-30T23:59:58", "2026-12-31T23:59:58", "2026-11-01T01:59:58")
         return {
+            **{f"Backend ({os}, Python 3.12)": backend_steps for os in SYSTEMS},
+            **{f"Backend (ubuntu-latest, Python {version})": backend_steps for version in ("3.11", "3.13", "3.14")},
+            **{f"Backend (TZ={zone})": (f"Run tests in {zone} (-rs: a skipped test is named)",
+                                       "Only the skips expected on this system") for zone in zones},
+            **{f"Backend (clock at {clock})": (f"The date-heavy tests at {clock}, Los Angeles time",
+                                              "Check that the clock suite actually ran") for clock in clocks},
+            "Dependency audit": ("Python (the versions users get)", "npm (what ships; high and critical fail, moderate is listed)"),
+            "Frontend (Node 20)": frontend_steps,
+            "Frontend (Node 22)": (*frontend_steps, "Unit tests with the clock behind UTC (a day's edge, a date read as UTC)"),
+            "End to end (Playwright)": ("Happy path against the demo data",),
+            "End to end (Playwright, macOS)": ("Every page and the flows",),
+            **{f"Fresh user ({os})": ("From clone to a working setup",) for os in SYSTEMS},
+            **{f"Launcher ({os})": ("Healthy", "Nothing left serving",
+                                    "Start at login and the shortcut, for real (the runner's own login entry, its shortcut, then off)")
+               for os in SYSTEMS},
+            **{f"Real Claude Code 2.1.312 and Codex 0.167.0 against stub models ({os})": (
+                "One turn: the hooks record it, the MCP server writes a decision (scripts/ci/stub_model.py; no tokens)",
+                "codex exec against a stub of the Responses API: recorded as a helper of the chat in its environment, "
+                "with its effort (scripts/ci/stub_responses.py; no tokens, no key)",
+            ) for os in SYSTEMS},
             **{f"Real Codex ({os})": CODEX_LIMITS for os in SYSTEMS},
             **{f"Interactive agent ({tool}, {os})": (INTERACTIVE_STUB,) for tool in TOOLS for os in SYSTEMS},
             **{f"Interactive agent (opencode, {os})": (INTERACTIVE_STUB, HEADLESS_OPENCODE) for os in SYSTEMS},
@@ -91,9 +118,7 @@ def problem(workflow: str, payload: dict, sha: str) -> str:
             if matches != ["success"]:
                 conclusion = matches[0] if matches else "missing"
                 return f"required step did not pass: {name} / {step} ({conclusion})"
-    if workflow == "ci.yml" and len(jobs) != 40:
-        return f"required CI matrix is incomplete: {len(jobs)} jobs, expected 40"
-    if workflow != "ci.yml" and len(jobs) != len(required):
+    if len(jobs) != len(required):
         return f"{workflow}: expected {len(required)} jobs, got {len(jobs)}"
     for name, job in by_name.items():
         if job.get("head_sha") != sha:

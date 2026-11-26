@@ -8,7 +8,7 @@ import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
-from .. import hookshared, limits, titlelib
+from .. import hookshared, limits, thinklib, titlelib
 from ..csvio import rewrite_rows
 from ..db import ViewStore
 from ..docs_md import resolve_under
@@ -61,7 +61,7 @@ _OPERATOR_FIELDS = frozenset({
     "lane", "assignee", "impact", "effort", "novelty", "tokens", "position", "projects", "remember",
 })
 # Keys an update body may carry that are not task columns.
-_UPDATE_META_KEYS = frozenset({"actor", "agent_id", "description", "turn", "comment"})
+_UPDATE_META_KEYS = frozenset({"actor", "agent_id", "description", "turn", "comment", "think"})
 #: Above an agent's comment, after the operator's text (the operator's wording).
 COMMENT_MARK = "--- comment from agent:"
 RESURFACE_EVERY_MAX = 36500   # a hundred years
@@ -95,6 +95,11 @@ def tasks_update(
     actor = identity_of(body)
     is_agent = actor not in _HOUSE_ACTORS
     if is_agent:
+        if "think" in body:
+            refuse_agent(f"the «{thinklib.MARK}» mark is the operator's", "only the operator sets or removes it")
+        moving = {k: body[k] for k in ("status", "lane", "assignee") if k in body}
+        if moving:
+            thinklib.refusal(store, task_id, actor, f"changing its {', '.join(moving)}", moving)
         held = sorted(k for k in body if k in _OPERATOR_FIELDS)
         if held:
             refuse_agent(
@@ -199,6 +204,15 @@ def tasks_update(
                 if old:
                     target[stamp_field] = ""
                     changes.append((stamp_field, old, ""))
+        if "think" in body:
+            # The operator's think mark: on (stamped now) or off.
+            was = str(target.get("think_at") or "")
+            if body["think"] in (True, "yes", "1", "true") and not was:
+                target.update(thinklib.mark_fields())
+                changes.append(("think", "", "set on the board"))
+            elif body["think"] in (False, "", "no", "0", "false", None) and was:
+                target["think_at"] = target["think_by"] = ""
+                changes.append(("think", was, ""))
         if "_agent_tags" in body:
             # The agent's tags replace its own (ag_*) on the card; the
             # operator's stay.
@@ -398,6 +412,7 @@ def tasks_events(
 @router.post("/api/tasks/{task_id}/archive")
 def tasks_archive(task_id: str, body: dict = Body(default={}), store: ViewStore = Depends(get_store)) -> dict:
     """Hide the task from the board, keep everything; reversible."""
+    thinklib.refusal(store, task_id, identity_of(body), "archiving it")
     return _set_archived(store, task_id, time.strftime("%Y-%m-%dT%H:%M:%S"), identity_of(body) or _DEFAULT_ACTOR)
 
 
@@ -531,3 +546,17 @@ def tasks_detail(
         "turns": [t.as_dict() for t in turns],
         "turns_n": len(turns),
     }, etag)
+
+
+@router.post("/api/tasks/{task_id}/move")
+def task_move(task_id: str, body: Any = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    """``{to}``: the task moves to project ``to``, keeping its id
+    (tasklib.move_task). The operator, or an agent at task level 3 that is a
+    member of both projects (MCP ``task_move``)."""
+    from ..tasklib import move_task
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail=f"the body is one object {{to}}, not a {type(body).__name__}")
+    to = body.get("to")
+    if not isinstance(to, str):
+        raise HTTPException(status_code=422, detail="to is one project code, as text")
+    return move_task(store, task_id, to, identity_of(body))

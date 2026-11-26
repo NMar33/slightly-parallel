@@ -1,5 +1,7 @@
 import { ProjectFolder } from '../../../lib/paths'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { BOARD_KEY } from './boardData'
 import { askToTrack, useWork } from '../../../lib/timer'
 import { toast } from '../../../components/primitives'
 import { Confirm } from '../../../components/Confirm'
@@ -128,6 +130,21 @@ export function TaskAddModal({
   // Important: a star that outlives done — for "what were the important
   // ones" later, not for redoing. The same star #important sets.
   const [remember, setRemember] = useState(existingTask?.remember === 'yes')
+  // The operator's «think» mark: the badge's × removes it at once, as on the card.
+  const qc = useQueryClient()
+  const [thinkAt, setThinkAt] = useState(existingTask?.think_at ?? '')
+  const thinkOff = async () => {
+    if (!existingTask) return
+    const was = thinkAt
+    setThinkAt('')
+    try {
+      await postJson(`/api/tasks/${encodeURIComponent(existingTask.id)}/update`, { think: false, actor: OPERATOR_ACTOR })
+      void qc.invalidateQueries({ queryKey: BOARD_KEY })
+    } catch {
+      setThinkAt(was)
+      toast.error(t('The think mark was not removed'))
+    }
+  }
   // Bring it back: a comeback date, a target column, an optional repeat.
   const [resurfaceOn, setResurfaceOn] = useState(existingTask?.resurface_on ?? '')
   const [resurfaceTo, setResurfaceTo] = useState(existingTask?.resurface_to || 'todo')
@@ -408,6 +425,7 @@ export function TaskAddModal({
     <Modal tone="window" labelledBy="task-modal-title" onClose={onClose}
       width="w-full" maxWidth={MODAL_WIDTH_PX[prefs.width]} padding="p-14" className="flex flex-col gap-10">
         <EditorHeader isEdit={isEdit} existingTask={existingTask} onRelease={onRelease}
+          thinkAt={thinkAt} onThinkOff={() => void thinkOff()}
           tuning={tuning} setTuning={setTuning} onClose={onClose} />
 
         {tuning && <WindowPrefs prefs={prefs} applyPrefs={applyPrefs} />}

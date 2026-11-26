@@ -21,7 +21,7 @@ from ..docs_md import parse_sections, resolve_under, safe_ref_part
 from ..file_safety import atomic_write
 from ..models import ScanCreate, ScanDetail, ScanRow, ScansListResponse
 from .deps import (
-    clean, etag_for, get_store, json_response, known_project, maybe_304, rows_as,
+    clean, etag_for, get_store, json_response, known_project, material_for, maybe_304, rows_as,
 )
 
 router = APIRouter()
@@ -182,6 +182,7 @@ def scans_material(
     request: Request,
     project: str = Query(...),
     agent_id: str = Query(""),
+    cwd: str = Query("", description="the asking chat's folder: a warning when the project's is another"),
     store: ViewStore = Depends(get_store),
 ) -> dict:
     """What a scan is written from: the commits and files since the project's
@@ -190,8 +191,10 @@ def scans_material(
     from pathlib import Path
 
     code = known_project(store, project)
+    extra = material_for(store, code, agent_id, cwd)
     root = getattr(request.app.state, "prompt_root", None) or Path(__file__).resolve().parents[3]
     return {
+        **extra,
         **scanlib.material(store, code, agent_id.strip()),
         "instructions": scanlib.instructions(Path(root)),
         "next": (

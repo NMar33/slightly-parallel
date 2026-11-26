@@ -490,7 +490,7 @@ export function EditAgentButton({ p, code, label = false }: { p: AgentProfile; c
         type="button"
         onClick={() => setOpen(true)}
         aria-label={t('Edit {profileLabel}', { profileLabel: profileLabel(p) })}
-        title={t('rename · group')}
+        title={t('rename · group · projects')}
         className={`inline-flex items-center gap-4 rounded-input text-tertiary hover:text-primary hover:bg-hover ${label ? 'px-8 h-24 text-11' : 'h-24 w-24 justify-center'}`}
       >
         <Pencil size={11} aria-hidden />

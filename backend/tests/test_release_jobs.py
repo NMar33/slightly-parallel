@@ -39,7 +39,6 @@ def test_full_ci_cannot_release_with_a_missing_interactive_stub_job(missing):
          "steps": [{"name": step, "conclusion": "success"} for step in steps]}
         for name, steps in module["required_jobs"]("ci.yml").items() if name != missing
     ]
-    jobs.extend({"name": f"Optional job {index}", "head_sha": sha, "conclusion": "success"} for index in range(30))
     issue = module["problem"]("ci.yml", {"jobs": jobs, "total_count": len(jobs)}, sha)
     assert issue == f"required job missing: {missing}"
 
@@ -56,7 +55,6 @@ def test_full_ci_requires_the_offline_codex_core_on_all_systems(os):
         ]}
         for name, steps in module["required_jobs"]("ci.yml").items()
     ]
-    jobs.extend({"name": f"Optional job {index}", "head_sha": sha, "conclusion": "success"} for index in range(28))
     issue = module["problem"]("ci.yml", {"jobs": jobs, "total_count": len(jobs)}, sha)
     assert issue == f"required step did not pass: {job_name} / {step_name} (missing)"
 
@@ -71,3 +69,28 @@ def test_pipeline_proof_rejects_a_duplicate_named_step():
          "steps": [{"name": step, "conclusion": "failure"}, {"name": step, "conclusion": "success"}]},
     ]}
     assert module["problem"](workflow, payload, sha) == f"duplicate required step: {name} / {step}"
+
+
+@pytest.mark.parametrize(("name", "step"), [
+    ("Backend (windows-latest, Python 3.12)", "Run tests (-rs: a skipped test is named, never silent)"),
+    ("Backend (TZ=Asia/Kolkata)", "Only the skips expected on this system"),
+    ("Backend (clock at 2026-11-30T23:59:58)", "Check that the clock suite actually ran"),
+    ("Frontend (Node 22)", "Unit tests"),
+    ("Fresh user (windows-latest)", "From clone to a working setup"),
+    ("End to end (Playwright, macOS)", "Every page and the flows"),
+    ("Launcher (ubuntu-latest)", "Nothing left serving"),
+    ("Dependency audit", "Python (the versions users get)"),
+])
+def test_full_ci_rejects_a_green_job_when_its_test_step_was_skipped(name, step):
+    module = run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "ci" / "release_jobs.py"))
+    sha = "e" * 40
+    required = module["required_jobs"]("ci.yml")
+    jobs = [
+        {"name": job, "head_sha": sha, "conclusion": "success",
+         "steps": [{"name": action, "conclusion": "skipped" if (job, action) == (name, step) else "success"}
+                   for action in steps]}
+        for job, steps in required.items()
+    ]
+    assert module["problem"]("ci.yml", {"jobs": jobs, "total_count": len(jobs)}, sha) == (
+        f"required step did not pass: {name} / {step} (skipped)"
+    )

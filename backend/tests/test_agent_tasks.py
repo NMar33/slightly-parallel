@@ -51,7 +51,10 @@ def test_an_agent_task_lands_in_the_agent_column(client: TestClient) -> None:
     explicit = _post(client, created_time="21:11", status="agent")
     assert explicit["metadata"]["status"] == "agent"
     wrong = _post(client, expect=422, created_time="21:12", status="todo")
-    assert "agent" in wrong["detail"] and "todo" in wrong["detail"]
+    # This agent has no captured chat: no #now can be read, so the refusal
+    # says retry, never "write it in `agent`" (tk_1cb0324a).
+    assert "not captured yet" in wrong["detail"] and "todo" in wrong["detail"]
+    assert "`agent` column" not in wrong["detail"]
 
 
 def test_tags_come_from_the_closed_set_one_to_three(client: TestClient) -> None:
@@ -125,13 +128,55 @@ def test_task_takes_the_lane_the_operator_named_in_braces(tmp_path: Path) -> Non
     c.__exit__(None, None, None)
 
 
-def test_a_lane_the_board_does_not_have_is_refused_with_the_list(tmp_path: Path) -> None:
+def test_a_lane_the_board_does_not_have_is_a_new_lane(tmp_path: Path) -> None:
+    # Braces that name no project and no live lane name a new lane
+    # (tk_d1d25a4d step 3, note nt_258a7ed7 §3; before it, refused).
     root = tmp_path / "data"
     c = _board(root, "#task {ux} the form accepts an empty trigger_id")
     r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
                                    "agent_id": "cc-a", "title": "x", "tags": "ag_bug"})
+    assert r.status_code == 201, r.text
+    assert r.json()["metadata"]["lane"] == "ux"
+    c.__exit__(None, None, None)
+
+
+def test_a_lane_the_agent_names_itself_is_never_new(tmp_path: Path) -> None:
+    # The operator's decision (vision vs_5dd903f1, tk_79e9f2cd): a new lane
+    # is the operator's to make. The operator's braces still make one at
+    # once; an agent naming a lane of its own that the board lacks is refused,
+    # one the board has is dropped as before (the lane is the operator's).
+    root = tmp_path / "data"
+    c = _board(root, "look into the form, it accepts an empty trigger_id")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "x", "tags": "ag_bug", "lane": "brand-new"})
     assert r.status_code == 422, r.text
-    assert "'ux'" in r.text and "Bugs" in r.text and "Kanban Board" in r.text and "ask the operator" in r.text
+    assert "'brand-new' is not on the board" in r.text and "Bugs, Kanban Board" in r.text
+    assert "a new lane is the operator's to make" in r.text
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:11", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "y", "tags": "ag_bug", "lane": "Bugs"})
+    assert r.status_code == 201, r.text
+    assert not r.json()["metadata"].get("lane") and "lane" in r.json().get("ignored", [])
+    c.__exit__(None, None, None)
+    # The operator's own braces with a new lane: the card is made in it.
+    c = _board(tmp_path / "data2", "#task {ux} the form accepts an empty trigger_id")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "x", "tags": "ag_bug", "lane": "ux"})
+    assert r.status_code == 201 and r.json()["metadata"]["lane"] == "ux", r.text
+    c.__exit__(None, None, None)
+
+
+def test_a_near_miss_of_a_lane_the_board_has_is_made_and_asked_after(tmp_path: Path) -> None:
+    # {bug} for the board's Bugs is a typo, not a new lane (the critic of c1):
+    # the card is made in the default lane all the same, and the answer says
+    # what to ask the operator (tk_970d6b2d: a refusal lost the card).
+    root = tmp_path / "data"
+    c = _board(root, "#task {bug} the form accepts an empty trigger_id")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "x", "tags": "ag_bug"})
+    assert r.status_code == 201, r.text
+    assert not r.json()["metadata"].get("lane")
+    assert r.json()["ask"] == ("ask the operator in one line: {bug} is not a lane of alpha's board — "
+                               "did you mean Bugs, or a new lane bug? (to name a new one: {lane:bug})")
     c.__exit__(None, None, None)
 
 

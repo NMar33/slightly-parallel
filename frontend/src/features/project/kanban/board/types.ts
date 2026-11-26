@@ -19,6 +19,7 @@ export type ByLaneCol = {
 /** The link and hover wiring every render of a card gets (the board's linkProps). */
 type LinkWiring = {
   onImportant: (t: TaskRow, next: boolean) => void
+  onThinkOff: (t: TaskRow) => void
   link: LinkInfo | undefined
   linksMode: boolean
   armed: boolean

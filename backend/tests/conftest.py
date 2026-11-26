@@ -474,6 +474,27 @@ def _agents_may_write_over_http(monkeypatch):
     monkeypatch.setattr(_server.AgentsViaMcp, "_enforced", lambda self: False)
 
 
+class _EveryProject(list):
+    """The member projects of an agent the suite never recorded: every one."""
+
+    def __contains__(self, _code: object) -> bool:
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _unrecorded_agents_write_anywhere(request, monkeypatch):
+    """The suite posts as agents it never gave a chat (``cc-test``, ``x``):
+    in the product an agent Slightly Parallel has not recorded is refused
+    (memberships.may_write, tk_d1d25a4d step 3). Here such an agent is a
+    member of every project; a recorded agent is checked as in the product.
+    Tests marked ``strict_membership`` see the product's refusal."""
+    if request.node.get_closest_marker("strict_membership") is not None:
+        return
+    from backend import memberships
+    monkeypatch.setattr(memberships, "unrecorded",
+                        lambda agent: memberships.AgentView(agent, _EveryProject(), "", 2))
+
+
 @pytest.fixture(autouse=True)
 def _never_touch_real_env(tmp_path, monkeypatch):
     """No test may write the repo's real .env — redirect it wholesale.

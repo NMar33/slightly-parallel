@@ -20,13 +20,12 @@ from pathlib import Path
 from common import WINDOWS, redact_diagnostics
 
 SCREEN_POLL_INTERVAL_S = 0.3
-KEY_PRESS_SETTLE_S = 0.5
-CODEX_PROMPT_TIMEOUT_S = 30
 PTY_CLOSE_TIMEOUT_S = 3
 
 _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|[\x00-\x08\x0e-\x1f]")
 DOWN, ENTER = "\x1b[B", "\r"
 _CURSOR_MODE = re.compile(r"\x1b\[\?1([hl])")
+_PASTE_MODE = re.compile(r"\x1b\[\?2004([hl])")
 _CURSOR_ARROWS = {"\x1b[A": "\x1bOA", DOWN: "\x1bOB"}
 KITTY_KEYBOARD_QUERY = "\x1b[?u"
 ROWS, COLS = 45, 160
@@ -58,6 +57,52 @@ class TerminalTrace:
             log.write(f"\n--- {label} ---\n{redact_diagnostics(self.rendered)}\n")
 
 
+def _opencode_composer(frame: str) -> str:
+    from wcwidth import wcwidth, wcswidth
+
+    lines = frame.splitlines()
+    for index in range(len(lines) - 1, 1, -1):
+        border = re.fullmatch(r"( *)╹▀{4,}(?: {2,}\S.*)?", lines[index])
+        if border:
+            break
+    else:
+        return ""
+    # Input rows and the mode/model row have the same left border.
+    prefix = border[1] + "┃"
+    status = lines[index - 1]
+    if not status.startswith(prefix):
+        return ""
+    # OpenCode starts the right pane at the same column on each row.
+    # The status row leaves an aligned gap before its workspace label.
+    status_body = status[len(prefix):].lstrip()
+    gap = re.search(r" {4,}(?=\S)", status_body)
+    width = wcswidth(status[:len(status) - len(status_body) + gap.end()]) if gap else 0
+    rows = []
+    for line in reversed(lines[:index - 1]):
+        if not line.startswith(prefix):
+            break
+        if width:
+            columns = 0
+            for offset, char in enumerate(line):
+                columns += max(0, wcwidth(char))
+                if columns > width:
+                    line = line[:offset]
+                    break
+        rows.append(line[len(prefix):])
+    return "\n".join(reversed(rows))
+
+
+def _claude_paste_marker(frame: str) -> tuple[str, str] | None:
+    lines = frame.splitlines()
+    dividers = [index for index, line in enumerate(lines) if re.fullmatch(r" *─{8,} *", line)]
+    if len(dividers) < 2:
+        return None
+    top, bottom = dividers[-2:]
+    composer = "\n".join(lines[top + 1:bottom]).strip()
+    match = re.fullmatch(r"[❯>]\s*\[Pasted text #(\d+)(?: \+\d+ lines?)?\](.*)", composer, re.S)
+    return (match[1], re.sub(r"\s", "", match[2])) if match else None
+
+
 class Screen:
     """One program on a pseudo-terminal: what it shows so far, and keys to send."""
 
@@ -65,8 +110,10 @@ class Screen:
                  reply_to_kitty_query: bool = True, columns: int = COLS):
         self.text = ""
         self.history = ""
+        self._paste_before_input: tuple[str, str] | None = None
         self.exited = False
         self.application_cursor = False
+        self.bracketed_paste = False
         self.reply_to_kitty_query = reply_to_kitty_query
         self._cursor_tail = ""
         self.trace = TerminalTrace(trace, columns) if trace is not None else None
@@ -130,7 +177,9 @@ class Screen:
         controls = self._cursor_tail + text
         if modes := _CURSOR_MODE.findall(controls):
             self.application_cursor = modes[-1] == "h"
-        self._cursor_tail = controls[-4:]
+        if modes := _PASTE_MODE.findall(controls):
+            self.bracketed_paste = modes[-1] == "h"
+        self._cursor_tail = controls[-7:]
         self._answer(text)
         if self.trace is not None:
             self.trace.feed(text)
@@ -158,30 +207,49 @@ class Screen:
                 continue
             self._write(said)
 
-    def wait_for(self, words: str, seconds: float) -> bool:
+    def wait_for(self, words: str, seconds: float, *, tool: str = "") -> bool:
         """Until the screen shows these words. A full-screen program moves the
         cursor between words instead of writing spaces: they are compared without."""
-        end = time.time() + seconds
+        end = time.monotonic() + seconds
         want = re.sub(r"\s", "", words)
-        while time.time() < end:
+        previous_paint = None
+        while time.monotonic() < end:
             self.read()
-            if want in re.sub(r"\s", "", self.rendered):
+            frame = self.rendered
+            if tool == "opencode":
+                if want == re.sub(r"\s", "", _opencode_composer(frame)):
+                    return True
+            elif want in re.sub(r"\s", "", frame):
                 return True
+            elif tool == "claude-code" and len(words) > COLS:
+                marker = _claude_paste_marker(frame)
+                original = self._paste_before_input
+                if marker and marker == previous_paint and (not original or marker[0] != original[0]) and want.endswith(marker[1]):
+                    # Claude elides all or part of the paste. Verify any
+                    # visible suffix here and the complete capture after Enter.
+                    return True
+                previous_paint = marker
             time.sleep(SCREEN_POLL_INTERVAL_S)
         return False
 
-    def send(self, keys: str) -> None:
+    def send(self, keys: str, *, paste: bool = False) -> None:
         self.save_frame("before input")
+        self._paste_before_input = _claude_paste_marker(self.rendered) if len(keys) > COLS else None
         self.history = (self.history + "\n" + self.text.rstrip())[-SCREEN_HISTORY_CHARS:]
         self.text = ""  # what comes after this key
-        self._write(_CURSOR_ARROWS.get(keys, keys) if self.application_cursor else keys)
-        time.sleep(KEY_PRESS_SETTLE_S)
+        if paste and self.bracketed_paste:
+            keys = f"\x1b[200~{keys}\x1b[201~"
+        elif self.application_cursor:
+            keys = _CURSOR_ARROWS.get(keys, keys)
+        self._write(keys)
 
     def _write(self, keys: str) -> None:
         if WINDOWS:
             self.proc.write(keys)
         else:
-            os.write(self.fd, keys.encode())
+            remaining = memoryview(keys.encode())
+            while remaining:
+                remaining = remaining[os.write(self.fd, remaining):]
 
     def close(self) -> None:
         if WINDOWS:
@@ -283,20 +351,12 @@ def trust_codex(folder: Path, env: dict[str, str], home: Path, seconds: float = 
     """Open Codex in the folder, trust the folder and its hooks on Codex's own
     screen, and check that Codex saved the hooks' trust. Answers (done, what
     the screen showed last)."""
+    from agents import tools
+    from interactive import _ready
+
     screen = Screen(codex_pty_args(), folder, env)
     try:
-        if screen.wait_for("Trust this folder", seconds):
-            screen.send(ENTER)
-        # The choice's own words: a heading's letter can be lost in the drawing ("Hooks eed review", macOS).
-        if not screen.wait_for("Trust all and continue", seconds):
-            return False, screen.text[-600:]
-        screen.send(DOWN)            # "Trust all and continue", the second choice
-        screen.send(ENTER)
-        screen.wait_for("Ask Codex", CODEX_PROMPT_TIMEOUT_S)
+        ready = _ready(screen, tools()["codex"], seconds, [], home / ".codex" / "config.toml")
+        return ready, screen.rendered[-600:]
     finally:
         screen.close()
-    try:
-        saved = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
-    except OSError:
-        saved = ""
-    return "trusted_hash" in saved, saved[-600:]

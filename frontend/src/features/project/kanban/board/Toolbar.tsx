@@ -14,7 +14,7 @@ import { SwitchChip } from './controls'
 import { KanbanInfo } from './dialogs'
 import { t } from '../../../../i18n/scope/project'
 
-/** Two remembered switches (descriptions, copy) and two momentary lenses. */
+/** Two remembered switches (descriptions, copy) and three momentary lenses. */
 export function useBoardSwitches() {
   // Remembered per browser: descriptions on cards, and per-task copy
   // affordances (which also unlock column copy and bulk move). Off by
@@ -29,13 +29,16 @@ export function useBoardSwitches() {
     setCopyMode(!copyMode)
     persistPref('sp-kanban-copy', copyMode ? '0' : '1')
   }
-  // A momentary lens: only the starred tasks, or only today's. Not remembered across loads.
+  // A momentary lens: only the starred tasks, only today's, or only the
+  // «think» ones. Not remembered across loads.
   const [onlyRemembered, setOnlyRemembered] = useState(false)
   const [onlyToday, setOnlyToday] = useState(false)
+  const [onlyThink, setOnlyThink] = useState(false)
   return {
     showDesc, toggleDesc, copyMode, toggleCopy,
     onlyToday, toggleOnlyToday: () => setOnlyToday((v) => !v),
     onlyRemembered, toggleOnlyRemembered: () => setOnlyRemembered((v) => !v),
+    onlyThink, toggleOnlyThink: () => setOnlyThink((v) => !v),
   }
 }
 
@@ -86,6 +89,12 @@ export function BoardToolbar({ sw, linksMode, toggleLinks, tasksN, todayN, proje
           onToggle={sw.toggleOnlyRemembered}
           label="★"
           title={t('Show only important tasks (★)')}
+        />
+        <SwitchChip
+          on={sw.onlyThink}
+          onToggle={sw.toggleOnlyThink}
+          label={t('think')}
+          title={t('Show only the tasks marked «think»: yours to think through')}
         />
       </div>
       {/* The film is a page, not a lightbox. Opening it over the board

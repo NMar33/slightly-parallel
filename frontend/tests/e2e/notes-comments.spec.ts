@@ -2,7 +2,9 @@ import { expect, test } from '@playwright/test'
 
 test('Notes keeps separate comments on a checklist item and on the whole note', async ({ page, request }) => {
   await request.get('/api/health', { headers: { 'Sec-Fetch-Site': 'same-origin' } })
-  const agent = { project: 'alpha-labs', agent_id: 'cc-e2e-note-comments', kind: 'report' }
+  // A chat the demo data recorded in pdr-framework-dev: an agent Slightly Parallel
+  // has no chat of writes nothing (tk_d1d25a4d step 3).
+  const agent = { project: 'pdr-framework-dev', agent_id: 'mira-sztern-lenses-2608-09', kind: 'report' }
   const write = (body: Record<string, unknown>) => request.post('/api/notes/write', {
     headers: { 'X-SP-Via': 'mcp' },
     data: { ...agent, ...body },

@@ -756,7 +756,8 @@ def _delete_project_data(store: ViewStore, code: str, trash: Path,
     # behind, a starred message pointed at a chat that was gone.
     from .donelib import DONE_COLUMNS, DONE_CSV
     from .marklib import MARK_COLUMNS, MARKS_CSV
-    for name, cols in ((MARKS_CSV, MARK_COLUMNS), (DONE_CSV, DONE_COLUMNS)):
+    from .thinklib import THINK_COLUMNS, THINK_CSV
+    for name, cols in ((MARKS_CSV, MARK_COLUMNS), (DONE_CSV, DONE_COLUMNS), (THINK_CSV, THINK_COLUMNS)):
         n = _split_rows(data_root, trash, name, cols, is_project)
         if n:
             moved[name.removesuffix(".csv")] = n

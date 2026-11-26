@@ -338,7 +338,7 @@ def test_the_server_refuses_what_it_cannot_keep(env) -> None:
     # A chat of another project does not write this note's next version.
     who.update({"project": "beta", "agent_id": OTHER})
     c.app.state.store.rebuild()
-    with pytest.raises(mcp.ApiError, match="is a note of alpha"):
+    with pytest.raises(mcp.ApiError, match="is not a member of alpha; this note is alpha.s"):
         tr.call("note_write", {"id": nid, "text": "# x", "kind": "plan"})
 
 

@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import corelib, keeplib, limits
+from . import corelib, keeplib, limits, memberships
 from .actors import is_agent
 from .answers import mint_id
 from .csvio import append_if_absent, append_row, as_int, read_rows, rewrite_rows
@@ -694,13 +694,6 @@ def remove_item(store: ViewStore, item_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _agent_project(store: ViewStore, agent: str) -> str:
-    for a in store.agents():
-        if str(a.get("agent_id") or "") == agent:
-            return str(a.get("project") or "")
-    return ""
-
-
 def _list(body: dict, key: str) -> list[Any]:
     v = body.get(key)
     if v in (None, ""):
@@ -856,9 +849,9 @@ def write(store: ViewStore, any_id: str, body: dict, actor: str) -> dict[str, An
     project = str(row.get("project") or "")
     agent = is_agent(actor)
     if agent:
-        mine = _agent_project(store, actor)
-        if mine and project and mine != project:
-            raise PublishRefused(f"{card_id} is a card of {project}; this chat works in {mine}. Nothing was written")
+        ok, line = memberships.may_write_row(store, actor, project, "card")
+        if not ok:
+            raise PublishRefused(line)
     text = body.get("text")
     context = body.get("context")
     for key, v in (("text", text), ("context", context)):

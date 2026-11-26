@@ -20,6 +20,8 @@ export interface YearSession {
   created_date: string
   start_time: string
   end_time: string
+  /** Minutes from the first turn to the last: the span the operator was at it. */
+  duration_min?: number
   agent_min: number
   turns_n: number
   tasks?: number
@@ -133,6 +135,75 @@ export function yearGrid(days: Map<string, YearSession[]>, now = new Date(), mos
     out.push({ day: key, date: d, minutes: (days.get(key) ?? []).reduce((s, x) => s + (Number(x.agent_min) || 0), 0), future: d > today })
   }
   return out
+}
+
+/** The year heatmap's layers, in the order the pill steps through them. */
+export const LAYERS = ['agent', 'you', 'ratio', 'lines'] as const
+export type Layer = typeof LAYERS[number]
+
+/** Below this many minutes of the operator's time a day has no ratio. */
+export const RATIO_FLOOR_MIN = 30
+
+/**
+ * The operator's minutes in work on a day: the union of the sessions'
+ * [start, start + duration] spans, overlaps merged so parallel chats count
+ * once. A span past midnight stops at the end of the day.
+ */
+export function yourMinutes(sessions: YearSession[]): number {
+  const spans: Array<[number, number]> = []
+  for (const s of sessions) {
+    const dur = Number(s.duration_min) || 0
+    if (dur <= 0) continue
+    const a = clock(s.start_time)
+    spans.push([a, Math.min(1440, a + dur)])
+  }
+  spans.sort((x, y) => x[0] - y[0])
+  let total = 0
+  let from = -1
+  let to = -1
+  for (const [a, b] of spans) {
+    if (a > to) { total += to - from; from = a; to = b } else if (b > to) to = b
+  }
+  total += to - from
+  return Math.min(1440, total)
+}
+
+/** Agent minutes per minute of the operator's time; 0 below the floor. */
+export function ratioOf(agent: number, you: number): number {
+  return you < RATIO_FLOOR_MIN ? 0 : agent / you
+}
+
+/**
+ * A session's agent minutes inside its day: the share of its span before
+ * midnight, the same cut `yourMinutes` makes, so the ratio's two sides
+ * count the same minutes. A session with no span keeps all of them.
+ */
+export function agentInDay(s: YearSession): number {
+  const agent = Number(s.agent_min) || 0
+  const dur = Number(s.duration_min) || 0
+  if (dur <= 0) return agent
+  const a = clock(s.start_time)
+  return agent * (Math.max(0, Math.min(1440, a + dur) - a) / dur)
+}
+
+/** One day's value on each layer. */
+export function layerValues(sessions: YearSession[]): Record<Layer, number> {
+  const agent = sessions.reduce((s, x) => s + (Number(x.agent_min) || 0), 0)
+  const you = yourMinutes(sessions)
+  return {
+    agent,
+    you,
+    ratio: ratioOf(sessions.reduce((s, x) => s + agentInDay(x), 0), you),
+    lines: sessions.reduce((s, x) => s + (Number(x.git?.add) || 0), 0),
+  }
+}
+
+/** The quantile cuts (25/50/80 % of the days with a value) and a value's step, 0–4. */
+export function stepsOf(values: number[]): (v: number) => number {
+  const nonzero = values.filter((v) => v > 0).sort((a, b) => a - b)
+  const q = (p: number) => nonzero[Math.floor(p * (nonzero.length - 1))] ?? 0
+  const cuts = [q(0.25), q(0.5), q(0.8)] as const
+  return (v) => (v <= 0 ? 0 : v <= cuts[0] ? 1 : v <= cuts[1] ? 2 : v <= cuts[2] ? 3 : 4)
 }
 
 /** Days in a row with agent time, ending today (or yesterday, while today is still empty). */

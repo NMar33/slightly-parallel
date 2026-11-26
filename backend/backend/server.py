@@ -34,6 +34,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -47,7 +48,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from .server_address import DEFAULT_PORT
-from . import __version__, app_settings, backup as backup_engine, logbook
+from . import __version__, app_settings, backup as backup_engine, logbook, memberships
+from .entitylib import project_codes
 from .csvio import DamagedFile
 from .config import Settings, lan_refusal
 from .db import FIXTURES, ViewStore
@@ -349,7 +351,7 @@ MCP_VIA_HEADERS = (MCP_VIA_HEADER, b"x-merkhet-via")
 from .mcp import TOOLS as _MCP_TOOLS  # noqa: E402 — the one tool list
 
 _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "task_evidence",
-                "task_story", "interpret", "skill_draft", "artifact_write", "doc_version",
+                "task_story", "task_move", "interpret", "skill_draft", "artifact_write", "doc_version",
                 "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
                 "task_done", "next_tasks",
                 "core_new", "core_note", "core_attach", "core_off", "publish_attach", "publish_write", "usage_prices_write",
@@ -380,7 +382,7 @@ _MCP_WRITE_PATHS = (
     r"/api/artifacts/[^/]+/write",
     r"/api/docs/[^/]+/versions",
     r"/api/skills/[^/]+/draft",
-    r"/api/tasks/[^/]+/(update|report|evidence|story|commits)",
+    r"/api/tasks/[^/]+/(update|report|evidence|story|commits|move)",
     r"/api/standups/(claim|postpone)",
     r"/api/architecture/page",
     r"/api/map",
@@ -538,6 +540,172 @@ class OperatorCookie:
         await self.app(scope, receive, with_cookie)
 
 
+def _task_project(store: ViewStore, task_id: str) -> tuple[str, ...] | None:
+    """The projects a task is worked in: its project first, then the codes
+    of its ``projects`` (the operator's answer (a) to B3: a member of any of
+    them works on it, as the boards show it there)."""
+    from .entitylib import project_codes
+    row = store.query_one("SELECT project, projects FROM tasks_mutual WHERE id = ?", (task_id,))
+    if row is None:
+        return None
+    main = str(row.get("project") or "")
+    return tuple(dict.fromkeys([main, *project_codes(row.get("projects"))]))
+
+
+def _via_task(sql: str) -> "Any":
+    """A row that belongs to a task (its note, link, evidence item): the task's project."""
+    def resolve(store: ViewStore, rid: str) -> tuple[str, ...] | None:
+        row = store.query_one(sql, (rid,))
+        return None if row is None else _task_project(store, str(row.get("task_id") or ""))
+    return resolve
+
+
+def _link_projects(store: ViewStore, rid: str) -> list[tuple[str, ...]] | None:
+    """A link joins two tasks: each task's projects, both checked."""
+    row = store.query_one("SELECT from_id, to_id FROM task_links_mutual WHERE id = ?", (rid,))
+    if row is None:
+        return None
+    got = [_task_project(store, str(row.get(k) or "")) for k in ("from_id", "to_id")]
+    return [p for p in got if p is not None]
+
+
+def _in_view(view: str) -> "Any":
+    def resolve(store: ViewStore, rid: str) -> str | None:
+        row = store.query_one(f"SELECT project FROM {view} WHERE id = ?", (rid,))
+        return None if row is None else str(row.get("project") or "")
+    return resolve
+
+
+def _core_project(store: ViewStore, rid: str) -> str | None:
+    from .corelib import CORES_FILE
+    from .csvio import read_rows
+    row = next((r for r in read_rows(store.data_root / CORES_FILE) if r.get("id") == rid), None)
+    return None if row is None else str(row.get("project") or "")
+
+
+def _lens_project(store: ViewStore, rid: str, base: str) -> str | None:
+    from .entities import ENTITIES
+    ent = next((e for e in ENTITIES.values() if e.view.removesuffix("_mutual") == base.replace("-", "_")), None)
+    if ent is None or "project" not in ent.columns:
+        return None
+    return _in_view(ent.view)(store, rid)
+
+
+#: The writes on one row by its id, and how the gate finds that row's project
+#: (note nt_258a7ed7 §2: writes by id are checked against the row). Tried in
+#: order; the first pattern that matches decides. A row not found passes: its
+#: router answers 404 (or, for a new id, the create is checked by its body).
+#: Notes' pictures, publishing cards, entry point stops and ways and the lens
+#: updates check their row in their libraries too (memberships.may_write_row).
+_ROW_WRITES: tuple[tuple["re.Pattern[str]", str, Any], ...] = (
+    (re.compile(r"/api/tasks/notes/([^/]+)/.+"), "task",
+     _via_task("SELECT task_id FROM task_notes_mutual WHERE id = ?")),
+    (re.compile(r"/api/tasks/links/([^/]+)/.+"), "task", _link_projects),
+    (re.compile(r"/api/tasks/evidence/([^/]+)/.+"), "task",
+     _via_task("SELECT task_id FROM task_evidence_mutual WHERE id = ?")),
+    (re.compile(r"/api/tasks/([^/]+)/.+"), "task", _task_project),
+    (re.compile(r"/api/cores/([^/]+)/.+"), "core", _core_project),
+    (re.compile(r"/api/docs/([^/]+)/.+"), "document", _in_view("docs_mutual")),
+    (re.compile(r"/api/(visions|rules|problems|entrypoints|artifacts|skills)/([^/]+)/.+"), "",
+     None),
+)
+#: The MCP write paths that name a row by its id and are checked in their
+#: libraries instead (the guard test reads both lists).
+ROW_CHECKED_IN_LIBRARIES: tuple[str, ...] = (
+    "/api/publishing/cards/", "/api/notes/", "/api/entrypoints/",
+)
+
+
+#: What finish-a-task writes after a #done: on a task the operator's #done
+#: closed in this chat, these go through in any project (answer 2,
+#: dc_f6ec18c8: an id next to #done closes a task in any project).
+_DONE_FOLLOWUP = re.compile(r"/api/tasks/([^/]+)/(report|evidence|story)")
+
+
+def closed_here(store: ViewStore, actor: str, path: str) -> bool:
+    """Did the operator's #done in this agent's chat close the task this
+    report, evidence or story is for? Only a #done that moved it (done.csv
+    result «moved»): one naming a task already done or archived closed
+    nothing, and gives no rights on it."""
+    hit = _DONE_FOLLOWUP.fullmatch(path)
+    if hit is None:
+        return False
+    from . import donelib
+    task_id = urllib.parse.unquote(hit.group(1))
+    return any(r.get("agent_id") == actor and r.get("task_id") == task_id
+               and r.get("result") == "moved" for r in donelib.rows(store))
+
+
+def row_of_write(store: ViewStore, path: str) -> tuple[list[tuple[str, ...]], str] | None:
+    """``(groups, what)`` of the row a by-id write names: one group of
+    project codes per row (a task's project and projects; a link's two
+    tasks are two groups), a member of any code of a group may write on
+    that row. None: no such route, or no such row."""
+    for pattern, what, resolve in _ROW_WRITES:
+        hit = pattern.fullmatch(path)
+        if hit is None:
+            continue
+        if resolve is None:
+            base, rid = hit.group(1), urllib.parse.unquote(hit.group(2))
+            got = _lens_project(store, rid, base)
+            what = {"entrypoints": "topic"}.get(base, base.rstrip("s"))
+        else:
+            got = resolve(store, urllib.parse.unquote(hit.group(1)))
+        if got is None:
+            return None
+        groups = got if isinstance(got, list) else [got]
+        return [g if isinstance(g, tuple) else (g,) for g in groups], what
+    return None
+PROJECT_SHAPE = "project is one project code, as text"
+PROJECTS_SHAPE = "projects is project codes: comma-separated text or a list of texts"
+
+
+def membership_refusal(store: ViewStore, path: str, data: Any, actor: str) -> tuple[int, str] | None:
+    """Why an agent's write may not go where it names (tk_d1d25a4d step 3,
+    note nt_258a7ed7 §2): ``(status, line)``, or None.
+
+    A create's ``project`` and every code in its ``projects`` must be the
+    agent's member projects (memberships.may_write); a write on a task by
+    its id must be on a task of a member project (the operator's answer 1,
+    dc_f59e2918). Writes on other rows by id are checked in their libraries
+    (memberships.may_write_row)."""
+    if not isinstance(data, dict):
+        return None
+    codes: list[str] = []
+    project = data.get("project")
+    if project not in (None, ""):
+        if not isinstance(project, str):
+            return 422, PROJECT_SHAPE
+        codes.append(project.strip())
+    raw = data.get("projects")
+    if raw not in (None, ""):
+        if not (isinstance(raw, str) or (isinstance(raw, list) and all(isinstance(x, str) for x in raw))):
+            return 422, PROJECTS_SHAPE
+        codes += [c for c in project_codes(raw) if c not in codes]
+    for code in codes:
+        ok, line = memberships.may_write(store, actor, code)
+        if not ok:
+            return 403, line
+    row = row_of_write(store, path)
+    if row is not None and closed_here(store, actor, path):
+        return None
+    for group in (row[0] if row is not None else []):
+        ok, line = memberships.may_write_row(store, actor, group[0], row[1] if row else "", also=group[1:])
+        if not ok:
+            return 403, line
+    if _LINK_CREATE.fullmatch(path) and isinstance(data.get("to"), str):
+        # A link joins two tasks: the other end is checked as the delete checks both.
+        other = _task_project(store, data["to"].strip())
+        if other is not None:
+            ok, line = memberships.may_write_row(store, actor, other[0], "task", also=other[1:])
+            if not ok:
+                return 403, line
+    return None
+
+
+_LINK_CREATE = re.compile(r"/api/tasks/[^/]+/link")
+
+
 class AgentsViaMcp:
     """Refuse an agent's write that did not come through the MCP translator.
 
@@ -608,9 +776,7 @@ class AgentsViaMcp:
             if not deps.is_agent(actor):
                 await JSONResponse({"detail": MCP_NEEDS_AGENT}, status_code=403)(scope, replay, send)
                 return
-            await self.app(scope, replay, send)
-            return
-        if actor and deps.is_agent(actor) and self._enforced():
+        elif actor and deps.is_agent(actor) and self._enforced():
             # The same status every other refusal of an agent carries
             # (routers/deps.refuse_agent) — this one cannot raise, it is
             # ASGI below FastAPI, so it spells the answer by hand.
@@ -619,12 +785,19 @@ class AgentsViaMcp:
             )
             await resp(scope, replay, send)
             return
-        if not deps.is_agent(actor) and not operator:
+        elif not deps.is_agent(actor) and not operator:
             # A write that names no agent is the operator's, and the
             # operator's pages carry the cookie (OperatorCookie). Anything
             # else on this computer posting as the operator is refused.
             await JSONResponse({"detail": OPERATOR_REFUSAL}, status_code=403)(scope, replay, send)
             return
+        if deps.is_agent(actor):
+            # Every agent writer, through the MCP or (agents.mcp_only off)
+            # over plain HTTP: the projects it names must be its own.
+            refused = membership_refusal(self.app_ref.state.store, path, data, actor)
+            if refused is not None:
+                await JSONResponse({"detail": refused[1]}, status_code=refused[0])(scope, replay, send)
+                return
         await self.app(scope, replay, send)
 
     def _enforced(self) -> bool:
@@ -719,6 +892,11 @@ def create_app(
         except (OSError, RuntimeError, ValueError, DamagedFile) as exc:
             log.warning("time entry migration skipped: %s", exc)
     store = ViewStore(data_root=root)
+    # The moments #now, #done and #think became commands here, made now if
+    # missing (nowlib.stamp_starts); never on the shipped fixtures.
+    if root.resolve() != FIXTURES.resolve():
+        from .nowlib import stamp_starts
+        stamp_starts(root)
     # Publish cards whose task the server used to guess at every read: the
     # sound guesses frozen into stored links once (publishlib.migrate).
     if root.resolve() != FIXTURES.resolve():
