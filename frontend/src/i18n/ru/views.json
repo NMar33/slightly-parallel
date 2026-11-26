@@ -198,7 +198,7 @@
   "ran in": "работал в",
   "folder not recorded": "папка не записана",
   "Edit {profileLabel}": "Изменить {profileLabel}",
-  "rename · group": "имя · группа",
+  "rename · group · projects": "имя · группа · проекты",
   "Open {profileLabel}": "Открыть {profileLabel}",
   "Open the agent's page: chats, files, folder": "Открыть страницу агента: чаты, файлы, папка",
   "started by": "запущен агентом",
@@ -1106,5 +1106,21 @@
     "one": "+ {n} чат из других проектов",
     "few": "+ {n} чата из других проектов",
     "many": "+ {n} чатов из других проектов"
-  }
+  },
+  "The projects could not be read": "Проекты не прочитались",
+  "Projects of this agent": "Проекты этого агента",
+  "projects": "проекты",
+  "Member projects": "Проекты, где он участник",
+  "home": "дом",
+  "Leave {project}": "Выйти из {project}",
+  "leave": "выйти",
+  "join": "добавить",
+  "Join a project": "Добавить в проект",
+  "join a project…": "добавить в проект…",
+  "a member of every project": "уже во всех проектах",
+  "task level": "уровень задач",
+  "home only": "только дом",
+  "picks by context": "выбирает по контексту",
+  "moves tasks": "переносит задачи",
+  "1: home only · 2: picks the project by context · 3: also moves tasks": "1: только дом · 2: проект по контексту · 3: ещё и переносит задачи"
 }

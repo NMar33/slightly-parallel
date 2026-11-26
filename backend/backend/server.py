@@ -540,21 +540,28 @@ class OperatorCookie:
         await self.app(scope, receive, with_cookie)
 
 
-def _task_project(store: ViewStore, task_id: str) -> str | None:
-    row = store.query_one("SELECT project FROM tasks_mutual WHERE id = ?", (task_id,))
-    return None if row is None else str(row.get("project") or "")
+def _task_project(store: ViewStore, task_id: str) -> tuple[str, ...] | None:
+    """The projects a task is worked in: its project first, then the codes
+    of its ``projects`` (the operator's answer (a) to B3: a member of any of
+    them works on it, as the boards show it there)."""
+    from .entitylib import project_codes
+    row = store.query_one("SELECT project, projects FROM tasks_mutual WHERE id = ?", (task_id,))
+    if row is None:
+        return None
+    main = str(row.get("project") or "")
+    return tuple(dict.fromkeys([main, *project_codes(row.get("projects"))]))
 
 
 def _via_task(sql: str) -> "Any":
     """A row that belongs to a task (its note, link, evidence item): the task's project."""
-    def resolve(store: ViewStore, rid: str) -> str | None:
+    def resolve(store: ViewStore, rid: str) -> tuple[str, ...] | None:
         row = store.query_one(sql, (rid,))
         return None if row is None else _task_project(store, str(row.get("task_id") or ""))
     return resolve
 
 
-def _link_projects(store: ViewStore, rid: str) -> list[str] | None:
-    """A link joins two tasks: the projects of both."""
+def _link_projects(store: ViewStore, rid: str) -> list[tuple[str, ...]] | None:
+    """A link joins two tasks: each task's projects, both checked."""
     row = store.query_one("SELECT from_id, to_id FROM task_links_mutual WHERE id = ?", (rid,))
     if row is None:
         return None
@@ -629,9 +636,11 @@ def closed_here(store: ViewStore, actor: str, path: str) -> bool:
                and r.get("result") == "moved" for r in donelib.rows(store))
 
 
-def row_of_write(store: ViewStore, path: str) -> tuple[list[str], str] | None:
-    """``(projects, what)`` of the row a by-id write names (a link: both
-    tasks' projects), or None (no such route, or no such row)."""
+def row_of_write(store: ViewStore, path: str) -> tuple[list[tuple[str, ...]], str] | None:
+    """``(groups, what)`` of the row a by-id write names: one group of
+    project codes per row (a task's project and projects; a link's two
+    tasks are two groups), a member of any code of a group may write on
+    that row. None: no such route, or no such row."""
     for pattern, what, resolve in _ROW_WRITES:
         hit = pattern.fullmatch(path)
         if hit is None:
@@ -644,7 +653,8 @@ def row_of_write(store: ViewStore, path: str) -> tuple[list[str], str] | None:
             got = resolve(store, urllib.parse.unquote(hit.group(1)))
         if got is None:
             return None
-        return (got if isinstance(got, list) else [got]), what
+        groups = got if isinstance(got, list) else [got]
+        return [g if isinstance(g, tuple) else (g,) for g in groups], what
     return None
 PROJECT_SHAPE = "project is one project code, as text"
 PROJECTS_SHAPE = "projects is project codes: comma-separated text or a list of texts"
@@ -679,15 +689,15 @@ def membership_refusal(store: ViewStore, path: str, data: Any, actor: str) -> tu
     row = row_of_write(store, path)
     if row is not None and closed_here(store, actor, path):
         return None
-    for project in (row[0] if row is not None else []):
-        ok, line = memberships.may_write_row(store, actor, project, row[1] if row else "")
+    for group in (row[0] if row is not None else []):
+        ok, line = memberships.may_write_row(store, actor, group[0], row[1] if row else "", also=group[1:])
         if not ok:
             return 403, line
     if _LINK_CREATE.fullmatch(path) and isinstance(data.get("to"), str):
         # A link joins two tasks: the other end is checked as the delete checks both.
         other = _task_project(store, data["to"].strip())
         if other is not None:
-            ok, line = memberships.may_write_row(store, actor, other, "task")
+            ok, line = memberships.may_write_row(store, actor, other[0], "task", also=other[1:])
             if not ok:
                 return 403, line
     return None

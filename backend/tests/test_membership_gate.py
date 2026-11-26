@@ -376,6 +376,29 @@ def test_a_done_that_closed_nothing_gives_no_rights(op: TestClient, root: Path, 
     assert tree(root) == before
 
 
+def test_a_task_shown_on_a_member_project_is_the_members_to_work_on(op: TestClient, root: Path) -> None:
+    # The operator's answer (a) to B3: a member of any project in a task's
+    # projects works on it, as one of its main project does.
+    shared = "tk_gamma_shared"
+    with (root / "tasks.csv").open("a", encoding="utf-8") as fh:
+        fh.write(f'{shared},2611-20,10:00,GAMMA,operator,Shared,todo,med,,,,,10,,,,,"GAMMA,BETA",,,,,,,,,,,\n')
+    (root / "projects" / "DELTA").mkdir()
+    delta = "cc-dddd4444"
+    make_chat(root, "DELTA", delta, [("2026-11-20T10:00:00", "work", "ok")])
+    op.app.state.store.rebuild()
+    for verb, body in UPDATES.values():
+        r = op.post(f"/api/tasks/{shared}/{verb}", json={"agent_id": A, **body}, headers=VIA)
+        assert "is not a member of" not in str(r.json().get("detail", "")), (verb, r.text)
+    before = tree(root)
+    r = op.post(f"/api/tasks/{shared}/update", json={"agent_id": delta, "status": "doing"}, headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (403, (
+        f"agent {delta} is not a member of GAMMA; this task is GAMMA's. The operator adds it on the agent card"))
+    assert tree(root) == before
+    # A link to it, from a member's task: the other end is the member's too.
+    r = op.post("/api/tasks/tk_alpha_auth/link", json={"agent_id": A, "to": shared, "kind": "relates"}, headers=VIA)
+    assert r.status_code == 201, r.text
+
+
 def test_the_operator_is_never_refused(op: TestClient) -> None:
     r = op.post(f"/api/tasks/{GAMMA_TASK}/update", json={"actor": "operator", "status": "doing"})
     assert r.status_code == 200, r.text

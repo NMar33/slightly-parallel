@@ -430,7 +430,8 @@ def may_write(store: Any, agent: str, project: str) -> tuple[bool, str]:
                                     projects=", ".join(view.members) or "none")
 
 
-def may_write_row(store: Any, agent: str, project: str, what: str) -> tuple[bool, str]:
+def may_write_row(store: Any, agent: str, project: str, what: str,
+                  also: Iterable[str] = ()) -> tuple[bool, str]:
     """``may_write`` for a write on an existing row (a task, a note, a card,
     a topic) of ``project``: the refusal names whose row it is. A row with
     no project passes (nothing to compare)."""
@@ -439,7 +440,9 @@ def may_write_row(store: Any, agent: str, project: str, what: str) -> tuple[bool
     view = agent_view(store, agent)
     if view is None:
         return False, UNINDEXED.format(agent=agent)
-    if _member(store, view, project):
+    # ``also``: the row's other projects (a task's ``projects``); a member of
+    # any of them writes on it too.
+    if any(_member(store, view, code) for code in (project, *also) if code):
         return True, ""
     return False, NOT_MEMBER_ROW.format(agent=agent, project=project, what=what)
 

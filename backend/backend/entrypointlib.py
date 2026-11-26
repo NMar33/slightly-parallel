@@ -358,7 +358,9 @@ def _member_of_row(store: ViewStore, row: dict[str, Any], who: str, what: str = 
     """An agent writes on a topic (or a task) of its member projects only."""
     if not is_agent(who):
         return
-    ok, line = memberships.may_write_row(store, who, str(row.get("project") or ""), what)
+    from .entitylib import project_codes
+    ok, line = memberships.may_write_row(store, who, str(row.get("project") or ""), what,
+                                         also=project_codes(row.get("projects")))
     if not ok:
         raise EntryRefused(line)
 
@@ -838,7 +840,8 @@ def set_task_topic(store: ViewStore, task_id: str, body: Any) -> dict[str, Any]:
         _member_of_row(store, row, who)
     elif is_agent(who):
         # Clearing: the task's own project stands in for the topic's.
-        _member_of_row(store, {"id": task_id, "project": str(task.get("project") or "")}, who, "task")
+        _member_of_row(store, {"id": task_id, "project": str(task.get("project") or ""),
+                               "projects": str(task.get("projects") or "")}, who, "task")
     rec = {"id": _mint("tt_", task_id), "task_id": task_id, "entrypoint_id": ep_id, "at": now_iso(), "actor": who}
     def mutate(rows: list[dict[str, str]]) -> bool:
         # One step under the lock, the file's creation included: two calls

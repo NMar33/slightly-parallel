@@ -141,6 +141,18 @@ def test_a_task_of_a_project_the_agent_is_not_in_is_not_moved(world) -> None:
     assert tree(root) == before
 
 
+def test_a_task_shown_on_a_member_project_may_be_moved_by_a_member(world) -> None:
+    # Answer (a) to B3: «member of both» is a member of the task's project or
+    # of any of its projects, and of the target.
+    c, _root = world
+    _level(c, 3)
+    assert c.post("/api/tasks/tk_beta_x/move", json={"actor": "operator", "to": "GAMMA"}).status_code == 200
+    assert c.post("/api/tasks/tk_beta_x/update", json={"actor": "operator", "projects": "GAMMA,BETA"}).status_code == 200
+    r = c.post("/api/tasks/tk_beta_x/move", json={"agent_id": A, "to": "ALPHA"}, headers=VIA)
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "GAMMA" and r.json()["projects"] == "ALPHA,BETA"
+
+
 def test_the_wrong_shape_of_to(world) -> None:
     c, root = world
     before = tree(root)
