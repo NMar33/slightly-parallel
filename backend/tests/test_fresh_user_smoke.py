@@ -557,7 +557,8 @@ def test_opencode_core_edit_requests_only_the_file_edit(scripted_onboarding, tmp
     work = scripted_onboarding._operator_core_prompt(space, state, scenario.WORK)
     assert "Edit calc.py with the file editing tool" in edit
     assert "Do not run shell commands or tests in this turn" in edit
-    assert work == scenario.step_prompt(space, state, scenario.WORK)
+    assert work.startswith(scenario.step_prompt(space, state, scenario.WORK))
+    assert "-m pytest -q test_calc.py" in work and "Do not install packages" in work
 
 
 def test_windows_codex_core_tells_the_agent_its_actual_workspace(monkeypatch, tmp_path):
@@ -1472,3 +1473,48 @@ def test_capture_checks_a_claude_paste_with_literal_text_after_the_envelope(scri
     )
     assert scripted_onboarding._last_reply(chat, "#task The exact original visible tail") == "done"
     assert scripted_onboarding._last_reply(chat, "#task The exact original wrong tail") == ""
+
+
+def _paid_core_approval_frames():
+    import json
+
+    fixture = Path(__file__).parent / "fixtures" / "terminal-approvals" / "paid-core-shell.json"
+    return [pytest.param(frame, id=f"{frame['sha']}-{frame['platform']}-{i}")
+            for i, frame in enumerate(json.loads(fixture.read_text(encoding="utf-8")))]
+
+
+@pytest.mark.parametrize("case", _paid_core_approval_frames())
+def test_paid_core_shell_approval_frames(scripted_onboarding, case):
+    keys = []
+    screen = SimpleNamespace(rendered=case["frame"], send=keys.append)
+    if len(case["commands"]) == 2:
+        read, edit = case["commands"]
+        approve = scripted_onboarding._core_approval(screen, "a plain request",
+                                                      offline_command=read.strip(), command=edit.strip())
+    else:
+        approve = scripted_onboarding._core_approval(screen, "the work", read_commands=tuple(case["commands"]))
+    assert approve() == case["decision"]
+    assert keys == ([] if case["decision"] else [scripted_onboarding.ENTER])
+
+
+@pytest.mark.parametrize(("command", "accepted"), [
+    (r"Get-Content -LiteralPath 'C:\Temp\sample\scan-payloads.json' -Raw", True),
+    (r'Get-Content -LiteralPath "C:\Temp\sample\scan-payloads.json" -Raw', True),
+    (r"Get-Content -LiteralPath 'C:\Temp\outside\scan-payloads.json' -Raw", False),
+    (r"Get-Content -LiteralPath 'C:\Temp\sample\..\sample\scan-payloads.json' -Raw", False),
+    (r'Get-Content -LiteralPath "$env:TEMP\sample\scan-payloads.json" -Raw', False),
+    ("Get-Content -LiteralPath 'scan-payloads.json' -Raw", False),
+    ("Get-Content -LiteralPath 'C:/Temp/sample/scan-payloads.json'", False),
+    ("Get-Content -LiteralPath 'C:/Temp/sample/scan-payloads.json' -Raw; Get-Location", False),
+    ("Get-ChildItem -LiteralPath 'C:/Temp/sample/scan-payloads.json' -Raw", False),
+])
+def test_windows_read_approval_matches_only_the_same_literal_operation(scripted_onboarding, command, accepted):
+    keys = []
+    frame = ("Would you like to run the following command?\n"
+             f"  $ {command}\n\n› 1. Yes, proceed (y)")
+    screen = SimpleNamespace(rendered=frame, send=keys.append)
+    approve = scripted_onboarding._core_approval(
+        screen, "#scan", read_commands=("Get-Content -LiteralPath 'C:/Temp/sample/scan-payloads.json' -Raw",),
+    )
+    assert (approve() == "") is accepted
+    assert keys == ([scripted_onboarding.ENTER] if accepted else [])

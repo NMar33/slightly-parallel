@@ -255,6 +255,10 @@ jobs:
       - name: PTY renderer and Windows ConPTY driver
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok) }}
         run: python -m pip install -r scripts/fresh_user/requirements-pty.txt
+      - name: Prepare core Python, pytest and Git identity (60-second install limit)
+        if: ${{ !inputs.expect_failure && (steps.key.outputs.ok && env.SCENARIO == 'core') }}
+        timeout-minutes: 2
+        run: python scripts/ci/prepare_core_toolchain.py
       - name: Claude Code
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok && matrix.tool == 'claude-code') }}
         shell: bash

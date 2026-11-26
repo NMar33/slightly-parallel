@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 import re
 import sqlite3
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from contextlib import closing
@@ -321,6 +323,12 @@ def _windows_core_contract(folder: Path) -> Path:
     return contract
 
 
+def _core_toolchain_hint() -> str:
+    return (f"Pytest is already prepared. To run the tests within your sandbox, use `{sys.executable}` with"
+            " arguments `-m pytest -q test_calc.py` from the current workspace. If execution is blocked, report it in chat."
+            " Do not install packages or request permission to run the tests outside your sandbox.")
+
+
 def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step) -> str:
     message = scenario.step_prompt(space, state, step)
     if WINDOWS and state.tool.name == "codex" and step in (scenario.EDIT, scenario.WORK):
@@ -329,6 +337,8 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
     if state.tool.name == "opencode" and step == scenario.EDIT:
         message += (" Edit calc.py with the file editing tool in the current workspace."
                     " Do not run shell commands or tests in this turn. Report the edit in chat.")
+    if step == scenario.WORK and not (WINDOWS and state.tool.name == "codex"):
+        message += " " + _core_toolchain_hint()
     if step[0] != "#scan":
         return message
     filename = "scan-payloads.json"
@@ -420,9 +430,50 @@ RULE_INTERPRETATION = core_mcp.RULE_TEXT
 def _command_text(value: str) -> str:
     # Ignore renderer wrapping outside literals. In particular, a different
     # path or Python indentation inside a quoted argument is a different command.
-    parts = re.split(r"('(?:[^']|'')*')", value)
+    parts = re.split(r'''('(?:[^']|'')*'|"[^"\r\n]*")''', value)
     return "".join(part if index % 2 else re.sub(r"\s+", " ", part)
                    for index, part in enumerate(parts)).strip()
+
+
+_QUOTED_WINDOWS_PATH = r'''(?:'(?:[^'\r\n]|'')*'|"[^"$`\r\n]*")'''
+_WINDOWS_FILE_COMMAND = re.compile(
+    rf"(?P<operation>Get-ChildItem|Get-Content|Add-Content|Set-Content) -LiteralPath "
+    rf"(?P<path>{_QUOTED_WINDOWS_PATH})(?P<options>.*)"
+)
+_WINDOWS_GIT_COMMAND = re.compile(
+    rf"git -c core\.hooksPath=NUL -c protocol\.allow=never -c commit\.gpgsign=false "
+    rf"-C (?P<path>{_QUOTED_WINDOWS_PATH}) (?P<operation>add|commit)(?P<options> .*)"
+)
+_PACKAGE_INSTALL = re.compile(r"^(?:(?:python(?:3(?:\.\d+)?)? -m )?pip(?:3)? install|npm (?:install|ci)|uv pip install)\b")
+
+
+def _windows_absolute_literal(token: str) -> str | None:
+    path = token[1:-1]
+    if token.startswith("'"):
+        path = path.replace("''", "'")
+    path = path.replace("\\", "/")
+    if re.fullmatch(r'[A-Za-z]:/[^\x00-\x1f:"<>|?*]+', path) is None:
+        return None
+    if any(part in {".", ".."} or part.endswith((" ", ".")) for part in path[3:].split("/")):
+        return None
+    return ntpath.normpath(path).replace("\\", "/")
+
+
+def _approval_command(value: str) -> str | tuple:
+    literal = _command_text(value)
+    if (match := _WINDOWS_FILE_COMMAND.fullmatch(literal)) and (path := _windows_absolute_literal(match["path"])):
+        # The generated fixture gives the only allowed file and option
+        # text. Normalize the path spelling, never a write's contents.
+        return ("powershell", match["operation"], path, match["options"])
+    git_commands = literal.split(" && ")
+    if len(git_commands) == 2:
+        matches = [_WINDOWS_GIT_COMMAND.fullmatch(command) for command in git_commands]
+        if all(matches):
+            pairs = tuple((m["operation"], _windows_absolute_literal(m["path"]), m["options"])
+                          for m in matches if m is not None)
+            if all(path is not None for _, path, _ in pairs):
+                return ("git", pairs)
+    return literal
 
 
 def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None,
@@ -440,23 +491,25 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
     handled_shell = ""
     handled_mcp = ""
     # An earlier command can finish under the sandbox without a dialog.
-    pending = {_command_text(value) for value in (*read_commands, offline_command, command) if value}
+    pending = {_approval_command(value) for value in (*read_commands, offline_command, command) if value}
     edit_batch = ()
     if step == "a plain request" and offline_command and command:
-        edit_batch = (_command_text(offline_command), _command_text(command))
+        edit_batch = (_approval_command(offline_command), _approval_command(command))
 
     def check() -> str:
         nonlocal handled_shell, handled_mcp
         if shell := _COMMAND_APPROVAL.search(screen.rendered):
             if shell.group() == handled_shell:
                 return ""
-            shown = _command_text(shell["command"])
+            shown = _approval_command(shell["command"])
             if shell["choice"].strip() != "1. Yes, proceed (y)":
                 return "unexpected Codex command approval"
             approved = (shown,)
             if shown not in pending:
-                lines = tuple(_command_text(line) for line in shell["command"].strip().splitlines())
+                lines = tuple(_approval_command(line) for line in shell["command"].strip().splitlines())
                 if not edit_batch or lines != edit_batch or not pending.issuperset(edit_batch):
+                    if isinstance(shown, str) and _PACKAGE_INSTALL.match(shown):
+                        return "tool missing in the stand"
                     return "unexpected Codex command approval"
                 approved = edit_batch
             pending.difference_update(approved)
@@ -753,6 +806,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                             # The PTY must still see the entire prompt before it presses Enter.
                             with project_contract.open("a", encoding="utf-8") as instructions:
                                 instructions.write(f"\n\n## {WINDOWS_CORE_WORK_SECTION}\n\n"
+                                                   f"{_core_toolchain_hint()}\n\n"
                                                    "Run these commands exactly, in order:\n\n"
                                                    f"```powershell\n{offline_command}\n{command}\n```\n\n"
                                                    "Once the commit command succeeds, reply in chat without running any further commands.\n"

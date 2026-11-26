@@ -7,6 +7,8 @@ import sys
 
 SYSTEMS = ("ubuntu-latest", "macos-latest", "windows-latest")
 TOOLS = ("claude-code", "codex", "opencode")
+CORE_TOOLCHAIN = "Prepare core Python, pytest and Git identity (60-second install limit)"
+OFFLINE_TOOLCHAIN = "Check core Python, pytest and Git identity"
 AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
 AGENTS_PREFLIGHT = "Check provider access, authentication and model errors"
 OFFLINE_CORE = "Run full Codex core through the guarded MCP on a local stub"
@@ -23,7 +25,7 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
         return {
             "L0 CLI versions": ("Record the CLI package versions",),
             **{f"L0 {provider}": (AGENTS_PREFLIGHT,) for provider in ("anthropic", "openai")},
-            **{f"{tool} ({os})": (AGENTS_CORE,) for tool in TOOLS for os in SYSTEMS},
+            **{f"{tool} ({os})": (CORE_TOOLCHAIN, AGENTS_CORE) for tool in TOOLS for os in SYSTEMS},
         }
     if workflow == "machine.yml":
         return {f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS", MACHINE_COST)
@@ -94,7 +96,7 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
             **{f"Real Codex ({os})": CODEX_LIMITS for os in SYSTEMS},
             **{f"Interactive agent ({tool}, {os})": (INTERACTIVE_STUB,) for tool in TOOLS for os in SYSTEMS},
             **{f"Interactive agent (opencode, {os})": (OPENCODE_SDK, INTERACTIVE_STUB, HEADLESS_OPENCODE) for os in SYSTEMS},
-            **{f"Interactive agent (codex, {os})": (INTERACTIVE_STUB, OFFLINE_CORE) for os in SYSTEMS},
+            **{f"Interactive agent (codex, {os})": (INTERACTIVE_STUB, OFFLINE_TOOLCHAIN, OFFLINE_CORE) for os in SYSTEMS},
             **{f"Interactive agent (claude-code, {os}, trust dialog)": (INTERACTIVE_STUB,) for os in SYSTEMS},
         }
     raise ValueError(f"unknown workflow: {workflow}")
