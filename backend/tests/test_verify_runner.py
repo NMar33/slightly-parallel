@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
 from threading import Event
+from unittest.mock import Mock
 
 import psutil
 import pytest
@@ -139,3 +141,130 @@ def test_stopping_a_command_also_ends_a_child_that_ignores_term(tmp_path):
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)
+
+
+@pytest.mark.parametrize("remaining", ["", "  42 Z+\n", "  42 Z+\n  42 S\n"])
+def test_group_kill_permission_is_only_ignored_after_all_members_exit(monkeypatch, remaining):
+    monkeypatch.setattr(runner, "WINDOWS", False)
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
+    kill = Mock(side_effect=[None, PermissionError("Operation not permitted")])
+    monkeypatch.setattr(runner.os, "killpg", kill, raising=False)
+    monkeypatch.setattr(runner.subprocess, "check_output", lambda *_args, **_kwargs: f"  43 S\n{remaining}")
+    child = Mock(pid=42)
+
+    if "42 S" in remaining:
+        with pytest.raises(PermissionError, match="Operation not permitted"):
+            runner.stop_process(child)
+    else:
+        runner.stop_process(child)
+        assert child.wait.call_count == 2
+    assert [call.args for call in kill.call_args_list] == [(42, signal.SIGTERM), (42, signal.SIGKILL)]
+
+
+def _queued_command(lock, *args):
+    wrapper = (
+        "import runpy, sys; from pathlib import Path; "
+        "main = runpy.run_path(sys.argv.pop(1))['main']; "
+        "main.__globals__['LOCK'] = Path(sys.argv.pop(1)); raise SystemExit(main())"
+    )
+    return [sys.executable, "-c", wrapper, str(ROOT / "scripts" / "verify.py"), str(lock), "queue", *args]
+
+
+def test_queue_timeout_reports_hung_pytest_and_kills_workers_before_handoff(tmp_path):
+    lock = tmp_path / "queue.lock"
+    (tmp_path / "test_queue_hang.py").write_text(
+        "import os, time\nfrom pathlib import Path\n"
+        "def test_deliberate_queue_hang():\n"
+        "    marker = Path('worker.tmp')\n"
+        "    marker.write_text(str(os.getpid()))\n"
+        "    marker.replace('worker.pid')\n"
+        "    time.sleep(120)\n"
+    )
+    with (tmp_path / "queue.log").open("w+") as log:
+        first = subprocess.Popen(
+            _queued_command(lock, "--timeout", "12", "--", sys.executable, "-m", "pytest",
+                            "-n", "1", "-q", "test_queue_hang.py"),
+            cwd=tmp_path, stdout=log, stderr=subprocess.STDOUT,
+        )
+        worker = None
+        try:
+            worker_pid = tmp_path / "worker.pid"
+            deadline = time.monotonic() + 11
+            while not worker_pid.exists() and first.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if not worker_pid.exists():
+                log.seek(0)
+                pytest.fail(log.read())
+            worker = psutil.Process(int(worker_pid.read_text()))
+            follower = (
+                "import psutil, sys\n"
+                "try:\n"
+                "    assert psutil.Process(int(sys.argv[1])).status() == psutil.STATUS_ZOMBIE\n"
+                "except psutil.NoSuchProcess:\n"
+                "    pass\n"
+                "print('next run started')\n"
+            )
+            second = subprocess.run(
+                _queued_command(lock, "--", sys.executable, "-c", follower, str(worker.pid)),
+                cwd=tmp_path, capture_output=True, text=True, timeout=20, check=False,
+            )
+            first_status = first.wait(timeout=5)
+            log.seek(0)
+            output = log.read()
+            assert first_status == 124, output
+            assert second.returncode == 0 and "next run started" in second.stdout, second.stdout + second.stderr
+            assert "test_deliberate_queue_hang" in output
+            assert "timed out" in output
+        finally:
+            if worker is not None and worker.is_running():
+                try:
+                    worker.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            if first.poll() is None:
+                first.kill()
+                first.wait(timeout=5)
+
+
+def test_queue_recovers_after_holder_is_killed(tmp_path):
+    lock = tmp_path / "queue.lock"
+    held = tmp_path / "held"
+    holder = (
+        "import runpy, sys, time; from pathlib import Path\n"
+        "with runpy.run_path(sys.argv[1])['machine_queue'](Path(sys.argv[2])):\n"
+        "    Path(sys.argv[3]).touch()\n"
+        "    time.sleep(120)\n"
+    )
+    first = subprocess.Popen(
+        [sys.executable, "-c", holder, str(ROOT / "scripts" / "verify.py"), str(lock), str(held)],
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not held.exists() and first.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert held.exists()
+        first.kill()
+        first.wait(timeout=5)
+        second = subprocess.run(
+            _queued_command(lock, "--", sys.executable, "-c", "print('queue recovered')"),
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        assert second.returncode == 0 and "queue recovered" in second.stdout
+    finally:
+        if first.poll() is None:
+            first.kill()
+            first.wait(timeout=5)
+
+
+def test_windows_weekly_heavy_suite_has_a_runner_deadline():
+    import yaml
+
+    workflow = ROOT / ".github" / "workflows" / "weekly.yml"
+    heavy = yaml.safe_load(workflow.read_text(encoding="utf-8"))["jobs"]["heavy"]
+    step = next(step for step in heavy["steps"] if " -m heavy" in step.get("run", ""))
+    assert step["timeout-minutes"] == 20
+    assert step["env"]["PYTEST_ADDOPTS"] == (
+        "${{ runner.os == 'Windows' && '-o faulthandler_timeout=0' || '' }}"
+    )
+    evidence = next(step for step in heavy["steps"] if step.get("run", "").startswith("python ../scripts/ci/check_skips"))
+    assert evidence["run"].endswith("--minimum 2")

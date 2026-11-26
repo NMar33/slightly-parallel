@@ -36,6 +36,7 @@ from ..entities import (
     STORY_IMAGE_COLUMNS, STORY_REQUEST_COLUMNS, TASK_NOTE_COLUMNS, TASK_NOTE_TYPES,
 )
 from ..file_safety import atomic_write, edit_json, safe_read_json
+from ..refusals import Reasons
 from .deps import create_answer, get_store, identity_of, mint_id, not_found, rewrite_one, task_brief
 from ..taskevents import append_events as _append_events
 from ..date_utils import now_iso
@@ -425,6 +426,11 @@ def story_post(task_id: str, body: dict = Body(...), store: ViewStore = Depends(
     """``{request_id, agent_id, body, images?: [{title, data_base64, ext}]}``
     — the piece, under an open request. Images are stored at the operator's
     quality and ``(image:N)`` in the text becomes their URL."""
+    # A missing task or request is the only reason; the rest come together
+    # (tk_90c1ba5f): the request, who posts, the text, each image.
+    task = _task(store, task_id)
+    if task is None:
+        raise not_found("task", task_id)
     rid = str(body.get("request_id") or "").strip()
     if not rid:
         raise HTTPException(
@@ -435,38 +441,47 @@ def story_post(task_id: str, body: dict = Body(...), store: ViewStore = Depends(
     req = store.query_one("SELECT * FROM story_requests_mutual WHERE id = ?", (rid,))
     if req is None:
         raise not_found("request", rid)
+    why = Reasons()
     if str(req.get("task_id")) != task_id:
-        raise HTTPException(status_code=422, detail=f"request {rid} belongs to task {req.get('task_id')}")
+        why.add(f"request {rid} belongs to task {req.get('task_id')}", code="other_task", field="request_id")
     if str(req.get("status")) != "open":
-        raise HTTPException(status_code=409, detail=f"request {rid} is {req.get('status')} — ask the operator for a new one")
+        why.add(f"request {rid} is {req.get('status')} — ask the operator for a new one", status=409,
+                code="closed", field="request_id")
     agent_id = identity_of(body)
     if not agent_id:
-        raise HTTPException(status_code=422, detail="agent_id is required")
+        why.add("agent_id is required", code="identity", field="agent_id")
     text = str(body.get("body") or "").strip()
     if not text:
-        raise HTTPException(status_code=422, detail="body is required")
-    if len(text) > MAX_BODY:
-        raise HTTPException(status_code=422, detail=f"body is at most {MAX_BODY} characters")
+        why.add("body is required", code="empty", field="body")
+    elif len(text) > MAX_BODY:
+        why.add(f"body is at most {MAX_BODY} characters", code="length", field="body")
     # The kind of note was the operator's choice when the request was made;
     # the prompt promised it, so the agent does not pick another.
     ntype = str(req.get("type") or "release")
     if ntype not in TASK_NOTE_TYPES:
-        raise HTTPException(status_code=422, detail=f"type must be one of {', '.join(TASK_NOTE_TYPES)}")
-    task = _task(store, task_id)
-    if task is None:
-        raise not_found("task", task_id)
+        why.add(f"type must be one of {', '.join(TASK_NOTE_TYPES)}", code="vocabulary", field="type")
     images = body.get("images") or []
     if not isinstance(images, list) or len(images) > MAX_IMAGES:
-        raise HTTPException(status_code=422, detail=f"images: a list of at most {MAX_IMAGES}")
+        why.add(f"images: a list of at most {MAX_IMAGES}", code="shape", field="images")
+        images = []
 
-    # Decode and measure every image before anything is written.
+    # Decode and measure every image before anything is written; every bad
+    # one is named.
     prepared: list[tuple[str, bytes, str, int, int]] = []
     for i, item in enumerate(images, start=1):
         if not isinstance(item, dict):
-            raise HTTPException(status_code=422, detail=f"image {i}: not an object")
-        ext, raw = story_images.checked_image(item, f"image {i}")
-        w, h = story_images.dimensions(raw)
+            why.add(f"image {i}: not an object", code="image", field=f"images[{i}]")
+            continue
+        try:
+            ext, raw = story_images.checked_image(item, f"image {i}")
+            w, h = story_images.dimensions(raw)
+        except (HTTPException, ValueError) as exc:
+            why.add(str(exc.detail if isinstance(exc, HTTPException) else exc),
+                    status=exc.status_code if isinstance(exc, HTTPException) else 422,
+                    code="image", field=f"images[{i}]")
+            continue
         prepared.append((str(item.get("title") or f"image {i}")[:limits.MAX_TITLE], raw, ext, w, h))
+    why.raise_if_any()
 
     now = now_iso()
     note_id = mint_id("nt_", task_id, ntype, text, now, f"{time.time():.6f}")

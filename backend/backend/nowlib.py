@@ -12,7 +12,9 @@ agent would have written — the message as its text, its column and lane —
 titled with the message's start (the tag taken out, up to 80 characters, at
 a word). Its history says the server wrote it, and for which chat; the
 agent can retitle it with ``task_update``. A lane the message names that the
-board does not have is left to the agent, who asks the operator which.
+board does not have is a new lane; one the braces leave unclear (a near
+miss, a project's name too) puts the card in the default lane, and its
+history says what to ask the operator.
 
 The ledger ``now.csv`` keeps one row per #now turn the server wrote a card
 for, so a card moved or archived on the board is not written again; tags
@@ -91,12 +93,31 @@ def _keep_settled(data_root: Path, settled: set[str]) -> None:
     except OSError as exc:
         log.warning("%s not written (%s); settled tags are checked again after a restart", SETTLED, exc)
 
+#: The chat commands whose tags count from a moment on (their since-stamps).
+def stamps() -> tuple[tuple[str, str], ...]:
+    """Each command's since-stamp file and its tag: the modules' own STATE
+    names (read here, not at import: donelib imports this module)."""
+    from . import donelib, thinklib
+    return ((STATE, "#now"), (donelib.STATE, "#done"), (thinklib.STATE, "#think"))
+
+
+def stamp_starts(data_root: Path) -> None:
+    """Make each missing since-stamp at the server's start. Made on the first
+    list read before, a ``#think tk_…`` typed before anyone opened the board
+    was taken as history by the agent's next write (thinklib.refusal reads
+    only a stamped root): from the start, it counts."""
+    for name, what in stamps():
+        if not (data_root / name).exists():
+            since_stamp(data_root / name, what)
+
+
 def since_stamp(path: Path, what: str) -> str | None:
     """The moment a chat command became one here (``{"since": …}`` in
     ``path``); tags older than it are history. Written on first use. None
     when it cannot be kept: the caller applies nothing, rather than run with
     a moment that is "now" again on every call and so passes every tag by.
-    #now and #done each keep one (now.json, done.json)."""
+    #now, #done and #think each keep one (now.json, done.json, think.json);
+    stamp_starts makes the missing ones at the server's start."""
     try:
         got = json.loads(path.read_text(encoding="utf-8-sig"))
         value = str(got.get("since") or "") if isinstance(got, dict) else ""
@@ -223,7 +244,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
             failed.add((agent, turn))
             continue
         if not task_id:
-            settled.add(rid)             # the agent asks the operator which lane
+            settled.add(rid)             # no card to write (the braces refused)
             continue
         known.add(rid)
         added.append({"id": rid, "task_id": task_id, "agent_id": agent, "turn": str(turn)})
@@ -242,14 +263,15 @@ def _write_card(store: ViewStore, tag: dict) -> str:
     from .tasklib import DESCRIPTION_MAX, _lane_for, create_task
     from .taskevents import append_events
 
-    from .tasklib import task_braces
+    from .tasklib import task_braces, unclear_lane_note
 
     project, agent = str(tag["project"] or ""), str(tag["agent_id"] or "")
     column = str(tag["column_"] or "doing")
     # The braces, once, at adoption (note nt_258a7ed7 §3): a project named
-    # there is where the card goes; a refusal (a near miss, two projects, a
-    # project the chat is not in) makes no card, and the hook's notice of
-    # that turn already said why.
+    # there is where the card goes; a refusal (a project's near miss, two
+    # projects, a project the chat is not in) makes no card, and the hook's
+    # notice of that turn already said why. A lane left unclear is no
+    # refusal: the default lane, and the history says what to ask.
     braces = task_braces(store, agent, str(tag["body"] or ""))
     if braces["refusal"]:
         return ""
@@ -266,6 +288,10 @@ def _write_card(store: ViewStore, tag: dict) -> str:
         body["lane"] = body["assignee"] = lane
     if column == "doing":
         body["today_on"] = at.date().isoformat()
+    from . import thinklib
+    from .hookshared import command_text
+    if thinklib.wants_mark(command_text(message)):
+        body.update(thinklib.mark_fields())
     # The operator's message is kept whole: the limit is for text written onto
     # the board, and this text is already in the chat. The card says it is long.
     out = create_task(store, body, text_max=None)
@@ -295,7 +321,8 @@ def _write_card(store: ViewStore, tag: dict) -> str:
         (verb, "", f"in the chat, with {tagname} ({agent}#{tag['turn']}); "
                    "the agent wrote no card, so the server did, titled with the message's start"),
     ] + ([("note", "", f"the message is {len(message):,} characters, over the board's usual {DESCRIPTION_MAX:,}; "
-                      "kept whole")] if len(message) > DESCRIPTION_MAX else []))
+                      "kept whole")] if len(message) > DESCRIPTION_MAX else [])
+      + ([("note", "", unclear_lane_note(braces["ask"]))] if braces.get("ask") else []))
     return task_id
 
 

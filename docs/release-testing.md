@@ -11,13 +11,19 @@ the checks still to build, and the limits the release notes must name.
 1. **One candidate.** Freeze the commit; run the whole CI on it
    (`scripts/publish-ci.sh ci-windows "…"`, then
    `gh workflow run ci.yml --ref ci-windows` and
-   `gh workflow run terminal.yml --ref ci-windows`). Every job green on the
-   same commit, no unexplained retry: `scripts/release-ready.sh ci-windows
-   vX.Y.Z` checks CI and the Terminal window for the branch's head commit
-   (the terminal bench does not gate) and prints the merge and tag commands.
-2. **Real agents.** Run `Agents` (`.github/workflows/agents.yml`) by hand:
-   Claude Code, Codex and OpenCode on cheap models, eight messages each,
-   `#sp` among them.
+   `gh workflow run terminal.yml --ref ci-windows`). Dispatch Weekly and
+   Agents on that ref as well, and dispatch Machine with `-f full=true`.
+   `scripts/release-ready.sh ci-windows vX.Y.Z` checks all five workflows
+   for that exact commit, on their first attempt. It checks that the
+   required jobs and steps ran and prints the merge and tag commands.
+   The terminal benchmark is a separate measurement.
+2. **Real agents.** Use the default `core` scenario in Agents. Claude
+   Code, Codex and OpenCode each run an interactive chat and a separate
+   headless helper on Linux, macOS and Windows. The tests verify the
+   operator's captured turns and a single board card, then verify capture
+   and an explicit task refusal for the helper. Core also exercises
+   decision, rule, scan, checkup and done in the interactive chat.
+   The daily canary uses the shorter smoke scenario with the latest CLIs.
 3. **By hand on Windows and macOS** — the list below, about half an hour each.
 4. **A late fix** makes a new candidate: CI again, the failing case shown
    fixed, and the stages it touches run again.
@@ -54,8 +60,8 @@ up. Follow the README as written.
       `python scripts/ci/check_codex_limits.py`; it prints the plan, the
       5-hour and the weekly percentages. On Windows, with Codex installed by
       `npm install -g @openai/codex`, Usage › "Read now" on the Codex row shows
-      the same. *A login:* only a ChatGPT login has plan limits; CI logs in
-      with an API key, so it proves the read works and ends, not the percentages.
+      the same. Plan percentages need a ChatGPT login. CI uses an empty
+      profile and checks the precise signed-out response from the limits RPC.
 - [ ] macOS, a real sleep of over an hour with the server running: after
       waking, the Codex row is read again within a few minutes, and Monitor ›
       Server shows no error for the poll. *A real computer:* a runner cannot sleep.
@@ -65,8 +71,8 @@ up. Follow the README as written.
 - **Codex's Read now through the real server** — in CI (job Real Codex,
   `scripts/ci/codex_server_check.py`, three systems): the server on an empty
   data folder, `POST /api/usage/limits/refresh` as the page sends it, the
-  Codex row answers (with the key login: "not signed in" or Codex's own
-  sentence), no codex or node process from the read is left, no temporary
+  Codex row consistently reports "not signed in" with a fresh profile,
+  no codex or node process from the read is left, no temporary
   file in `.usage`.
 - **Network off** — in CI (job Launcher, `scripts/ci/offline_check.py`,
   three systems): new outgoing connections dropped by the system firewall

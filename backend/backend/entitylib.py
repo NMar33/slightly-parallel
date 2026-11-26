@@ -23,7 +23,8 @@ from .docs_md import build_detail, read_detail, resolve_under, safe_ref_part
 from .entities import Entity
 from .file_entries import assessment_summary, prepare_file_entry
 from .file_safety import atomic_write
-from .vocab import HEADLINE_REQUIRED, check_enum_fields
+from .refusals import Reasons
+from .vocab import HEADLINE_REQUIRED, check_enum_fields, enum_problems  # noqa: F401
 
 # Writes that are the operator's alone. Sprints are planned by a person.
 OPERATOR_ONLY: dict[str, str] = {
@@ -353,10 +354,16 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     # Python text ("['a value']") in every lens (round 5, agent-shaped
     # writes); the task update refuses it the same way. After
     # PRE_CREATE, which reads a list where one is meant (a task's projects).
+    # Every such column and every value outside its vocabulary, at once
+    # (tk_90c1ba5f).
+    why = Reasons()
     for col in ent.columns:
         if col not in _SLOTS and isinstance(body.get(col), (list, dict)):
-            raise HTTPException(status_code=422, detail=f"{col} is text, not a list or an object")
-    check_enum_fields(ent.name, body)
+            why.add(f"{col} is text, not a list or an object", code="shape", field=col)
+    for field, line in enum_problems(ent.name, body):
+        if not any(r.field == field for r in why.items):
+            why.add(line, code="vocabulary", field=field)
+    why.raise_if_any()
 
     check = CONTRACT_CHECKS.get(ent.name)
     warnings = check(body) if check else []

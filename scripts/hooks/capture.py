@@ -201,6 +201,10 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "help": ("sp-help", "answering with its list, as it is"),
     # The operator's verdict: the server moves the task (backend donelib.py).
     "done": ("finish-a-task", "MCP tool task_done"),
+    # The operator's think mark: the server sets it and refuses an agent's
+    # moves on the task (backend thinklib.py); format_signals says which tasks.
+    "think": ("", "nothing to write: the server marks the task the operator thinks through himself"),
+    "think-off": ("", "nothing to write: the server removes the operator's think mark"),
     "problem solved": ("", "MCP tool update_entry, lens problem, changes {status: \"resolved\"}"),
     # Archiving entries made by mistake: the operator asks, chooses by number
     # and confirms; the server checks both in the chat (backend undolib.py).
@@ -441,7 +445,7 @@ def task_where(data_root: Path, project: str, agent: str, user_text: str,
                kind: str = "") -> dict | None:
     """Where the operator's #task / #now goes, read from its braces by the
     server's rule (hookshared.resolve_braces): ``{"project", "lane",
-    "refusal"}``, the project the home when none is named; None without a
+    "refusal", "ask"}``, the project the home when none is named; None without a
     command. ``projects``: agent_projects' answer, when the caller has it."""
     text = shared.command_text(user_text or "")
     hit = shared.pick_task_hit(list(_TASK_CMD_RE.finditer(text)), kind)
@@ -642,8 +646,14 @@ def where_notice(where: dict) -> str:
     if where.get("refusal"):
         return (f"Refused: {where['refusal']}. No card is made for it: tell the operator in one line, "
                 "and do not write the task another way.")
-    return (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
+    told = (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
             + " (the server sets the project and the lane from the braces; send that project).")
+    if where.get("ask"):
+        # A lane the braces leave unclear: the card is written now, in the
+        # default lane, and the operator is asked after (tk_970d6b2d).
+        told += (" The lane is unclear, so the card goes to the default lane: write it now, with no lane, "
+                 f"then ask the operator in one line: {where['ask']}")
+    return told
 
 
 class TurnCapture:
@@ -988,6 +998,8 @@ class TurnCapture:
             except Exception as exc:  # noqa: BLE001
                 self._lost("waiting messages not handed over", exc)
 
+        task_cmd = any(c == "task" or c.startswith("now") for c in commands)
+        where_sig = self._task_where(said) if task_cmd else None
         return {
             "turn_number": turn,
             "standup_due": standup_due,
@@ -999,6 +1011,11 @@ class TurnCapture:
             "unsigned_commits": {"commits": unsigned, "sure": unsigned_sure} if unsigned else None,
             "commands": commands,
             "done_lookup": (str(self.data_root.resolve()), self.agent_name) if "done" in commands else None,
+            # #think / #think-off: the tasks the server marks, by the server's rule.
+            "think": shared.think_targets(said) if {"think", "think-off"} & set(commands) else None,
+            # The card a #think message makes, as the server picks it; none
+            # when its braces are refused.
+            "think_card": _think_card(said, where_sig) if "think" in commands else None,
             # The hook's own answer to #usage, #usage-on and #usage-off.
             "usage_answer": self.usage_answer(usage_cmds, str(meta.get("tool") or "")) if usage_cmds else None,
             # #map costs a helper run: its notice asks the operator, naming
@@ -1009,8 +1026,7 @@ class TurnCapture:
             "helper_models": _helper_models(self.data_root) if (standup_due or {"map", "standup"} & set(commands)) else None,
             # #task / #now {project} {lane}: where the card goes, or why it
             # goes nowhere, by the server's rule (note nt_258a7ed7 §3).
-            "task_where": self._task_where(said)
-            if any(c == "task" or c.startswith("now") for c in commands) else None,
+            "task_where": where_sig,
             "kept": kept,
             # Identity + clock on the first turn and every refresh: entries
             # posted with this agent_id and time line up with the captured
@@ -2232,6 +2248,53 @@ def _done_outcome_notice(outcome: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+#: What an agent may and may not do with a task the operator marked «think».
+THINK_RULE = ("An agent never picks it up, starts it or finishes it: the server refuses your status, lane and "
+              "assignee changes, your task_report, archiving and moving it to another project while the mark "
+              "is on. You may read it, comment "
+              "(task_update {id, comment}), add notes, evidence and links, propose options and ask the operator. "
+              "Only the operator removes the mark (the badge's × on the board, or #think-off tk_…).")
+
+
+def _think_card(said: str, where: dict | None) -> dict:
+    """The card a #think message makes, picked as the server picks it
+    (hookshared.pick_task_hit): ``{"creates", "doing", "refused"}``. Braces
+    the server refuses make no card, so nothing gets the mark."""
+    hit = shared.pick_task_hit(list(_TASK_CMD_RE.finditer(said or "")))
+    if hit is None:
+        return {"creates": False, "doing": False, "refused": False}
+    tag = hit.group(1).lower()
+    got = (where or {}).get("now" if tag.startswith("now") else "task") or {}
+    if got.get("refusal"):
+        return {"creates": False, "doing": False, "refused": True}
+    return {"creates": True, "doing": tag in ("now", "now-doing"), "refused": False}
+
+
+def _think_notice(name: str, ids: list[str], creates: bool, doing: bool = False, refused: bool = False) -> str:
+    """The #think / #think-off notice: which tasks, and the rule."""
+    if name == "think-off":
+        if not ids:
+            return ("[slightly-parallel] #think-off — no task named: ask the operator which one, in one line; "
+                    "they answer with #think-off tk_…. Nothing to write.")
+        return (f"[slightly-parallel] #think-off — the server removes the operator's think mark from {', '.join(ids)}. "
+                "Nothing to write; the task is an ordinary one again.")
+    if ids:
+        return (f"[slightly-parallel] #think — the server marks {', '.join(ids)} as the operator's to think through. "
+                "Nothing to write. " + THINK_RULE)
+    if refused:
+        return ("[slightly-parallel] #think — the task command in this message is refused (its notice says why), "
+                "so no card is made and nothing gets the think mark. Nothing to write. " + THINK_RULE)
+    if creates and doing:
+        return ("[slightly-parallel] #think — the task this message makes goes to doing, as #now asks, and carries "
+                "the think mark: write it as #now says, and the server sets the mark. Prepare it — gather context, "
+                "propose options — and ask the operator before acting on it. " + THINK_RULE)
+    if creates:
+        return ("[slightly-parallel] #think — the task this message makes carries the think mark: write it as the "
+                "other command in the message says, and the server sets the mark. Do not start it. " + THINK_RULE)
+    return ("[slightly-parallel] #think — no task named: ask the operator which one, in one line; they answer "
+            "with #think tk_…. Nothing to write. " + THINK_RULE)
+
+
 def format_signals(signals: dict, tool: str = "claude-code") -> str:
     """Human-readable context notice; empty when nothing is due. ``tool``:
     the one the notice is for, so a helper is offered the way it starts one."""
@@ -2259,6 +2322,12 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             continue
         if name == "carry-brief" and signals.get("briefs_owed"):
             continue  # the briefs owed, below, name this message
+        if name in ("think", "think-off"):
+            card = signals.get("think_card") or {}
+            notes.append(_think_notice(name, (signals.get("think") or {}).get(name) or [],
+                                       bool(card.get("creates")), bool(card.get("doing")),
+                                       bool(card.get("refused"))))
+            continue
         if name == "map":
             on, other = offer("map", signals.get("map_model") or "opus")
             notes.append(

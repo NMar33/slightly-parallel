@@ -68,9 +68,10 @@ ENUM_FIELDS.update({
 })
 
 
-def check_enum_fields(ent_name: str, body: dict) -> None:
-    """Refuse a write that would put a filtered-on field outside its
-    vocabulary: a ValueError, which the server answers as 422 with its sentence."""
+def enum_problems(ent_name: str, body: dict) -> list[tuple[str, str]]:
+    """Every field of ``body`` outside its vocabulary: ``(field, line)``
+    each, in the vocabulary's order (tk_90c1ba5f names them all)."""
+    out: list[tuple[str, str]] = []
     for field, allowed in ENUM_FIELDS.get(ent_name, {}).items():
         v = body.get(field)
         if v in (None, ""):
@@ -78,8 +79,18 @@ def check_enum_fields(ent_name: str, body: dict) -> None:
         if isinstance(v, (list, dict, bool)):
             # str(["agent"]) is "['agent']": the refusal then named "agent"
             # among the allowed values. Say the shape (round 5, the fuzzer).
-            raise ValueError(f"{ent_name}.{field} is one text value, not {type(v).__name__} — "
-                             f"use one of: {', '.join(sorted(allowed))}")
-        if str(v) not in allowed:
-            raise ValueError(f"{ent_name}.{field} {v} is not a known value — "
-                             f"use one of: {', '.join(sorted(allowed))}")
+            out.append((field, f"{ent_name}.{field} is one text value, not {type(v).__name__} — "
+                               f"use one of: {', '.join(sorted(allowed))}"))
+        elif str(v) not in allowed:
+            out.append((field, f"{ent_name}.{field} {v} is not a known value — "
+                               f"use one of: {', '.join(sorted(allowed))}"))
+    return out
+
+
+def check_enum_fields(ent_name: str, body: dict) -> None:
+    """Refuse a write that would put a filtered-on field outside its
+    vocabulary: a ValueError, which the server answers as 422 with its
+    sentence — one line per field outside it."""
+    bad = enum_problems(ent_name, body)
+    if bad:
+        raise ValueError("\n".join(line for _f, line in bad))

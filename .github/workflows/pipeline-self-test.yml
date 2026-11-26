@@ -1,0 +1,38 @@
+name: Pipeline self-test
+
+on:
+  push:
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - scripts/ci/pipeline_probe.py
+      - scripts/ci/check_windows_shells.py
+      - scripts/ci/check_skips.py
+  workflow_dispatch:
+  schedule:
+    - cron: "13 2 * * 1"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify pipeline failure propagation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Require every native probe to fail and prove why
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci/pipeline_probe.py

@@ -152,6 +152,30 @@ class ApiError(RuntimeError):
     """An HTTP call that failed, carrying the server's own explanation."""
 
 
+def _numbered(reasons: Any) -> str:
+    """Two reasons or more as numbered lines (refusals.py): the agent fixes
+    them all before it sends again. One reason, or a server that sends none:
+    "" — the ``detail`` reads as it always has."""
+    if not isinstance(reasons, list) or len(reasons) < 2:
+        return ""
+    lines = []
+    for n, r in enumerate(reasons, 1):
+        if not isinstance(r, dict):
+            return ""
+        reason, instead = str(r.get("reason") or ""), str(r.get("instead") or "")
+        lines.append(f"{n}. {reason} — {instead}" if instead else f"{n}. {reason}")
+    return f"{len(lines)} reasons, fix them all before sending again:\n" + "\n".join(lines)
+
+
+def _refuse_all(lines: list[str]) -> None:
+    """The translator's own refusal, every reason in it: one line as it
+    always read, two or more numbered as the server's (``_numbered``)."""
+    if len(lines) == 1:
+        raise ApiError(lines[0])
+    if lines:
+        raise ApiError(_numbered([{"reason": line} for line in lines]))
+
+
 class Api:
     """The thinnest possible client for the one write authority."""
 
@@ -172,10 +196,12 @@ class Api:
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             try:
-                detail = json.loads(exc.read().decode("utf-8")).get("detail", "")
+                answer = json.loads(exc.read().decode("utf-8"))
+                detail = answer.get("detail", "")
+                reasons = answer.get("reasons")
             except Exception:  # noqa: BLE001 — the body is best-effort
-                detail = ""
-            raise ApiError(f"{exc.code}: {detail or exc.reason}") from None
+                detail, reasons = "", None
+            raise ApiError(f"{exc.code}: {_numbered(reasons) or detail or exc.reason}") from None
         except (urllib.error.URLError, TimeoutError) as exc:
             raise ApiError(
                 f"cannot reach the Slightly Parallel server at {self.base} — is it running? ({exc})"
@@ -348,20 +374,26 @@ class Translator:
     # -- client-side gate: the typo dies before a request exists -----------
 
     def _check_vocab(self, lens: str, payload: dict) -> None:
+        _refuse_all(self._vocab_problems(lens, payload))
+
+    def _vocab_problems(self, lens: str, payload: dict) -> list[str]:
+        """Every field outside its vocabulary, one line each."""
+        out: list[str] = []
         for field, allowed in self.vocab.get(lens, {}).items():
             v = payload.get(field)
             if isinstance(v, (list, dict, bool)):
                 # str(["agent"]) is "['agent']": refused with a list that
                 # names "agent" as allowed. Say the shape instead.
-                raise ApiError(
+                out.append(
                     f"{lens}.{field} is one text value, not {type(v).__name__} — "
                     f"use one of: {', '.join(allowed)}"
                 )
-            if v not in (None, "") and str(v) not in allowed:
-                raise ApiError(
+            elif v not in (None, "") and str(v) not in allowed:
+                out.append(
                     f"{lens}.{field} {v!r} is not a known value — "
                     f"use one of: {', '.join(allowed)}"
                 )
+        return out
 
     # The lenses an agent writes most, each with the names it holds.
     _DIGEST_LENSES = ("scan", "file", "decision", "problem", "standup", "task")
@@ -376,17 +408,21 @@ class Translator:
 
     def _check_names(self, lens: str, spec: dict, payload: dict) -> None:
         """A field the lens does not have dies here, with the ones it has."""
+        _refuse_all(self._name_problems(lens, spec, payload))
+
+    def _name_problems(self, lens: str, spec: dict, payload: dict) -> list[str]:
         known = set(spec.get("fields") or {}) | {"project", "agent_id", "created_date",
                                                  "created_time", "paths", "changes", "checked"}
         unknown = sorted(k for k in payload if k not in known)
         if unknown and self._refresh(lens):
-            return self._check_names(lens, self.lenses.get(lens) or spec, payload)
-        if unknown:
-            raise ApiError(
-                f"{lens} has no field {', '.join(unknown)} — it holds: "
-                f"{', '.join(spec.get('text_fields') or [])}; columns: "
-                f"{', '.join(sorted(k for k in (spec.get('fields') or {}) if k not in (spec.get('text_fields') or [])))}"
-            )
+            return self._name_problems(lens, self.lenses.get(lens) or spec, payload)
+        if not unknown:
+            return []
+        return [
+            f"{lens} has no field {', '.join(unknown)} — it holds: "
+            f"{', '.join(spec.get('text_fields') or [])}; columns: "
+            f"{', '.join(sorted(k for k in (spec.get('fields') or {}) if k not in (spec.get('text_fields') or [])))}"
+        ]
 
     @staticmethod
     def _by_name(result: Any) -> Any:
@@ -1238,8 +1274,9 @@ class Translator:
             payload = {**(args.get("fields") or {}), **self._stamp(args)}
             # Fields by name only: the numbered storage slots (l1…l4) are not
             # a way in. A name the lens lacks is refused, never routed around.
-            self._check_names(lens, spec, payload)
-            self._check_vocab(lens, payload)
+            # Both at once (tk_90c1ba5f): a name the lens lacks and a value
+            # outside its vocabulary.
+            _refuse_all(self._name_problems(lens, spec, payload) + self._vocab_problems(lens, payload))
             return _with_where(self.api.post(f"/api/{spec['base']}", payload), payload["project"])
         if name == "update_entry":
             lens = str(args.get("lens") or "")

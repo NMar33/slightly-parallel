@@ -15,11 +15,51 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "check_skips.p
 @pytest.mark.parametrize("system, expected", [("Windows", 0), ("Linux", 1), ("Darwin", 1)])
 def test_the_windows_only_skips_are_reported_by_platform(tmp_path: Path, system: str, expected: int) -> None:
     suite = ET.Element("testsuite")
-    for reason in ("no tmux on Windows", "requires Unix sockets", "a bash script, run on Linux and macOS"):
+    ET.SubElement(suite, "testcase", classname="sample", name="passed")
+    for reason in ("no tmux on Windows", "requires Unix sockets", "a bash script, run on Linux and macOS",
+                   "Unix PTY process groups"):
         case = ET.SubElement(suite, "testcase", classname="sample", name=reason)
         ET.SubElement(case, "skipped", message=reason)
     report = tmp_path / "pytest.xml"
     ET.ElementTree(suite).write(report, encoding="utf-8")
     checked = subprocess.run([sys.executable, str(SCRIPT), str(report), system],
+                             capture_output=True, encoding="utf-8", timeout=10)
+    assert checked.returncode == expected, checked.stdout
+
+
+@pytest.mark.parametrize(("statuses", "expected"), [
+    ((), 1), (("passed",), 0), (("failure",), 1), (("error",), 1), (("skipped",), 1),
+    (("passed", "passed"), 1),
+])
+def test_only_one_passed_test_can_clear_a_single_case_job(tmp_path: Path, statuses, expected: int) -> None:
+    suite = ET.Element("testsuite")
+    for index, status in enumerate(statuses):
+        case = ET.SubElement(suite, "testcase", classname="sample", name=f"test_{index}")
+        if status != "passed":
+            ET.SubElement(case, status)
+    report = tmp_path / "pytest.xml"
+    ET.ElementTree(suite).write(report, encoding="utf-8")
+    checked = subprocess.run([sys.executable, str(SCRIPT), str(report), "--one-passed"],
+                             capture_output=True, encoding="utf-8", timeout=10)
+    assert checked.returncode == expected, checked.stdout
+
+
+@pytest.mark.parametrize(("statuses", "minimum", "expected"), [
+    ((), 1, 1), (("skip", "xfail"), 1, 1), (("passed", "skip"), 1, 0),
+    (("passed", "skip"), 2, 1), (("passed", "error"), 1, 1), (("passed", "failure"), 1, 1),
+])
+def test_required_suite_checks_a_floor_of_real_passes(tmp_path, statuses, minimum, expected):
+    suite = ET.Element("testsuite")
+    for index, status in enumerate(statuses):
+        case = ET.SubElement(suite, "testcase", classname="sample", name=f"test_{index}")
+        if status == "skip":
+            ET.SubElement(case, "skipped", message="ConPTY is Windows only")
+        elif status == "xfail":
+            ET.SubElement(case, "skipped", type="pytest.xfail")
+        elif status != "passed":
+            ET.SubElement(case, status)
+    report = tmp_path / "pytest.xml"
+    ET.ElementTree(suite).write(report, encoding="utf-8")
+    checked = subprocess.run([sys.executable, str(SCRIPT), str(report), "Linux", "--minimum", str(minimum)],
                              capture_output=True, encoding="utf-8", timeout=10)
     assert checked.returncode == expected, checked.stdout

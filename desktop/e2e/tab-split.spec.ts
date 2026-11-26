@@ -1,6 +1,6 @@
 import { test, expect, echoCalc, expectLine, fullSize, openShell, ready, sessions } from './fixtures'
 
-test('opening a tab on the right keeps the left shell and puts keyboard input in the right shell', async ({ win, shell, server }) => {
+test('opening a tab on the right keeps the left shell and puts keyboard input in the right shell', async ({ win, shell, server }, testInfo) => {
   const { app, page } = win
   const other = await openShell(server.api, 'right-hand-shell')
   await page.reload()
@@ -25,7 +25,22 @@ test('opening a tab on the right keeps the left shell and puts keyboard input in
   await expect(input(main)).toBeFocused()
   await page.keyboard.type(echoCalc('left-pane-', '6*7'))
   await page.keyboard.press('Enter')
-  await expectLine(page, 'left-pane-42')
+  try {
+    await expectLine(page, 'left-pane-42')
+  } catch (error) {
+    if (shell.backend === 'tmux') {
+      // On macOS the command was visible, but the reply never reached the DOM.
+      // The pane's own text separates execution from rendering on the next failure.
+      const capture = await server.api.post(`/api/terminal/sessions/${shell.id}/capture`, {
+        data: { mode: 'screen' }, timeout: 3000,
+      }).then(async (response) => response.ok() ? (await response.json()).text : `HTTP ${response.status()}`)
+        .catch(() => 'The tmux capture request did not finish.')
+      await testInfo.attach('left tmux pane after closing the split', {
+        body: String(capture), contentType: 'text/plain',
+      })
+    }
+    throw error
+  }
   await expect.poll(async () => (await sessions(server.api)).length).toBe(2)
 
   await tab(other.id).click({ button: 'right' })

@@ -24,8 +24,8 @@ import { t, tn } from '../../i18n/scope/pages'
 import type { OverviewData } from './data'
 import { workingNow } from './data'
 import {
-  STEP, YEAR_LIMIT, countsOf, dayCurve, dayKey, period, streak, usualDay, useYear, yearGrid,
-  type Year, type YearSession,
+  LAYERS, RATIO_FLOOR_MIN, STEP, YEAR_LIMIT, countsOf, dayCurve, dayKey, layerValues, period, stepsOf, streak, usualDay, useYear, yearGrid,
+  type Layer, type Year, type YearSession,
 } from './home-data'
 import { monthLabel } from '../../lib/months'
 
@@ -573,17 +573,85 @@ export function NeedsYou({ data }: { data: OverviewData }) {
 
 /* --------------------------------------------------------------- year */
 
-function YearSection({ year }: { year: Year }) {
-  const grid = useMemo(() => yearGrid(year.days), [year.days])
-  const run = useMemo(() => streak(year.days), [year.days])
-  const cur = useMemo(() => period(year.days, 30), [year.days])
-  const prev = useMemo(() => period(year.days, 30, 30), [year.days])
-  const total = useMemo(() => grid.reduce((s, c) => s + c.minutes, 0), [grid])
-  const nonzero = grid.filter((c) => c.minutes > 0).map((c) => c.minutes).sort((a, b) => a - b)
-  const q = (p: number) => nonzero[Math.floor(p * (nonzero.length - 1))] ?? 0
-  const cuts = [q(0.25), q(0.5), q(0.8)]
-  const level = (m: number) => (m <= 0 ? 0 : m <= cuts[0]! ? 1 : m <= cuts[1]! ? 2 : m <= cuts[2]! ? 3 : 4)
-  const fill = ['var(--bg-hover)', 'color-mix(in oklab, var(--brand) 28%, var(--bg-surface))', 'color-mix(in oklab, var(--brand) 52%, var(--bg-surface))', 'color-mix(in oklab, var(--brand) 78%, var(--bg-surface))', 'var(--brand)']
+/** The heatmap's layer and whether it plays on its own: per viewer, in this browser. */
+const HEAT_KEY = 'sp-home-heat'
+/** How long a layer shows while the heatmap plays. */
+const HEAT_MS = 5000
+const HEAT_COLOR: Record<Layer, string> = {
+  agent: 'var(--heat-agent)',
+  you: 'var(--heat-you)',
+  ratio: 'var(--heat-ratio)',
+  lines: 'var(--heat-lines)',
+}
+
+interface Heat { layer: Layer; auto: boolean }
+
+function loadHeat(): Heat {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HEAT_KEY) || '{}') as Partial<Heat>
+    const layer = LAYERS.includes(raw.layer as Layer) ? raw.layer as Layer : 'agent'
+    return { layer, auto: raw.auto !== false }
+  } catch {
+    return { layer: 'agent', auto: true }
+  }
+}
+
+function saveHeat(heat: Heat) {
+  try { localStorage.setItem(HEAT_KEY, JSON.stringify(heat)) } catch { /* private window: the choice lives for this visit */ }
+}
+
+function nextLayer(l: Layer): Layer {
+  return LAYERS[(LAYERS.indexOf(l) + 1) % LAYERS.length]!
+}
+
+/** The five steps of a layer's ramp: empty, three tints, the full colour. */
+function ramp(color: string): string[] {
+  return ['var(--bg-hover)', ...[28, 52, 78].map((p) => `color-mix(in oklab, ${color} ${p}%, var(--bg-surface))`), color]
+}
+
+function layerName(l: Layer): string {
+  return l === 'agent' ? t('agent time') : l === 'you' ? t('your time') : l === 'ratio' ? t('ratio') : t('lines of code')
+}
+
+/** A cell's tooltip text after the date: the layer's value that day. */
+function layerValue(l: Layer, v: Record<Layer, number>): string {
+  if (l === 'agent') return v.agent ? hMin(v.agent) : t('no agent time')
+  if (l === 'you') return v.you ? t('{h} your time', { h: hMin(v.you) }) : t('none of your time')
+  if (l === 'ratio') {
+    if (v.you < RATIO_FLOOR_MIN) return t('under {n}m of your time', { n: RATIO_FLOOR_MIN })
+    return `×${v.ratio.toLocaleString(locale(), { maximumFractionDigits: 1 })}`
+  }
+  return v.lines ? tn(v.lines, '{n} line', '{n} lines', { n: v.lines.toLocaleString(locale()) }) : t('no lines')
+}
+
+/** The year heatmap: one layer at a time, stepping on its own until the pill is clicked. */
+function YearHeatmap({ year, grid }: { year: Year; grid: ReturnType<typeof yearGrid> }) {
+  const [heat, setHeat] = useState(loadHeat)
+  const [still, setStill] = useState(reduced)
+  const [hover, setHover] = useState(false)
+  const [keyboard, setKeyboard] = useState(false)
+  const playing = heat.auto && !still
+  useEffect(() => saveHeat(heat), [heat])
+  // Reduced motion read live: turned on mid-play, the bar goes rather than freezing.
+  useEffect(() => {
+    let mq: MediaQueryList | undefined
+    try { mq = window.matchMedia?.('(prefers-reduced-motion: reduce)') } catch { return }
+    if (!mq) return
+    const on = () => setStill(mq!.matches)
+    mq.addEventListener?.('change', on)
+    return () => mq!.removeEventListener?.('change', on)
+  }, [])
+  const advance = () => setHeat((h) => ({ ...h, layer: nextLayer(h.layer) }))
+  // The pointer is over the heatmap when ▶ is clicked: play now, and pause
+  // on hover again only after the pointer leaves and comes back.
+  const toggle = () => { if (!heat.auto) setHover(false); setHeat({ ...heat, auto: !heat.auto }) }
+
+  const values = useMemo(() => grid.map((c) => layerValues(year.days.get(c.day) ?? [])), [grid, year.days])
+  const step = useMemo(() => stepsOf(values.map((v) => v[heat.layer])), [values, heat.layer])
+  const color = HEAT_COLOR[heat.layer]
+  const fill = ramp(color)
+  const name = layerName(heat.layer)
+
   const weeks = Math.ceil(grid.length / 7)
   const CELL = 14
   const GAP = 3
@@ -592,6 +660,76 @@ function YearSection({ year }: { year: Year }) {
     const first = grid[w * 7]!
     if (first.date.getDate() <= 7) months.push({ col: w, name: monthLabel(first.date) })
   }
+  return (
+    <div className="flex flex-col gap-8 min-w-0"
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHover(true) }}
+      onPointerLeave={() => setHover(false)}>
+      <div className="flex items-center">
+        <span className="relative inline-flex items-center min-w-0 max-w-full h-24 rounded-pill transition-colors duration-med"
+          style={{ background: `color-mix(in oklab, ${color} 14%, var(--bg-surface))` }}>
+          <button type="button" data-testid="heat-layer"
+            onClick={() => setHeat({ layer: nextLayer(heat.layer), auto: false })}
+            onFocus={(e) => { try { setKeyboard(e.currentTarget.matches(':focus-visible')) } catch { setKeyboard(false) } }}
+            onBlur={() => setKeyboard(false)}
+            aria-label={playing
+              ? t('Heatmap shows {layer}; show the next layer and stop autoplay', { layer: name })
+              : t('Heatmap shows {layer}; show the next layer', { layer: name })}
+            className="inline-flex items-center gap-6 min-w-0 h-24 px-10 rounded-pill text-12 font-medium text-primary whitespace-nowrap">
+            <span aria-hidden className="shrink-0 w-8 h-8 rounded-pill" style={{ background: color }} />
+            <span className="truncate">{name}</span>
+          </button>
+          {!still && (
+            <button type="button" data-testid="heat-play" onClick={toggle}
+              aria-label={playing ? t('Pause the layers') : t('Play the layers')} title={playing ? t('Pause the layers') : t('Play the layers')}
+              className="inline-flex shrink-0 items-center justify-center w-20 h-24 mr-4 rounded-pill text-10 text-secondary hover:text-primary">
+              {playing ? '❚❚' : '▶'}
+            </button>
+          )}
+          {playing && (
+            <span aria-hidden className="absolute inset-0 rounded-pill overflow-hidden pointer-events-none">
+              <span key={heat.layer} className="home-heat-bar absolute left-0 bottom-0 h-2 w-full"
+                style={{ background: color, animationDuration: `${HEAT_MS}ms`, animationPlayState: hover || keyboard ? 'paused' : 'running' }}
+                onAnimationEnd={advance} />
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="overflow-x-auto -mx-4 px-4">
+        <svg width={weeks * (CELL + GAP) + 28} height={7 * (CELL + GAP) + 18} role="img" aria-label={t('The last year, per day: {layer}', { layer: name })} className="block">
+          {months.map((m) => (
+            <text key={m.col} x={28 + m.col * (CELL + GAP)} y={10} fontSize={10} fill="var(--text-tertiary)">{m.name}</text>
+          ))}
+          {[1, 3, 5].map((r) => (
+            <text key={r} x={0} y={18 + r * (CELL + GAP) + CELL - 2} fontSize={10} fill="var(--text-tertiary)">
+              {new Date(2024, 0, r).toLocaleDateString(locale(), { weekday: 'short' })}
+            </text>
+          ))}
+          {grid.map((c, i) => c.future ? null : (
+            <rect key={c.day} x={28 + Math.floor(i / 7) * (CELL + GAP)} y={18 + (i % 7) * (CELL + GAP)} width={CELL} height={CELL} rx={3}
+              className="home-cell" style={{ fill: fill[step(values[i]![heat.layer])], transition: still ? undefined : 'fill .6s ease', animationDelay: `${Math.floor(i / 7) * 12}ms` }}>
+              <title>{`${dayHeading(c.day)} · ${layerValue(heat.layer, values[i]!)}`}</title>
+            </rect>
+          ))}
+        </svg>
+      </div>
+      <div className="flex items-center gap-6 text-11 text-tertiary">
+        <span>{t('less')}</span>
+        {fill.map((f, i) => <span key={i} className="w-12 h-12 rounded-[3px]" style={{ background: f, transition: still ? undefined : 'background-color .6s ease' }} />)}
+        <span>{t('more')}</span>
+      </div>
+      {year.truncated && (
+        <p className="text-11 text-tertiary">{t('The year shows the latest {n} chats.', { n: YEAR_LIMIT.toLocaleString(locale()) })}</p>
+      )}
+    </div>
+  )
+}
+
+function YearSection({ year }: { year: Year }) {
+  const grid = useMemo(() => yearGrid(year.days), [year.days])
+  const run = useMemo(() => streak(year.days), [year.days])
+  const cur = useMemo(() => period(year.days, 30), [year.days])
+  const prev = useMemo(() => period(year.days, 30, 30), [year.days])
+  const total = useMemo(() => grid.reduce((s, c) => s + c.minutes, 0), [grid])
   const figures: Array<[string, string, number, number]> = [
     [t('agent time'), hMin(cur.minutes, '0m'), cur.minutes, prev.minutes],
     [t('commits'), cur.commits.toLocaleString(locale()), cur.commits, prev.commits],
@@ -620,34 +758,7 @@ function YearSection({ year }: { year: Year }) {
           </div>
         ))}
       </div>
-      <div className="flex flex-col gap-8 min-w-0">
-      <div className="overflow-x-auto -mx-4 px-4">
-        <svg width={weeks * (CELL + GAP) + 28} height={7 * (CELL + GAP) + 18} role="img" aria-label={t('Agent time per day, the last year')} className="block">
-          {months.map((m) => (
-            <text key={m.col} x={28 + m.col * (CELL + GAP)} y={10} fontSize={10} fill="var(--text-tertiary)">{m.name}</text>
-          ))}
-          {[1, 3, 5].map((r) => (
-            <text key={r} x={0} y={18 + r * (CELL + GAP) + CELL - 2} fontSize={10} fill="var(--text-tertiary)">
-              {new Date(2024, 0, r).toLocaleDateString(locale(), { weekday: 'short' })}
-            </text>
-          ))}
-          {grid.map((c, i) => c.future ? null : (
-            <rect key={c.day} x={28 + Math.floor(i / 7) * (CELL + GAP)} y={18 + (i % 7) * (CELL + GAP)} width={CELL} height={CELL} rx={3}
-              fill={fill[level(c.minutes)]} className="home-cell" style={{ animationDelay: `${Math.floor(i / 7) * 12}ms` }}>
-              <title>{`${dayHeading(c.day)} · ${c.minutes ? hMin(c.minutes) : t('no agent time')}`}</title>
-            </rect>
-          ))}
-        </svg>
-      </div>
-      <div className="flex items-center gap-6 text-11 text-tertiary">
-        <span>{t('less')}</span>
-        {fill.map((f, i) => <span key={i} className="w-12 h-12 rounded-[3px]" style={{ background: f }} />)}
-        <span>{t('more')}</span>
-      </div>
-      {year.truncated && (
-        <p className="text-11 text-tertiary">{t('The year shows the latest {n} chats.', { n: YEAR_LIMIT.toLocaleString(locale()) })}</p>
-      )}
-      </div>
+      <YearHeatmap year={year} grid={grid} />
       </div>
     </section>
   )
@@ -708,11 +819,13 @@ const MOTION = `
 @keyframes home-fade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes home-ping { 0% { transform: scale(.6); opacity: .5 } 100% { transform: scale(2.2); opacity: 0 } }
 @keyframes home-cell { from { opacity: 0 } to { opacity: 1 } }
+@keyframes home-heat { from { transform: scaleX(0) } to { transform: scaleX(1) } }
 .home-draw { stroke-dasharray: 1; animation: home-draw 1.1s cubic-bezier(.2,.7,.2,1) both }
 .home-fade { animation: home-fade .9s .3s ease-out both }
 .home-ping { transform-box: fill-box; transform-origin: center; animation: home-ping 1.8s ease-out infinite }
 .home-cell { animation: home-cell .4s ease-out both }
-@media (prefers-reduced-motion: reduce) { .home-draw, .home-fade, .home-ping, .home-cell { animation: none } }
+.home-heat-bar { transform-origin: left; animation: home-heat linear both }
+@media (prefers-reduced-motion: reduce) { .home-draw, .home-fade, .home-ping, .home-cell, .home-heat-bar { animation: none } }
 `
 
 export function Home({ data }: { data: OverviewData }) {

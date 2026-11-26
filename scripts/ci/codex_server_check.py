@@ -7,9 +7,8 @@ check_codex_limits.py calls the reading code itself. This starts the server
 ``POST /api/usage/limits/refresh`` as the page's "Read now" does, and reads
 ``GET /api/usage/limits`` until the Codex row has an answer. Then:
 
-- the row answers: a reading, or a cause from Codex. With an API-key login
-  (CI) the cause is "not signed in" or Codex's own sentence; a cause that
-  says the server could not talk to Codex fails;
+- the row returns a successful reading, or exactly "not signed in" when
+  CI explicitly exercises the logged-out path;
 - no codex or node process started during the read is left running
   (Windows: codex.cmd starts node, which starts codex.exe);
 - the data folder's ``.usage`` holds no temporary file (``.units.json.*``,
@@ -21,6 +20,7 @@ installed and logged in. Spends no tokens.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import socket
@@ -41,9 +41,6 @@ SERVER_EXIT_TIMEOUT_S = 15
 
 ROOT = Path(__file__).resolve().parents[2]
 WINDOWS = os.name == "nt"
-#: Causes that say the server could not talk to Codex (codexlimits.read).
-BROKEN = ("no answer in", "codex has no app-server", "codex could not start", "codex is not on this machine",
-          "unreadable answer")
 
 
 def free_port() -> int:
@@ -88,12 +85,18 @@ def temporary_files(usage: Path) -> list[str]:
                   if p.name.startswith(".units.json.") or p.suffix in (".tmp", ".part") or ".tmp" in p.name)
 
 
-def main() -> int:
+def poll_answered(poll: dict, *, expect_signed_out: bool) -> bool:
+    if expect_signed_out:
+        return poll.get("cause") == "not signed in" and not poll.get("last_success")
+    return bool(poll.get("last_success")) and not poll.get("cause")
+
+
+def main(*, expect_signed_out: bool = False) -> int:
     data = Path(tempfile.mkdtemp(prefix="sp codex ü-")).resolve()
     port = free_port()
     before = codex_or_node()
     log = open(data.parent / f"{data.name}.log", "w", encoding="utf-8")
-    env = {**os.environ, "SP_DATA_ROOT": str(data), "SP_PORT": str(port), "PYTHONUTF8": "1"}
+    env = {**os.environ, "SP_DATA_ROOT": str(data), "SP_PORT": str(port), "PYTHONUTF8": "1", "SP_EXAMPLE": "0"}
     flags: dict = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
     proc = subprocess.Popen([sys.executable, "-m", "backend.server"], cwd=ROOT / "backend", env=env,
                             stdout=log, stderr=subprocess.STDOUT, **flags)
@@ -140,8 +143,7 @@ def main() -> int:
         print("codex_poll:", json.dumps(poll), flush=True)
         print("limits:", json.dumps(limits)[:600], flush=True)
         cause = str(poll.get("cause") or "")
-        check("the Codex row answers: a reading or Codex's own cause",
-              bool(poll.get("last_success")) or bool(cause) and not cause.startswith(BROKEN), cause or poll)
+        check("the Codex row shows the expected limits result", poll_answered(poll, expect_signed_out=expect_signed_out), cause or poll)
         if cause:
             print(f"  info Codex says: {cause}", flush=True)
 
@@ -171,4 +173,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expect-signed-out", action="store_true")
+    sys.exit(main(expect_signed_out=parser.parse_args().expect_signed_out))

@@ -74,6 +74,14 @@
   --core-workflow:    #1F8A8A;
   --core-experiment:  #C24E7A;
 
+  /* ---- Home year heatmap layers (features/overview/home.tsx): a fixed
+     palette of four hues, apart from the accent, so no accent or skin makes
+     two layers look alike. */
+  --heat-agent: #3E9B84;
+  --heat-you:   #C8812A;
+  --heat-ratio: #6E56CF;
+  --heat-lines: #2F6FCF;
+
   /* ---- Ink: a status colour as text on a tint of itself -------------------
      The light theme's status hues are too pale to read on their own 14%
      tint (2:1 for amber); these darker inks clear 4.5:1 on that tint over
@@ -201,6 +209,10 @@
     --core-store:      #D29A2E;
     --core-workflow:   #3AADAD;
     --core-experiment: #E07AA3;
+    --heat-agent: #4FB39A;
+    --heat-you:   #E8A04E;
+    --heat-ratio: #9B86F0;
+    --heat-lines: #5B95EE;
 
     /* Ink on a tint: in the dark the hue itself reads. */
     --status-green-ink:   var(--status-green);
@@ -250,6 +262,10 @@
   --core-store:      #D29A2E;
   --core-workflow:   #3AADAD;
   --core-experiment: #E07AA3;
+  --heat-agent: #4FB39A;
+  --heat-you:   #E8A04E;
+  --heat-ratio: #9B86F0;
+  --heat-lines: #5B95EE;
 
   /* Ink on a tint: in the dark the hue itself reads. */
   --status-green-ink:   var(--status-green);

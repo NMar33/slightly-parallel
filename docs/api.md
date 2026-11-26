@@ -43,6 +43,13 @@ the 200/201 payload. `—` means none beyond the lens shape.
   `problem.status`. A decision or goal with no first line is refused the
   same way; the requirement is derived from the read models, so the two
   sides cannot drift.
+- **Every reason at once** — a refusal whose checks do not depend on each
+  other names all of them (`backend/backend/refusals.py`): `detail` is
+  text, one line per reason (`reason — what to do`), most general first,
+  and the status is the first reason's; one reason reads as it always has.
+  The answer adds `reasons`, one `{reason, instead, code, field?}` each; the
+  MCP translator numbers two or more. A missing entity (404) and no access
+  (403) are each the only reason: the other checks are not run.
 - **Agents write through MCP** — a POST whose `actor` or `agent_id` names an
   agent is accepted only with the header `X-SP-Via: mcp`, which the MCP
   translator sets on every call; otherwise 422, naming the tools. The
@@ -181,9 +188,14 @@ hook and the server (`hookshared.resolve_braces`): `{project:x}` /
 `{lane:x}`; an exact project code or alias, any case (a project the chat is
 not a member of is refused); an exact live lane of the target board; a near
 miss of a code or alias (difflib ratio ≥ 0.8) refused with a hint; anything
-else a new lane. A name both a project and a lane, two projects or two lanes
-are refused in one line and no card is made. An agent's create on that
-command must send the project the braces named.
+else a new lane. Two projects or two lanes are refused and no card is made.
+Every refusal of the braces is named at once (`reasons`; the hook's notice
+joins them with "; "), except a project the chat is not a member of, which
+is said alone. A lane the braces leave unclear (a near miss of a live lane, a
+name both a project and a lane) makes the card in the default lane and the
+agent asks after. An agent's create on that command must send the project
+the braces named; its status, text, lane, title and tags are then checked
+together, every refusal in one answer.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
   Answers: `agent_id`, `agent_group`.
 - `POST /api/agents/{agent_id}/rename` — body: `name`, stored as
@@ -305,6 +317,17 @@ The board, its blocks, and everything hung off a task.
   refused, naming the creator. `comment` is open to every agent on any
   task. The one exception is the waiting title of a task made from a
   message (above).
+  `think: true | false` sets or removes the operator's think mark (the
+  columns `think_at`, `think_by`; `#think` / `#think-off` in a chat do the
+  same). An agent sending `think` is refused. While the mark is on, an
+  agent's change of `status`, `lane` or `assignee`, its
+  `POST /api/tasks/{task_id}/report`, its archive and its move to another
+  project are refused with a reason that names the mark; comments, notes, evidence and links stay
+  open. The operator is never refused; the operator's `#done` closes the
+  task and clears the mark. A refused update names every reason at once: a
+  task that is not there alone (404), then who may change what (the mark,
+  the operator's switches, the card's creator, the status), then the values
+  (vocabulary, tags, lengths, shapes).
 - `POST /api/tasks/{task_id}/turn` — the next round of instruction. Body:
   `text`, `actor`, `created_date`, `created_time`. Answers: `task`, `turn`,
   `turns`, `description`, `ref`.
@@ -341,9 +364,12 @@ The board, its blocks, and everything hung off a task.
   the head), a sprint and milestone links are let go, and its notes,
   evidence, story requests and story images move with it. The
   history gets `project` (old → new) and «moved from A to B, by …». Refused
-  in one line, writing nothing: no such project (404), the same project or a
-  done or archived task (409), an agent below level 3 or not a member (403).
-  Answers `task_id`, `from`, `to`, `lane`, `projects`, `lane_cleared`,
+  with every reason at once, writing nothing, the most general first: no
+  such task or project (404, alone); an agent below level 3 or not a member
+  of `to` (403, both named, nothing else said); then together a done or
+  archived task (409), the same project (409) and, for an agent, a task with
+  the operator's think mark (422, naming the mark; the operator's move keeps
+  the mark). Answers `task_id`, `from`, `to`, `lane`, `projects`, `lane_cleared`,
   `topic_dropped`, `stack_dropped`, `sprint_dropped`, `milestones_dropped`, `where`, `said`.
 - `GET /api/commits/signed?project=&days=7` — per project with a repository:
   commits in the last `days` days, how many carry a `Task:` line (`signed`),
@@ -394,12 +420,15 @@ An agent reports; the operator judges. The report is never the verdict.
 - `POST /api/tasks/{task_id}/report` — body: `agent_id`, `summary`. Answers:
   `task_id`, `status`, `recorded`, `moved`, `auto_manage`, `evidence`,
   `evidence_extra`, `evidence_prompt`, `evidence_prompt_id`, `next` — the
-  instructions for the evidence the report owes.
+  instructions for the evidence the report owes. Refused with every reason
+  at once after the 404: no `agent_id`, an archived task (409), the think
+  mark, the summary's shape and length.
 - `GET /api/tasks/{task_id}/evidence` — the task's evidence with git's
   account of the same work beside it. Query: `path`, `paths`, `changes`,
   `start_here`. Answers: `task_id`, `evidence`, `missing`, `work`.
 - `POST /api/tasks/{task_id}/evidence` — body: `agent_id`, `items`.
-  Answers: `task_id`, `saved`, `existing`.
+  Answers: `task_id`, `saved`, `existing`. A missing task is the 404 before
+  anything; every bad item is named, by its index.
 - `GET /api/tasks/{task_id}/evidence/ask` — `#evidence`: the same
   instructions a done-report would have carried. Answers: `task_id`, `next`,
   `work`, `evidence_prompt`, `evidence_prompt_id`, `evidence_extra`.
@@ -456,7 +485,9 @@ An agent reports; the operator judges. The report is never the verdict.
 - `POST /api/story/requests/{request_id}/cancel` — answers: `request`.
 - `POST /api/tasks/{task_id}/story` — the agent answers a request. Body:
   `request_id`, `agent_id`, `body`, `images?` (`title`, `data_base64`,
-  `ext`). Answers: `note`, `images`, `request_id`.
+  `ext`). Answers: `note`, `images`, `request_id`. A missing task or request
+  is the only reason (404); the rest — the request's task and state, the
+  agent, the body, each image — are named together.
 - `GET /api/story/images?…` — answers: `images`, `total`.
 - `GET /api/story/images/{image_id}/file` — the image itself.
 - `GET /api/story/prompts` — the saved brief and style presets.
@@ -1433,7 +1464,9 @@ existing topic takes it, its old name written to `entrypoint_names.csv`);
   `entrypoint_names.csv` (by the operator).
 - `GET /api/tasks/{task_id}/topic` — the task's topic, or null.
 - `POST /api/tasks/{task_id}/topic` — `entrypoint_id` ("" clears): a topic of
-  the task's project.
+  the task's project. An agent not a member of the topic's project is
+  refused first and alone, 403 like the gate; a topic of another project
+  after it (422).
 
 ### Usage
 

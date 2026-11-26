@@ -99,6 +99,10 @@ class EntryRefused(ValueError):
     """A write the server will not make; answered as 422 with the sentence."""
 
 
+class EntryForbidden(EntryRefused):
+    """No access to the row: answered as 403, like the membership gate."""
+
+
 def _mint(prefix: str, *parts: str) -> str:
     return prefix + hashlib.sha256("|".join(parts).encode()).hexdigest()[:10]
 
@@ -354,15 +358,17 @@ def _last_turn(store: ViewStore, agent: str) -> int:
     return best
 
 
-def _member_of_row(store: ViewStore, row: dict[str, Any], who: str, what: str = "topic") -> None:
-    """An agent writes on a topic (or a task) of its member projects only."""
+def _member_of_row(store: ViewStore, row: dict[str, Any], who: str, what: str = "topic",
+                   forbidden: bool = False) -> None:
+    """An agent writes on a topic (or a task) of its member projects only.
+    ``forbidden``: refused as the membership gate refuses (403)."""
     if not is_agent(who):
         return
     from .entitylib import project_codes
     ok, line = memberships.may_write_row(store, who, str(row.get("project") or ""), what,
                                          also=project_codes(row.get("projects")))
     if not ok:
-        raise EntryRefused(line)
+        raise (EntryForbidden if forbidden else EntryRefused)(line)
 
 
 # ---------------------------------------------------------------------------
@@ -835,13 +841,15 @@ def set_task_topic(store: ViewStore, task_id: str, body: Any) -> dict[str, Any]:
     who = identity_of(body) or "operator"
     if ep_id:
         row = _need(store, ep_id)
+        # No access first, and alone, as the gate answers it (403): a
+        # non-member learns nothing of where the topic is (tk_90c1ba5f).
+        _member_of_row(store, row, who, forbidden=True)
         if not in_project(task, str(row.get("project") or "")):
             raise EntryRefused(f"{ep_id} is a topic of {row.get('project')}; {task_id} is in {task.get('project')}")
-        _member_of_row(store, row, who)
     elif is_agent(who):
         # Clearing: the task's own project stands in for the topic's.
         _member_of_row(store, {"id": task_id, "project": str(task.get("project") or ""),
-                               "projects": str(task.get("projects") or "")}, who, "task")
+                               "projects": str(task.get("projects") or "")}, who, "task", forbidden=True)
     rec = {"id": _mint("tt_", task_id), "task_id": task_id, "entrypoint_id": ep_id, "at": now_iso(), "actor": who}
     def mutate(rows: list[dict[str, str]]) -> bool:
         # One step under the lock, the file's creation included: two calls

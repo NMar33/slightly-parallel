@@ -11,23 +11,37 @@
 # their numbers compare across systems, not with a laptop. The JSON (and
 # its table) is the artifact bench-<os>.
 name: Terminal bench
+run-name: ${{ inputs.expect_failure && format('Pipeline probe {0} / Terminal bench', inputs.probe_id) || 'Terminal bench' }}
 
 on:
   push:
     branches: [ci-bench]
   workflow_dispatch:
+    inputs:
+      expect_failure:
+        description: Inject and check a failure in every job without running normal steps
+        type: boolean
+        default: false
+      probe_id:
+        description: ID of the pipeline self-test dispatching this run
+        type: string
+        default: ''
   schedule:
     - cron: "47 4 * * 1"   # Monday 04:47 UTC
 
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   bench:
     name: Bench (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    continue-on-error: true
+    continue-on-error: ${{ !inputs.expect_failure }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,13 +50,35 @@ jobs:
           - { os: macos-latest, name: macos }
           - { os: windows-latest, name: windows }
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
           cache: npm
@@ -50,31 +86,34 @@ jobs:
             frontend/package-lock.json
             desktop/package-lock.json
       - name: tmux, and Xvfb for a display (Linux); tmux (macOS)
-        if: runner.os != 'Windows'
+        if: ${{ !inputs.expect_failure && (runner.os != 'Windows') }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux xvfb; else brew install tmux; fi
       - name: Backend environment
+        if: ${{ !inputs.expect_failure }}
         working-directory: backend
         shell: bash
         run: |
           python -m venv .venv
           .venv/${{ runner.os == 'Windows' && 'Scripts' || 'bin' }}/python -m pip install -q -r requirements.lock -r requirements-dev.txt
       - name: Frontend build and Playwright
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npm ci && npm run build
       - name: Electron
+        if: ${{ !inputs.expect_failure }}
         working-directory: desktop
         run: npm ci
       - name: "Bench, Linux: an X11 window under Xvfb"
-        if: runner.os == 'Linux'
+        if: ${{ !inputs.expect_failure && (runner.os == 'Linux') }}
         working-directory: desktop
         run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run bench
       - name: Bench, ${{ runner.os }}
-        if: runner.os != 'Linux'
+        if: ${{ !inputs.expect_failure && (runner.os != 'Linux') }}
         working-directory: desktop
         run: npm run bench
       - name: The bench's JSON and table
-        if: always()
+        if: ${{ !inputs.expect_failure && (always()) }}
         uses: actions/upload-artifact@v7
         with:
           name: bench-${{ matrix.name }}

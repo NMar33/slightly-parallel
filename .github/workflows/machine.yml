@@ -6,12 +6,21 @@
 # (real agents on three systems): by hand, or on a push to the ci-machine
 # branch (a dispatch needs the file on the default branch first).
 name: Machine
+run-name: ${{ inputs.expect_failure && format('Pipeline probe {0} / Machine', inputs.probe_id) || (inputs.full && 'Machine (full)' || 'Machine (standard)') }}
 
 on:
   push:
     branches: [ci-machine]
   workflow_dispatch:
     inputs:
+      expect_failure:
+        description: Inject and check a failure in every job without running normal steps
+        type: boolean
+        default: false
+      probe_id:
+        description: ID of the pipeline self-test dispatching this run
+        type: string
+        default: ''
       full:
         description: "all three agents on all three systems (9 runs, ~$4-8); off: Claude Code on all three, Codex and OpenCode on Linux (5 runs)"
         type: boolean
@@ -19,15 +28,19 @@ on:
 
 # One run at a time: a second push waits instead of paying twice.
 concurrency:
-  group: machine
+  group: ${{ inputs.expect_failure && format('machine-probe-{0}', inputs.probe_id) || 'machine' }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   machine:
-    name: Machine (${{ matrix.os }})
+    name: Machine${{ inputs.full && ' full' || '' }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -37,32 +50,73 @@ jobs:
     env:
       SP_LOCAL: "1"
       SP_NONINTERACTIVE: "1"
+      SP_AGENT_CHANNEL: pinned
       SP_ARCHIVE_DIR: ${{ github.workspace }}/.sp/archive
       # Every agent on Linux; on macOS and Windows Claude Code alone, unless full.
       TOOLS: ${{ (inputs.full || matrix.os == 'ubuntu-latest') && 'claude-code,codex,opencode' || 'claude-code' }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      CODEX_MODEL: ${{ vars.CODEX_MODEL }}      # empty: Codex's own default
+      ANTHROPIC_API_KEY: ${{ !inputs.expect_failure && secrets.ANTHROPIC_API_KEY || '' }}
+      OPENAI_API_KEY: ${{ !inputs.expect_failure && secrets.OPENAI_API_KEY || '' }}
+      SP_CLAUDE_MODEL: claude-haiku-5-5
+      CODEX_MODEL: gpt-6-luna
+      SP_OPENCODE_MODEL: openai/gpt-6-luna
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           fetch-depth: 0          # the upgrade stage installs the last release tag first
       - name: Git identity (the run makes commits in its sample projects)
+        if: ${{ !inputs.expect_failure }}
         run: git config --global user.email ci@example.com && git config --global user.name CI
       - name: The kit, Linux and macOS
-        if: runner.os != 'Windows'
+        if: ${{ !inputs.expect_failure && (runner.os != 'Windows') }}
         run: bash scripts/machine/bootstrap.sh --tools "$TOOLS"
       - name: The kit, Windows
-        if: runner.os == 'Windows'
+        if: ${{ !inputs.expect_failure && (runner.os == 'Windows') }}
         shell: pwsh
-        run: ./scripts/machine/bootstrap.ps1 --tools "$env:TOOLS"
-      - name: The archive it made
-        if: always()
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -File scripts/machine/bootstrap.ps1 --tools "$env:TOOLS"
+      - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure && (always()) }}
+        with:
+          python-version: "3.12"
+      - name: Check the Machine archive before upload
+        id: artifact-audit
+        if: ${{ !inputs.expect_failure && (always()) }}
+        shell: bash
+        env:
+          AUDITED_ARCHIVES: ${{ runner.temp }}/sp-audited-machine
+        run: python scripts/ci/guard_agent_artifacts.py --machine .sp/archive "$AUDITED_ARCHIVES"
+      - name: Report CLI version and model cost
+        if: ${{ !inputs.expect_failure && (always() && steps.artifact-audit.outcome == 'success') }}
+        env:
+          SP_AGENT_COST_LIMIT_USD: '1.00'
+        run: python scripts/ci/agent_summary.py .sp/fresh-user/report.json
+      - name: The audited Machine archive
+        if: ${{ !inputs.expect_failure && (always() && steps.artifact-audit.outcome == 'success') }}
         uses: actions/upload-artifact@v7
         with:
           name: machine-${{ matrix.os }}
-          # Only the archive: run.py cut the secrets out of it. The raw step
-          # logs are not uploaded; a bootstrap failure shows in this job's log.
-          path: .sp/archive/sp-machine-*.zip
+          path: ${{ runner.temp }}/sp-audited-machine/sp-machine-*.zip
           if-no-files-found: warn
           retention-days: 14

@@ -49,7 +49,7 @@ _MEDIA = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "
 
 
 def _refused(exc: E.EntryRefused) -> HTTPException:
-    return HTTPException(status_code=422, detail=str(exc))
+    return HTTPException(status_code=403 if isinstance(exc, E.EntryForbidden) else 422, detail=str(exc))
 
 
 def _row(store: ViewStore, ep_id: str) -> dict[str, str]:

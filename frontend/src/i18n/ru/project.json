@@ -963,5 +963,10 @@
   "Core": "Ядро",
   "Remove {core}": "Убрать {core}",
   "Add a core": "Добавить ядро",
-  "The task is saved. Its core was not. Open the task and pick the core again.": "Задача сохранена, а ядро — нет. Откройте задачу и выберите ядро снова."
+  "The task is saved. Its core was not. Open the task and pick the core again.": "Задача сохранена, а ядро — нет. Откройте задачу и выберите ядро снова.",
+  "think": "обдумать",
+  "Yours to think through: agents do not start, move or finish it · since {date}": "Обдумываете вы сами: агенты её не берут, не двигают и не закрывают · с {date}",
+  "Remove the think mark": "Снять пометку «обдумать»",
+  "Show only the tasks marked «think»: yours to think through": "Показывать только задачи с пометкой «обдумать»: их обдумываете вы сами",
+  "The think mark was not removed": "Пометка «обдумать» не снята"
 }

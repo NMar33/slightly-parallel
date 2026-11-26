@@ -74,6 +74,10 @@
   --core-internals: #27a050;
   --core-workflow: #46d1a0;
   --core-experiment: #ffc8a0;
+  --heat-agent: #4FB39A;
+  --heat-you:   #E8A04E;
+  --heat-ratio: #9B86F0;
+  --heat-lines: #5B95EE;
 
   --status-green-ink: var(--status-green);
   --status-amber-ink: var(--status-amber);
@@ -195,6 +199,10 @@
   --core-internals: #675f4f;
   --core-workflow: #2f6b6b;
   --core-experiment: #8f3f5a;
+  --heat-agent: #3E9B84;
+  --heat-you:   #C8812A;
+  --heat-ratio: #6E56CF;
+  --heat-lines: #2F6FCF;
 
   --status-green-ink: #245530;
   --status-amber-ink: #7d4a05;
@@ -294,6 +302,10 @@
   --core-internals: #7b8fae;
   --core-workflow: #4fd1c5;
   --core-experiment: #ff8fb0;
+  --heat-agent: #4FB39A;
+  --heat-you:   #E8A04E;
+  --heat-ratio: #9B86F0;
+  --heat-lines: #5B95EE;
 
   --status-green-ink: var(--status-green);
   --status-amber-ink: var(--status-amber);
@@ -398,6 +410,10 @@
   --core-internals: #6f6c64;
   --core-workflow: #3f7a78;
   --core-experiment: #8f5a6e;
+  --heat-agent: #3E9B84;
+  --heat-you:   #C8812A;
+  --heat-ratio: #6E56CF;
+  --heat-lines: #2F6FCF;
 
   --status-green-ink: #3a5636;
   --status-amber-ink: #6e470f;

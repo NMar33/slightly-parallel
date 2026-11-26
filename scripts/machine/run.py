@@ -8,8 +8,8 @@ them: python scripts/machine/run.py
 What it does, each step logged and checked:
 1. The browser the checks drive (Playwright's Chromium).
 2. The fresh-user test with Claude Code, Codex and OpenCode: from a clone to
-   Setup, the hooks, MCP, and a real agent building a small notes page with
-   #now, #task, #scan, #sp and #done (scripts/fresh_user, scenario "site").
+   Setup, the hooks, MCP, a recorded operator chat and a task on the board, with helper commands
+   refused (scripts/fresh_user, scenario "smoke").
 3. This machine's own start: sp up, the monitor reads the machine, #sp and
    the report, sp down, sp check with the server down, start at login and
    the shortcut, for real (scripts/ci).
@@ -70,9 +70,10 @@ def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = DEFAULT_STA
     log = OUT / f"{name}.log"
     t0 = time.time()
     ok = False
+    child_env = {**os.environ, "PYTHONIOENCODING": "utf-8", **(env or {})}
     with open(log, "w", encoding="utf-8") as fh:
         try:
-            proc = subprocess.Popen(argv, cwd=cwd, stdout=fh, stderr=subprocess.STDOUT, env={**os.environ, **(env or {})},
+            proc = subprocess.Popen(argv, cwd=cwd, stdout=fh, stderr=subprocess.STDOUT, env=child_env,
                                     shell=WINDOWS and argv[0] in ("npm", "npx"), start_new_session=not WINDOWS)
             try:
                 ok = proc.wait(timeout) == 0
@@ -150,11 +151,12 @@ def bundle(fresh_root: Path | None) -> Path:
     if fresh.is_dir():
         picked += [(p, f"fresh-user/{p.relative_to(fresh)}") for p in
                    [fresh / "report.json", *fresh.glob("logs/*.log"), *fresh.glob("screens/*.png")]]
-    for project, p in ([(pr, e) for pr, _a, f in chatstore.iter_chats(fresh_root / "data", sort=False)
-                        for e in f.glob("*")] if fresh_root else []):
-        if p.name in ("meta.json", "work.jsonl"):                        # what the hooks saw, per chat
-            # chats/<agent>/<file>: the path under the project's folder
-            picked.append((p, p.relative_to(chatstore.project_dir(fresh_root / "data", project)).as_posix()))
+    if fresh_root:
+        data = fresh_root / "data"
+        for _, _, folder in chatstore.iter_chats(data, sort=False):
+            for file in ("meta.json", "work.jsonl"):
+                member = folder / file
+                picked.append((member, member.relative_to(data).as_posix()))
     for p in (fresh_root.glob("sample*/notes-*/*") if fresh_root else []):   # the pages the agents built
         if p.suffix in (".html", ".js", ".css", ".md"):
             picked.append((p, f"built/{p.parent.name}/{p.name}"))
@@ -187,7 +189,7 @@ def main() -> int:
     run("browser", ["npm", "ci"], cwd=REPO / "frontend", timeout=BROWSER_DEPENDENCY_INSTALL_TIMEOUT_S)
     run("browser-chromium", ["npx", "playwright", "install", *([] if WINDOWS or sys.platform == "darwin" else ["--with-deps"]), "chromium"],
         cwd=REPO / "frontend")
-    run("fresh-user", [py, "scripts/fresh_user/run.py", "--tools", args.tools, "--scenario", "site",
+    run("fresh-user", [py, "scripts/fresh_user/run.py", "--tools", args.tools, "--scenario", "smoke",
                        "--model", args.model, "--keep"], timeout=FRESH_USER_STAGE_TIMEOUT_S)
     fresh_root = None
     try:

@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import os
 import tarfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Condition, Event
 
 import pytest
 
-from backend import backup
+from backend import backup, example
 
 
 @pytest.fixture(autouse=True)
@@ -561,6 +563,73 @@ def test_restore_over_the_api_demands_the_name_and_leaves_a_way_back(client, dat
     assert "tk_alpha_auth" in (data_root / "tasks.csv").read_text(encoding="utf-8")
     assert ok["safety"]["label"] == f"before restoring {name}"
     assert client.get("/api/tasks").json(), "the views were rebuilt after the restore"
+
+
+def test_restore_waits_for_an_example_build_before_renaming_its_directory(client, data_root, monkeypatch):
+    name = client.post("/api/backup/run", json={"label": "before example"}).json()["archive"]["name"]
+    started, release, waiting_or_done = Event(), Event(), Event()
+    repo = data_root / example.REPO_DIR
+    rename = os.rename
+
+    class ObservedCondition(Condition):
+        def wait_for(self, predicate, timeout=None):
+            if not predicate():
+                waiting_or_done.set()
+            return super().wait_for(predicate, timeout)
+
+    def play(root):
+        assert root == data_root
+        repo.mkdir()
+        started.set()
+        assert release.wait(20)
+        (repo / "completed.txt").write_text("example build completed", encoding="utf-8")
+        return ""
+
+    def rename_with_open_example(src, dst, *args, **kwargs):
+        if Path(src) == repo and not (repo / "completed.txt").exists():
+            raise PermissionError("the example builder holds the Windows directory open")
+        return rename(src, dst, *args, **kwargs)
+
+    def restore():
+        try:
+            return client.post(f"/api/backup/{name}/restore", json={"confirm": name})
+        finally:
+            waiting_or_done.set()
+
+    example._state(client.app)["lock"] = ObservedCondition()
+    monkeypatch.setattr(example, "_play", play)
+    monkeypatch.setattr(os, "rename", rename_with_open_example)
+    assert example.build(client.app)
+    with ThreadPoolExecutor(max_workers=1) as threads:
+        try:
+            assert started.wait(10)
+            response = threads.submit(restore)
+            assert waiting_or_done.wait(15)
+        finally:
+            release.set()
+        result = response.result(timeout=15)
+    assert result.status_code == 200, result.json()
+    assert result.json()["restored"]["name"] == name
+    assert not repo.exists()
+    safety = backup.find(backup.backup_root_for(data_root), result.json()["safety"]["name"])
+    assert safety is not None and safety.path is not None
+    with tarfile.open(safety.path) as saved:
+        assert any(member.name.endswith("/example/completed.txt") for member in saved.getmembers())
+
+
+def test_restore_reports_a_busy_example_without_touching_live_data(client, data_root, monkeypatch):
+    name = client.post("/api/backup/run", json={"label": "before example"}).json()["archive"]["name"]
+    tasks = data_root / "tasks.csv"
+    tasks.write_text("id,title\ntk_new,kept while the example runs\n", encoding="utf-8")
+    monkeypatch.setattr(example, "RESTORE_WAIT_SECONDS", 0)
+    monkeypatch.setitem(example._state(client.app), "building", True)
+
+    refused = client.post(f"/api/backup/{name}/restore", json={"confirm": name})
+
+    assert refused.status_code == 409
+    assert "example project is still being built" in refused.json()["detail"]
+    assert "kept while the example runs" in tasks.read_text(encoding="utf-8")
+    assert [item.name for item in backup.list_archives(backup.backup_root_for(data_root))] == [name]
 
 
 def test_a_refused_restore_leaves_no_safety_archive_behind(client, data_root):

@@ -46,18 +46,32 @@ def contradicts(detail: str, sent: Any) -> str:
 def snapshot(root: Path, skip: tuple[str, ...] = ()) -> dict[str, tuple[int, int]]:
     """Every file under root: (size, mtime_ns). Cheap enough per request."""
     out: dict[str, tuple[int, int]] = {}
-    for dirpath, _dirs, files in os.walk(root):
-        for f in files:
-            p = os.path.join(dirpath, f)
-            rel = os.path.relpath(p, root).replace(os.sep, "/")
-            # A lock's sidecar file is made by taking the lock, not a write.
-            if rel.startswith(skip) or rel.endswith(".lock"):
-                continue
-            try:
-                st = os.stat(p)
-            except OSError:
-                continue
-            out[rel] = (st.st_size, st.st_mtime_ns)
+    pending = [(os.fspath(root), "")]
+    while pending:
+        path, prefix = pending.pop()
+        try:
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    rel = prefix + entry.name
+                    try:
+                        if entry.is_dir():
+                            child_prefix = rel + "/"
+                            if not child_prefix.startswith(skip) and not entry.is_symlink():
+                                pending.append((entry.path, child_prefix))
+                            continue
+                    except OSError:
+                        pass  # Like os.walk, still try to inspect the entry as a file.
+                    # Taking a lock can create its sidecar without a data write.
+                    if rel.startswith(skip) or rel.endswith(".lock"):
+                        continue
+                    try:
+                        # Windows can use the metadata already read by scandir.
+                        st = entry.stat()
+                    except OSError:
+                        continue
+                    out[rel] = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            continue
     return out
 
 

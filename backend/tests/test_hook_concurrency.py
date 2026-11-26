@@ -138,14 +138,15 @@ def test_six_chats_at_once_each_turn_once_in_its_own_chat(tmp_path: Path) -> Non
             acked = {s: f.result(timeout=600) for s, f in futures.items()}
         assert all(len(a) == TURNS - 1 for a in acked.values()), {s[:8]: len(a) for s, a in acked.items()}
 
-        # The page reads what the watcher has rebuilt: wait for every chat's
-        # turns to be in (a condition, with a deadline only for a hang).
+        # The watcher can publish a prompt and its answer in different views.
+        # Wait for complete pairs before testing uniqueness and ownership.
         deadline = time.monotonic() + 120
         seen: dict[str, list[dict]] = {}
         while True:
             seen = {s: _turns_of(server, p, _agent(s)) for s, p in CHATS}
-            texts = {s: " ".join(str(t.get("user") or "") for t in ts) for s, ts in seen.items()}
-            if all(all(pr in texts[s] for pr, _a in acked[s]) for s, _p in CHATS) or time.monotonic() > deadline:
+            pairs = {s: {(str(t.get("user") or "").strip(), str(t.get("agent") or "").strip()) for t in ts}
+                     for s, ts in seen.items()}
+            if all(set(acked[s]) <= pairs[s] for s, _p in CHATS) or time.monotonic() > deadline:
                 break
             time.sleep(0.5)
     finally:

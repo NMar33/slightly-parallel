@@ -24,7 +24,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from .. import app_settings, backup, limits
+from .. import app_settings, backup, example, limits
 from ..db import ViewStore
 from .deps import get_store, not_found
 
@@ -257,10 +257,18 @@ async def backup_restore(
             detail=f'restoring replaces the data root — send {{"confirm": "{name}"}}',
         )
     data_root, backup_root = _roots(store)
+
+    def restore_live() -> dict[str, Any]:
+        # The example rebuilds the views before it releases its own slot.
+        with example.ready_for_restore(request.app), store.source_files_lock:
+            return _restore(data_root, backup_root, name)
+
     try:
-        result = await asyncio.to_thread(_restore, data_root, backup_root, name)
+        result = await asyncio.to_thread(restore_live)
     except backup.BackupError as exc:
         raise _fail(exc) from exc
+    except example.ExampleBuildTimeout as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     # The views are a cache of a directory that just changed underneath them.
     await asyncio.to_thread(request.app.state.store.rebuild)
     result["state"] = await asyncio.to_thread(_state, data_root, backup_root)

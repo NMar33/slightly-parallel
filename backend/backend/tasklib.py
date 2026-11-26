@@ -11,12 +11,13 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date
+from typing import Any
 
 from fastapi import HTTPException
 
-from . import app_settings, hookshared, limits, titlelib
+from . import app_settings, hookshared, limits, thinklib, titlelib
 from .actors import HOUSE_ACTORS as _HOUSE_ACTORS
-from .actors import identity_of, refuse_agent
+from .actors import AGENT_REFUSED, identity_of, refuse_agent
 from .answers import create_answer, not_found
 from .csvio import as_int, rewrite_rows
 from .db import ViewStore
@@ -24,6 +25,7 @@ from .docs_md import build_detail, resolve_under
 from .entities import ENTITIES, is_done
 from .entitylib import create_entity
 from .file_safety import atomic_write
+from .refusals import Reasons
 from .frontmatter import block as fm_block
 from .taskevents import DEFAULT_ACTOR as _DEFAULT_ACTOR
 from .taskevents import append_events as _append_events
@@ -280,22 +282,59 @@ def _operator_command(store: ViewStore, agent: str, *, in_helper: bool = False) 
     message); no chat, or no command → ("", "", "", ""). A helper chat has
     none, unless ``in_helper``: the command its latest message holds, which
     does not act (_refuse_in_helper)."""
+    return _operator_said(store, agent, in_helper=in_helper)[:4]
+
+
+def _operator_said(store: ViewStore, agent: str, *, in_helper: bool = False) -> tuple[str, str, str, str, int]:
+    """_operator_command and the turn of that message (0 with none). Read
+    from chat.md itself, never the derived tables: the hook writes the turn
+    there before it announces the card, and the store has it only once the
+    watcher rebuilt (tk_1cb0324a)."""
     from .sessions import _operator_text, chat_path, helper_ids, parse_turns, task_command
     from .hookshared import command_text
     path = chat_path(store, agent)
     if path is None or (not in_helper and agent in helper_ids(store)):
         # A helper's prompt was written by another agent: no operator's command.
-        return "", "", "", ""
+        return "", "", "", "", 0
     try:
         turns = parse_turns(path)
     except OSError:
-        return "", "", "", ""
+        return "", "", "", "", 0
     for t in reversed(turns):
         text = _operator_text(t)
         if text:
             command, lane, column = task_command(command_text(text))
-            return command, lane, column, text if command else ""
-    return "", "", "", ""
+            return command, lane, column, text if command else "", t.number
+    return "", "", "", "", 0
+
+
+def _catch_up(store: ViewStore) -> None:
+    """Take in the chat the operator just typed in before an agent's create
+    is judged: the hook wrote the turn to chat.md and announced the card at
+    once, and the agent's write came before the watcher rebuilt (tk_1cb0324a,
+    seen twice on 26 Nov). Rebuilt, as thinklib.refusal does for #think. The
+    #now cards owed are not written here (nowlib.adopt): an agent's write
+    must not be the read that writes the server's card for it, or the since
+    stamp. A failure is logged, never the agent's error: the gate reads the
+    message from chat.md all the same."""
+    try:
+        store.rebuild()
+    except Exception:  # noqa: BLE001 — as deps.adopt_when_changed
+        log.warning("catching up the chats before an agent's create failed; the gate reads chat.md", exc_info=True)
+
+
+def _not_captured(agent: str, status: str) -> tuple[str, str]:
+    """The agent's chat is not in the store yet, even after a rebuild: the
+    operator's message (a #now in it, likely) cannot be read. An agent card
+    is offered only for a write no #now asked for: a #now card filed there
+    would lose the message, and a tool without the hook, which never gets a
+    chat, must not be left retrying."""
+    return (
+        f"the operator's latest message in this chat ({agent}) is not captured yet, "
+        f"so the status {status!r} cannot be checked against its #now",
+        "retry the same write in a few seconds; if it is refused again, tell the operator in one line. "
+        'Or, if the operator gave no #now, write it with status "agent"',
+    )
 
 
 def _board_lanes(store: ViewStore, project: str) -> list[str]:
@@ -327,14 +366,22 @@ def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
     return ""
 
 
-def _now_card_written(store: ViewStore, agent: str) -> bool:
-    """Whether the latest #now of this chat has its card: one the agent wrote
-    in that turn (its history says so), or the server's (now.csv)."""
-    from . import nowlib
+def _latest_now_turn(store: ViewStore, agent: str) -> int | None:
+    """The turn of the chat's latest #now the store knows."""
     latest = store.query_one("SELECT max(turn) AS turn FROM now_tags WHERE agent_id = ?", (agent,)) or {}
-    if latest.get("turn") is None:
+    return None if latest.get("turn") is None else as_int(latest.get("turn"))
+
+
+def _now_card_written(store: ViewStore, agent: str, turn: int | None = None) -> bool:
+    """Whether the latest #now of this chat has its card: one the agent wrote
+    in that turn (its history says so), or the server's (now.csv). ``turn``:
+    the #now's turn as chat.md has it (_operator_said) — the store's latest
+    may still be the previous #now, whose card is not this message's."""
+    from . import nowlib
+    if turn is None:
+        turn = _latest_now_turn(store, agent)
+    if turn is None:
         return False
-    turn = as_int(latest.get("turn"))
     if any(r.get("agent_id") == agent and as_int(r.get("turn")) == turn for r in nowlib.rows(store)):
         return True
     return any(n == turn for _a, n, _t in nowlib.card_turns(store, {agent}, skip_server=True))
@@ -366,13 +413,18 @@ LEVEL_ONE = ("agent {agent} may create tasks only in its home {home} (level 1). 
              "Name the project in braces, or the operator raises the level on the agent card")
 
 
-NO_BRACES: dict[str, str] = {"project": "", "lane": "", "refusal": ""}
+NO_BRACES: dict[str, Any] = {"project": "", "lane": "", "refusal": "", "ask": "", "reasons": []}
 
 
-def task_braces(store: ViewStore, agent: str, message: str, kind: str = "") -> dict[str, str]:
+def unclear_lane_note(ask: str) -> str:
+    """The history line of a card whose braces left the lane unclear."""
+    return f"the braces left the lane unclear, so the card went to the default lane: {ask}"
+
+
+def task_braces(store: ViewStore, agent: str, message: str, kind: str = "") -> dict[str, Any]:
     """The project and the lane the braces of the operator's #task / #now
     name (hookshared.resolve_braces, the hook's own rule), for ``agent``:
-    ``{"project", "lane", "refusal"}``; NO_BRACES without a command. Each
+    ``{"project", "lane", "refusal", "ask"}``; NO_BRACES without a command. Each
     tag has its own braces: ``kind`` "now" or "task" reads that tag's
     (``#now {ui} x and #task {writing-tracker} y``)."""
     from . import memberships
@@ -407,8 +459,10 @@ def _check_level(store: ViewStore, agent: str, body: dict, named: str = "") -> N
         raise HTTPException(status_code=403, detail=LEVEL_ONE.format(agent=agent, home=view.home))
 
 
-def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
-    """Apply the /task contract to an agent's create; return the fields dropped.
+def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
+    """Apply the /task contract to an agent's create; return the fields
+    dropped, and the line to ask the operator when the braces left the lane
+    unclear (hookshared.resolve_braces ``ask``: the card is made all the same).
 
     A house actor (the board) passes untouched. The operator's message
     decides the column and the lane: ``#task`` → the `agent` column,
@@ -418,10 +472,10 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     """
     agent = identity_of(body)
     if agent in _HOUSE_ACTORS:
-        return []
+        return [], ""
     _refuse_in_helper(store, agent)
-    command, named, column, message = _operator_command(store, agent)
-    now_written = command == "now" and _now_card_written(store, agent)
+    command, named, column, message, said_turn = _operator_said(store, agent)
+    now_written = command == "now" and _now_card_written(store, agent, said_turn)
     if now_written:
         # The #now card is on the board (the agent's or the server's): what
         # the agent writes after it, while that message is still the latest,
@@ -432,41 +486,57 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     else:
         braces = task_braces(store, agent, message) if command else dict(NO_BRACES)
     if braces["refusal"]:
-        raise HTTPException(status_code=403, detail=braces["refusal"])
+        # Each refusal of the braces, one line each (hookshared.resolve_braces).
+        why = Reasons()
+        for line in braces.get("reasons") or [braces["refusal"]]:
+            why.add(line, status=403, code="braces")
+        why.raise_if_any()
     if braces["project"] and str(body.get("project") or "").strip() != braces["project"]:
         raise HTTPException(status_code=403, detail=(
             f"the operator named {braces['project']} in braces: this task goes to {braces['project']}, "
             f"not {str(body.get('project') or '').strip() or '(none)'} — send project {braces['project']}"))
     named = braces["lane"]
     _check_level(store, agent, body, braces["project"])
+    # The rest are named together (tk_90c1ba5f): the status, the text, the
+    # lane, the title, the tags.
+    why = Reasons()
     status = str(body.get("status") or "").strip() or (column if command == "now" else "agent")
     if command == "now" and status != column:
-        refuse_agent(
+        why.add(
             f"the operator's #now puts this task in `{column}`",
-            f"send status \"{column}\" (or none), not {status!r}",
+            f"send status \"{column}\" (or none), not {status!r}", code="status", field="status",
         )
     if command == "now":
         if str(body.get("description") or "").strip():
-            refuse_agent(
+            why.add(
                 "a #now task's text is the operator's message, kept as it was written",
                 "send the title and tags only; the server writes the message in as the text",
+                code="own_card", field="description",
             )
         body["description"] = message
     if status != "agent":
         # A #now written late: the server wrote the card when the turn ended
         # (whether or not that message is still the operator's latest).
         from . import nowlib
-        latest = store.query_one("SELECT max(turn) AS turn FROM now_tags WHERE agent_id = ?", (agent,)) or {}
+        # The #now of the message on disk, when it holds one: the store's
+        # latest may be the previous #now, and its server card is not this
+        # message's (tk_1cb0324a: the agent was told to retitle that one).
+        now_turn = said_turn if command == "now" or now_written else _latest_now_turn(store, agent)
         last = next((r for r in nowlib.rows(store) if r.get("agent_id") == agent
-                     and as_int(r.get("turn")) == as_int(latest.get("turn"), -1)), None)
+                     and as_int(r.get("turn")) == (-1 if now_turn is None else now_turn)), None)
         if last:
-            refuse_agent(
+            why.add(
                 f"the server already wrote the #now task as {last['task_id']}: "
                 "the turn ended without one",
                 f"give it a title with task_update {{id: \"{last['task_id']}\", title}}; do not write it again",
+                code="written", field="status",
             )
-        if command != "now":
-            refuse_agent(
+        elif command != "now":
+            from .sessions import chat_path
+            if not now_written and chat_path(store, agent) is None:
+                why.add_pair(_not_captured(agent, status), code="not_captured", field="status")
+            else:
+                why.add_pair((
                 "an agent creates tasks only in the `agent` column",
                 f"send status \"agent\" (or none), not {status!r}; the operator "
                 "classifies the card from there"
@@ -475,7 +545,7 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
                 + (" (the #now in the operator's latest message already has its card; "
                    "a task written after it is an agent card)" if now_written
                    else "" if command else " (#now in the operator's message starts a task in `doing`)"),
-            )
+                ), code="status", field="status")
     body["status"] = status
     # The lane comes from the operator's message, never from the agent.
     lane = _lane_for(store, str(body.get("project") or ""), command, named)
@@ -489,11 +559,14 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     for key in ("lane", "assignee"):
         own = str(body.get(key) or "").strip()
         if own and not named and own.lower() not in board and own.lower() != lane.lower():
-            refuse_agent(
-                f"the lane {own!r} is not on the board",
-                ("the board's lanes: " + ", ".join(on_board) if on_board else "the board has no lanes yet")
-                + " — ask the operator which, in one line; a new lane is the operator's to make",
-            )
+            reason = f"the lane {own!r} is not on the board"
+            if not any(r.reason == reason for r in why.items):     # lane and assignee alike: once
+                why.add(
+                    reason,
+                    ("the board's lanes: " + ", ".join(on_board) if on_board else "the board has no lanes yet")
+                    + " — ask the operator which, in one line; a new lane is the operator's to make",
+                    code="lane", field=key,
+                )
     dropped = {k for k in ("lane", "assignee") if str(body.pop(k, None) or "").strip()}
     if lane:
         body["lane"] = body["assignee"] = lane
@@ -501,32 +574,24 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
         body["today_on"] = date.today().isoformat()
     title = str(body.get("title") or "").strip()
     if not title:
-        raise HTTPException(status_code=422, detail="an agent task needs a title")
-    if len(title) > AGENT_TITLE_MAX:
-        raise HTTPException(
-            status_code=422,
-            detail=f"an agent task title is at most {AGENT_TITLE_MAX} characters ({len(title)} sent)",
-        )
+        why.add("an agent task needs a title", code="empty", field="title")
+    elif len(title) > AGENT_TITLE_MAX:
+        why.add(f"an agent task title is at most {AGENT_TITLE_MAX} characters ({len(title)} sent)",
+                code="length", field="title")
     tags = agent_tags(body.get("tags"))
     bad = [t for t in tags if t not in AGENT_TAGS]
     if not tags or bad:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                ("unknown tag(s) " + ", ".join(bad) + " — " if bad else "an agent task needs tags — ")
-                + f"1–{AGENT_TAGS_MAX} of: " + ", ".join(AGENT_TAGS)
-            ),
-        )
-    if len(tags) > AGENT_TAGS_MAX:
-        raise HTTPException(
-            status_code=422,
-            detail=f"an agent task carries at most {AGENT_TAGS_MAX} tags ({len(tags)} sent)",
-        )
+        why.add(("unknown tag(s) " + ", ".join(bad) + " — " if bad else "an agent task needs tags — ")
+                + f"1–{AGENT_TAGS_MAX} of: " + ", ".join(AGENT_TAGS), code="vocabulary", field="tags")
+    elif len(tags) > AGENT_TAGS_MAX:
+        why.add(f"an agent task carries at most {AGENT_TAGS_MAX} tags ({len(tags)} sent)",
+                code="length", field="tags")
+    why.raise_if_any()
     body["tags"] = ",".join(tags)
     ignored = sorted(k for k in list(body) if k not in _AGENT_CREATE_FIELDS)
     for k in ignored:
         body.pop(k, None)
-    return sorted(set(ignored) | dropped)
+    return sorted(set(ignored) | dropped), braces.get("ask", "")
 
 
 def _title_from_message(store: ViewStore, body: dict) -> str:
@@ -578,10 +643,19 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
         title_wait = _title_from_message(store, body)
         body.pop(titlelib.TITLE_FROM_FIELD, None)
         body.pop(titlelib.TITLE_SOURCE_FIELD, None)
-    said = (_operator_command(store, identity_of(body))
-            if identity_of(body) not in _HOUSE_ACTORS and not chosen else ("", "", "", ""))
+    agent_create = identity_of(body) not in _HOUSE_ACTORS and not chosen
+    if agent_create:
+        _catch_up(store)
+    said = _operator_said(store, identity_of(body)) if agent_create else ("", "", "", "", 0)
     started_now, column = said[0] == "now", said[2]
-    ignored = [] if chosen else _gate_agent_create(body, store)
+    # #think beside #now / #task: the card this message makes is the
+    # operator's to think through (thinklib). Not a card written after the
+    # #now one already has its card: that one is the agent's finding.
+    think = bool(said[0]) and thinklib.wants_mark(hookshared.command_text(said[3])) and not (
+        started_now and _now_card_written(store, identity_of(body), said[4]))
+    ignored, ask = ([], "") if chosen else _gate_agent_create(body, store)
+    if think:
+        body.update(thinklib.mark_fields())
     if len(str(body.get("title") or "")) > TITLE_MAX:
         raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
     description = str(body.pop("description", "") or "").strip()
@@ -601,6 +675,8 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     if title_wait and task_id and not out.get("existing"):
         titlelib.open_wait(store.data_root, task_id, str(meta.get("project") or ""), title_wait,
                            str(meta.get("title") or ""))
+    if (think or thinklib.marked(body)) and task_id and not out.get("existing"):
+        _append_events(store, task_id, _DEFAULT_ACTOR, [("think", "", "set with #think in the chat")])
     if identity_of(body) not in _HOUSE_ACTORS and task_id and not out.get("existing"):
         # An agent's task outside its home: the history says where it went
         # (note nt_258a7ed7 §6), as the answer's `where` and the hook's notice do.
@@ -616,6 +692,9 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
         verb, tag = ("started", "#now") if column == "doing" else ("filed", f"#now-{column}")
         _append_events(store, task_id, _DEFAULT_ACTOR, [(verb, "", f"in the chat, with {tag} (written by {identity_of(body)})")])
         store.rebuild()
+    if ask and task_id and not out.get("existing"):
+        _append_events(store, task_id, _DEFAULT_ACTOR, [("note", "", unclear_lane_note(ask))])
+        store.rebuild()
     result = {
         "metadata": meta,
         "description": description_of(turns),
@@ -624,6 +703,9 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     }
     if ignored:
         result["ignored"] = ignored
+    if ask:
+        # The card is made; the agent asks the operator now, in one line.
+        result["ask"] = f"ask the operator in one line: {ask}"
     return create_answer(result, existing=bool(out.get("existing")),
                          warnings=out.get("warnings"))
 
@@ -641,9 +723,11 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     ``to`` and ``projects`` loses the old one, so the card leaves its board;
     the column and ``md_ref`` stay; the lane stays when a live card in ``to``
     carries it, else it is cleared; a topic of the old project and a stack
-    in it are let go. The history says «moved from A to B, by …». Refused in
-    one line, writing nothing: no such project, the same project, a done or
-    archived task, an agent below level 3 or not in ``to``."""
+    in it are let go. The history says «moved from A to B, by …». Refused with
+    every reason at once, writing nothing, the most general first: no such
+    task or project (alone); an agent below level 3 or not in ``to`` (no
+    access: alone); a done or archived task, the same project and, for an
+    agent, the operator's think mark."""
     from . import memberships
     from .entitylib import project_codes
     from .entities import ENTITIES
@@ -653,27 +737,38 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     to = str(to or "").strip()
     if not to:
         raise HTTPException(status_code=422, detail="to names the project the task moves to")
+    # Every reason at once, all before any write (tk_90c1ba5f). A missing
+    # task or project is the only reason; no access (the source by the gate,
+    # then the level and ``to``) ends the answer, naming nothing about the
+    # task; then a closed task, the same project and, for an agent, the
+    # operator's think mark, together.
     row = store.query_one("SELECT * FROM tasks_mutual WHERE id = ?", (task_id,))
     if row is None:
         raise not_found("task", task_id)
     old = str(row.get("project") or "")
     if to not in memberships.existing_codes(store.data_root):
         raise HTTPException(status_code=404, detail=f"no project «{to}»")
-    if to == old:
-        raise HTTPException(status_code=409, detail=f"{task_id} is in {to} already")
-    if str(row.get("archived_at") or "").strip() or is_done(str(row.get("status") or "")):
-        raise HTTPException(status_code=409, detail=f"{task_id} is done or archived: a closed task is not moved")
+    why = Reasons()
     if actor not in _HOUSE_ACTORS:
         view = memberships.agent_view(store, actor)
         if view is None:
             raise HTTPException(status_code=403, detail=memberships.UNINDEXED.format(agent=actor))
         if view.level < MOVE_LEVEL:
-            raise HTTPException(status_code=403, detail=(
-                f"agent {actor} may not move tasks (level {view.level}); the operator raises it to "
-                f"level {MOVE_LEVEL} on the agent card"))
+            why.add(f"agent {actor} may not move tasks (level {view.level}); the operator raises it to "
+                    f"level {MOVE_LEVEL} on the agent card", status=403, code="level")
         ok, line = memberships.may_write(store, actor, to)
         if not ok:
-            raise HTTPException(status_code=403, detail=line)
+            why.add(line, status=403, code="not_member", field="to")
+        why.raise_if_any()
+    if str(row.get("archived_at") or "").strip() or is_done(str(row.get("status") or "")):
+        why.add(f"{task_id} is done or archived: a closed task is not moved", status=409, code="closed")
+    if to == old:
+        why.add(f"{task_id} is in {to} already", status=409, code="same_project", field="to")
+    # A task the operator thinks through is not moved by an agent. The
+    # operator's move keeps the mark (it is in the task's columns).
+    why.add_pair(thinklib.reason(store, task_id, actor, "moving it to another project"),
+                 status=AGENT_REFUSED, code="think")
+    why.raise_if_any()
     lane = str(row.get("lane") or row.get("assignee") or "").strip()
     kept_lane = next((x for x in _board_lanes(store, to) if lane and x.lower() == lane.lower()), "")
     ep_id = topics_by_task(store).get(task_id) or ""

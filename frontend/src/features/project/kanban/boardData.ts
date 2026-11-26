@@ -24,7 +24,7 @@ import { PROJECT_TASKS_LIMIT } from '../../tasks/data'
 import { t } from '../../../i18n/scope/project'
 
 /** Every board query starts with this: one invalidation reaches them all. */
-const BOARD_KEY = ['tasks', 'board'] as const
+export const BOARD_KEY = ['tasks', 'board'] as const
 
 /* ---------------------------------------------------------------------------
  * Evidence prompts — the instructions a copied task carries. One small

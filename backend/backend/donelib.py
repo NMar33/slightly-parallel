@@ -255,6 +255,11 @@ def _move(store: ViewStore, moves: list[tuple[str, str, int]], by_task: dict[str
                 if r.get(stamp):
                     ch.append((stamp, r[stamp], ""))
                     r[stamp] = ""
+            # The operator closed it: the «think» mark is over, and the
+            # agent's report after #done is not refused (thinklib).
+            if r.get("think_at"):
+                ch.append(("think", r["think_at"], "think mark cleared by #done"))
+                r["think_at"] = r["think_by"] = ""
             # The stack advances and a repeating task re-arms, as on the board.
             # Their events wait for the rewrite to land: a refused rewrite
             # (a damaged file, a Windows replace that gave up) must not

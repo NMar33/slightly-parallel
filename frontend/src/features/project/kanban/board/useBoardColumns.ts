@@ -19,7 +19,7 @@ import type { ByLaneCol } from './types'
 const ARCHIVE_STRIP = '__archive__'
 
 export function useBoardColumns({
-  boardKey, tasks, todayTasks, today, statusSince, sprintFilter, onlyRemembered, onlyToday,
+  boardKey, tasks, todayTasks, today, statusSince, sprintFilter, onlyRemembered, onlyToday, onlyThink = false,
 }: {
   boardKey: string
   tasks: TaskRow[]
@@ -29,6 +29,8 @@ export function useBoardColumns({
   sprintFilter: string | null
   onlyRemembered: boolean
   onlyToday: boolean
+  /** Only the tasks the operator marked «think». */
+  onlyThink?: boolean
 }) {
   // Navigating between projects reuses the board, so every remembered
   // choice is read again for the new board (board/prefs).
@@ -80,6 +82,7 @@ export function useBoardColumns({
       if (sprintFilter && sprintFilter !== 'none' && t.sprint_id !== sprintFilter) continue
       if (onlyRemembered && t.remember !== 'yes') continue
       if (onlyToday && !isToday(t, today)) continue
+      if (onlyThink && !t.think_at) continue
       // The fallback column (Unclassified) can be hidden too: its cards are
       // then out of view, like the other hidden columns' (not a crash).
       map[columnKeyOf(t)]?.push(t)
@@ -89,7 +92,7 @@ export function useBoardColumns({
       if (mode !== 'manual') map[col.key] = sortTasks(map[col.key]!, mode, statusSince)
     }
     return map
-  }, [tasks, columns, allColumns, hiddenCols, columnKeyOf, sorts, statusSince, sprintFilter, onlyRemembered, onlyToday, today])
+  }, [tasks, columns, allColumns, hiddenCols, columnKeyOf, sorts, statusSince, sprintFilter, onlyRemembered, onlyToday, onlyThink, today])
 
   /**
    * The lane view's cells, the per-lane totals and the Today band's

@@ -121,6 +121,9 @@ API_PRICES: dict[str, dict[str, Any]] = {
     "claude-haiku-5-5": _price(0.1, 0.125, 0.2, 0.01, 0.5, over_tokens=100_000,
                                over=_price(0.5, 0.625, 1.0, 0.05, 2.5)),
     "gpt-6.1-sol": _price(2.0, None, None, 0.1, 10.0),
+    # https://developers.openai.com/api/docs/models/gpt-6-luna
+    "gpt-6-luna": _price(0.1, None, None, 0.01, 0.5, over_tokens=272_000,
+                         over=_price(0.2, None, None, 0.02, 0.75)),
 }
 API_PRICE_SOURCES = ("https://platform.claude.com/docs/en/about-claude/pricing",
                      "https://developers.openai.com/api/docs/pricing")

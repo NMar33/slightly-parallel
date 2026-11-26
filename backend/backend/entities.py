@@ -413,7 +413,12 @@ ENTITIES: dict[str, Entity] = {
                 # read. The operator's next status change clears the stamps.
                 "auto_manage", "evidence_required", "evidence_prompt",
                 "agent_done_at", "agent_done_by", "agent_done_note",
-                "agent_moved_at", "md_ref",
+                "agent_moved_at",
+                # The operator's think mark (thinklib.py): when it was set
+                # and by whom. While it is on, an agent never starts,
+                # moves or finishes the task.
+                "think_at", "think_by",
+                "md_ref",
             ),
             ints=("position",),
             # The id seed must include the title: without it, two tasks

@@ -47,6 +47,10 @@ export type TaskRow = {
   agent_done_note?: string
   /** When an auto-managed card was moved by an agent (badge, 2 days). */
   agent_moved_at?: string
+  /** The operator's «think» mark: when it was set and by whom. While it is
+   *  on, the server refuses an agent's moves on the task. */
+  think_at?: string
+  think_by?: string
   assignee?: string
   due_date?: string
   lane?: string

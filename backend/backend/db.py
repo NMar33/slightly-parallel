@@ -382,6 +382,9 @@ class ViewStore:
         self.load_errors: list[dict[str, str]] = []
         # One build at a time, off the read lock — see rebuild().
         self._build_cv = threading.Condition()
+        # Cached queries can continue during restore. Builds must close the
+        # live source files first so Windows can rename their directories.
+        self.source_files_lock = threading.Lock()
         self._building = False
         self._requested = 0
         self._completed = 0
@@ -581,7 +584,8 @@ class ViewStore:
             while True:
                 with self._build_cv:
                     target = self._requested
-                self._build_once()
+                with self.source_files_lock:
+                    self._build_once()
                 with self._build_cv:
                     self._completed = target
                     if self._requested == target:
@@ -972,6 +976,11 @@ class ViewStore:
                  k["column_"], k["lane"], k["answered"], k["body"])
                 for r in rows for k in r.now_tags if acts(r, k)
             ],
+            "think_tags": [
+                (k["kind"], k["project"], k["agent_id"], k["session_id"], k["turn"], k["at"],
+                 k["tasks"], k["creates"])
+                for r in rows for k in r.think_tags if acts(r, k)
+            ],
             "skill_uses": [tuple(u) for u in read_uses(chats, rows)],
             "turn_prints": [
                 (p["print"], p["project"], p["agent_id"], p["session_id"], p["turn"],
@@ -1000,6 +1009,8 @@ class ViewStore:
     #                 board and records each task's stretch of the chat.
     # now_tags      — turns tagged #now / #now-<column>; nowlib.py writes the
     #                 card when the agent answered without writing it.
+    # think_tags    — turns tagged #think / #think-off; thinklib.py applies
+    #                 the operator's think mark to the tasks they name.
     # skill_uses    — the skills that ran in each turn, from skills.jsonl
     #                 beside each chat; a use without a turn is placed in
     #                 its session by time.
@@ -1043,6 +1054,10 @@ class ViewStore:
             "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",
             "turn": "INTEGER", "at_ts": "VARCHAR", "column_": "VARCHAR", "lane": "VARCHAR",
             "answered": "VARCHAR", "body": "VARCHAR",
+        },
+        "think_tags": {
+            "kind": "VARCHAR", "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",
+            "turn": "INTEGER", "at_ts": "VARCHAR", "tasks": "VARCHAR", "creates": "VARCHAR",
         },
         "skill_uses": {
             "project": "VARCHAR", "agent_id": "VARCHAR", "session_id": "VARCHAR",

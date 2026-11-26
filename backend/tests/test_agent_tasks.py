@@ -51,7 +51,10 @@ def test_an_agent_task_lands_in_the_agent_column(client: TestClient) -> None:
     explicit = _post(client, created_time="21:11", status="agent")
     assert explicit["metadata"]["status"] == "agent"
     wrong = _post(client, expect=422, created_time="21:12", status="todo")
-    assert "agent" in wrong["detail"] and "todo" in wrong["detail"]
+    # This agent has no captured chat: no #now can be read, so the refusal
+    # says retry, never "write it in `agent`" (tk_1cb0324a).
+    assert "not captured yet" in wrong["detail"] and "todo" in wrong["detail"]
+    assert "`agent` column" not in wrong["detail"]
 
 
 def test_tags_come_from_the_closed_set_one_to_three(client: TestClient) -> None:
@@ -162,14 +165,18 @@ def test_a_lane_the_agent_names_itself_is_never_new(tmp_path: Path) -> None:
     c.__exit__(None, None, None)
 
 
-def test_a_near_miss_of_a_lane_the_board_has_is_refused_with_its_name(tmp_path: Path) -> None:
-    # {bug} for the board's Bugs is a typo, not a new lane (the critic of c1).
+def test_a_near_miss_of_a_lane_the_board_has_is_made_and_asked_after(tmp_path: Path) -> None:
+    # {bug} for the board's Bugs is a typo, not a new lane (the critic of c1):
+    # the card is made in the default lane all the same, and the answer says
+    # what to ask the operator (tk_970d6b2d: a refusal lost the card).
     root = tmp_path / "data"
     c = _board(root, "#task {bug} the form accepts an empty trigger_id")
     r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
                                    "agent_id": "cc-a", "title": "x", "tags": "ag_bug"})
-    assert r.status_code == 403, r.text
-    assert r.json()["detail"] == "{bug} is not a lane of alpha's board — did you mean Bugs? or write {lane:bug}"
+    assert r.status_code == 201, r.text
+    assert not r.json()["metadata"].get("lane")
+    assert r.json()["ask"] == ("ask the operator in one line: {bug} is not a lane of alpha's board — "
+                               "did you mean Bugs, or a new lane bug? (to name a new one: {lane:bug})")
     c.__exit__(None, None, None)
 
 

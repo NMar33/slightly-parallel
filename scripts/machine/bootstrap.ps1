@@ -55,7 +55,12 @@ git --version | Out-Null; Must "git"
 npm.cmd --version | Out-Null; Must "npm"
 
 Say "Claude Code, Codex and OpenCode"
-npm.cmd install -g --silent @anthropic-ai/claude-code @openai/codex opencode-ai | Out-Host; Must "npm install of the agents"
+$packages = @("@anthropic-ai/claude-code", "@openai/codex", "opencode-ai")
+if ($Local -and $env:SP_AGENT_CHANNEL) {
+  $packages = @(py -3.14 (Join-Path $Dest "scripts/ci/agent_packages.py") $env:SP_AGENT_CHANNEL)
+  Must "select agent versions"
+}
+npm.cmd install -g --silent @packages | Out-Host; Must "npm install of the agents"
 Refresh-Path
 
 if ($Quiet) {
@@ -84,5 +89,6 @@ if (-not (git config --global user.name)) { git config --global user.name "Machi
 
 Say "Running everything (about an hour). Leave it be."
 Set-Location $Dest
+py -3.14 -m pip install -r scripts\fresh_user\requirements-pty.txt | Out-Host; Must "PTY tools for the interactive agent test"
 py -3.14 scripts\machine\run.py @args
 exit $LASTEXITCODE

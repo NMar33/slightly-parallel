@@ -25,6 +25,8 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +41,17 @@ REPO_DIR = "example"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILDER = _REPO_ROOT / "scripts" / "demo" / "build_example.py"
 BUILD_SECONDS = 1800
+RESTORE_WAIT_SECONDS = 180
+
+
+class ExampleBuildTimeout(TimeoutError):
+    """The example still owns its files after waiting for a restore slot."""
 
 
 def _state(app: Any) -> dict[str, Any]:
     st = getattr(app.state, "example", None)
     if st is None:
-        st = {"building": False, "error": "", "lock": threading.Lock()}
+        st = {"building": False, "error": "", "lock": threading.Condition()}
         app.state.example = st
     return st
 
@@ -87,11 +94,12 @@ def on_start(app: Any) -> None:
     example, once."""
     if os.environ.get("SP_EXAMPLE", "1") == "0":
         return
-    root = app.state.store.data_root
-    if chosen(root) is not None or holds_projects(root):
-        return
-    app_settings.save(root, {SETTING: True})
-    build(app)
+    with _state(app)["lock"]:
+        root = app.state.store.data_root
+        if chosen(root) is not None or holds_projects(root):
+            return
+        app_settings.save(root, {SETTING: True})
+        build(app)
 
 
 def apply(app: Any, enabled: bool) -> None:
@@ -133,6 +141,22 @@ def _claim(app: Any) -> bool:
     return True
 
 
+def _finish(st: dict[str, Any]) -> None:
+    with st["lock"]:
+        st["building"] = False
+        st["lock"].notify_all()
+
+
+@contextmanager
+def ready_for_restore(app: Any) -> Iterator[None]:
+    """Let the demo close its repository before an archive moves the tree."""
+    st = _state(app)
+    with st["lock"]:
+        if not st["lock"].wait_for(lambda: not st["building"], timeout=RESTORE_WAIT_SECONDS):
+            raise ExampleBuildTimeout("The example project is still being built. Try restoring when it has finished.")
+        yield
+
+
 def build(app: Any) -> bool:
     """Play the month in the background. False when a build is running."""
     if not _claim(app):
@@ -146,7 +170,7 @@ def build(app: Any) -> bool:
                 st["error"] = _play(root)
             app.state.store.rebuild()
         finally:
-            st["building"] = False
+            _finish(st)
 
     threading.Thread(target=run, name="example-build", daemon=True).start()
     return True
@@ -166,7 +190,7 @@ def replay(app: Any) -> str:
         app.state.store.rebuild()
         return st["error"]
     finally:
-        st["building"] = False
+        _finish(st)
 
 
 def _rmtree(path: Path | str) -> None:

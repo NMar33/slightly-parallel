@@ -363,6 +363,56 @@ def test_opencode_a_subagent_is_a_helper_and_a_command_is_what_was_typed(tmp_pat
     assert after == {"text": "thanks #pin"}
 
 
+@pytest.mark.parametrize("idle", ["session.idle", "session.status", "session.status,session.idle", "missing"])
+def test_opencode_run_awaits_pending_reply_capture_on_dispose(tmp_path: Path, idle: str) -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    plugin = tmp_path / "plugin.mjs"
+    plugin.write_text((HOOKS / "slightly-parallel-opencode.js").read_text(encoding="utf-8"), encoding="utf-8")
+    driver = tmp_path / "helper.mjs"
+    driver.write_text(r"""
+import { pathToFileURL } from 'node:url'
+const [, , plugin, idle] = process.argv
+process.argv[2] = 'run'
+const calls = []
+const sid = 'ses_example1234abcd'
+const part = (text) => ({ id: 'prt_1', type: 'text', text })
+const { SlightlyParallelCapture } = await import(pathToFileURL(plugin).href)
+const hooks = await SlightlyParallelCapture({
+  client: { session: {
+    messages: async () => ({ data: [
+      { info: { role: 'user', id: 'prompt' }, parts: [part('Read this')] },
+      { info: { role: 'assistant', id: 'reply' }, parts: [part('The final reply')] },
+    ] }),
+    children: async () => ({ data: [] }),
+  } },
+  directory: '/tmp/sample',
+  $: (strings, ...values) => ({ quiet: async () => {
+    const input = JSON.parse(await values.at(-1).text())
+    await new Promise(resolve => setTimeout(resolve, 25))
+    calls.push({ phase: values[2], text: input.text, helper: input.helper })
+    return { text: () => '' }
+  } }),
+})
+await hooks['chat.message']({ sessionID: sid }, { message: { id: 'prompt' }, parts: [part('Read this')] })
+// OpenCode's bus invokes this without awaiting capture. Shutdown can also
+// start before the plugin receives the idle event.
+for (const type of idle.split(',')) {
+  if (type !== 'missing') void hooks.event({ event: { type, properties: { sessionID: sid, status: { type: 'idle' } } } })
+}
+await hooks.dispose?.()
+console.log(JSON.stringify(calls))
+process.exit(0)
+""", encoding="utf-8")
+    proc = subprocess.run([node, str(driver), str(plugin), idle], capture_output=True, text=True, timeout=20)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == [
+        {"phase": "open", "text": "Read this", "helper": "opencode-run"},
+        {"phase": "complete", "text": "The final reply", "helper": "opencode-run"},
+    ]
+
+
 def test_opencode_a_subagent_chat_is_marked_through_the_cli_adapter(root: Path, tmp_path: Path) -> None:
     proc = subprocess.run(
         [sys.executable, str(HOOKS / "capture-cli.py"), "--phase", "open", "--project", "alpha", "--data-root", str(root),

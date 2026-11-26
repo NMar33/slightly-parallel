@@ -1,4 +1,5 @@
 name: CI
+run-name: ${{ inputs.expect_failure && format('Pipeline probe {0} / CI', inputs.probe_id) || (inputs.interactive_only && 'CI (interactive stubs)' || 'CI (full)') }}
 
 on:
   push:
@@ -6,9 +7,30 @@ on:
   pull_request:
   # By hand on another branch (ci-windows): the whole check before a merge.
   workflow_dispatch:
+    inputs:
+      expect_failure:
+        description: Inject and check a failure in every job without running normal steps
+        type: boolean
+        default: false
+      probe_id:
+        description: ID of the pipeline self-test dispatching this run
+        type: string
+        default: ''
+      interactive_only:
+        description: "Run only the pinned PTY matrix against local models"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   backend:
+    if: ${{ !inputs.interactive_only }}
     name: Backend (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     # The suite takes about 10 minutes; a hung test ends the job here, not at
@@ -32,42 +54,73 @@ jobs:
             python: "3.14"
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - name: Git identity (tests make commits in temporary repositories)
+        if: ${{ !inputs.expect_failure }}
         run: git config --global user.email ci@example.com && git config --global user.name CI
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies (the pinned versions users get, plus the test tools)
+        if: ${{ !inputs.expect_failure }}
         run: pip install -r requirements.lock -r requirements-dev.txt
+      - name: Windows workflow steps preserve native exit codes
+        if: ${{ !inputs.expect_failure && (runner.os == 'Linux' && matrix.python == '3.12') }}
+        run: python ../scripts/ci/check_windows_shells.py ../.github/workflows
       - name: tmux (the terminal's tmux tests skip without it; Windows has none, its terminal is a ConPTY)
-        if: runner.os != 'Windows'
+        if: ${{ !inputs.expect_failure && (runner.os != 'Windows') }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux; else brew install tmux; fi
       - name: Lint (ruff — pyflakes and bugbear's bug classes; settings in pyproject.toml)
+        if: ${{ !inputs.expect_failure }}
         run: python -m ruff check backend tests ../scripts ../sp.py
       - name: Types (pyright, basic; settings in pyproject.toml)
-        if: runner.os == 'Linux'
+        if: ${{ !inputs.expect_failure && (runner.os == 'Linux') }}
         run: python -m pyright
       # The heavy tests (the write fuzzer, the hooks at once; marker "heavy")
       # run here on Linux with Python 3.12, and on all three systems in the
       # weekly workflow (weekly.yml).
       - name: "Run tests (-rs: a skipped test is named, never silent)"
+        if: ${{ !inputs.expect_failure }}
         run: python -m pytest -q -rs --junitxml=pytest.xml tests ${{ !(runner.os == 'Linux' && matrix.python == '3.12') && '-m "not heavy"' || '' }}
       - name: "Only the skips expected on this system (scripts/ci/check_skips.py: a new skip fails, named)"
-        run: python ../scripts/ci/check_skips.py pytest.xml
+        if: ${{ !inputs.expect_failure }}
+        run: python ../scripts/ci/check_skips.py pytest.xml --minimum 2700
       - name: "macOS: a server started at login finds Codex in /opt/homebrew/bin (a short PATH)"
-        if: runner.os == 'macOS'
+        if: ${{ !inputs.expect_failure && (runner.os == 'macOS') }}
         run: env -i HOME="$HOME" PATH=/usr/bin:/bin "$(python -c 'import sys; print(sys.executable)')" ../scripts/ci/codex_path_check.py
       - name: API reference names every route
-        if: runner.os == 'Linux'
+        if: ${{ !inputs.expect_failure && (runner.os == 'Linux') }}
         run: python ../scripts/check_api_doc.py
 
   zones:
+    if: ${{ !inputs.interactive_only }}
     # The suite again with the clock in another zone (CI's own is UTC, Nick's
     # +11): naive and zoned times compared (P02), a day's edge in standups and
     # Time. One behind UTC, one at a half hour ahead. Linux only: a zone is the
@@ -80,28 +133,56 @@ jobs:
         tz: [America/Los_Angeles, Asia/Kolkata]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - name: Git identity (tests make commits in temporary repositories)
+        if: ${{ !inputs.expect_failure }}
         run: git config --global user.email ci@example.com && git config --global user.name CI
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies
+        if: ${{ !inputs.expect_failure }}
         run: pip install -r requirements.lock -r requirements-dev.txt
       - name: tmux (the terminal's tests skip without it)
+        if: ${{ !inputs.expect_failure }}
         run: sudo apt-get install -y -qq tmux
       - name: "Run tests in ${{ matrix.tz }} (-rs: a skipped test is named)"
+        if: ${{ !inputs.expect_failure }}
         env:
           TZ: ${{ matrix.tz }}
         run: python -m pytest -q -rs --junitxml=pytest.xml tests -m "not heavy"
       - name: Only the skips expected on this system
-        run: python ../scripts/ci/check_skips.py pytest.xml
+        if: ${{ !inputs.expect_failure }}
+        run: python ../scripts/ci/check_skips.py pytest.xml --minimum 2700
 
   clock:
+    if: ${{ !inputs.interactive_only }}
     # The date-heavy tests with the clock moved (SP_TEST_CLOCK, time-machine in
     # tests/conftest.py) to two seconds before midnight at a month's end, a
     # year's end, and in the hour the clocks go back in Los Angeles: two
@@ -117,24 +198,49 @@ jobs:
         at: ["2026-11-30T23:59:58", "2026-12-31T23:59:58", "2026-11-01T01:59:58"]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - name: Git identity (tests make commits in temporary repositories)
+        if: ${{ !inputs.expect_failure }}
         run: git config --global user.email ci@example.com && git config --global user.name CI
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies
+        if: ${{ !inputs.expect_failure }}
         run: pip install -r requirements.lock -r requirements-dev.txt
       - name: The date-heavy tests at ${{ matrix.at }}, Los Angeles time
+        if: ${{ !inputs.expect_failure }}
         env:
           TZ: America/Los_Angeles
           SP_TEST_CLOCK: ${{ matrix.at }}
         run: >-
-          python -m pytest -q -rs
+          python -m pytest -q -rs --junitxml=clock.xml
           tests/test_agent_tasks.py
           tests/test_analytics.py
           tests/test_audit_round3_tasks.py
@@ -159,8 +265,12 @@ jobs:
           tests/test_usageinsights.py
           tests/test_usage_golden.py
           tests/test_consistency.py
+      - name: Check that the clock suite actually ran
+        if: ${{ !inputs.expect_failure }}
+        run: python ../scripts/ci/check_skips.py clock.xml --minimum 100
 
   real-cli:
+    if: ${{ !inputs.interactive_only }}
     # The real Claude Code CLI, pinned, against a local stub of the Messages
     # API (tests/test_real_cli.py): hook events, payloads, the MCP server and
     # the page, end to end, without tokens. The newest runs weekly.
@@ -173,55 +283,227 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
+        with:
+          persist-credentials: false
       - name: Git identity (tests make commits in temporary repositories)
+        if: ${{ !inputs.expect_failure }}
         run: git config --global user.email ci@example.com && git config --global user.name CI
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
       - name: Install dependencies and Claude Code 2.1.312
+        if: ${{ !inputs.expect_failure }}
         run: |
           pip install -r requirements.lock -r requirements-dev.txt
           npm install -g @anthropic-ai/claude-code@2.1.312
           claude --version
       - name: "One turn: the hooks record it, the MCP server writes a decision (scripts/ci/stub_model.py; no tokens)"
+        if: ${{ !inputs.expect_failure }}
         env:
           SP_REAL_CLI: "1"
-        run: python -m pytest -q -rs -o addopts="" tests/test_real_cli.py
+        run: |
+          python -m pytest -q -rs -o addopts="" --junitxml=real-claude.xml tests/test_real_cli.py
+          python ../scripts/ci/check_skips.py real-claude.xml --one-passed
       - name: Install Codex 0.167.0 (the version the Real Codex job pins)
+        if: ${{ !inputs.expect_failure }}
         run: npm install -g @openai/codex@0.167.0 && codex --version
       - name: "codex exec against a stub of the Responses API: recorded as a helper of the chat in its environment, with its effort (scripts/ci/stub_responses.py; no tokens, no key)"
+        if: ${{ !inputs.expect_failure }}
         env:
           SP_REAL_CODEX: "1"
-        run: python -m pytest -q -rs -o addopts="" tests/test_real_codex.py
+        run: |
+          python -m pytest -q -rs -o addopts="" --junitxml=real-codex.xml tests/test_real_codex.py
+          python ../scripts/ci/check_skips.py real-codex.xml --one-passed
+
+  interactive-cli:
+    name: Interactive agent (${{ matrix.cli }}, ${{ matrix.os }}${{ matrix.drive_trust && ', trust dialog' || '' }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        cli: [claude-code, codex, opencode]
+        drive_trust: [false]
+        include:
+          - os: ubuntu-latest
+            cli: claude-code
+            drive_trust: true
+          - os: macos-latest
+            cli: claude-code
+            drive_trust: true
+          - os: windows-latest
+            cli: claude-code
+            drive_trust: true
+    steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
+      - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements-dev.txt
+            scripts/fresh_user/requirements-pty.txt
+      - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
+        with:
+          node-version: 22
+      - name: Install the pinned CLI and PTY dependencies
+        if: ${{ !inputs.expect_failure }}
+        shell: bash
+        env:
+          CLI: ${{ matrix.cli }}
+        run: |
+          python -m pip install -r backend/requirements.lock -r backend/requirements-dev.txt
+          spec=$(python scripts/ci/agent_packages.py pinned "$CLI")
+          npm install -g "$spec"
+          if [[ "$CLI" == opencode ]]; then
+            python scripts/ci/setup_opencode_ripgrep.py
+            sdk="$RUNNER_TEMP/sp-opencode-sdk"
+            npm install --no-audit --no-fund --ignore-scripts --prefix "$sdk" "@opencode-ai/plugin@${spec##*@}"
+            echo "SP_OPENCODE_SDK_SEED=$sdk" >> "$GITHUB_ENV"
+          fi
+      - name: Capture a real PTY turn, task, decision, rule and done on a local stub
+        if: ${{ !inputs.expect_failure }}
+        shell: bash
+        working-directory: backend
+        timeout-minutes: 6
+        env:
+          CLI: ${{ matrix.cli }}
+          SP_REAL_INTERACTIVE: "1"
+          SP_TEST_CLAUDE_TRUST: ${{ matrix.drive_trust && '1' || '0' }}
+          SP_INTERACTIVE_ARTIFACTS: ${{ runner.temp }}/sp-interactive-stub
+        run: |
+          python -m pytest -q -s -rs -o addopts='' --junitxml=interactive.xml "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
+          python ../scripts/ci/check_skips.py interactive.xml --one-passed
+      - name: Run full Codex core through the guarded MCP on a local stub
+        if: ${{ !inputs.expect_failure && (matrix.cli == 'codex') }}
+        working-directory: backend
+        timeout-minutes: 6
+        env:
+          SP_REAL_INTERACTIVE: "1"
+          SP_INTERACTIVE_ARTIFACTS: ${{ runner.temp }}/sp-interactive-stub
+        run: |
+          python -m pytest -q -s -rs -o addopts='' --junitxml=core.xml tests/test_interactive_agents.py::test_codex_runs_full_core_against_the_local_model
+          python ../scripts/ci/check_skips.py core.xml --one-passed
+      - name: Save the headless OpenCode reply before the process exits
+        if: ${{ !inputs.expect_failure && (matrix.cli == 'opencode') }}
+        shell: bash
+        working-directory: backend
+        timeout-minutes: 6
+        env:
+          SP_REAL_INTERACTIVE: "1"
+        run: |
+          python -m pytest -q -s -rs -o addopts='' --junitxml=headless.xml 'tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[opencode-run]'
+          python ../scripts/ci/check_skips.py headless.xml --one-passed
+      - name: Keep the local provider and PTY evidence
+        if: ${{ !inputs.expect_failure && (always()) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: interactive-${{ matrix.cli }}-${{ matrix.os }}${{ matrix.drive_trust && '-trust' || '' }}
+          path: ${{ runner.temp }}/sp-interactive-stub/
+          if-no-files-found: ignore
 
   audit:
+    if: ${{ !inputs.interactive_only }}
     # Known vulnerabilities in the pinned dependencies. A job of its own: an
     # advisory published today turns this red, not the tests.
     name: Dependency audit
     runs-on: ubuntu-latest
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
       - name: Python (the versions users get)
+        if: ${{ !inputs.expect_failure }}
         run: pip install pip-audit==2.10.1 && pip-audit -r backend/requirements.lock
       - name: npm (what ships; high and critical fail, moderate is listed)
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
 
   codex:
+    if: ${{ !inputs.interactive_only }}
     # The real Codex program, not the tests' stand-in: does the plan limits' read
     # start and end on each system. It spends no tokens (scripts/ci/check_codex_limits.py).
     name: Real Codex (${{ matrix.os }})
@@ -234,42 +516,59 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
     steps:
-      - name: The key
-        id: key
-        shell: bash
-        env:
-          KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
         run: |
-          if [ -n "$KEY" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else echo "No key (a fork's pull request): skipped."; fi
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
-        if: steps.key.outputs.ok
+        if: ${{ !inputs.expect_failure }}
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
-        if: steps.key.outputs.ok
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v7
-        if: steps.key.outputs.ok
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
-      - name: Install the backend and Codex, logged in with the key
-        if: steps.key.outputs.ok
-        shell: bash
+      - name: Install the backend and Codex with an empty profile
+        if: ${{ !inputs.expect_failure }}
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_HOME: ${{ runner.temp }}/sp-signed-out-codex
+        shell: bash
         run: |
           python -m pip install -q -r backend/requirements.txt
-          # Pinned to what npm installed on 2026-11-10: a new Codex changes the answer
-          # codexlimits reads, so it is moved on purpose, with this check green.
+          python -c 'import os; from pathlib import Path; Path(os.environ["CODEX_HOME"]).mkdir(parents=True, exist_ok=True)'
           npm install -g @openai/codex@0.167.0
-          printenv OPENAI_API_KEY | codex login --with-api-key
-      - name: One read of the limits from the real program
-        if: steps.key.outputs.ok
-        run: python scripts/ci/check_codex_limits.py
-      - name: "Read now through the real server: the row answers, no codex or node left, no temporary file in .usage"
-        if: steps.key.outputs.ok
-        run: python scripts/ci/codex_server_check.py
+      - name: Codex limits RPC rejects a signed-out account
+        if: ${{ !inputs.expect_failure }}
+        env:
+          CODEX_HOME: ${{ runner.temp }}/sp-signed-out-codex
+        run: python scripts/ci/check_codex_limits.py --expect-signed-out
+      - name: The real server reports the signed-out Codex limits response
+        if: ${{ !inputs.expect_failure }}
+        env:
+          CODEX_HOME: ${{ runner.temp }}/sp-signed-out-codex
+        run: python scripts/ci/codex_server_check.py --expect-signed-out
 
   frontend:
+    if: ${{ !inputs.interactive_only }}
     name: Frontend (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
@@ -279,70 +578,126 @@ jobs:
         node: [20, 22]
     defaults:
       run:
+        shell: bash
         working-directory: frontend
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: "No two paths differ only by case (one file on macOS and Windows: scripts/ci/case_clash_check.py)"
+        if: ${{ !inputs.expect_failure }}
         run: python3 ../scripts/ci/case_clash_check.py
       - name: Install dependencies
+        if: ${{ !inputs.expect_failure }}
         run: npm ci
       - name: Refactoring budgets
-        if: matrix.node == 22
+        if: ${{ !inputs.expect_failure && (matrix.node == 22) }}
         env:
           REFACTORING_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python3 ../scripts/ci/refactoring_budget.py --base "${REFACTORING_BASE:-HEAD^}"
       - name: Lint
+        if: ${{ !inputs.expect_failure }}
         run: npm run lint
       - name: Colors come from tokens.css
+        if: ${{ !inputs.expect_failure }}
         run: bash ../scripts/check-no-raw-hex.sh
       - name: Build (typecheck-gated)
+        if: ${{ !inputs.expect_failure }}
         run: npm run build
       - name: Types of the Node-side files (configs, Playwright specs)
+        if: ${{ !inputs.expect_failure }}
         run: npx tsc -p tsconfig.node.json
       - name: Unit tests
+        if: ${{ !inputs.expect_failure }}
         run: npx vitest run
       - name: Unit tests with the clock behind UTC (a day's edge, a date read as UTC)
-        if: matrix.node == 22
+        if: ${{ !inputs.expect_failure && (matrix.node == 22) }}
         env:
           TZ: America/Los_Angeles
         run: npx vitest run
 
   e2e:
+    if: ${{ !inputs.interactive_only }}
     name: End to end (Playwright)
     runs-on: ubuntu-latest
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Backend environment (the Playwright config starts the server from backend/.venv)
+        if: ${{ !inputs.expect_failure }}
         working-directory: backend
         run: python -m venv .venv && .venv/bin/pip install -r requirements.lock -r requirements-dev.txt
       - name: Frontend build
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npm ci && npm run build
       - name: Browsers
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npx playwright install --with-deps chromium
       - name: Happy path against the demo data
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npx playwright test
       - name: Playwright report (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
-        if: failure()
+        if: ${{ !inputs.expect_failure && (failure()) }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
@@ -352,6 +707,7 @@ jobs:
           if-no-files-found: ignore
 
   e2e-macos:
+    if: ${{ !inputs.interactive_only }}
     # The same browser tests on macOS: the shortcuts there take the Command
     # key (metaKey, 24 branches in the frontend), and the flows press
     # ControlOrMeta. The flows hold the drops (the board, the calendar) and
@@ -360,33 +716,60 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: tmux (the terminal flow)
+        if: ${{ !inputs.expect_failure }}
         run: brew install tmux
       - name: Backend environment (the Playwright config starts the server from backend/.venv)
+        if: ${{ !inputs.expect_failure }}
         working-directory: backend
         run: python -m venv .venv && .venv/bin/pip install -r requirements.lock -r requirements-dev.txt
       - name: Frontend build
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npm ci && npm run build
       - name: Browsers
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npx playwright install chromium
       - name: Every page and the flows
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npx playwright test
       - name: Playwright report (on failure; a test that passed only on a retry fails the run, so its first attempt's trace is here)
-        if: failure()
+        if: ${{ !inputs.expect_failure && (failure()) }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-macos
@@ -396,6 +779,7 @@ jobs:
           if-no-files-found: ignore
 
   launcher:
+    if: ${{ !inputs.interactive_only }}
     # sp.py starts, supervises and stops Slightly Parallel the same way everywhere:
     # up (makes the backend environment, builds the UI), healthy, down, and
     # nothing left on the port.
@@ -406,27 +790,53 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: The blank-machine scripts parse (scripts/machine)
+        if: ${{ !inputs.expect_failure }}
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile("scripts/machine/bootstrap.ps1", [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count) { $errors | Out-String | Write-Error; exit 1 }
           if (-not $IsWindows) { bash -n scripts/machine/bootstrap.sh; if ($LASTEXITCODE) { exit 1 } }
           python scripts/machine/run.py --help | Out-Null; if ($LASTEXITCODE) { exit 1 }
       - name: Start in the background
+        if: ${{ !inputs.expect_failure }}
         run: python sp.py up
       - name: The supervisor's log (on failure)
-        if: failure()
+        if: ${{ !inputs.expect_failure && (failure()) }}
         shell: python
         env:
           PYTHONIOENCODING: utf-8   # the Windows console is cp1252; the log is utf-8
@@ -435,34 +845,43 @@ jobs:
           log = Path(".sp/server.log")
           print(log.read_text(encoding="utf-8", errors="replace")[-6000:] if log.is_file() else "no .sp/server.log")
       - name: Healthy
+        if: ${{ !inputs.expect_failure }}
         run: python sp.py status
       - name: The resource monitor reads this machine (processor, memory, disks, network, ping, processes)
+        if: ${{ !inputs.expect_failure }}
         run: python scripts/ci/monitor_check.py
       - name: A browser for the top bar
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npm ci && npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
       - name: The top bar shows the readings
+        if: ${{ !inputs.expect_failure }}
         run: node scripts/ci/topbar_check.mjs
       - name: The top bar, as drawn
-        if: always()
+        if: ${{ !inputs.expect_failure && (always()) }}
         uses: actions/upload-artifact@v7
         with:
           name: topbar-${{ matrix.os }}
           path: .sp/ci/topbar.png
           if-no-files-found: ignore
       - name: "#sp's checks and the report, from the running server"
+        if: ${{ !inputs.expect_failure }}
         run: python scripts/ci/checkup_check.py up
       - name: "Network off by the firewall (127.0.0.1 kept): the pages answer in time, Monitor says No connection"
+        if: ${{ !inputs.expect_failure }}
         timeout-minutes: 10
         run: python scripts/ci/offline_check.py
       - name: Network on again (also when the check above failed or was stopped)
-        if: always()
+        if: ${{ !inputs.expect_failure && (always()) }}
         run: python scripts/ci/offline_check.py on
       - name: Stop
+        if: ${{ !inputs.expect_failure }}
         run: python sp.py down
       - name: "sp.py check with the server down looks from outside"
+        if: ${{ !inputs.expect_failure }}
         run: python scripts/ci/checkup_check.py down
       - name: Nothing left serving
+        if: ${{ !inputs.expect_failure }}
         shell: python
         run: |
           import socket, sys
@@ -472,9 +891,11 @@ jobs:
           print("port 8123:", "still served" if busy else "free")
           sys.exit(1 if busy else 0)
       - name: Start at login and the shortcut, for real (the runner's own login entry, its shortcut, then off)
+        if: ${{ !inputs.expect_failure }}
         run: python scripts/ci/autostart_check.py
 
   fresh-user:
+    if: ${{ !inputs.interactive_only }}
     # A new user's path, with no agent: clone, first start, every page,
     # Setup in a browser, the hook and the MCP server, the terminal,
     # Disconnect, restart, the background run and the dev start
@@ -489,33 +910,58 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           # The upgrade stage installs the last release tag first, then pulls.
           fetch-depth: 0
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v7
+        if: ${{ !inputs.expect_failure }}
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Git identity (the test makes commits in its sample projects)
+        if: ${{ !inputs.expect_failure }}
         run: git config --global user.email ci@example.com && git config --global user.name CI
       - name: tmux (the terminal stage; Windows has none, its terminal is plain, a ConPTY)
-        if: runner.os != 'Windows'
+        if: ${{ !inputs.expect_failure && (runner.os != 'Windows') }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get install -y -qq tmux; else brew install tmux; fi
       - name: The browser the test drives
+        if: ${{ !inputs.expect_failure }}
         working-directory: frontend
         run: npm ci && npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
       - name: From clone to a working setup
+        if: ${{ !inputs.expect_failure }}
         env:
           PYTHONIOENCODING: utf-8
         run: python scripts/fresh_user/run.py --no-agent
       - name: The failed checks, with their detail (on failure)
-        if: failure()
+        if: ${{ !inputs.expect_failure && (failure()) }}
         shell: python
         env:
           PYTHONIOENCODING: utf-8
@@ -530,7 +976,7 @@ jobs:
                   if not c.get("ok"):
                       print(f"[{c.get('stage')}] {c.get('name')}\n    {c.get('detail', '')[-4000:]}")
       - name: Keep the report and the pictures
-        if: always()
+        if: ${{ !inputs.expect_failure && (always()) }}
         uses: actions/upload-artifact@v7
         with:
           name: fresh-user-${{ matrix.os }}

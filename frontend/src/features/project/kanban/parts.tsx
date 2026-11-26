@@ -28,6 +28,37 @@ export function stepClash(title: string, steps: string[]): string | null {
 
 export { PillGroup } from '../../../components/PillGroup'
 import { t } from '../../../i18n/scope/project'
+import { formatStamp } from '../../../utils/dateUtils'
+
+/**
+ * The operator's «think» mark: a task he thinks through himself, which no
+ * agent starts, moves or finishes. The card's pill style; the × removes the
+ * mark (only the operator can — the server refuses an agent).
+ */
+export function ThinkBadge({ at, onClear }: { at?: string; onClear?: () => void }) {
+  const title = t('Yours to think through: agents do not start, move or finish it · since {date}', { date: formatStamp(at) })
+  return (
+    <span
+      className="text-10 font-mono rounded-pill px-6 py-1 inline-flex items-center gap-2"
+      style={{ color: 'var(--status-info)', backgroundColor: 'color-mix(in srgb, var(--status-info) 14%, transparent)' }}
+      title={title}
+    >
+      {t('think')}
+      {onClear && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onClear() }}
+          onKeyDown={(e) => e.stopPropagation()}
+          aria-label={t('Remove the think mark')}
+          title={t('Remove the think mark')}
+          className="-mr-2 h-14 w-14 inline-flex items-center justify-center rounded-pill leading-none opacity-70 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  )
+}
 
 export function ValueInfo() {
   const { open, setOpen, rootRef } = usePopover()

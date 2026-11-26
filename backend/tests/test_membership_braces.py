@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -98,7 +99,8 @@ TABLE: list[tuple[str, tuple[str, str, str]]] = [
     ("#task {project:writing-tracker} {lane:ui} x", (MEMBER, "ui", "")),             # prefixes
     ("#task {project:release} x", (MEMBER, "", "")),
     ("#task {lane:release} x", ("", "release", "")),
-    ("#task {release} x", ("", "", "{release} is a project and a lane: write {project:release} or {lane:release}")),
+    # Unclear lanes make the card in the default lane and ask after (ASKS below).
+    ("#task {release} x", ("", "", "")),
     ("#task {ui} x", ("", "ui", "")),
     ("#task {UI} x", ("", "ui", "")),                                                # the board's spelling
     ("#task {merkhet-ui} x", ("", "merkhet-ui", "")),                                # a live lane beats a near miss
@@ -109,9 +111,14 @@ TABLE: list[tuple[str, tuple[str, str, str]]] = [
     ("#task {shopfront} x", ("", "", NOT_SHOPFRONT)),
     ("#task {project:nowhere} x", ("", "", "{project:nowhere}: nowhere is not a project of this agent")),
     ("#task {brand new lane} x", ("", "brand new lane", "")),
-    ("#task {ui2} x", ("", "", "{ui2} is not a lane of merkhet's board — did you mean ui? or write {lane:ui2}")),
-    ("#task {writing-tracker} {doc} x",
-     ("", "", "{doc} is not a lane of writing-tracker's board — did you mean docs? or write {lane:doc}")),
+    ("#task {ui2} x", ("", "", "")),
+    ("#task {writing-tracker} {doc} x", (MEMBER, "", "")),
+    # An ask drops the lanes: the card really goes to the default lane, as
+    # the ask says (the critic: {ui} {ui2} landed in ui).
+    ("#now {ui} {ui2} x", ("", "", "")),
+    # A both-name is no target: the other groups read the home's board, so
+    # {ui2} is a near miss of ui there, not a new lane of writing-tracker's.
+    ("#now {release} {ui2} x", ("", "", "")),
     # A numbered or suffixed sibling of a live lane is a new lane, not a typo.
     ("#task {phase-2} x", ("", "phase-2", "")),
     ("#task {sprint2} x", ("", "sprint2", "")),
@@ -123,6 +130,16 @@ TABLE: list[tuple[str, tuple[str, str, str]]] = [
     ("#now-todo {writing-tracker} later", (MEMBER, "", "")),
     ("#mute #task {writing-tracker} x", None),                                       # muted: no command
     ("#task {ui} x ###now {writing-tracker} y", (MEMBER, "", "")),                    # ### reads that one
+    # Every refusal at once (tk_90c1ba5f), joined by "; " for the notice.
+    ("#task {merkht} {writing-tracer} x",
+     ("", "", near("merkht", "merkhet") + "; " + near("writing-tracer", "writing-tracker"))),
+    ("#task {project:nowhere} {lane:} x",
+     ("", "", "{project:nowhere}: nowhere is not a project of this agent; {lane:} names no lane")),
+    ("#task {merkhet} {writing-tracker} {ui} {backend} x",
+     ("", "", "two projects in braces (merkhet, writing-tracker): name one; "
+              "two lanes in braces (ui, backend): name one")),
+    # No access is said alone: nothing about the rest of the braces.
+    ("#task {shopfront} {ui} {backend} x", ("", "", NOT_SHOPFRONT)),
 ]
 
 
@@ -143,6 +160,78 @@ def test_the_hook_and_the_server_read_braces_alike(world, text: str, want) -> No
     assert (server["project"], server["lane"], server["refusal"]) == (project, lane, refusal), server
     assert (hook["project"], hook["lane"], hook["refusal"]) == (
         (project or HOME) if not refusal else "", lane, refusal), hook
+    assert server["ask"] == hook["ask"] == ASKS.get(text, ""), (server, hook)
+
+
+# A lane the braces leave unclear (tk_970d6b2d): no refusal, the card is made
+# in the default lane, and the agent asks the operator this line after.
+ASKS: dict[str, str] = {
+    "#task {release} x": "{release} is both a project and a lane — did you mean project writing-tracker "
+                         "or lane release? (to name one: {project:release} or {lane:release})",
+    "#task {ui2} x": "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
+                     "(to name a new one: {lane:ui2})",
+    "#now {ui} {ui2} x": "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
+                         "(to name a new one: {lane:ui2})",
+    "#now {release} {ui2} x": "{release} is both a project and a lane — did you mean project writing-tracker "
+                              "or lane release? (to name one: {project:release} or {lane:release}) Also: "
+                              "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
+                              "(to name a new one: {lane:ui2})",
+    "#task {writing-tracker} {doc} x": "{doc} is not a lane of writing-tracker's board — did you mean docs, "
+                                       "or a new lane doc? (to name a new one: {lane:doc})",
+}
+
+
+def test_the_hook_says_write_now_and_ask_after_for_an_unclear_lane(world) -> None:
+    """The notice never asks before writing: the card is written at once,
+    and the question comes after it (tk_970d6b2d)."""
+    _c, root = world
+    for text, ask in ASKS.items():
+        notice = capture.where_notice(capture.task_where(root, HOME, A, text))
+        assert "Refused" not in notice and "No card" not in notice, notice
+        assert "write it now" in notice and notice.endswith("ask the operator in one line: " + ask), notice
+    # A new lane the operator names: written there, nothing to ask.
+    notice = capture.where_notice(capture.task_where(root, HOME, A, "#now-todo {Growth} plan the launch"))
+    assert notice.startswith(f"→ {HOME} · lane Growth") and "ask" not in notice, notice
+
+
+def test_a_now_todo_with_an_unclear_lane_is_written_at_once_by_the_server(world) -> None:
+    """The agent wrote nothing (it was told to ask first, before step 3):
+    the server's card arrives all the same, in the default lane, and its
+    history says what to ask."""
+    c, root = world
+    _say(root, "#now-todo {ui2} make the timeline readable", minutes_ago=5)
+    c.app.state.store.rebuild()
+    cards = [t for t in c.get("/api/tasks", params={"project": HOME}).json()["tasks"]
+             if "timeline" in t["title"]]
+    assert len(cards) == 1 and cards[0]["status"] == "todo" and cards[0]["lane"] == "Now", cards
+    events = json.dumps(c.get(f"/api/tasks/{cards[0]['id']}/events").json())
+    assert "did you mean ui" in events
+
+
+def test_a_now_todo_with_a_new_lane_makes_the_lane_and_the_agents_card(world) -> None:
+    c, root = world
+    _ask(root, "#now-todo {Growth} plan the launch posts")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "Plan the launch posts",
+                                   "status": "todo", "tags": "ag_idea"}, headers=VIA)
+    assert r.status_code == 201, r.text
+    meta = r.json()["metadata"]
+    assert meta["status"] == "todo" and meta["lane"] == "Growth" and "ask" not in r.json()
+
+
+def test_an_agents_now_todo_with_an_unclear_lane_is_made_and_says_ask(world) -> None:
+    c, root = world
+    _ask(root, "#now-todo {ui2} make the timeline readable")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "Readable timeline",
+                                   "status": "todo", "tags": "ag_idea"}, headers=VIA)
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["metadata"]["lane"] == "Now" and out["metadata"]["status"] == "todo"
+    assert out["ask"] == "ask the operator in one line: " + ASKS["#task {ui2} x"]
+    assert "make the timeline readable" in json.dumps(c.get(f"/api/tasks/{out['metadata']['id']}").json())
 
 
 # Each tag reads its own braces (the critic of c1: the #task's were lost).
@@ -191,6 +280,12 @@ def test_the_hook_notice_names_each_tags_place(world) -> None:
 def _say(root: Path, text: str, minutes_ago: int = 1) -> None:
     at = (datetime.now() - timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
     make_chat(root, HOME, A, [("2026-11-20T10:00:00", "start", "ok"), (at, text, "on it")])
+
+
+def _ask(root: Path, text: str) -> None:
+    """The operator's message, the agent's turn still open: it writes the card now."""
+    at = (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")
+    make_chat(root, HOME, A, [("2026-11-20T10:00:00", "start", "ok"), (at, text, "")])
 
 
 def _agent_task(c: TestClient, project: str):
@@ -337,3 +432,68 @@ def test_two_processes_race_on_one_alias(world) -> None:
 def test_memberships_alias_map_reads_the_file(world) -> None:
     c, _root = world
     assert memberships.alias_map(c.app.state.store) == {"WT": MEMBER, "release": MEMBER}
+
+
+
+# -- every reason at once (tk_90c1ba5f) ---------------------------------------
+
+def test_the_braces_give_each_refusal_as_a_reason(world) -> None:
+    c, root = world
+    text = "#task {merkht} {writing-tracer} x"
+    server = tasklib.task_braces(c.app.state.store, A, text)
+    hook = capture.task_where(root, HOME, A, text)
+    assert server["reasons"] == hook["reasons"] == [near("merkht", "merkhet"),
+                                                    near("writing-tracer", "writing-tracker")]
+    assert tasklib.task_braces(c.app.state.store, A, "#task {wt} x")["reasons"] == []
+
+
+def test_two_refused_braces_refuse_the_agents_create_with_both(world) -> None:
+    c, root = world
+    _say(root, "#task {merkht} {writing-tracer} check it")
+    c.app.state.store.rebuild()
+    before = tree(root)
+    r = _agent_task(c, HOME)
+    assert r.status_code == 403
+    assert r.json()["detail"] == near("merkht", "merkhet") + "\n" + near("writing-tracer", "writing-tracker")
+    assert len(r.json()["reasons"]) == 2
+    assert tree(root) == before
+
+
+def test_the_agents_create_names_status_lane_title_and_tags_together(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    before = tree(root)
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "", "tags": "nonsense",
+                                   "status": "doing", "lane": "nowhere"}, headers=VIA)
+    assert r.status_code == 422, r.text
+    got = r.json()["detail"].split("\n")
+    assert len(got) == 4, got
+    assert got[0].startswith("an agent creates tasks only in the `agent` column")
+    assert got[1].startswith("the lane 'nowhere' is not on the board")
+    assert got[2] == "an agent task needs a title"
+    assert got[3].startswith("unknown tag(s) nonsense")
+    assert tree(root) == before
+
+
+def test_a_long_title_and_too_many_tags_are_both_named(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "t" * 81,
+                                   "tags": ",".join(tasklib.AGENT_TAGS)}, headers=VIA)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].split("\n") == [
+        f"an agent task title is at most {tasklib.AGENT_TITLE_MAX} characters (81 sent)",
+        f"an agent task carries at most {tasklib.AGENT_TAGS_MAX} tags ({len(tasklib.AGENT_TAGS)} sent)"]
+
+
+def test_one_bad_field_of_the_agents_create_reads_as_before(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "", "tags": "ag_bug"}, headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (422, "an agent task needs a title")

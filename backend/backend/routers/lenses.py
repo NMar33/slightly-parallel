@@ -20,8 +20,9 @@ from typing import Any, Callable, Sequence
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
 from .. import (archpage, artifactlib, donelib, entry_fields, frontmatter, keeplib, memberships, nowlib, skilllib,
-               repomap, undolib)
-from ..csvio import rewrite_rows
+               repomap, thinklib, undolib)
+from ..csvio import read_rows, rewrite_rows
+from ..refusals import Reasons
 from ..date_utils import InvalidYYMMDD, format_yymm_dd, parse_yymm_dd
 from ..db import ViewStore
 from ..docs_md import build_detail, read_detail, resolve_under
@@ -30,7 +31,7 @@ from ..entities import ENTITIES, Entity
 from ..file_safety import atomic_write
 from .deps import (
     adopt_when_changed, detail_cached, etag_for, frontmatter_cached,
-    get_store, identity_of, json_response, maybe_304, parsed_file, refuse_agent, written_by_agent,
+    get_store, identity_of, json_response, maybe_304, parsed_file, written_by_agent,
 )
 from .integrate import sync_all_rules
 
@@ -279,11 +280,22 @@ _LIBRARY_ENTITIES = {"idea", "note", "prompt"}
 # that keeps a write inside them live in vocab.py (the doctor and the
 # libraries read them too); this module uses and re-exports them.
 from ..vocab import ENUM_FIELDS, HEADLINE_REQUIRED, READ_MODELS, check_enum_fields  # noqa: E402,F401
+from ..vocab import enum_problems  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Shared create implementation
 # ---------------------------------------------------------------------------
+
+
+def _not_in_table(ent: Entity, item_id: str) -> HTTPException:
+    return HTTPException(
+        status_code=404,
+        detail=(
+            f"{ent.name} not found in {ent.csv}: {item_id} "
+            "(rows from per-project overlay files are read-only)"
+        ),
+    )
 
 
 def update_entity(
@@ -302,33 +314,48 @@ def update_entity(
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="send the body as a JSON object")
     refuse_agent_write(ent, body)
-    check_enum_fields(ent.name, body)
+    # A row that is not there is the only reason; no access comes next, and
+    # alone; the rest are named together (tk_90c1ba5f). Asked again in
+    # mutate, under the lock.
+    csv_path = store.data_root / ent.csv
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail=f"{ent.csv} not found")
+    current = next((r for r in read_rows(csv_path) if r.get("id") == item_id), None)
+    if current is None:
+        raise _not_in_table(ent, item_id)
+    if written_by_agent(body):
+        ok, line = memberships.may_write_row(store, identity_of(body), str(current.get("project") or ""), ent.name)
+        if not ok:
+            raise HTTPException(status_code=403, detail=line)
+    why = Reasons()
     if ent.name in {"vision", "problem"} and "archived_at" in body:
         if written_by_agent(body):
-            refuse_agent(f"archiving a {ent.name} is the operator's")
+            why.add(f"archiving a {ent.name} is the operator's", code="operator_field", field="archived_at")
         stamp = body["archived_at"]
         try:
             valid = format_yymm_dd(parse_yymm_dd(stamp)) == stamp
         except InvalidYYMMDD:
             valid = False
         if not valid:
-            raise HTTPException(status_code=422, detail="archived_at must be a valid YYMM-DD date")
+            why.add("archived_at must be a valid YYMM-DD date", code="shape", field="archived_at")
     if ent.name in keeplib.KINDS and written_by_agent(body):
         probe = entry_fields.to_slots(ent.name, dict(body), ent.columns)
         if any(k in probe for k in ("l2", "l3", "l4", "body")):
             # The text of a kept entry is the operator's own message, kept as
             # written; an agent's reading of it is a version of the
             # interpretation, not an edit of the message.
-            refuse_agent(f"a {ent.name}'s text is the operator's own message, kept as it was written",
-                         f"write your reading of it with the MCP tool interpret {{lens: \"{ent.name}\", id, text}}")
+            why.add(f"a {ent.name}'s text is the operator's own message, kept as it was written",
+                    f"write your reading of it with the MCP tool interpret {{lens: \"{ent.name}\", id, text}}",
+                    code="own_card")
     if ent.name == "entrypoint" and written_by_agent(body):
         held = sorted(k for k in ("status", "state", "no_project", "home") if k in body)
         if held:
-            refuse_agent(f"an entry point's {', '.join(held)} is the operator's, set on the Entry points page",
-                         "an agent adds a stop (entrypoint_stop), a way in (entrypoint_way) or a shot (entrypoint_shot)")
-    csv_path = store.data_root / ent.csv
-    if not csv_path.exists():
-        raise HTTPException(status_code=404, detail=f"{ent.csv} not found")
+            why.add(f"an entry point's {', '.join(held)} is the operator's, set on the Entry points page",
+                    "an agent adds a stop (entrypoint_stop), a way in (entrypoint_way) or a shot (entrypoint_shot)",
+                    code="operator_field")
+    for field, line in enum_problems(ent.name, body):
+        why.add(line, code="vocabulary", field=field)
+    why.raise_if_any()
 
     changed = False
 
@@ -336,13 +363,7 @@ def update_entity(
         nonlocal changed
         target = next((r for r in rows if r.get("id") == item_id), None)
         if target is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"{ent.name} not found in {ent.csv}: {item_id} "
-                    "(rows from per-project overlay files are read-only)"
-                ),
-            )
+            raise _not_in_table(ent, item_id)
         if written_by_agent(body):
             # update_entry: the row's project is checked (note nt_258a7ed7 §2).
             ok, line = memberships.may_write_row(store, identity_of(body), str(target.get("project") or ""), ent.name)
@@ -509,6 +530,7 @@ def _register(ent: Entity) -> None:
             # task on the board's next read.
             adopt_when_changed(store, "now", nowlib.adopt)
             adopt_when_changed(store, "done", donelib.adopt)
+            adopt_when_changed(store, "think", thinklib.adopt)
         qp = request.query_params
         clauses, params, fingerprint = _list_filters(specs, qp)
         if ent.name in undolib.HIDDEN_BY_DATE:
