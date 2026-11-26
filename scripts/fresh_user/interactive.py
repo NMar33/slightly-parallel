@@ -80,8 +80,9 @@ def _last_reply(chat: Path, prompt: str) -> str:
     _, separator, captured = user.partition("\n**User**: ")
     if not separator:
         return ""
-    paste = re.fullmatch(r'\n*<pasted_content id="([\w-]+)">\n(.*)\n</pasted_content id="\1">\n*', captured, re.S)
-    return reply.strip() if (paste[2] if paste else captured) == prompt else ""
+    expanded = re.sub(r'\n\n<pasted_content id="([\w-]+)">\n(.*?)\n</pasted_content id="\1">(?:\n|$)',
+                      lambda paste: paste[2], captured, flags=re.S)
+    return reply.strip() if prompt in (captured, expanded) else ""
 
 
 def _opencode_turn_evidence(home: Path, session: str) -> dict:

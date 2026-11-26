@@ -1294,3 +1294,14 @@ def test_codex_waits_before_confirming_the_first_paint_of_folder_trust(scripted_
     screen.send = lambda key: keys.append((key, paints))
     assert interactive._ready(screen, tools()["codex"], 3, [])
     assert len(keys) == 1 and keys[0][0] == interactive.ENTER and keys[0][1] >= 4
+
+
+def test_capture_checks_a_claude_paste_with_literal_text_after_the_envelope(scripted_onboarding, tmp_path):
+    chat = tmp_path / "chat.md"
+    chat.write_text(
+        '## Turn 1\n**User**: \n\n<pasted_content id="b482">\n#task The exact original \n'
+        '</pasted_content id="b482">\nvisible tail\n**Agent**: done\n',
+        encoding="utf-8",
+    )
+    assert scripted_onboarding._last_reply(chat, "#task The exact original visible tail") == "done"
+    assert scripted_onboarding._last_reply(chat, "#task The exact original wrong tail") == ""

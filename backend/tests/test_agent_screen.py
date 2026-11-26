@@ -296,3 +296,26 @@ def test_claude_accepts_only_a_new_paste_marker_in_the_composer(monkeypatch, act
     terminal.read = lambda: setattr(terminal, "text", painted)
     monkeypatch.setattr(screen, "SCREEN_POLL_INTERVAL_S", 0)
     assert terminal.wait_for(prompt, 0.02, tool="claude-code") is accepted
+
+
+@pytest.mark.parametrize(("tail", "accepted"), [
+    ("part of the final line", True), ("not our final line", False),
+])
+def test_claude_accepts_a_paste_marker_with_the_exact_visible_suffix(monkeypatch, tail, accepted):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    separator = "─" * 80
+    terminal = screen.Screen.__new__(screen.Screen)
+    terminal.trace = None
+    terminal.history = ""
+    terminal.application_cursor = False
+    terminal._write = lambda _: None
+    terminal.text = f"{separator}\n❯\n{separator}\n  ⏸ manual mode on"
+    prompt = "Paste a long request. " * 60 + "part of the final line"
+    terminal.send(prompt)
+    terminal.read = lambda: setattr(
+        terminal, "text", f"{separator}\n❯ [Pasted text #1]{tail}\n{separator}\n  ⏸ manual mode on",
+    )
+    monkeypatch.setattr(screen, "SCREEN_POLL_INTERVAL_S", 0)
+    assert terminal.wait_for(prompt, 0.02, tool="claude-code") is accepted

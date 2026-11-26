@@ -91,15 +91,15 @@ def _opencode_composer(frame: str) -> str:
     return "\n".join(reversed(rows))
 
 
-def _claude_paste_marker(frame: str) -> str:
+def _claude_paste_marker(frame: str) -> tuple[str, str] | None:
     lines = frame.splitlines()
     dividers = [index for index, line in enumerate(lines) if re.fullmatch(r" *─{8,} *", line)]
     if len(dividers) < 2:
-        return ""
+        return None
     top, bottom = dividers[-2:]
     composer = "\n".join(lines[top + 1:bottom]).strip()
-    match = re.fullmatch(r"[❯>]\s*\[Pasted text #(\d+)(?: \+\d+ lines?)?\]", composer)
-    return match[1] if match else ""
+    match = re.fullmatch(r"[❯>]\s*\[Pasted text #(\d+)(?: \+\d+ lines?)?\](.*)", composer, re.S)
+    return (match[1], re.sub(r"\s", "", match[2])) if match else None
 
 
 class Screen:
@@ -109,6 +109,7 @@ class Screen:
                  reply_to_kitty_query: bool = True, columns: int = COLS):
         self.text = ""
         self.history = ""
+        self._paste_before_input: tuple[str, str] | None = None
         self.exited = False
         self.application_cursor = False
         self.reply_to_kitty_query = reply_to_kitty_query
@@ -207,6 +208,7 @@ class Screen:
         cursor between words instead of writing spaces: they are compared without."""
         end = time.monotonic() + seconds
         want = re.sub(r"\s", "", words)
+        previous_paint = None
         while time.monotonic() < end:
             self.read()
             frame = self.rendered
@@ -217,16 +219,18 @@ class Screen:
                 return True
             elif tool == "claude-code" and len(words) > COLS:
                 marker = _claude_paste_marker(frame)
-                if marker and marker != self._paste_before_input:
-                    # Claude elides long pastes. The caller still requires
-                    # the captured turn to contain the exact original text.
+                original = self._paste_before_input
+                if marker and marker == previous_paint and (not original or marker[0] != original[0]) and want.endswith(marker[1]):
+                    # Claude elides all or part of the paste. Verify any
+                    # visible suffix here and the complete capture after Enter.
                     return True
+                previous_paint = marker
             time.sleep(SCREEN_POLL_INTERVAL_S)
         return False
 
     def send(self, keys: str) -> None:
         self.save_frame("before input")
-        self._paste_before_input = _claude_paste_marker(self.rendered) if len(keys) > COLS else ""
+        self._paste_before_input = _claude_paste_marker(self.rendered) if len(keys) > COLS else None
         self.history = (self.history + "\n" + self.text.rstrip())[-SCREEN_HISTORY_CHARS:]
         self.text = ""  # what comes after this key
         self._write(_CURSOR_ARROWS.get(keys, keys) if self.application_cursor else keys)
