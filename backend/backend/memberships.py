@@ -334,6 +334,9 @@ NOT_MEMBER = ("agent {agent} is not a member of {project}; its projects: {projec
               "The operator adds it on the agent card")
 NOT_MEMBER_ROW = ("agent {agent} is not a member of {project}; this {what} is {project}'s. "
                   "The operator adds it on the agent card")
+#: A row shown on several projects (a task's ``projects``): each would let it in.
+NOT_MEMBER_ROWS = ("agent {agent} is not a member of {projects}; this {what} is on {listed}. "
+                   "The operator adds it on the agent card")
 UNINDEXED = ("agent {agent} is not a chat Slightly Parallel has recorded; nothing was written. "
              "Tell the operator")
 
@@ -444,6 +447,10 @@ def may_write_row(store: Any, agent: str, project: str, what: str,
     # any of them writes on it too.
     if any(_member(store, view, code) for code in (project, *also) if code):
         return True, ""
+    codes = list(dict.fromkeys(c for c in (project, *also) if c))
+    if len(codes) > 1:
+        return False, NOT_MEMBER_ROWS.format(agent=agent, projects=" or ".join(codes), what=what,
+                                             listed=", ".join(codes))
     return False, NOT_MEMBER_ROW.format(agent=agent, project=project, what=what)
 
 

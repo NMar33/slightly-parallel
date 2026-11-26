@@ -191,3 +191,49 @@ def test_the_rest_of_the_card_goes_with_it_or_is_let_go_and_said(world) -> None:
     assert {r["project"] for r in store.query("SELECT project FROM task_notes_mutual WHERE task_id = ?", (TASK,))} == {"BETA"}
     head = store.query_one("SELECT stack_head_at FROM tasks_mutual WHERE id = ?", (other_id,))
     assert head["stack_head_at"], "the next card of the stack became its head"
+
+
+def test_the_story_and_the_evidence_go_with_the_task(world) -> None:
+    # The critic of f260b177: story requests and story images carry the
+    # project too, and a later delete of A sweeps every row filed under A.
+    from backend.csvio import append_row
+    from backend.entities import STORY_IMAGE_COLUMNS, STORY_REQUEST_COLUMNS, TASK_EVIDENCE_COLUMNS
+    c, root = world
+    rows = {
+        "story_requests.csv": (STORY_REQUEST_COLUMNS, {"id": "sr_move0001", "task_id": TASK, "project": "ALPHA",
+                                                       "type": "release", "status": "open"}),
+        "story_images.csv": (STORY_IMAGE_COLUMNS, {"id": "si_move0001", "note_id": "nt_x", "task_id": TASK,
+                                                   "project": "ALPHA", "path": "story/x.png"}),
+        "task_evidence.csv": (TASK_EVIDENCE_COLUMNS, {"id": "ev_move0001", "task_id": TASK, "project": "ALPHA",
+                                                      "kind": "text", "body": "ran it"}),
+    }
+    for name, (columns, row) in rows.items():
+        append_row(root / name, columns, row)
+    c.app.state.store.rebuild()
+    got = c.post(f"/api/tasks/{TASK}/move", json={"actor": "operator", "to": "BETA"}).json()
+    assert "its notes, evidence and story go with it" in got["said"], got
+    store = c.app.state.store
+    for view in ("story_requests_mutual", "story_images_mutual", "task_evidence_mutual"):
+        assert {r["project"] for r in store.query(f"SELECT project FROM {view} WHERE task_id = ?", (TASK,))} == {"BETA"}, view
+
+
+def _sprint(c: TestClient, projects: str) -> str:
+    r = c.post("/api/sprints", json={"created_date": "2611-20", "started_date": "2611-20", "name": f"S {projects}",
+                                     "projects": projects, "status": "active", "agent_id": "operator",
+                                     "project": projects.split(",")[0]})
+    assert r.status_code == 201, r.text
+    return r.json()["metadata"]["id"]
+
+
+@pytest.mark.parametrize("projects,kept", [("ALPHA", False), ("ALPHA,BETA", True)])
+def test_a_sprint_that_plans_the_target_keeps_the_task(world, projects: str, kept: bool) -> None:
+    # The critic of f260b177: the sprint was cleared, and called A's, even
+    # when the sprint's projects include the target.
+    c, _root = world
+    sid = _sprint(c, projects)
+    assert c.post(f"/api/tasks/{TASK}/update", json={"actor": "operator", "sprint_id": sid}).status_code == 200
+    got = c.post(f"/api/tasks/{TASK}/move", json={"actor": "operator", "to": "BETA"}).json()
+    row = c.app.state.store.query_one("SELECT sprint_id FROM tasks_mutual WHERE id = ?", (TASK,))
+    assert (row["sprint_id"] or "") == (sid if kept else "")
+    assert got["sprint_dropped"] is (not kept)
+    assert (f"its sprint {sid} is ALPHA's: let go" in got["said"]) is (not kept)

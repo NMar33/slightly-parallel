@@ -392,7 +392,7 @@ def test_a_task_shown_on_a_member_project_is_the_members_to_work_on(op: TestClie
     before = tree(root)
     r = op.post(f"/api/tasks/{shared}/update", json={"agent_id": delta, "status": "doing"}, headers=VIA)
     assert (r.status_code, r.json()["detail"]) == (403, (
-        f"agent {delta} is not a member of GAMMA; this task is GAMMA's. The operator adds it on the agent card"))
+        f"agent {delta} is not a member of GAMMA or BETA; this task is on GAMMA, BETA. The operator adds it on the agent card"))
     assert tree(root) == before
     # A link to it, from a member's task: the other end is the member's too.
     r = op.post("/api/tasks/tk_alpha_auth/link", json={"agent_id": A, "to": shared, "kind": "relates"}, headers=VIA)

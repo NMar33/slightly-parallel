@@ -510,6 +510,19 @@ def _contents(space: Space) -> dict[str, list]:
     return {"projects": projects, "chats": chats, "tasks": tasks}
 
 
+def _said(exc: Exception) -> str:
+    """A failed request as the server put it: «HTTP Error 409: Conflict —
+    <its detail>», not the bare status (a Windows restore 409 said nothing)."""
+    import urllib.error
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            detail = json.loads(exc.read() or b"{}").get("detail", "")
+        except (ValueError, OSError, AttributeError):
+            detail = ""
+        return f"{exc} — {detail}" if detail else str(exc)
+    return str(exc)
+
+
 def backup_restore(space: Space, report: Report, code: str) -> None:
     """Settings › Backups › Back up now, the archive downloaded, then
     restored into a new data folder: the projects, chats and tasks are there.
@@ -554,7 +567,7 @@ def backup_restore(space: Space, report: Report, code: str) -> None:
         report.add(s, "the data check finds nothing damaged", not get(space, "/api/health").get("load_errors"),
                    json.dumps(get(space, "/api/health").get("load_errors"))[:300])
     except Exception as exc:
-        report.add(s, "it restores into the new data folder", False, str(exc)[:300])
+        report.add(s, "it restores into the new data folder", False, _said(exc)[:300])
     finally:
         http(space.url + "/api/setup/data-root", {"path": str(space.data)})
     report.add(s, "the server is back on the data folder Setup chose", get(space, "/api/health").get("data_root") == str(space.data))

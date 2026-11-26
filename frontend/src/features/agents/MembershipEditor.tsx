@@ -35,6 +35,16 @@ export function membershipKey(agentId: string) {
   return ['agents', 'membership', agentId] as const
 }
 
+/**
+ * What a join, a leave or a new level changes on other pages: the agent
+ * queries (its membership, profile, the rosters), the snapshot's agents,
+ * and the chat lists (sessions). Nothing else is fetched again.
+ */
+export function touchedByMembership(key: readonly unknown[]): boolean {
+  const head = String(key[0] ?? '')
+  return head === 'agents' || head === 'snapshot' || key.some((part) => /session/i.test(String(part)))
+}
+
 export function MembershipEditor({ agentId }: { agentId: string }) {
   const qc = useQueryClient()
   const path = `/api/agents/${encodeURIComponent(agentId)}/membership`
@@ -51,7 +61,7 @@ export function MembershipEditor({ agentId }: { agentId: string }) {
       qc.setQueryData(membershipKey(agentId), answer)
       setSaid({ ok: true, text: answer.summary })
       setPick('')
-      void qc.invalidateQueries()
+      void qc.invalidateQueries({ predicate: (q) => touchedByMembership(q.queryKey) })
     },
     onError: (e) => setSaid({ ok: false, text: (e as Error).message }),
   })

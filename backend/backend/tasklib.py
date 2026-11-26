@@ -479,6 +479,21 @@ def _gate_agent_create(body: dict, store: ViewStore) -> list[str]:
     body["status"] = status
     # The lane comes from the operator's message, never from the agent.
     lane = _lane_for(store, str(body.get("project") or ""), command, named)
+    # A lane the agent names itself: a new one is the operator's to make
+    # (vision vs_5dd903f1, tk_79e9f2cd). One the board has, or the one the
+    # operator's braces named (made at once), and any when the braces named
+    # one, is dropped as before: the lane comes from the operator's message,
+    # never from the agent.
+    on_board = _board_lanes(store, str(body.get("project") or ""))
+    board = {x.lower() for x in on_board}
+    for key in ("lane", "assignee"):
+        own = str(body.get(key) or "").strip()
+        if own and not named and own.lower() not in board and own.lower() != lane.lower():
+            refuse_agent(
+                f"the lane {own!r} is not on the board",
+                ("the board's lanes: " + ", ".join(on_board) if on_board else "the board has no lanes yet")
+                + " — ask the operator which, in one line; a new lane is the operator's to make",
+            )
     dropped = {k for k in ("lane", "assignee") if str(body.pop(k, None) or "").strip()}
     if lane:
         body["lane"] = body["assignee"] = lane
@@ -666,7 +681,13 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     drop_topic = topic is not None and str(topic.get("project") or "") != to
     stack = str(row.get("stack_id") or "").strip()
     sprint = str(row.get("sprint_id") or "").strip()
-    from .entities import MILESTONE_TASK_COLUMNS, TASK_EVIDENCE_COLUMNS, TASK_NOTE_COLUMNS
+    if sprint:
+        # A sprint that plans the target project too keeps the task.
+        planned = store.query_one("SELECT projects FROM sprints_mutual WHERE id = ?", (sprint,))
+        if planned is not None and to in project_codes(planned.get("projects")):
+            sprint = ""
+    from .entities import (MILESTONE_TASK_COLUMNS, STORY_IMAGE_COLUMNS, STORY_REQUEST_COLUMNS,
+                           TASK_EVIDENCE_COLUMNS, TASK_NOTE_COLUMNS)
     milestones = [str(r.get("milestone_id") or "") for r in store.query(
         "SELECT milestone_id FROM milestone_tasks_mutual WHERE task_id = ?", (task_id,))]
     deferred: list = []
@@ -693,8 +714,11 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     rewrite_rows(store.data_root / ent.csv, ent.columns, mutate)
     for ev_task, ev_actor, ev_changes in deferred:
         _append_events(store, ev_task, ev_actor, ev_changes)
-    # Its notes and evidence go with it; a milestone is A's plan and lets it go.
-    for name, columns in (("task_notes.csv", TASK_NOTE_COLUMNS), ("task_evidence.csv", TASK_EVIDENCE_COLUMNS)):
+    # Its notes, evidence, story requests and story images go with it (a
+    # later delete of A sweeps every row filed under A); a milestone is A's
+    # plan and lets it go.
+    for name, columns in (("task_notes.csv", TASK_NOTE_COLUMNS), ("task_evidence.csv", TASK_EVIDENCE_COLUMNS),
+                          ("story_requests.csv", STORY_REQUEST_COLUMNS), ("story_images.csv", STORY_IMAGE_COLUMNS)):
         def follow(rs: list[dict[str, str]]) -> bool:
             hit = [r for r in rs if r.get("task_id") == task_id and r.get("project") != to]
             for r in hit:
@@ -729,7 +753,7 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     if milestones:
         said.append(f"its milestone{'s' if len(milestones) > 1 else ''} {', '.join(milestones)} "
                     f"{'are' if len(milestones) > 1 else 'is'} {old}'s: let go")
-    said.append("its notes and evidence go with it")
+    said.append("its notes, evidence and story go with it")
     return {"task_id": task_id, "from": old, "to": to, "lane": kept_lane, "projects": projects,
             "lane_cleared": bool(lane and not kept_lane), "topic_dropped": drop_topic,
             "stack_dropped": bool(stack), "sprint_dropped": bool(sprint), "milestones_dropped": milestones,

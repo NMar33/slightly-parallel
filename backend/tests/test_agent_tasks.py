@@ -137,6 +137,31 @@ def test_a_lane_the_board_does_not_have_is_a_new_lane(tmp_path: Path) -> None:
     c.__exit__(None, None, None)
 
 
+def test_a_lane_the_agent_names_itself_is_never_new(tmp_path: Path) -> None:
+    # The operator's decision (vision vs_5dd903f1, tk_79e9f2cd): a new lane
+    # is the operator's to make. The operator's braces still make one at
+    # once; an agent naming a lane of its own that the board lacks is refused,
+    # one the board has is dropped as before (the lane is the operator's).
+    root = tmp_path / "data"
+    c = _board(root, "look into the form, it accepts an empty trigger_id")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "x", "tags": "ag_bug", "lane": "brand-new"})
+    assert r.status_code == 422, r.text
+    assert "'brand-new' is not on the board" in r.text and "Bugs, Kanban Board" in r.text
+    assert "a new lane is the operator's to make" in r.text
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:11", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "y", "tags": "ag_bug", "lane": "Bugs"})
+    assert r.status_code == 201, r.text
+    assert not r.json()["metadata"].get("lane") and "lane" in r.json().get("ignored", [])
+    c.__exit__(None, None, None)
+    # The operator's own braces with a new lane: the card is made in it.
+    c = _board(tmp_path / "data2", "#task {ux} the form accepts an empty trigger_id")
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "21:10", "project": "alpha",
+                                   "agent_id": "cc-a", "title": "x", "tags": "ag_bug", "lane": "ux"})
+    assert r.status_code == 201 and r.json()["metadata"]["lane"] == "ux", r.text
+    c.__exit__(None, None, None)
+
+
 def test_a_near_miss_of_a_lane_the_board_has_is_refused_with_its_name(tmp_path: Path) -> None:
     # {bug} for the board's Bugs is a typo, not a new lane (the critic of c1).
     root = tmp_path / "data"

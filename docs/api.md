@@ -338,8 +338,8 @@ The board, its blocks, and everything hung off a task.
   loses the old project (the card leaves its board), the column and the
   document stay, the lane stays when a live card of `to` carries it (else it
   is cleared), a topic of the old project, a stack (its next card becomes
-  the head), a sprint and milestone links are let go, and its notes and
-  evidence move with it. The
+  the head), a sprint and milestone links are let go, and its notes,
+  evidence, story requests and story images move with it. The
   history gets `project` (old → new) and «moved from A to B, by …». Refused
   in one line, writing nothing: no such project (404), the same project or a
   done or archived task (409), an agent below level 3 or not a member (403).

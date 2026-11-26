@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '@testing-library/jest-dom/vitest'
 
-import { MembershipEditor } from './MembershipEditor'
+import { MembershipEditor, touchedByMembership } from './MembershipEditor'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
@@ -71,5 +71,17 @@ describe('the agent card: its projects', () => {
     const group = await screen.findByRole('radiogroup', { name: 'task level' })
     fireEvent.click(within(group).getByRole('radio', { name: /3/ }))
     await waitFor(() => expect(posted).toEqual([{ op: 'level', value: 3 }]))
+  })
+})
+
+describe('what a membership change fetches again', () => {
+  it('the agent and membership queries, the snapshot and the chat lists; nothing else', () => {
+    expect(touchedByMembership(['agents', 'membership', AGENT])).toBe(true)
+    expect(touchedByMembership(['agents', 'roster', 'beta'])).toBe(true)
+    expect(touchedByMembership(['snapshot'])).toBe(true)
+    expect(touchedByMembership(['aqua', 'chat-sessions', AGENT])).toBe(true)
+    expect(touchedByMembership(['msgmenu', 'sessions', AGENT])).toBe(true)
+    expect(touchedByMembership(['lens', 'decisions', 'detail', 'dc_1'])).toBe(false)
+    expect(touchedByMembership(['usage', 'day'])).toBe(false)
   })
 })
