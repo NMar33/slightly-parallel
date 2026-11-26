@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -15,7 +16,7 @@ from uuid import uuid4
 
 import scenario
 import core_mcp
-from agents import OpenCode, Tool, give_login, model_for
+from agents import OpenCode, OpenCodeSDKError, Tool, give_login, model_for
 from common import (
     Report,
     Space,
@@ -85,7 +86,23 @@ def _last_reply(chat: Path, prompt: str) -> str:
     return reply.strip() if prompt in (captured, expanded) else ""
 
 
-def _opencode_turn_evidence(home: Path, session: str) -> dict:
+def _opencode_shell_arguments(command: object, workdir: object, workspace: Path) -> dict[str, str]:
+    location = "[redacted]"
+    if workdir is None or workdir == "":
+        location = "default workspace"
+    elif isinstance(workdir, str):
+        try:
+            relative = os.path.relpath(workspace / workdir, workspace.parent)
+        except ValueError:
+            pass  # Windows drive mismatch or invalid path.
+        else:
+            # Keep the shape of an external path without publishing its names.
+            known = {"..", workspace.name}
+            location = "/".join(part if part in known else "[redacted]" for part in Path(relative).parts) or "."
+    return {"command": "pytest -q" if command == "pytest -q" else "[redacted]", "workdir": location}
+
+
+def _opencode_turn_evidence(home: Path, session: str, *, workspace: Path | None = None) -> dict:
     """Summarize the failed turn from the disposable CLI profile without exporting its payloads."""
     path = home / ".local" / "share" / "opencode" / "opencode.db"
     unavailable = {"state": "unavailable"}
@@ -107,18 +124,23 @@ def _opencode_turn_evidence(home: Path, session: str) -> dict:
             for message, finished, error in reversed(messages):
                 parts = list(database.execute(
                     "SELECT json_extract(data, '$.type'), json_extract(data, '$.tool'), "
-                    "json_extract(data, '$.state.status'), length(json_extract(data, '$.text')) > 0 "
+                    "json_extract(data, '$.state.status'), length(json_extract(data, '$.text')) > 0, "
+                    "json_extract(data, '$.state.input.command'), json_extract(data, '$.state.input.workdir') "
                     "FROM part WHERE session_id = ? AND message_id = ? ORDER BY time_created DESC, id DESC LIMIT 16",
                     (session, message),
                 ))
                 tools = []
-                for part, tool, status, _ in reversed(parts):
+                for part, tool, status, _, command, workdir in reversed(parts):
                     if part == "tool":
                         name = {"slightly-parallel_write_entry": "write_entry", "skill": "skill"}.get(tool, "other")
                         phase = status if status in {"pending", "running", "completed", "error"} else "unknown"
-                        tools.append({"tool": name, "status": phase})
+                        if workspace is not None and tool in {"bash", "shell"}:
+                            tools.append({"tool": "shell", "status": phase,
+                                          "arguments": _opencode_shell_arguments(command, workdir, workspace)})
+                        else:
+                            tools.append({"tool": name, "status": phase})
                 assistant.append({"finished": bool(finished), "error": bool(error),
-                                  "text_emitted": any(kind == "text" and text for kind, _, _, text in parts),
+                                  "text_emitted": any(kind == "text" and text for kind, _, _, text, *_ in parts),
                                   "tools": tools})
     except (OSError, ValueError, sqlite3.Error):
         return unavailable
@@ -304,6 +326,9 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
     if WINDOWS and state.tool.name == "codex" and step in (scenario.EDIT, scenario.WORK):
         message += (f" Set the command working directory to `{state.folder.resolve()}`"
                     " and use absolute paths under that directory for the calculator files.")
+    if state.tool.name == "opencode" and step == scenario.EDIT:
+        message += (" Edit calc.py with the file editing tool in the current workspace."
+                    " Do not run shell commands or tests in this turn. Report the edit in chat.")
     if step[0] != "#scan":
         return message
     filename = "scan-payloads.json"
@@ -357,6 +382,14 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int,
     return verdict
 
 
+def _opencode_permission_failure(screen: Screen) -> str:
+    frame = screen.rendered or screen.text
+    if (re.search(r"(?m)^ *┃ *△ Permission required\b", frame)
+            and re.search(r"(?m)^ *┃ *Allow once +Allow always +Reject\b", frame)):
+        return "unexpected OpenCode permission prompt"
+    return ""
+
+
 def _approve_task_write(screen: Screen, title: str) -> bool:
     frame = screen.rendered
     if ('Allow the slightly-parallel MCP server to run tool "write_entry"?' not in frame
@@ -408,6 +441,9 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
     handled_mcp = ""
     # An earlier command can finish under the sandbox without a dialog.
     pending = {_command_text(value) for value in (*read_commands, offline_command, command) if value}
+    edit_batch = ()
+    if step == "a plain request" and offline_command and command:
+        edit_batch = (_command_text(offline_command), _command_text(command))
 
     def check() -> str:
         nonlocal handled_shell, handled_mcp
@@ -415,9 +451,15 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
             if shell.group() == handled_shell:
                 return ""
             shown = _command_text(shell["command"])
-            if shown not in pending or shell["choice"].strip() != "1. Yes, proceed (y)":
+            if shell["choice"].strip() != "1. Yes, proceed (y)":
                 return "unexpected Codex command approval"
-            pending.remove(shown)
+            approved = (shown,)
+            if shown not in pending:
+                lines = tuple(_command_text(line) for line in shell["command"].strip().splitlines())
+                if not edit_batch or lines != edit_batch or not pending.issuperset(edit_batch):
+                    return "unexpected Codex command approval"
+                approved = edit_batch
+            pending.difference_update(approved)
             handled_shell = shell.group()
             screen.send(ENTER)
             return ""
@@ -466,8 +508,12 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     if not report.add(stage, "the CLI has a login", bool(offline_provider or give_login(tool, home, space, env))):
         return None
     if WINDOWS and isinstance(tool, OpenCode):
+        seed = os.environ.get("SP_OPENCODE_SDK_SEED")
         try:
-            tool.prepare_interactive(space, folder, env)
+            tool.prepare_interactive(space, folder, env, sdk_seed=Path(seed) if seed is not None else None)
+        except OpenCodeSDKError as error:
+            report.add(stage, "L1 the pinned OpenCode plugin is ready", False, str(error))
+            return None
         except subprocess.TimeoutExpired as error:
             report.add(stage, "L1 the pinned OpenCode plugin is ready", False,
                        f"npm install for the pinned OpenCode plugin SDK timed out after {error.timeout:g} seconds")
@@ -744,11 +790,18 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
                     def approval(command_approval=command_approval):
                         return policy_error() or command_approval()
+                elif tool.name == "opencode":
+                    def approval():
+                        return _opencode_permission_failure(screen)
 
                 if not type_prompt(message, name):
                     return None
                 error = _wait_for_turn(screen, lambda message=message: policy_complete() and bool(_last_reply(chat, message)), seconds,
                                        approval=approval)
+                if error and tool.name == "opencode":
+                    report.notes["OpenCode failed core turn"] = {
+                        "step": name, **_opencode_turn_evidence(space.home, str(session), workspace=folder),
+                    }
                 if not report.add(stage, f"{name}: the operator turn and answer are captured", not error,
                                   f"{error}\n{_screen_tail(screen)}"):
                     break

@@ -11,6 +11,7 @@ AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
 AGENTS_PREFLIGHT = "Check provider access, authentication and model errors"
 OFFLINE_CORE = "Run full Codex core through the guarded MCP on a local stub"
 INTERACTIVE_STUB = "Capture a real PTY turn, task, decision, rule and done on a local stub"
+OPENCODE_SDK = "Prepare pinned OpenCode SDK (60-second npm limit)"
 HEADLESS_OPENCODE = "Save the headless OpenCode reply before the process exits"
 MACHINE_COST = "Report CLI version and model cost"
 CODEX_LIMITS = ("Codex limits RPC rejects a signed-out account",
@@ -92,7 +93,7 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
             ) for os in SYSTEMS},
             **{f"Real Codex ({os})": CODEX_LIMITS for os in SYSTEMS},
             **{f"Interactive agent ({tool}, {os})": (INTERACTIVE_STUB,) for tool in TOOLS for os in SYSTEMS},
-            **{f"Interactive agent (opencode, {os})": (INTERACTIVE_STUB, HEADLESS_OPENCODE) for os in SYSTEMS},
+            **{f"Interactive agent (opencode, {os})": (OPENCODE_SDK, INTERACTIVE_STUB, HEADLESS_OPENCODE) for os in SYSTEMS},
             **{f"Interactive agent (codex, {os})": (INTERACTIVE_STUB, OFFLINE_CORE) for os in SYSTEMS},
             **{f"Interactive agent (claude-code, {os}, trust dialog)": (INTERACTIVE_STUB,) for os in SYSTEMS},
         }

@@ -218,6 +218,22 @@ class Codex(Tool):
         return [*base, message] if self.turns == 0 else again
 
 
+class OpenCodeSDKError(RuntimeError):
+    """The preinstalled SDK cannot be used by the disposable CLI."""
+
+
+def validate_opencode_sdk(seed: Path, version: str) -> None:
+    metadata = seed / "node_modules" / "@opencode-ai" / "plugin" / "package.json"
+    if not all(path.is_file() for path in (metadata, seed / "package.json", seed / "package-lock.json")):
+        raise OpenCodeSDKError("OpenCode plugin SDK seed is missing required files")
+    try:
+        package = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise OpenCodeSDKError("OpenCode plugin SDK seed metadata is unreadable") from None
+    if not isinstance(package, dict) or package.get("version") != version:
+        raise OpenCodeSDKError("OpenCode plugin SDK version does not match the CLI")
+
+
 class OpenCode(Tool):
     """`opencode run`, its events as JSON lines. The message goes on stdin:
     given as an argument, `opencode run` puts quotes around a message with
@@ -236,9 +252,7 @@ class OpenCode(Tool):
         if sdk_seed is None and not npm:
             raise RuntimeError("OpenCode's plugin SDK requires npm")
         if sdk_seed is not None:
-            metadata = sdk_seed / "node_modules" / "@opencode-ai" / "plugin" / "package.json"
-            if json.loads(metadata.read_text(encoding="utf-8")).get("version") != version:
-                raise RuntimeError("OpenCode plugin SDK version does not match the CLI")
+            validate_opencode_sdk(sdk_seed, version)
         config = space.home / ".config"
         prefixes = (config / "opencode", folder / ".opencode")
         if sdk_seed is None:

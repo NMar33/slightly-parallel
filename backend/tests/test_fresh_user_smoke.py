@@ -547,6 +547,19 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
 
 
+def test_opencode_core_edit_requests_only_the_file_edit(scripted_onboarding, tmp_path):
+    import scenario
+    from common import Space
+
+    space = Space(tmp_path, 1)
+    state = scenario.State("calc", space.sample, scenario.tools()["opencode"])
+    edit = scripted_onboarding._operator_core_prompt(space, state, scenario.EDIT)
+    work = scripted_onboarding._operator_core_prompt(space, state, scenario.WORK)
+    assert "Edit calc.py with the file editing tool" in edit
+    assert "Do not run shell commands or tests in this turn" in edit
+    assert work == scenario.step_prompt(space, state, scenario.WORK)
+
+
 def test_windows_codex_core_tells_the_agent_its_actual_workspace(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import interactive
@@ -604,6 +617,52 @@ def test_windows_fallback_confirms_only_literal_workspace_commands_once(monkeypa
     assert ask(edit, "2. Yes, and don't ask again (p)") == "unexpected Codex command approval"
     assert not ask(edit)
     assert keys == [ENTER, ENTER]
+
+
+@pytest.mark.parametrize("variant", ["exact", "third", "wrong_indent", "foreign", "reversed", "read_already_approved"])
+def test_windows_edit_approval_accepts_only_the_exact_pending_read_and_edit(monkeypatch, variant):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from core_mcp import EDIT_POWERSHELL
+    from interactive import ENTER, _core_approval
+
+    calc = "'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-bucbxpz2/sample/calc.py'"
+    read = f"Get-Content -LiteralPath {calc}"
+    edit = EDIT_POWERSHELL.format(path=calc)
+    keys = []
+    screen = SimpleNamespace(rendered="", send=keys.append)
+    check = _core_approval(screen, "a plain request", offline_command=read, command=edit)
+
+    def ask(command):
+        screen.rendered = ("Would you like to run the following command?\n"
+                           "Environment: local\n"
+                           "Reason: The sandbox denied access to calc.py.\n\n"
+                           f"  $ {command}\n\n"
+                           "› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)")
+        return check()
+
+    lines = [read, edit]
+    if variant == "third":
+        lines.append(read)
+    elif variant == "wrong_indent":
+        lines[1] = edit.replace("    return", " return")
+    elif variant == "foreign":
+        lines[0] = read.replace("/sample/calc.py", "/other/calc.py")
+    elif variant == "reversed":
+        lines.reverse()
+    elif variant == "read_already_approved":
+        assert ask(read) == ""
+
+    batch = "\n  ".join(lines)
+    if variant == "exact":
+        assert ask(batch) == ""
+        assert ask(batch) == ""
+        assert keys == [ENTER]
+        assert ask(edit) == "unexpected Codex command approval"
+        assert ask(read) == "unexpected Codex command approval"
+        assert keys == [ENTER]
+    else:
+        assert ask(batch) == "unexpected Codex command approval"
+        assert keys == ([ENTER] if variant == "read_already_approved" else [])
 
 
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:
@@ -1175,6 +1234,7 @@ def test_opencode_timeout_keeps_only_latest_turn_statuses(scripted_onboarding, t
     from contextlib import closing
 
     home = tmp_path / "тест ü"
+    workspace = tmp_path / "scratch" / "sample"
     database = home / ".local/share/opencode/opencode.db"
     database.parent.mkdir(parents=True)
     with closing(sqlite3.connect(database)) as connection:
@@ -1196,7 +1256,12 @@ def test_opencode_timeout_keeps_only_latest_turn_statuses(scripted_onboarding, t
             ("write", "mcp", "wanted", 4, {"type": "tool", "tool": "slightly-parallel_write_entry",
                                            "state": {"status": "completed", "output": "private raw payload"}}),
             ("skill", "skill", "wanted", 5, {"type": "tool", "tool": "skill", "state": {"status": "running"}}),
-            ("stray", "skill", "unrelated", 6, {"type": "text", "text": "private continuation"}),
+            ("first-shell", "skill", "wanted", 6, {"type": "tool", "tool": "bash", "state": {
+                "status": "completed", "input": {"command": "private command", "description": "private text"}}}),
+            ("blocked-shell", "skill", "wanted", 7, {"type": "tool", "tool": "bash", "state": {
+                "status": "running", "input": {"command": "pytest -q", "workdir": "../..//private-path/sample",
+                                               "description": "private notes"}}}),
+            ("stray", "skill", "unrelated", 8, {"type": "text", "text": "private continuation"}),
         ]
         connection.executemany("INSERT INTO part VALUES (?, ?, ?, ?, ?)",
                                [(pid, mid, sid, ts, json.dumps(row)) for pid, mid, sid, ts, row in parts])
@@ -1207,13 +1272,23 @@ def test_opencode_timeout_keeps_only_latest_turn_statuses(scripted_onboarding, t
             {"finished": True, "error": False, "text_emitted": False,
              "tools": [{"tool": "write_entry", "status": "completed"}]},
             {"finished": False, "error": False, "text_emitted": False,
-             "tools": [{"tool": "skill", "status": "running"}]},
+             "tools": [{"tool": "skill", "status": "running"}, {"tool": "other", "status": "completed"},
+                       {"tool": "other", "status": "running"}]},
         ],
     }
+    diagnostic = scripted_onboarding._opencode_turn_evidence(home, "wanted", workspace=workspace)
+    shell_history = diagnostic["assistant"][-1]["tools"][1:]
+    assert shell_history == [
+        {"tool": "shell", "status": "completed",
+         "arguments": {"command": "[redacted]", "workdir": "default workspace"}},
+        {"tool": "shell", "status": "running",
+         "arguments": {"command": "pytest -q", "workdir": "../[redacted]/sample"}},
+    ]
+    assert "private" not in json.dumps(diagnostic)
     assert scripted_onboarding._opencode_turn_evidence(tmp_path, "wanted") == {"state": "unavailable"}
 
 
-@pytest.mark.parametrize("invalid", ["", "reply ID", "tag", "description"])
+@pytest.mark.parametrize("invalid", ["", "reply ID", "tag", "description", "permission"])
 def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onboarding, monkeypatch, tmp_path, invalid):
     import json
     import re
@@ -1230,10 +1305,10 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
     chat.parent.mkdir(parents=True)
     chat.with_name("meta.json").write_text(json.dumps({"session_ref": session}), encoding="utf-8")
     card = {"id": task, "agent_id": agent, "project": "calc", "status": "agent"}
-    typed = []
+    typed, frames = [], []
 
     class Screen:
-        rendered = history = ""
+        rendered = history = text = ""
 
         def __init__(self, *_args, **_kwargs):
             pass
@@ -1243,6 +1318,13 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
                 typed.append(value)
                 return
             prompt = typed[-1]
+            if prompt.startswith("Add a function sub"):
+                self.rendered = (
+                    "  ┃  △ Permission required\n"
+                    "  ┃  ← Access external directory /private/var/folders/runner/sample\n"
+                    "  ┃  Allow once  Allow always  Reject ctrl+f fullscreen"
+                )
+                return
             if prompt.startswith("#task"):
                 card["title"] = prompt.split()[1].rstrip(".")
                 reply = "tk_00000000" if invalid == "reply ID" else task
@@ -1253,6 +1335,12 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
 
         def wait_for(self, line, _timeout, **_kwargs):
             return line == typed[-1]
+
+        def read(self):
+            pass
+
+        def save_frame(self, reason):
+            frames.append(reason)
 
         def close(self):
             pass
@@ -1268,15 +1356,21 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
     monkeypatch.setattr(interactive, "WINDOWS", False)
     monkeypatch.setattr(interactive, "Screen", Screen)
     monkeypatch.setattr(interactive, "_ready", lambda *_: True)
-    monkeypatch.setattr(interactive, "_wait_for_turn", lambda _screen, check, _seconds: "" if check() else "missing turn")
     monkeypatch.setattr(interactive, "get", get)
     monkeypatch.setattr(interactive, "new_task_rows", lambda *_: [card])
-    monkeypatch.setattr(scenario, "CORE", [])
+    monkeypatch.setattr(scenario, "CORE", [scenario.EDIT] if invalid == "permission" else [])
 
     report = Report()
     result = interactive.smoke(space, report, "calc", tmp_path, tool, "stub", space.home, 1, core=True)
-    assert bool(result) is not bool(invalid)
-    if invalid:
+    assert bool(result) is (not invalid or invalid == "permission")
+    if invalid == "permission":
+        [failure] = report.failed()
+        assert failure.name == "a plain request: the operator turn and answer are captured"
+        assert failure.detail.startswith("unexpected OpenCode permission prompt\n")
+        assert "Access external directory" in failure.detail
+        assert frames == ["unexpected OpenCode permission prompt"]
+        assert interactive.time.monotonic() == 0
+    elif invalid:
         assert report.failed()[-1].name == "OpenCode recorded the ID and fields of the created task"
     prompt = typed[1]
     assert "Call the Slightly Parallel write_entry tool once" in prompt

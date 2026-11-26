@@ -413,10 +413,14 @@ jobs:
           npm install -g "$spec"
           if [[ "$CLI" == opencode ]]; then
             python scripts/ci/setup_opencode_ripgrep.py
-            sdk="$RUNNER_TEMP/sp-opencode-sdk"
-            npm install --no-audit --no-fund --ignore-scripts --prefix "$sdk" "@opencode-ai/plugin@${spec##*@}"
-            echo "SP_OPENCODE_SDK_SEED=$sdk" >> "$GITHUB_ENV"
           fi
+      - name: Prepare pinned OpenCode SDK (60-second npm limit)
+        if: ${{ !inputs.expect_failure && (matrix.cli == 'opencode') }}
+        timeout-minutes: 2
+        run: |
+          sdk="$RUNNER_TEMP/sp-opencode-sdk"
+          python scripts/ci/prepare_opencode_sdk.py --seed "$sdk" --report "$RUNNER_TEMP/sp-interactive-stub/opencode-sdk.json"
+          echo "SP_OPENCODE_SDK_SEED=$sdk" >> "$GITHUB_ENV"
       - name: Capture a real PTY turn, task, decision, rule and done on a local stub
         if: ${{ !inputs.expect_failure }}
         shell: bash

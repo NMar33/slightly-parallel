@@ -30,6 +30,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -175,6 +176,20 @@ def bundle(fresh_root: Path | None) -> Path:
     return name
 
 
+def run_fresh_user(tools: str, model: str) -> bool:
+    argv = [sys.executable, "scripts/fresh_user/run.py", "--tools", tools, "--scenario", "smoke",
+            "--model", model, "--keep"]
+    if not WINDOWS or "opencode" not in {item.strip() for item in tools.split(",")}:
+        return run("fresh-user", argv, timeout=FRESH_USER_STAGE_TIMEOUT_S)
+
+    with tempfile.TemporaryDirectory(prefix="sp-machine-opencode-sdk-") as seed:
+        if not run("Prepare pinned OpenCode SDK (60-second npm limit)",
+                   [sys.executable, "scripts/ci/prepare_opencode_sdk.py", "--seed", seed,
+                    "--report", str(OUT / "opencode-sdk.json")], timeout=90):
+            return False
+        return run("fresh-user", argv, timeout=FRESH_USER_STAGE_TIMEOUT_S, env={"SP_OPENCODE_SDK_SEED": seed})
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--tools", default="claude-code,codex,opencode")
@@ -189,12 +204,13 @@ def main() -> int:
     run("browser", ["npm", "ci"], cwd=REPO / "frontend", timeout=BROWSER_DEPENDENCY_INSTALL_TIMEOUT_S)
     run("browser-chromium", ["npx", "playwright", "install", *([] if WINDOWS or sys.platform == "darwin" else ["--with-deps"]), "chromium"],
         cwd=REPO / "frontend")
-    run("fresh-user", [py, "scripts/fresh_user/run.py", "--tools", args.tools, "--scenario", "smoke",
-                       "--model", args.model, "--keep"], timeout=FRESH_USER_STAGE_TIMEOUT_S)
+    run_fresh_user(args.tools, args.model)
     fresh_root = None
     try:
-        notes = json.loads((REPO / ".sp" / "fresh-user" / "report.json").read_text(encoding="utf-8")).get("notes", {})
-        fresh_root = Path(notes["root"]) if notes.get("root") else None
+        report = REPO / ".sp" / "fresh-user" / "report.json"
+        if report.stat().st_mtime >= STARTED:
+            notes = json.loads(report.read_text(encoding="utf-8")).get("notes", {})
+            fresh_root = Path(notes["root"]) if notes.get("root") else None
     except (OSError, ValueError, KeyError):
         pass
 
