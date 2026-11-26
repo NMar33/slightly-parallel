@@ -36,6 +36,7 @@ from ..db import ViewStore
 from ..docs_md import resolve_under
 from ..entities import COMMIT_LINK_COLUMNS, TASK_EVIDENCE_COLUMNS, TASK_EVIDENCE_KINDS, is_done
 from ..file_safety import edit_json, safe_read_json
+from ..refusals import Reasons
 from .deps import create_answer, get_store, identity_of, not_found, operator_only
 
 router = APIRouter()
@@ -256,19 +257,24 @@ def task_report(
     from .tasks_extra import after_status_change
     from ..entities import ENTITIES
 
-    agent_id = identity_of(body)
-    if body.get("summary") is not None and not isinstance(body.get("summary"), str):
-        raise HTTPException(status_code=422, detail="summary is one line of text")
-    summary = str(body.get("summary") or "").strip()
-    if not agent_id:
-        raise HTTPException(status_code=422, detail="agent_id is required")
-    if len(summary) > 500:
-        raise HTTPException(status_code=422, detail="summary is at most 500 characters")
-
+    # A missing task is the only reason; the others come together
+    # (tk_90c1ba5f): who reports, the think mark, then the summary. An
+    # archived task is refused in mutate, on the file under the lock: the
+    # view read here can be a moment behind an un-archive.
     task = _task(store, task_id)
+    agent_id = identity_of(body)
+    why = Reasons()
+    if not agent_id:
+        why.add("agent_id is required", code="identity", field="agent_id")
     # A report is the agent saying the task is done: not on a think task.
     from .. import thinklib
-    thinklib.refusal(store, task_id, agent_id, "reporting it done")
+    why.add_pair(thinklib.reason(store, task_id, agent_id, "reporting it done"), code="think")
+    if body.get("summary") is not None and not isinstance(body.get("summary"), str):
+        why.add("summary is one line of text", code="shape", field="summary")
+    summary = str(body.get("summary") or "").strip()
+    if len(summary) > 500:
+        why.add("summary is at most 500 characters", code="length", field="summary")
+    why.raise_if_any()
 
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
     ent = ENTITIES["task"]
@@ -337,6 +343,41 @@ def task_report(
 # ---------------------------------------------------------------------------
 
 
+def _checked_item(i: int, item: Any) -> tuple[str, str, str, str, bytes | None]:
+    """One evidence item ready to store, or an HTTPException naming its fault."""
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=422, detail=f"item {i}: not an object")
+    kind = str(item.get("kind") or "").strip()
+    title = str(item.get("title") or "").strip()[:limits.MAX_TITLE]
+    if kind not in TASK_EVIDENCE_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"item {i}: kind must be one of {', '.join(TASK_EVIDENCE_KINDS)}",
+        )
+    if kind in ("files", "change"):
+        # What was touched and what was done: structured, in the words
+        # the file entry and the architecture form already use. Stored
+        # as JSON in the same column that holds a note or a file path.
+        try:
+            payload = (
+                evidence_items.clean_files(item) if kind == "files"
+                else evidence_items.clean_changes(item)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"item {i}: {exc}")
+        return (kind, title, "", evidence_items.dump(payload), None)
+    if kind == "text":
+        text = str(item.get("body") or "").strip()
+        if not text:
+            raise HTTPException(status_code=422, detail=f"item {i}: text body is empty")
+        if len(text) > MAX_TEXT:
+            raise HTTPException(status_code=422, detail=f"item {i}: text is at most {MAX_TEXT} characters")
+        return (kind, title, "", text, None)
+    ext, raw = story_images.checked_image(item, f"item {i}")
+    digest = hashlib.sha256(raw).hexdigest()
+    return (kind, title, ext, digest, raw)
+
+
 @router.post("/api/tasks/{task_id}/evidence", status_code=201)
 def evidence_add(
     task_id: str,
@@ -344,6 +385,7 @@ def evidence_add(
     body: dict = Body(...),
     store: ViewStore = Depends(get_store),
 ) -> dict:
+    task = _task(store, task_id)
     agent_id = identity_of(body)
     items = body.get("items")
     if not agent_id:
@@ -352,48 +394,22 @@ def evidence_add(
         raise HTTPException(status_code=422, detail="items must be a non-empty list")
     if len(items) > MAX_ITEMS:
         raise HTTPException(status_code=422, detail=f"at most {MAX_ITEMS} items per post")
-
-    task = _task(store, task_id)
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     # Every item is checked before anything is written: a bad second item
     # must not leave the first on disk, and a retry after a 422 must not
     # add it twice. The id is the content, so the same item posted again
-    # is the same row.
+    # is the same row. Every bad item is named, its first fault each.
     checked: list[tuple[str, str, str, str, bytes | None]] = []
+    why = Reasons()
     for i, item in enumerate(items):
-        if not isinstance(item, dict):
-            raise HTTPException(status_code=422, detail=f"item {i}: not an object")
-        kind = str(item.get("kind") or "").strip()
-        title = str(item.get("title") or "").strip()[:limits.MAX_TITLE]
-        if kind not in TASK_EVIDENCE_KINDS:
-            raise HTTPException(
-                status_code=422,
-                detail=f"item {i}: kind must be one of {', '.join(TASK_EVIDENCE_KINDS)}",
-            )
-        if kind in ("files", "change"):
-            # What was touched and what was done: structured, in the words
-            # the file entry and the architecture form already use. Stored
-            # as JSON in the same column that holds a note or a file path.
-            try:
-                payload = (
-                    evidence_items.clean_files(item) if kind == "files"
-                    else evidence_items.clean_changes(item)
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=f"item {i}: {exc}")
-            checked.append((kind, title, "", evidence_items.dump(payload), None))
-        elif kind == "text":
-            text = str(item.get("body") or "").strip()
-            if not text:
-                raise HTTPException(status_code=422, detail=f"item {i}: text body is empty")
-            if len(text) > MAX_TEXT:
-                raise HTTPException(status_code=422, detail=f"item {i}: text is at most {MAX_TEXT} characters")
-            checked.append((kind, title, "", text, None))
-        else:
-            ext, raw = story_images.checked_image(item, f"item {i}")
-            digest = hashlib.sha256(raw).hexdigest()
-            checked.append((kind, title, ext, digest, raw))
+        try:
+            checked.append(_checked_item(i, item))
+        except HTTPException as exc:
+            why.add(str(exc.detail), code="item", field=f"items[{i}]")
+        except ValueError as exc:      # an image (story_images.checked_image)
+            why.add(str(exc), code="item", field=f"items[{i}]")
+    why.raise_if_any()
 
     known = {
         str(r.get("id") or "")
@@ -506,10 +522,14 @@ def task_commits(task_id: str, body: dict = Body(...), store: ViewStore = Depend
     raw = body.get("shas")
     if not isinstance(raw, list) or not raw:
         raise HTTPException(status_code=422, detail="shas is a list of commit hashes")
-    shas = [str(x).strip().lower() for x in raw]
+    # The same hash twice is one: one link, one reason.
+    shas = list(dict.fromkeys(str(x).strip().lower() for x in raw))
     bad = [x for x in shas if not re.fullmatch(r"[0-9a-f]{7,40}", x)]
     if bad:
+        # Refused before git is asked about anything.
         raise HTTPException(status_code=422, detail=f"not a commit hash: {', '.join(bad[:5])}")
+    # Every hash the repositories refuse, at once (tk_90c1ba5f).
+    why = Reasons()
     who = identity_of(body) or "operator"
     # The hashes name commits of the project's repository (the last 120 days,
     # gitwork.HORIZON_DAYS); an agent links only its own commits ("Only
@@ -528,17 +548,21 @@ def task_commits(task_id: str, body: dict = Body(...), store: ViewStore = Depend
         for sha in shas:
             full = next((k for k in known if k.startswith(sha)), None)
             if full is None:
-                raise HTTPException(status_code=422, detail=(
-                    f"{sha[:7]} is not a commit of the task's repositories (the last {gitwork.HORIZON_DAYS} days)"))
+                why.add(f"{sha[:7]} is not a commit of the task's repositories (the last {gitwork.HORIZON_DAYS} days)",
+                        code="unknown_commit", field="shas")
+                continue
             c = known[full]
             if who != "operator" and c.agent and c.agent != who:
-                raise HTTPException(status_code=422, detail=f"{sha[:7]} was made by {c.agent}, not by this chat")
+                why.add(f"{sha[:7]} was made by {c.agent}, not by this chat", code="not_yours", field="shas")
+                continue
             if c.tasks and task_id not in c.tasks:
-                raise HTTPException(status_code=422, detail=(
-                    f"{sha[:7]} is signed for {', '.join(c.tasks)}: a commit counts for one task"))
+                why.add(f"{sha[:7]} is signed for {', '.join(c.tasks)}: a commit counts for one task",
+                        code="signed_elsewhere", field="shas")
+                continue
             found[sha] = full
             if own is None or where[full] != own:
                 elsewhere[full[:7]] = str(where[full])
+        why.raise_if_any()
         shas = [found[s] for s in shas]
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
     added = []

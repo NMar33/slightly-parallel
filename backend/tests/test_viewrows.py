@@ -39,7 +39,7 @@ def test_a_missing_view_is_an_empty_ledger_and_the_agent_rides_along(tmp_path: P
 
 
 def test_a_value_outside_the_vocabulary_is_refused_in_words(tmp_path: Path) -> None:
-    """vocab.check_enum_fields: 422 and the allowed list, on create and update."""
+    """vocab.enum_problems: 422 and the allowed list, on create and update."""
     from fastapi.testclient import TestClient
 
     from backend.server import create_app

@@ -96,7 +96,23 @@ LOCAL_HOSTS: dict[str, str] = {
 
 
 class EntryRefused(ValueError):
-    """A write the server will not make; answered as 422 with the sentence."""
+    """A write the server will not make; answered as 422 with the sentence.
+    ``lines``: every reason, when there are several (tk_90c1ba5f); the
+    sentence is then they, one per line."""
+
+    def __init__(self, *args: object, lines: list[str] | None = None) -> None:
+        super().__init__(*args)
+        self.lines: list[str] = lines or [str(args[0]) if args else ""]
+
+
+def refuse_all(lines: list[str]) -> None:
+    """Raise one EntryRefused naming every line; nothing when there is none."""
+    if lines:
+        raise EntryRefused("\n".join(lines), lines=list(lines))
+
+
+class EntryForbidden(EntryRefused):
+    """No access to the row: answered as 403, like the membership gate."""
 
 
 def _mint(prefix: str, *parts: str) -> str:
@@ -302,38 +318,54 @@ def _body(body: Any) -> dict:
     return body
 
 
-def checked_way(raw: Any) -> dict[str, str]:
-    """A way in from a request, every field checked; nothing written yet."""
+def checked_way(raw: Any, lines: list[str] | None = None) -> dict[str, str]:
+    """A way in from a request, every field checked; nothing written yet.
+    Every fault is named at once (tk_90c1ba5f); with ``lines`` they are
+    added there for the caller to refuse with its own."""
     if not isinstance(raw, dict):
         raise EntryRefused("way is an object: {name, kind, url?, path?, command?, folder?, port?, note?}")
     from . import mcp_args
+    out: list[str] = [] if lines is None else lines
     # Identity inside the way was dropped without a word (tk_0b8a32d2).
     stamped = sorted(k for k in raw if k in mcp_args.STAMPED and raw[k] not in (None, ""))
     if stamped:
-        raise EntryRefused(mcp_args.stamped_refusal(stamped) + " (inside way)")
+        out.append(mcp_args.stamped_refusal(stamped) + " (inside way)")
     if raw.get("project") not in (None, ""):
-        raise EntryRefused("a way in has no project of its own: it is the topic's; leave it out (inside way)")
-    kind =_text(raw, "kind", 20, required=True).lower()
-    if kind not in ENTRYPOINT_WAY_KINDS:
-        raise EntryRefused(f"kind is one of {', '.join(ENTRYPOINT_WAY_KINDS)}")
-    url = _text(raw, "url", URL_MAX)
+        out.append("a way in has no project of its own: it is the topic's; leave it out (inside way)")
+
+    def take(check: Any, *args: Any, **kwargs: Any) -> str:
+        try:
+            return check(*args, **kwargs)
+        except EntryRefused as exc:
+            out.append(str(exc))
+            return ""
+
+    before = len(out)
+    kind = take(_text, raw, "kind", 20, required=True).lower()
+    if kind and kind not in ENTRYPOINT_WAY_KINDS:
+        out.append(f"kind is one of {', '.join(ENTRYPOINT_WAY_KINDS)}")
+    url = take(_text, raw, "url", URL_MAX)
     if url and not url.lower().startswith(("http://", "https://")):
-        raise EntryRefused("url starts with http:// or https://")
+        out.append("url starts with http:// or https://")
     way = {
-        "name": _text(raw, "name", NAME_MAX, required=True),
+        "name": take(_text, raw, "name", NAME_MAX, required=True),
         "kind": kind,
         "url": url,
-        "path": _text(raw, "path", PATH_MAX),
-        "command": _text(raw, "command", COMMAND_MAX),
-        "folder": _text(raw, "folder", PATH_MAX),
-        "port": _port(raw.get("port")),
-        "note": _text(raw, "note", NOTE_MAX),
+        "path": take(_text, raw, "path", PATH_MAX),
+        "command": take(_text, raw, "command", COMMAND_MAX),
+        "folder": take(_text, raw, "folder", PATH_MAX),
+        "port": take(_port, raw.get("port")),
+        "note": take(_text, raw, "note", NOTE_MAX),
     }
-    if not (way["url"] or way["path"] or way["command"]):
-        raise EntryRefused("a way in needs where it opens (url or path) or the command that starts it")
+    # Where it opens is asked only of fields that read: a url refused above
+    # is not also "missing".
+    if len(out) == before and not (way["url"] or way["path"] or way["command"]):
+        out.append("a way in needs where it opens (url or path) or the command that starts it")
     for k in ("name", "command", "note"):
         if "\n" in way[k]:
-            raise EntryRefused(f"{k} is one line")
+            out.append(f"{k} is one line")
+    if lines is None:
+        refuse_all(out)
     return way
 
 
@@ -361,15 +393,17 @@ def _last_turn(store: ViewStore, agent: str) -> int:
     return best
 
 
-def _member_of_row(store: ViewStore, row: dict[str, Any], who: str, what: str = "topic") -> None:
-    """An agent writes on a topic (or a task) of its member projects only."""
+def _member_of_row(store: ViewStore, row: dict[str, Any], who: str, what: str = "topic",
+                   forbidden: bool = False) -> None:
+    """An agent writes on a topic (or a task) of its member projects only.
+    ``forbidden``: refused as the membership gate refuses (403)."""
     if not is_agent(who):
         return
     from .entitylib import project_codes
     ok, line = memberships.may_write_row(store, who, str(row.get("project") or ""), what,
                                          also=project_codes(row.get("projects")))
     if not ok:
-        raise EntryRefused(line)
+        raise (EntryForbidden if forbidden else EntryRefused)(line)
 
 
 # ---------------------------------------------------------------------------
@@ -614,20 +648,28 @@ def put_way(store: ViewStore, ep_id: str, body: Any) -> dict[str, Any]:
     """Add a way in, or change one (``id``). The operator or an agent."""
     body = _body(body)
     row = _need(store, ep_id)
-    way = checked_way(body.get("way"))
     who = identity_of(body) or "operator"
+    # No access first, and alone; then every fault of the way and of its id
+    # at once (tk_90c1ba5f).
     _member_of_row(store, row, who)
-    way_id = _text(body, "id", 40)
+    lines: list[str] = []
+    way = checked_way(body.get("way"), lines)
+    way_id = ""
+    try:
+        way_id = _text(body, "id", 40)
+    except EntryRefused as exc:
+        lines.append(str(exc))
     # The way's id has one place, next to way (tk_0b8a32d2): inside `way` it
     # was dropped, and a second way was added in silence.
     inner = body["way"].get("id")
     if inner not in (None, ""):
         shape = f'{{"id":"{ep_id}","way_id":"{inner}","way":{{…}}}}'
         if not way_id:
-            raise EntryRefused(f"put the way's id next to way: {shape}")
-        if str(inner).strip() != way_id:
-            raise EntryRefused(f"the way's id is given twice and differs: {way_id!r} next to way, "
-                               f"{inner!r} inside it; send it once, next to way")
+            lines.append(f"put the way's id next to way: {shape}")
+        elif str(inner).strip() != way_id:
+            lines.append(f"the way's id is given twice and differs: {way_id!r} next to way, "
+                         f"{inner!r} inside it; send it once, next to way")
+    refuse_all(lines)
     now = now_iso()
     current = ways_of(store, ep_id)
     if way_id:
@@ -852,13 +894,15 @@ def set_task_topic(store: ViewStore, task_id: str, body: Any) -> dict[str, Any]:
     who = identity_of(body) or "operator"
     if ep_id:
         row = _need(store, ep_id)
+        # No access first, and alone, as the gate answers it (403): a
+        # non-member learns nothing of where the topic is (tk_90c1ba5f).
+        _member_of_row(store, row, who, forbidden=True)
         if not in_project(task, str(row.get("project") or "")):
             raise EntryRefused(f"{ep_id} is a topic of {row.get('project')}; {task_id} is in {task.get('project')}")
-        _member_of_row(store, row, who)
     elif is_agent(who):
         # Clearing: the task's own project stands in for the topic's.
         _member_of_row(store, {"id": task_id, "project": str(task.get("project") or ""),
-                               "projects": str(task.get("projects") or "")}, who, "task")
+                               "projects": str(task.get("projects") or "")}, who, "task", forbidden=True)
     rec = {"id": _mint("tt_", task_id), "task_id": task_id, "entrypoint_id": ep_id, "at": now_iso(), "actor": who}
     def mutate(rows: list[dict[str, str]]) -> bool:
         # One step under the lock, the file's creation included: two calls

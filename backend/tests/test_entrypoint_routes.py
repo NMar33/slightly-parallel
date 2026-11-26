@@ -386,3 +386,18 @@ def test_a_removed_way_is_not_changed_back(world) -> None:
     r = c.post(f"/api/entrypoints/{eid}/ways", json={"id": wid, "way": {**way, "port": 8120}, "agent_id": AGENT})
     assert r.status_code == 422
     assert _snapshot(root) == before
+
+
+@pytest.mark.strict_membership
+def test_no_access_to_the_topic_comes_before_its_project_and_answers_403(world) -> None:
+    # tk_90c1ba5f: a chat of BETA sets ALPHA's topic on a BETA task. It used
+    # to hear the topic is ALPHA's (422); no access is said first and alone.
+    c, root, eid, _tid = world
+    r = c.post("/api/tasks", json={"created_date": "2609-01", "created_time": "11:00", "project": "BETA",
+                                  "agent_id": "operator", "title": "Elsewhere", "status": "todo"})
+    other = r.json()["metadata"]["id"]
+    before = _snapshot(root)
+    r = c.post(f"/api/tasks/{other}/topic", json={"entrypoint_id": eid, "agent_id": STRANGER})
+    assert (r.status_code, r.json()["detail"]) == (
+        403, f"agent {STRANGER} is not a member of ALPHA; this topic is ALPHA's. The operator adds it on the agent card")
+    assert _snapshot(root) == before

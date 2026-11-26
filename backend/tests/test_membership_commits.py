@@ -106,3 +106,28 @@ def test_a_hash_in_no_repository_of_the_task_is_refused(world) -> None:
     assert r.status_code == 422 and "is not a commit of the task's repositories" in r.json()["detail"]
     assert (root / "tasks.csv").read_bytes() == before
     assert not (root / taskwork.LINKS_FILE).exists() or loose[:7] not in (root / taskwork.LINKS_FILE).read_text()
+
+
+
+def test_every_refused_hash_is_named_once(world) -> None:
+    # tk_90c1ba5f: each well-formed hash the repositories refuse, together;
+    # the same hash sent twice is one line (the critic of 7ace3e1d).
+    c, root, _repo_a, _signed, _loose = world
+    before = (root / "tasks.csv").read_bytes()
+    r = c.post(f"/api/tasks/{TASK}/commits", json={"shas": ["abcdef1", "abcdef1", "1234567"]})
+    assert r.status_code == 422
+    days = gitwork.HORIZON_DAYS
+    assert r.json()["detail"] == (f"abcdef1 is not a commit of the task's repositories (the last {days} days)\n"
+                                  f"1234567 is not a commit of the task's repositories (the last {days} days)")
+    assert (root / "tasks.csv").read_bytes() == before
+
+
+def test_a_malformed_hash_is_refused_before_git_is_asked(world, monkeypatch) -> None:
+    c, _root, _repo_a, _signed, _loose = world
+
+    def no_git(*_a, **_k):
+        raise AssertionError("git was asked about a malformed hash")
+
+    monkeypatch.setattr(taskwork, "task_repo_log", no_git)
+    r = c.post(f"/api/tasks/{TASK}/commits", json={"shas": ["zz", "abcdef1"]})
+    assert (r.status_code, r.json()["detail"]) == (422, "not a commit hash: zz")

@@ -94,7 +94,11 @@ def _keep_settled(data_root: Path, settled: set[str]) -> None:
         log.warning("%s not written (%s); settled tags are checked again after a restart", SETTLED, exc)
 
 #: The chat commands whose tags count from a moment on (their since-stamps).
-STAMPS = (("now.json", "#now"), ("done.json", "#done"), ("think.json", "#think"))
+def stamps() -> tuple[tuple[str, str], ...]:
+    """Each command's since-stamp file and its tag: the modules' own STATE
+    names (read here, not at import: donelib imports this module)."""
+    from . import donelib, thinklib
+    return ((STATE, "#now"), (donelib.STATE, "#done"), (thinklib.STATE, "#think"))
 
 
 def stamp_starts(data_root: Path) -> None:
@@ -102,7 +106,7 @@ def stamp_starts(data_root: Path) -> None:
     list read before, a ``#think tk_…`` typed before anyone opened the board
     was taken as history by the agent's next write (thinklib.refusal reads
     only a stamped root): from the start, it counts."""
-    for name, what in STAMPS:
+    for name, what in stamps():
         if not (data_root / name).exists():
             since_stamp(data_root / name, what)
 
@@ -112,7 +116,8 @@ def since_stamp(path: Path, what: str) -> str | None:
     ``path``); tags older than it are history. Written on first use. None
     when it cannot be kept: the caller applies nothing, rather than run with
     a moment that is "now" again on every call and so passes every tag by.
-    #now and #done each keep one (now.json, done.json)."""
+    #now, #done and #think each keep one (now.json, done.json, think.json);
+    stamp_starts makes the missing ones at the server's start."""
     try:
         got = json.loads(path.read_text(encoding="utf-8-sig"))
         value = str(got.get("since") or "") if isinstance(got, dict) else ""

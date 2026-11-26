@@ -152,6 +152,33 @@ class ApiError(RuntimeError):
     """An HTTP call that failed, carrying the server's own explanation."""
 
 
+def _numbered(reasons: Any) -> str:
+    """Two reasons or more as numbered lines (refusals.py): the agent fixes
+    them all before it sends again. One reason, or a server that sends none:
+    "" — the ``detail`` reads as it always has."""
+    if not isinstance(reasons, list) or len(reasons) < 2:
+        return ""
+    lines = []
+    for n, r in enumerate(reasons, 1):
+        if not isinstance(r, dict):
+            return ""
+        reason, instead = str(r.get("reason") or ""), str(r.get("instead") or "")
+        lines.append(f"{n}. {reason} — {instead}" if instead else f"{n}. {reason}")
+    return f"{len(lines)} reasons, fix them all before sending again:\n" + "\n".join(lines)
+
+
+def _refusal(lines: list[str]) -> ApiError:
+    """The translator's own refusal, every reason in it: one line as it
+    always read, two or more numbered as the server's (``_numbered``)."""
+    return ApiError(lines[0] if len(lines) == 1 else _numbered([{"reason": line} for line in lines]))
+
+
+def _refuse_all(lines: list[str]) -> None:
+    """Raise ``_refusal`` when there is any line."""
+    if lines:
+        raise _refusal(lines)
+
+
 class Api:
     """The thinnest possible client for the one write authority."""
 
@@ -172,10 +199,12 @@ class Api:
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             try:
-                detail = json.loads(exc.read().decode("utf-8")).get("detail", "")
+                answer = json.loads(exc.read().decode("utf-8"))
+                detail = answer.get("detail", "")
+                reasons = answer.get("reasons")
             except Exception:  # noqa: BLE001 — the body is best-effort
-                detail = ""
-            raise ApiError(f"{exc.code}: {detail or exc.reason}") from None
+                detail, reasons = "", None
+            raise ApiError(f"{exc.code}: {_numbered(reasons) or detail or exc.reason}") from None
         except (urllib.error.URLError, TimeoutError) as exc:
             raise ApiError(
                 f"cannot reach the Slightly Parallel server at {self.base} — is it running? ({exc})"
@@ -268,75 +297,78 @@ def _target(args: dict, who: dict) -> str:
     return raw.strip()
 
 
-def _only_its_arguments(name: str, args: dict) -> None:
-    """A top-level argument the tool does not take is refused in one line
-    with the ones it takes (mcp_args.TOOL_ARGS), never dropped: a project
-    sent to a tool that has none was read as this chat's project."""
+def _argument_problems(name: str, args: dict) -> list[str]:
+    """A top-level argument the tool does not take is refused with the ones
+    it takes (mcp_args.TOOL_ARGS), never dropped: a project sent to a tool
+    that has none was read as this chat's project. Stamped names, the other
+    arguments and identity inside the objects each give a line, all at once
+    (tk_90c1ba5f)."""
     if name not in mcp_args.TOOL_ARGS:
-        return  # the unknown tool's own refusal says so
+        return []  # the unknown tool's own refusal says so
+    out: list[str] = []
     takes = mcp_args.accepts(name)
     # A null is no value: some clients echo every optional key as null.
     extra = sorted(k for k in args if k not in takes and args[k] is not None)
-    if not extra:
-        _nested_identity(name, args)
-        return
     stamped = [k for k in extra if k in mcp_args.STAMPED]
     if stamped:
-        raise ApiError(mcp_args.stamped_refusal(stamped))
+        out.append(mcp_args.stamped_refusal(stamped))
+    rest = [k for k in extra if k not in mcp_args.STAMPED]
     listed = ", ".join(sorted(takes)) or "nothing"
-    if name == "project" and extra == ["code"]:
+    if name == "project" and rest == ["code"]:
         # Its old name for the same value (tk_0b8a32d2): one name everywhere.
-        raise ApiError(f'project takes the code as project, not code: {{"project":"{args["code"]}"}}')
-    if extra == ["project"]:
-        raise ApiError(f"{name} takes no project: it works in this chat's project; it takes: {listed}")
-    raise ApiError(f"{name} takes no argument {', '.join(extra)} — it takes: {listed}")
+        out.append(f'project takes the code as project, not code: {{"project":"{args["code"]}"}}')
+    elif rest == ["project"]:
+        out.append(f"{name} takes no project: it works in this chat's project; it takes: {listed}")
+    elif rest:
+        out.append(f"{name} takes no argument {', '.join(rest)} — it takes: {listed}")
+    return out + _nested_identity(name, {k: v for k, v in args.items() if k not in extra})
 
 
-def _nested_identity(name: str, args: dict) -> None:
+def _nested_identity(name: str, args: dict) -> list[str]:
     """Identity inside an object a tool carries (an evidence item, a map row,
     a way in, an image …) is refused by name, as at the top level: it was
     dropped there without a word (tk_0b8a32d2). ``fields`` and ``changes``
     have their own refusals (_not_stamped, _one_project). The one reading
-    is mcp_args.nested_identity; the server's gate asks it too."""
+    is mcp_args.nested_identities; the server's gate asks it too. Every hit
+    is a line."""
     skip = ("fields", "changes") if name in ("write_entry", "update_entry") else ()
-    hit = mcp_args.nested_identity(args, skip)
-    if hit is None:
-        return
-    key, where = hit
-    if key != "project":
-        raise ApiError(f"{mcp_args.stamped_refusal([key])} (inside {where})")
-    if name in mcp_args.PROJECT_TOOLS:
-        raise ApiError(f"put project next to the other arguments, not inside {where}")
-    raise ApiError(f"{name} takes no project, inside {where} either")
+    out: list[str] = []
+    for key, where in mcp_args.nested_identities(args, skip):
+        if key != "project":
+            out.append(f"{mcp_args.stamped_refusal([key])} (inside {where})")
+        elif name in mcp_args.PROJECT_TOOLS:
+            out.append(f"put project next to the other arguments, not inside {where}")
+        else:
+            out.append(f"{name} takes no project, inside {where} either")
+    return out
 
 
-def _not_stamped(given: dict) -> None:
+def _not_stamped(given: dict) -> list[str]:
     """Identity inside ``fields`` or ``changes`` is refused: it was written
-    over in silence (tk_0b8a32d2)."""
+    over in silence (tk_0b8a32d2). The line, or none."""
     stamped = sorted(k for k in given if k in mcp_args.STAMPED)
-    if stamped:
-        raise ApiError(mcp_args.stamped_refusal(stamped))
+    return [mcp_args.stamped_refusal(stamped)] if stamped else []
 
 
-def _one_project(lens: str, args: dict) -> dict:
-    """write_entry's ``fields`` without a project: the project has one place,
-    next to ``lens`` (tk_0b8a32d2). A project only inside ``fields`` is refused
-    with that shape, two different ones with both; the same one twice is
-    taken once. The stamp used to write over a ``fields.project`` without a
-    word, so the entry landed in a project the call did not name."""
+def _one_project(lens: str, args: dict) -> tuple[dict, list[str]]:
+    """write_entry's ``fields`` without a project, and the refusals: the
+    project has one place, next to ``lens`` (tk_0b8a32d2). A project only
+    inside ``fields`` is refused with that shape, two different ones with
+    both; the same one twice is taken once. The stamp used to write over a
+    ``fields.project`` without a word, so the entry landed in a project the
+    call did not name."""
     fields = dict(args.get("fields") or {})
-    _not_stamped(fields)
+    out = _not_stamped(fields)
     inner = fields.pop("project", None)
     if inner is None or inner == "":
-        return fields
+        return fields, out
     top = args.get("project")
     if top is None or top == "":
-        raise ApiError("put project next to lens, not inside fields: "
-                       + mcp_args.project_shape(lens, str(inner)))
-    if not isinstance(inner, str) or not isinstance(top, str) or inner.strip() != top.strip():
-        raise ApiError(f"project is given twice and differs: {top!r} next to lens, {inner!r} inside fields; "
-                       "send it once, next to lens: " + mcp_args.project_shape(lens, str(top)))
-    return fields
+        out.append("put project next to lens, not inside fields: " + mcp_args.project_shape(lens, str(inner)))
+    elif not isinstance(inner, str) or not isinstance(top, str) or inner.strip() != top.strip():
+        out.append(f"project is given twice and differs: {top!r} next to lens, {inner!r} inside fields; "
+                   "send it once, next to lens: " + mcp_args.project_shape(lens, str(top)))
+    return fields, out
 
 
 def where_of(result: Any, project: str) -> str:
@@ -451,20 +483,26 @@ class Translator:
     # -- client-side gate: the typo dies before a request exists -----------
 
     def _check_vocab(self, lens: str, payload: dict) -> None:
+        _refuse_all(self._vocab_problems(lens, payload))
+
+    def _vocab_problems(self, lens: str, payload: dict) -> list[str]:
+        """Every field outside its vocabulary, one line each."""
+        out: list[str] = []
         for field, allowed in self.vocab.get(lens, {}).items():
             v = payload.get(field)
             if isinstance(v, (list, dict, bool)):
                 # str(["agent"]) is "['agent']": refused with a list that
                 # names "agent" as allowed. Say the shape instead.
-                raise ApiError(
+                out.append(
                     f"{lens}.{field} is one text value, not {type(v).__name__} — "
                     f"use one of: {', '.join(allowed)}"
                 )
-            if v not in (None, "") and str(v) not in allowed:
-                raise ApiError(
+            elif v not in (None, "") and str(v) not in allowed:
+                out.append(
                     f"{lens}.{field} {v!r} is not a known value — "
                     f"use one of: {', '.join(allowed)}"
                 )
+        return out
 
     # The lenses an agent writes most, each with the names it holds.
     _DIGEST_LENSES = ("scan", "file", "decision", "problem", "standup", "task")
@@ -479,17 +517,22 @@ class Translator:
 
     def _check_names(self, lens: str, spec: dict, payload: dict) -> None:
         """A field the lens does not have dies here, with the ones it has."""
+        _refuse_all(self._name_problems(lens, spec, payload))
+
+    def _name_problems(self, lens: str, spec: dict, payload: dict) -> list[str]:
         known = set(spec.get("fields") or {}) | {"project", "agent_id", "created_date",
                                                  "created_time", "paths", "changes", "checked"}
-        unknown = sorted(k for k in payload if k not in known)
+        # A stamped name has its own refusal (_not_stamped), not this one.
+        unknown = sorted(k for k in payload if k not in known and k not in mcp_args.STAMPED)
         if unknown and self._refresh(lens):
-            return self._check_names(lens, self.lenses.get(lens) or spec, payload)
-        if unknown:
-            raise ApiError(
-                f"{lens} has no field {', '.join(unknown)} — it holds: "
-                f"{', '.join(spec.get('text_fields') or [])}; columns: "
-                f"{', '.join(sorted(k for k in (spec.get('fields') or {}) if k not in (spec.get('text_fields') or [])))}"
-            )
+            return self._name_problems(lens, self.lenses.get(lens) or spec, payload)
+        if not unknown:
+            return []
+        return [
+            f"{lens} has no field {', '.join(unknown)} — it holds: "
+            f"{', '.join(spec.get('text_fields') or [])}; columns: "
+            f"{', '.join(sorted(k for k in (spec.get('fields') or {}) if k not in (spec.get('text_fields') or [])))}"
+        ]
 
     @staticmethod
     def _by_name(result: Any) -> Any:
@@ -1288,7 +1331,11 @@ class Translator:
 
     def call(self, name: str, args: dict) -> Any:
         self.ensure()
-        _only_its_arguments(name, args)
+        # write_entry and update_entry name their arguments' faults with
+        # their own (tk_90c1ba5f); every other tool refuses them here.
+        problems = _argument_problems(name, args)
+        if name not in ("write_entry", "update_entry"):
+            _refuse_all(problems)
         if name == "interpret":
             lens = str(args.get("lens") or "")
             base = {"vision": "visions", "rule": "rules", "problem": "problems", "entrypoint": "entrypoints"}.get(lens)
@@ -1326,43 +1373,49 @@ class Translator:
             spec = self.lenses.get(lens)
             if spec is None:
                 allowed = sorted(n for n, l in self.lenses.items() if l.get("agent_write", True))
-                raise ApiError(f"unknown lens {lens!r} — one of: {', '.join(allowed)}")
+                # Everything else depends on the lens: the arguments' own
+                # faults are said first, else the lens.
+                raise _refusal(problems or [f"unknown lens {lens!r} — one of: {', '.join(allowed)}"])
             if args.get("fields") is not None and not isinstance(args.get("fields"), dict):
-                raise ApiError("fields is an object: the entry's fields by name")
-            fields = _one_project(lens, args)
-            # Identity last, over anything of the same name in `fields`.
-            payload = {**fields, **self._stamp(args)}
+                raise _refusal(problems or ["fields is an object: the entry's fields by name"])
+            fields, placed = _one_project(lens, args)
             # Fields by name only: the numbered storage slots (l1…l4) are not
             # a way in. A name the lens lacks is refused, never routed around.
-            self._check_names(lens, spec, payload)
-            self._check_vocab(lens, payload)
+            # Every fault at once (tk_90c1ba5f): the arguments, the project's
+            # place, a name the lens lacks and a value outside its vocabulary;
+            # all before the stamp is read (the stamped names pass the names).
+            _refuse_all(problems + placed + self._name_problems(lens, spec, fields)
+                        + self._vocab_problems(lens, fields))
+            # Identity last, over anything of the same name in `fields`.
+            payload = {**fields, **self._stamp(args)}
             return _with_where(self.api.post(f"/api/{spec['base']}", payload), payload["project"])
         if name == "update_entry":
             lens = str(args.get("lens") or "")
             spec = self.lenses.get(lens)
             if spec is None:
-                raise ApiError(f"unknown lens {lens!r}")
+                raise _refusal(problems or [f"unknown lens {lens!r}"])
             changes = dict(args.get("changes") or {})
-            _not_stamped(changes)
+            problems += _not_stamped(changes)
 
             def _unknown(spec: dict) -> list[str]:
                 texts = spec.get("text_fields") or []
                 open_texts = texts if spec.get("headline_mutable") else texts[1:]
                 return [k for k in changes
-                        if k not in spec["mutable"] and k not in open_texts]
+                        if k not in spec["mutable"] and k not in open_texts and k not in mcp_args.STAMPED]
             unknown = _unknown(spec)
             if unknown and self._refresh(lens):
                 spec = self.lenses.get(lens) or spec
                 unknown = _unknown(spec)
             if unknown:
                 first = (spec.get("text_fields") or [""])[0]
-                raise ApiError(
+                problems.append(
                     f"{lens} cannot change {', '.join(unknown)} — it takes "
                     f"{', '.join((spec.get('text_fields') or [])[1:] + spec['mutable']) or 'nothing'}. "
                     f"The first field ({first or 'the headline'}) is fixed once written: "
                     "write a new entry instead."
                 )
-            self._check_vocab(lens, changes)
+            # Every fault at once (tk_90c1ba5f).
+            _refuse_all(problems + self._vocab_problems(lens, changes))
             # Identity last, as every other write: without it the server read
             # the change as the operator's, and an agent could end a sprint or
             # retire a skill — the operator-only gates look at who writes.

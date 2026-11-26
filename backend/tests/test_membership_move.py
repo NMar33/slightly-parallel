@@ -258,15 +258,53 @@ def test_an_agent_does_not_move_a_think_task(world) -> None:
     assert TASK in _board(c, "ALPHA")
 
 
-def test_a_marked_closed_task_gets_the_moves_own_reason_first(world) -> None:
+def test_a_marked_closed_task_gets_the_moves_own_reason_first_and_the_mark_after(world) -> None:
+    # tk_90c1ba5f: every reason, the most general first.
     c, root = world
     _level(c, 3)
     task = "tk_alpha_cyr"   # done
     assert c.post(f"/api/tasks/{task}/update", json={"actor": "operator", "think": True}).status_code == 200
     before = tree(root)
     r = c.post(f"/api/tasks/{task}/move", json={"agent_id": A, "to": "BETA"}, headers=VIA)
-    assert (r.status_code, r.json()["detail"]) == (409, f"{task} is done or archived: a closed task is not moved")
+    lines = r.json()["detail"].split("\n")
+    assert r.status_code == 409
+    assert lines[0] == f"{task} is done or archived: a closed task is not moved"
+    assert len(lines) == 2 and "«think»" in lines[1] and "moving it to another project" in lines[1]
+    assert [x["code"] for x in r.json()["reasons"]] == ["closed", "think"]
     assert tree(root) == before
+
+
+def test_a_low_level_and_a_foreign_target_are_both_named(world) -> None:
+    c, root = world
+    before = tree(root)
+    r = c.post(f"/api/tasks/{TASK}/move", json={"agent_id": A, "to": "GAMMA"}, headers=VIA)
+    assert r.status_code == 403
+    assert r.json()["detail"] == (
+        f"agent {A} may not move tasks (level 2); the operator raises it to level 3 on the agent card\n"
+        f"agent {A} is not a member of GAMMA; its projects: ALPHA, BETA. The operator adds it on the agent card")
+    assert tree(root) == before
+
+
+def test_a_closed_task_moved_to_its_own_project_hears_both(world) -> None:
+    c, root = world
+    task = "tk_alpha_cyr"   # done, in ALPHA
+    before = tree(root)
+    r = c.post(f"/api/tasks/{task}/move", json={"actor": "operator", "to": "ALPHA"})
+    assert r.status_code == 409
+    assert r.json()["detail"] == (f"{task} is done or archived: a closed task is not moved\n"
+                                  f"{task} is in ALPHA already")
+    assert tree(root) == before
+
+
+def test_no_access_hides_the_tasks_state(world) -> None:
+    # A closed, marked task the agent may not move: the level alone, nothing
+    # about the task (no access ends the answer).
+    c, _root = world
+    task = "tk_alpha_cyr"
+    assert c.post(f"/api/tasks/{task}/update", json={"actor": "operator", "think": True}).status_code == 200
+    r = c.post(f"/api/tasks/{task}/move", json={"agent_id": A, "to": "ALPHA"}, headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (
+        403, f"agent {A} may not move tasks (level 2); the operator raises it to level 3 on the agent card")
 
 
 def test_no_access_comes_before_a_closed_task(world) -> None:

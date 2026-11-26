@@ -23,7 +23,8 @@ from .docs_md import build_detail, read_detail, resolve_under, safe_ref_part
 from .entities import Entity
 from .file_entries import assessment_summary, prepare_file_entry
 from .file_safety import atomic_write
-from .vocab import HEADLINE_REQUIRED, check_enum_fields
+from .refusals import Reasons
+from .vocab import HEADLINE_REQUIRED, enum_problems
 
 # Writes that are the operator's alone. Sprints are planned by a person.
 OPERATOR_ONLY: dict[str, str] = {
@@ -326,6 +327,10 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="send the body as a JSON object")
     refuse_agent_write(ent, body)
+    if (reason := AGENT_CREATE_REFUSED.get(ent.name)) and written_by_agent(body):
+        refuse_agent(reason)
+    # Named with the first line's absence, in one answer (tk_90c1ba5f).
+    why = Reasons()
     if written_by_agent(body):
         # Identity an agent sends is refused (tk_0b8a32d2), a lens's own
         # column included: a vision's session_id is the server's to fill, and
@@ -334,9 +339,7 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
         stray = sorted(k for k in body if k in mcp_args.STAMPED and body[k] not in (None, "")
                        and k not in ("agent_id", "actor", "created_date", "created_time"))
         if stray:
-            raise HTTPException(status_code=422, detail=mcp_args.stamped_refusal(stray))
-    if (reason := AGENT_CREATE_REFUSED.get(ent.name)) and written_by_agent(body):
-        refuse_agent(reason)
+            why.add(mcp_args.stamped_refusal(stray), code="stamped")
     # Agents write what the entry holds by name (entry_fields.py); the names
     # land in the storage slots here, before anything reads them.
     entry_fields.to_slots(ent.name, body, ent.columns)
@@ -351,10 +354,8 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
         elif ent.name in HEADLINE_REQUIRED:
             named = entry_fields.fields_for(ent.name, ent.columns)
             first = named[0].name if named else head
-            raise HTTPException(
-                status_code=422,
-                detail=f"{ent.name} needs its first line: send {first}",
-            )
+            why.add(f"{ent.name} needs its first line: send {first}", code="empty", field=first)
+    why.raise_if_any()
     pre = PRE_CREATE.get(ent.name)
     if pre:
         pre(store, body)
@@ -362,10 +363,15 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     # Python text ("['a value']") in every lens (round 5, agent-shaped
     # writes); the task update refuses it the same way. After
     # PRE_CREATE, which reads a list where one is meant (a task's projects).
+    # Every such column and every value outside its vocabulary, at once
+    # (tk_90c1ba5f).
     for col in ent.columns:
         if col not in _SLOTS and isinstance(body.get(col), (list, dict)):
-            raise HTTPException(status_code=422, detail=f"{col} is text, not a list or an object")
-    check_enum_fields(ent.name, body)
+            why.add(f"{col} is text, not a list or an object", code="shape", field=col)
+    for field, line in enum_problems(ent.name, body):
+        if not any(r.field == field for r in why.items):
+            why.add(line, code="vocabulary", field=field)
+    why.raise_if_any()
 
     check = CONTRACT_CHECKS.get(ent.name)
     warnings = check(body) if check else []

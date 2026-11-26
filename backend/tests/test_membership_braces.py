@@ -130,6 +130,16 @@ TABLE: list[tuple[str, tuple[str, str, str]]] = [
     ("#now-todo {writing-tracker} later", (MEMBER, "", "")),
     ("#mute #task {writing-tracker} x", None),                                       # muted: no command
     ("#task {ui} x ###now {writing-tracker} y", (MEMBER, "", "")),                    # ### reads that one
+    # Every refusal at once (tk_90c1ba5f), joined by "; " for the notice.
+    ("#task {merkht} {writing-tracer} x",
+     ("", "", near("merkht", "merkhet") + "; " + near("writing-tracer", "writing-tracker"))),
+    ("#task {project:nowhere} {lane:} x",
+     ("", "", "{project:nowhere}: nowhere is not a project of this agent; {lane:} names no lane")),
+    ("#task {merkhet} {writing-tracker} {ui} {backend} x",
+     ("", "", "two projects in braces (merkhet, writing-tracker): name one; "
+              "two lanes in braces (ui, backend): name one")),
+    # No access is said alone: nothing about the rest of the braces.
+    ("#task {shopfront} {ui} {backend} x", ("", "", NOT_SHOPFRONT)),
 ]
 
 
@@ -441,3 +451,67 @@ def test_the_hook_notice_and_the_servers_refusal_name_the_project_alike(world) -
     c.app.state.store.rebuild()
     r = _agent_task(c, HOME)
     assert r.status_code == 403 and r.json()["detail"].endswith(want), r.text
+
+
+# -- every reason at once (tk_90c1ba5f) ---------------------------------------
+
+def test_the_braces_give_each_refusal_as_a_reason(world) -> None:
+    c, root = world
+    text = "#task {merkht} {writing-tracer} x"
+    server = tasklib.task_braces(c.app.state.store, A, text)
+    hook = capture.task_where(root, HOME, A, text)
+    assert server["reasons"] == hook["reasons"] == [near("merkht", "merkhet"),
+                                                    near("writing-tracer", "writing-tracker")]
+    assert tasklib.task_braces(c.app.state.store, A, "#task {wt} x")["reasons"] == []
+
+
+def test_two_refused_braces_refuse_the_agents_create_with_both(world) -> None:
+    c, root = world
+    _say(root, "#task {merkht} {writing-tracer} check it")
+    c.app.state.store.rebuild()
+    before = tree(root)
+    r = _agent_task(c, HOME)
+    assert r.status_code == 403
+    assert r.json()["detail"] == near("merkht", "merkhet") + "\n" + near("writing-tracer", "writing-tracker")
+    assert len(r.json()["reasons"]) == 2
+    assert tree(root) == before
+
+
+def test_the_agents_create_names_status_lane_title_and_tags_together(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    before = tree(root)
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "", "tags": "nonsense",
+                                   "status": "doing", "lane": "nowhere"}, headers=VIA)
+    assert r.status_code == 422, r.text
+    got = r.json()["detail"].split("\n")
+    assert len(got) == 4, got
+    assert got[0].startswith("an agent creates tasks only in the `agent` column")
+    assert got[1].startswith("the lane 'nowhere' is not on the board")
+    assert got[2] == "an agent task needs a title"
+    assert got[3].startswith("unknown tag(s) nonsense")
+    assert tree(root) == before
+
+
+def test_a_long_title_and_too_many_tags_are_both_named(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "t" * 81,
+                                   "tags": ",".join(tasklib.AGENT_TAGS)}, headers=VIA)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].split("\n") == [
+        f"an agent task title is at most {tasklib.AGENT_TITLE_MAX} characters (81 sent)",
+        f"an agent task carries at most {tasklib.AGENT_TAGS_MAX} tags ({len(tasklib.AGENT_TAGS)} sent)"]
+
+
+def test_one_bad_field_of_the_agents_create_reads_as_before(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "", "tags": "ag_bug"}, headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (422, "an agent task needs a title")
