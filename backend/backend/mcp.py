@@ -333,10 +333,13 @@ def _nested_identity(name: str, args: dict) -> list[str]:
     is a line."""
     skip = ("fields", "changes") if name in ("write_entry", "update_entry") else ()
     out: list[str] = []
-    for key, where in mcp_args.nested_identities(args, skip):
-        if key != "project":
-            out.append(f"{mcp_args.stamped_refusal([key])} (inside {where})")
-        elif name in mcp_args.PROJECT_TOOLS:
+    for where, keys in mcp_args.nested_by_object(args, skip):
+        stamped = [k for k in keys if k != "project"]
+        if stamped:
+            out.append(f"{mcp_args.stamped_refusal(stamped)} (inside {where})")
+        if "project" not in keys:
+            continue
+        if name in mcp_args.PROJECT_TOOLS:
             out.append(f"put project next to the other arguments, not inside {where}")
         else:
             out.append(f"{name} takes no project, inside {where} either")

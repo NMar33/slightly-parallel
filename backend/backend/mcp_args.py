@@ -155,6 +155,17 @@ def nested_identities(args: dict, skip: tuple[str, ...] = ()) -> list[tuple[str,
     return hits
 
 
+def nested_by_object(args: dict, skip: tuple[str, ...] = ()) -> list[tuple[str, list[str]]]:
+    """``nested_identities`` by object: ``(where, names)`` once per object in
+    the order met, its stamped names sorted, ``project`` after them. One
+    refusal line per object, as the top level groups its names."""
+    grouped: dict[str, list[str]] = {}
+    for key, where in nested_identities(args, skip):
+        grouped.setdefault(where, []).append(key)
+    return [(where, sorted(k for k in keys if k != "project") + [k for k in keys if k == "project"])
+            for where, keys in grouped.items()]
+
+
 def accepts(tool: str) -> frozenset[str]:
     """The top-level arguments ``tool`` takes; empty for a tool there is not."""
     return TOOL_ARGS.get(tool, frozenset())

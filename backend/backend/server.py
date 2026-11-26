@@ -463,9 +463,14 @@ def nested_in_body(path: str, data: Any) -> list[str]:
     if not isinstance(data, dict) or not mcp_may_write(path):
         return []
     from . import mcp_args
-    return [f"put project next to the other fields, not inside {where}" if key == "project"
-            else f"{mcp_args.stamped_refusal([key])} (inside {where})"
-            for key, where in mcp_args.nested_identities(data)]
+    out: list[str] = []
+    for where, keys in mcp_args.nested_by_object(data):
+        stamped = [k for k in keys if k != "project"]
+        if stamped:
+            out.append(f"{mcp_args.stamped_refusal(stamped)} (inside {where})")
+        if "project" in keys:
+            out.append(f"put project next to the other fields, not inside {where}")
+    return out
 
 
 def _json_body(content_type: bytes | None) -> bool:

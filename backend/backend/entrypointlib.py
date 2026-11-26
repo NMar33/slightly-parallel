@@ -340,26 +340,34 @@ def checked_way(raw: Any, lines: list[str] | None = None) -> dict[str, str]:
             out.append(str(exc))
             return ""
 
-    before = len(out)
     kind = take(_text, raw, "kind", 20, required=True).lower()
     if kind and kind not in ENTRYPOINT_WAY_KINDS:
         out.append(f"kind is one of {', '.join(ENTRYPOINT_WAY_KINDS)}")
+    # The faults of the fields that say where it opens, counted apart.
+    where = len(out)
     url = take(_text, raw, "url", URL_MAX)
     if url and not url.lower().startswith(("http://", "https://")):
         out.append("url starts with http:// or https://")
+    where_faults = len(out) - where
+    name = take(_text, raw, "name", NAME_MAX, required=True)
+    where = len(out)
+    path = take(_text, raw, "path", PATH_MAX)
+    command = take(_text, raw, "command", COMMAND_MAX)
+    where_faults += len(out) - where
     way = {
-        "name": take(_text, raw, "name", NAME_MAX, required=True),
+        "name": name,
         "kind": kind,
         "url": url,
-        "path": take(_text, raw, "path", PATH_MAX),
-        "command": take(_text, raw, "command", COMMAND_MAX),
+        "path": path,
+        "command": command,
         "folder": take(_text, raw, "folder", PATH_MAX),
         "port": take(_port, raw.get("port")),
         "note": take(_text, raw, "note", NOTE_MAX),
     }
-    # Where it opens is asked only of fields that read: a url refused above
-    # is not also "missing".
-    if len(out) == before and not (way["url"] or way["path"] or way["command"]):
+    # Where it opens is asked only when url, path and command read: a url
+    # refused above is not also "missing"; another field's fault hides
+    # nothing.
+    if not where_faults and not (way["url"] or way["path"] or way["command"]):
         out.append("a way in needs where it opens (url or path) or the command that starts it")
     for k in ("name", "command", "note"):
         if "\n" in way[k]:
