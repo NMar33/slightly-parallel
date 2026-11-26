@@ -90,15 +90,27 @@ def test_every_call_the_agent_texts_and_descriptions_show_uses_the_tables_argume
              [*sorted((root / "templates" / "skills").glob("*/SKILL.md")),
               *sorted((root / "prompts" / "contract").glob("*.md"))]}
     texts |= {f"tool {n}": t["description"] for n, t in _tools_from(client).items()}
-    seen, wrong = 0, []
+    # The contract as agents read it, and the docs.
+    texts |= {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8")
+              for p in [root / "SLIGHTLY-PARALLEL.md", *sorted((root / "docs").rglob("*.md"))]}
+    # Every text the hooks and the server hand an agent (notices, «next»
+    # hints, refusals): the string constants of their code.
+    for path in [*sorted((root / "scripts" / "hooks").glob("*.py")), *sorted((root / "backend" / "backend").rglob("*.py"))]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        texts[path.relative_to(root).as_posix()] = "\n".join(
+            n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str))
+    seen, wrong, read_in = 0, [], set()
     for where, text in texts.items():
         for name, inner in _CALL_RE.findall(text):
             if name in mcp_args.TOOL_ARGS:
                 seen += 1
+                read_in.add(where.split("/")[0])
                 extra = _named_args(inner) - mcp_args.accepts(name)
                 if extra:
                     wrong.append((where, name, sorted(extra)))
     assert seen > 40 and not wrong, wrong
+    # The scan reaches each kind of text: hooks and server code, docs, the contract.
+    assert {"scripts", "backend", "docs", "SLIGHTLY-PARALLEL.md"} <= read_in, read_in
 
 
 def test_the_contract_and_write_entry_name_the_one_place_of_project(client) -> None:

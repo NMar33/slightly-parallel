@@ -8,6 +8,8 @@ with the one right shape; nothing is guessed or silently overridden.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from backend import mcp, mcp_args
@@ -141,3 +143,44 @@ def test_carry_brief_names_its_message_once(monkeypatch) -> None:
     tr.call("carry_brief", {"message": "cc-aaaa1111#5", "turn": 5, "text": "the brief"})
     tr.call("carry_brief", {"turn": 5, "text": "the brief"})
     assert [b["target"] for _p, b in tr.api.posts if b] == ["cc-aaaa1111#5", "cc-aaaa1111#5"]
+
+
+@pytest.mark.parametrize(("tool", "args", "where"), [
+    ("task_evidence", {"id": "tk_12345678", "items": [{"kind": "text", "title": "t", "body": "b", "agent_id": "cc-x"}]},
+     "items[0]"),
+    ("map_write", {"map": {"template": "tool", "rows": [], "agent_id": "cc-x"}}, "map"),
+    ("map_write", {"map": {"template": "tool", "rows": [{"kind": "module", "name": "m", "session_id": "s"}]}},
+     "map.rows[0]"),
+    ("entrypoint_way", {"id": "ep_1", "way": {"name": "w", "kind": "page", "url": "http://x/", "actor": "cc-x"}}, "way"),
+    ("note_write", {"text": "# N", "kind": "context", "images": [{"path": "/x.png", "created_by": "cc-x"}]},
+     "images[0]"),
+    ("usage_prices_write", {"models": {"m": {"input": 1, "agent_id": "cc-x"}}, "sources": ["https://e.org"]},
+     "models.m"),
+])
+def test_identity_inside_an_object_a_tool_carries_is_refused_by_name(monkeypatch, tool, args, where) -> None:
+    """It was dropped there without a word (tk_0b8a32d2): the evidence item,
+    the map, the way in kept everything else and lost the identity."""
+    tr = _bare(monkeypatch)
+    with pytest.raises(mcp.ApiError, match=rf"is stamped by Slightly Parallel; leave it out \(inside {re.escape(where)}\)$"):
+        tr.call(tool, args)
+    assert tr.api.posts == []
+
+
+def test_a_project_inside_an_object_is_refused_and_a_maps_from_is_a_part(monkeypatch) -> None:
+    tr = _bare(monkeypatch)
+    with pytest.raises(mcp.ApiError, match=r"^put project next to the other arguments, not inside map$"):
+        tr.call("map_write", {"map": {"template": "tool", "rows": [], "project": "GAMMA"}})
+    with pytest.raises(mcp.ApiError, match=r"^task_evidence takes no project, inside items\[0\] either$"):
+        tr.call("task_evidence", {"id": "tk_12345678", "items": [{"kind": "text", "project": "GAMMA"}]})
+    # A relation's `from` names a part of the program, not a writer.
+    tr.call("map_write", {"map": {"template": "tool", "rows": [], "relations": [{"from": "a", "to": "b", "verb": "calls"}]}})
+    assert tr.api.posts and tr.api.posts[-1][0] == "/api/map"
+
+
+def test_an_argument_sent_as_null_is_no_argument(monkeypatch) -> None:
+    """Some clients echo every optional key as null: that is not a value."""
+    tr = _bare(monkeypatch)
+    tr.call("task_report", {"id": "tk_12345678", "summary": "Done.", "not_an_argument": None, "agent_id": None})
+    assert tr.api.posts[-1] == ("/api/tasks/tk_12345678/report", {"agent_id": "cc-aaaa1111", "summary": "Done."})
+    with pytest.raises(mcp.ApiError, match="takes no argument not_an_argument"):
+        tr.call("task_report", {"id": "tk_12345678", "summary": "Done.", "not_an_argument": 0})

@@ -275,8 +275,10 @@ def _only_its_arguments(name: str, args: dict) -> None:
     if name not in mcp_args.TOOL_ARGS:
         return  # the unknown tool's own refusal says so
     takes = mcp_args.accepts(name)
-    extra = sorted(k for k in args if k not in takes)
+    # A null is no value: some clients echo every optional key as null.
+    extra = sorted(k for k in args if k not in takes and args[k] is not None)
     if not extra:
+        _nested_identity(name, args)
         return
     stamped = [k for k in extra if k in mcp_args.STAMPED]
     if stamped:
@@ -288,6 +290,36 @@ def _only_its_arguments(name: str, args: dict) -> None:
     if extra == ["project"]:
         raise ApiError(f"{name} takes no project: it works in this chat's project; it takes: {listed}")
     raise ApiError(f"{name} takes no argument {', '.join(extra)} — it takes: {listed}")
+
+
+def _nested_identity(name: str, args: dict) -> None:
+    """Identity inside an object a tool carries (an evidence item, a map row,
+    a way in, an image …) is refused by name, as at the top level: it was
+    dropped there without a word (tk_0b8a32d2). ``fields`` and ``changes``
+    have their own refusals (_not_stamped, _one_project); a map's relations
+    name their parts ``from`` and ``to``."""
+    def walk(value: Any, where: str) -> None:
+        if isinstance(value, list):
+            for i, item in enumerate(value):
+                walk(item, f"{where}[{i}]")
+            return
+        if not isinstance(value, dict):
+            return
+        for key, inner in value.items():
+            here = f"{where}.{key}" if where else str(key)
+            if where in ("fields", "changes") and name in ("write_entry", "update_entry"):
+                pass  # their own refusals, with the shape
+            elif key in mcp_args.STAMPED and inner is not None and not (
+                    name == "map_write" and key == "from" and ".relations[" in here):
+                raise ApiError(f"{mcp_args.stamped_refusal([key])} (inside {where})")
+            elif key == "project" and inner is not None:
+                if name in mcp_args.PROJECT_TOOLS:
+                    raise ApiError(f"put project next to the other arguments, not inside {where}")
+                raise ApiError(f"{name} takes no project, inside {where} either")
+            walk(inner, here)
+
+    for key, value in args.items():
+        walk(value, key)
 
 
 def _not_stamped(given: dict) -> None:

@@ -422,6 +422,35 @@ def mcp_may_write(path: str) -> bool:
     return _mcp_paths.fullmatch(path) is not None
 
 
+_lens_creates: "re.Pattern[str] | None" = None
+
+
+def lens_create(path: str) -> bool:
+    """Is ``path`` a lens's create (POST /api/<base>)? There the translator's
+    stamp (created_date, created_time) is in the body, and a lens's own
+    columns are checked by entitylib."""
+    global _lens_creates
+    if _lens_creates is None:
+        from .routers.schema_api import build_schema
+        bases = sorted({re.escape(str(l["base"])) for l in build_schema()["lenses"]})
+        _lens_creates = re.compile(rf"/api/({'|'.join(bases)})")
+    return _lens_creates.fullmatch(path) is not None
+
+
+def stamped_in_body(path: str, data: Any) -> list[str]:
+    """Identity an agent's body names besides who it is (agent_id/actor):
+    refused by name, as the MCP tools refuse it (mcp_args.IDENTITY). Routers
+    used to drop it without a word (tk_0b8a32d2)."""
+    if not isinstance(data, dict) or lens_create(path) or not mcp_may_write(path):
+        # Outside the MCP's writes the routes keep their own rules: the
+        # page's star names the chat's session, the prompt library refuses
+        # an agent with its own reason.
+        return []
+    from . import mcp_args
+    return sorted(k for k in data if k in mcp_args.STAMPED and k not in ("agent_id", "actor")
+                  and data[k] not in (None, ""))
+
+
 def _json_body(content_type: bytes | None) -> bool:
     """Would FastAPI read this body as JSON? Its own rule: no content type
     at all, or a subtype that is ``json`` or ends in ``+json``. The gate
@@ -806,6 +835,18 @@ class AgentsViaMcp:
             refused = membership_refusal(self.app_ref.state.store, path, data, actor)
             if refused is not None:
                 await JSONResponse({"detail": refused[1]}, status_code=refused[0])(scope, replay, send)
+                return
+            if memberships.agent_view(self.app_ref.state.store, actor) is None:
+                # A writer Slightly Parallel has no chat of: the project gate
+                # refused it, a write that names no project took it as it came
+                # (usage prices, messages; tk_0b8a32d2).
+                await JSONResponse({"detail": memberships.UNINDEXED.format(agent=actor)},
+                                   status_code=403)(scope, replay, send)
+                return
+            stray = stamped_in_body(path, data)
+            if stray:
+                from . import mcp_args
+                await JSONResponse({"detail": mcp_args.stamped_refusal(stray)}, status_code=422)(scope, replay, send)
                 return
         await self.app(scope, replay, send)
 

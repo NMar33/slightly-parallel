@@ -306,7 +306,14 @@ def checked_way(raw: Any) -> dict[str, str]:
     """A way in from a request, every field checked; nothing written yet."""
     if not isinstance(raw, dict):
         raise EntryRefused("way is an object: {name, kind, url?, path?, command?, folder?, port?, note?}")
-    kind = _text(raw, "kind", 20, required=True).lower()
+    from . import mcp_args
+    # Identity inside the way was dropped without a word (tk_0b8a32d2).
+    stamped = sorted(k for k in raw if k in mcp_args.STAMPED and raw[k] not in (None, ""))
+    if stamped:
+        raise EntryRefused(mcp_args.stamped_refusal(stamped) + " (inside way)")
+    if raw.get("project") not in (None, ""):
+        raise EntryRefused("a way in has no project of its own: it is the topic's; leave it out (inside way)")
+    kind =_text(raw, "kind", 20, required=True).lower()
     if kind not in ENTRYPOINT_WAY_KINDS:
         raise EntryRefused(f"kind is one of {', '.join(ENTRYPOINT_WAY_KINDS)}")
     url = _text(raw, "url", URL_MAX)
