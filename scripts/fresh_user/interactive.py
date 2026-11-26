@@ -666,7 +666,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                             with project_contract.open("a", encoding="utf-8") as instructions:
                                 instructions.write(f"\n\n## {WINDOWS_CORE_WORK_SECTION}\n\n"
                                                    "Run these commands exactly, in order:\n\n"
-                                                   f"```powershell\n{offline_command}\n{command}\n```\n")
+                                                   f"```powershell\n{offline_command}\n{command}\n```\n\n"
+                                                   "Once the commit command succeeds, reply in chat without running any further commands.\n"
+                                                   "The test runner checks the files and commit separately.\n")
                             message += (f" Use Get-Content -LiteralPath to read {project_contract.name} and run the two exact"
                                         f" commands in its {WINDOWS_CORE_WORK_SECTION} section, in order."
                                         " If the sandbox refuses either, ask once for that exact command.")

@@ -408,6 +408,8 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
     assert updated.startswith(initial_contract)
     assert [line for line in updated[len(initial_contract):].splitlines() if line in planned] == planned
     assert len(planned) == 2 and f"Task: {task}" in planned[1] and f"Agent: {agent}" in planned[1]
+    work_instructions = updated[len(initial_contract):]
+    assert "Once the commit command succeeds, reply in chat without running any further commands." in work_instructions
     assert "/SLIGHTLY-PARALLEL.md" in exclude.read_text(encoding="utf-8").splitlines()
     if paint_work:
         assert submitted == typed and not frames
@@ -1046,6 +1048,8 @@ def test_codex_rule_approval_waits_for_the_new_saved_rule(monkeypatch):
     ("git add calc.py test_calc.py && git commit -m 'Add calculator tests'", "2. Yes, and don't ask again (p)", False),
     ("git add . && git commit -m 'Add calculator tests'", "1. Yes, proceed (y)", False),
     ("git add calc.py test_calc.py && git push", "1. Yes, proceed (y)", False),
+    ("git -C 'C:/Temp/sp fresh ü/sample' status --short; "
+     "git -C 'C:/Temp/sp fresh ü/sample' log -1 --format='%h %s%n%b'", "1. Yes, proceed (y)", False),
 ])
 def test_codex_core_accepts_only_the_exact_local_commit_command(monkeypatch, operation, choice, allowed):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
