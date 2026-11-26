@@ -40,7 +40,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
     from agents import give_login, tools
     from common import Space, chatstore, eventually, free_port, get, http, wait_for
     from interactive import CLAUDE_MCP_ACCEPTED, _last_reply, _ready, _wait_for_turn
-    from screen import ENTER, Screen, codex_pty_args
+    from screen import COLS, ENTER, Screen, codex_pty_args
     from stages import make_sample
 
     headless = cli == "opencode-run"
@@ -167,7 +167,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
 
             def prompt(text):
                 nonlocal chat
-                terminal.send(text)
+                terminal.send(text, paste=cli == "claude-code" and len(text) > COLS)
                 assert terminal.wait_for(text, 8, tool=cli), f"{cli} did not display the prompt: {terminal.rendered}"
                 terminal.send(ENTER)
                 approved = False
@@ -189,7 +189,14 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
                     chat = matches[0]
                     return True
 
-                assert not (error := _wait_for_turn(terminal, captured, 40)), f"{error}: {text}\n{terminal.rendered}"
+                error = _wait_for_turn(terminal, captured, 40)
+                if error and cli == "claude-code" and chat and len(text) > COLS:
+                    from common import redact_diagnostics
+
+                    turn = chat.read_text(encoding="utf-8").rsplit("\n## Turn ", 1)[-1]
+                    user = turn.partition("\n**User**: ")[2].partition("\n**Agent**: ")[0]
+                    print(f"Claude paste: bracketed={terminal.bracketed_paste}, captured={redact_diagnostics(user[:2000])!r}")
+                assert not error, f"{error}: {text}\n{terminal.rendered}"
 
             prompt("Say hello for sp-stub-hello.")
             verdicts[layer] = "pass"

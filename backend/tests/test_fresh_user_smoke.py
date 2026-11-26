@@ -328,7 +328,7 @@ def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypa
         def __init__(self, command, *_args, **_kwargs):
             commands.extend(command)
 
-        def send(self, value):
+        def send(self, value, **_kwargs):
             if value == interactive.ENTER:
                 assert events[-1][0] == "painted"
             events.append(("send", value))
@@ -391,7 +391,7 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
         def __init__(self, *args, columns, **kwargs):
             self.columns = columns
 
-        def send(self, line):
+        def send(self, line, **_kwargs):
             if line != interactive.ENTER:
                 typed.append(line)
                 return
@@ -765,7 +765,7 @@ def test_canary_reports_startup_capture_and_task_verdicts(monkeypatch, tmp_path,
         def __init__(self, *args, **kwargs):
             pass
 
-        def send(self, line):
+        def send(self, line, **_kwargs):
             if line != interactive.ENTER:
                 inputs.append(line)
                 return
@@ -1173,7 +1173,7 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
         def __init__(self, *_args, **_kwargs):
             pass
 
-        def send(self, value):
+        def send(self, value, **_kwargs):
             if value != interactive.ENTER:
                 typed.append(value)
                 return

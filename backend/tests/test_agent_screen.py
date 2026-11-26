@@ -319,3 +319,22 @@ def test_claude_accepts_a_paste_marker_with_the_exact_visible_suffix(monkeypatch
     )
     monkeypatch.setattr(screen, "SCREEN_POLL_INTERVAL_S", 0)
     assert terminal.wait_for(prompt, 0.02, tool="claude-code") is accepted
+
+
+def test_claude_long_input_uses_one_bracketed_paste_when_the_cli_enables_it(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    terminal = screen.Screen.__new__(screen.Screen)
+    terminal.text = terminal.history = terminal._cursor_tail = ""
+    terminal.application_cursor = False
+    terminal.trace = None
+    sent = []
+    terminal._write = sent.append
+    text = "One long input with no transport boundaries. " * 28
+    terminal._receive("\x1b[?20")
+    terminal._receive("04h")
+    terminal.send(text, paste=True)
+    terminal._receive("\x1b[?2004l")
+    terminal.send(text, paste=True)
+    assert sent == ["\x1b[200~" + text + "\x1b[201~", text]

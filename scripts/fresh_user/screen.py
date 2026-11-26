@@ -25,6 +25,7 @@ PTY_CLOSE_TIMEOUT_S = 3
 _ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|[\x00-\x08\x0e-\x1f]")
 DOWN, ENTER = "\x1b[B", "\r"
 _CURSOR_MODE = re.compile(r"\x1b\[\?1([hl])")
+_PASTE_MODE = re.compile(r"\x1b\[\?2004([hl])")
 _CURSOR_ARROWS = {"\x1b[A": "\x1bOA", DOWN: "\x1bOB"}
 KITTY_KEYBOARD_QUERY = "\x1b[?u"
 ROWS, COLS = 45, 160
@@ -112,6 +113,7 @@ class Screen:
         self._paste_before_input: tuple[str, str] | None = None
         self.exited = False
         self.application_cursor = False
+        self.bracketed_paste = False
         self.reply_to_kitty_query = reply_to_kitty_query
         self._cursor_tail = ""
         self.trace = TerminalTrace(trace, columns) if trace is not None else None
@@ -175,7 +177,9 @@ class Screen:
         controls = self._cursor_tail + text
         if modes := _CURSOR_MODE.findall(controls):
             self.application_cursor = modes[-1] == "h"
-        self._cursor_tail = controls[-4:]
+        if modes := _PASTE_MODE.findall(controls):
+            self.bracketed_paste = modes[-1] == "h"
+        self._cursor_tail = controls[-7:]
         self._answer(text)
         if self.trace is not None:
             self.trace.feed(text)
@@ -228,12 +232,16 @@ class Screen:
             time.sleep(SCREEN_POLL_INTERVAL_S)
         return False
 
-    def send(self, keys: str) -> None:
+    def send(self, keys: str, *, paste: bool = False) -> None:
         self.save_frame("before input")
         self._paste_before_input = _claude_paste_marker(self.rendered) if len(keys) > COLS else None
         self.history = (self.history + "\n" + self.text.rstrip())[-SCREEN_HISTORY_CHARS:]
         self.text = ""  # what comes after this key
-        self._write(_CURSOR_ARROWS.get(keys, keys) if self.application_cursor else keys)
+        if paste and self.bracketed_paste:
+            keys = f"\x1b[200~{keys}\x1b[201~"
+        elif self.application_cursor:
+            keys = _CURSOR_ARROWS.get(keys, keys)
+        self._write(keys)
 
     def _write(self, keys: str) -> None:
         if WINDOWS:

@@ -538,7 +538,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         return not policy or policy.result() == (policy.expected, "")
 
     def type_prompt(text: str, turn: str) -> bool:
-        screen.send(text)
+        screen.send(text, paste=tool.name == "claude-code" and len(text) > COLS)
         if not screen.wait_for(text, PROMPT_PAINT_TIMEOUT_S, tool=tool.name):
             screen.save_frame("prompt paint timed out")
             return report.add(stage, f"{turn}: {tool.name} did not display the prompt before Enter", False, _screen_tail(screen))
