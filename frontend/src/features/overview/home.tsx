@@ -646,7 +646,7 @@ function YearHeatmap({ year, grid }: { year: Year; grid: ReturnType<typeof yearG
   // on hover again only after the pointer leaves and comes back.
   const toggle = () => { if (!heat.auto) setHover(false); setHeat({ ...heat, auto: !heat.auto }) }
 
-  const values = useMemo(() => grid.map((c) => layerValues(year.days.get(c.day) ?? [])), [grid, year.days])
+  const values = useMemo(() => grid.map((c) => layerValues(year.days.get(c.day) ?? [], year.you.get(c.day) ?? 0)), [grid, year.days, year.you])
   const step = useMemo(() => stepsOf(values.map((v) => v[heat.layer])), [values, heat.layer])
   const color = HEAT_COLOR[heat.layer]
   const fill = ramp(color)

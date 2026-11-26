@@ -10,6 +10,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { getJson } from '../../lib/getJson'
 import { useDayStart } from '../../lib/clock'
 import { formatYYMMDD, parseYYMMDD } from '../../utils/dateUtils'
+import { liveElapsed, type TimeEntry } from '../project/timeEntry'
 
 const YEAR_SESSIONS_REFETCH_MS = 60_000
 
@@ -144,28 +145,42 @@ export type Layer = typeof LAYERS[number]
 /** Below this many minutes of the operator's time a day has no ratio. */
 export const RATIO_FLOOR_MIN = 30
 
+/** One entry of the operator's timer, as `/api/time-entries` lists it. */
+export type OperatorEntry = TimeEntry & { agent_id?: string }
+
 /**
- * The operator's minutes in work on a day: the union of the sessions'
- * [start, start + duration] spans, overlaps merged so parallel chats count
- * once. A span past midnight stops at the end of the day.
+ * The operator's minutes per day (YYMM-DD), from the timer: each
+ * `agent_id: operator` entry counts its active time × share / 100, the
+ * Timer page's own count (`liveElapsed`, so a running timer counts up to
+ * `nowMs`). An entry past midnight is split between its days by the wall
+ * clock it covered. The sessions never feed this: agents keep them open
+ * while they work alone.
  */
-export function yourMinutes(sessions: YearSession[]): number {
-  const spans: Array<[number, number]> = []
-  for (const s of sessions) {
-    const dur = Number(s.duration_min) || 0
-    if (dur <= 0) continue
-    const a = clock(s.start_time)
-    spans.push([a, Math.min(1440, a + dur)])
+export function yourMinutesByDay(entries: OperatorEntry[], nowMs = Date.now()): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const e of entries) {
+    if (e.agent_id !== 'operator') continue
+    const min = (liveElapsed(e, nowMs) / 60) * ((e.share_pct ?? 100) / 100)
+    const a = Date.parse(e.started_at ?? '')
+    if (!(min > 0) || Number.isNaN(a)) continue
+    // The wall clock the entry covered: to its end, its pause, or now.
+    let b = Date.parse(e.ended_at ?? '')
+    if (Number.isNaN(b)) b = Date.parse(e.paused_at ?? '')
+    if (Number.isNaN(b)) b = nowMs
+    if (b <= a) {
+      const k = formatYYMMDD(new Date(a))
+      out.set(k, (out.get(k) ?? 0) + min)
+      continue
+    }
+    for (let t = a; t < b;) {
+      const d = new Date(t)
+      const next = Math.min(b, new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime())
+      const k = formatYYMMDD(d)
+      out.set(k, (out.get(k) ?? 0) + (min * (next - t)) / (b - a))
+      t = next
+    }
   }
-  spans.sort((x, y) => x[0] - y[0])
-  let total = 0
-  let from = -1
-  let to = -1
-  for (const [a, b] of spans) {
-    if (a > to) { total += to - from; from = a; to = b } else if (b > to) to = b
-  }
-  total += to - from
-  return Math.min(1440, total)
+  return out
 }
 
 /** Agent minutes per minute of the operator's time; 0 below the floor. */
@@ -173,27 +188,13 @@ export function ratioOf(agent: number, you: number): number {
   return you < RATIO_FLOOR_MIN ? 0 : agent / you
 }
 
-/**
- * A session's agent minutes inside its day: the share of its span before
- * midnight, the same cut `yourMinutes` makes, so the ratio's two sides
- * count the same minutes. A session with no span keeps all of them.
- */
-export function agentInDay(s: YearSession): number {
-  const agent = Number(s.agent_min) || 0
-  const dur = Number(s.duration_min) || 0
-  if (dur <= 0) return agent
-  const a = clock(s.start_time)
-  return agent * (Math.max(0, Math.min(1440, a + dur) - a) / dur)
-}
-
-/** One day's value on each layer. */
-export function layerValues(sessions: YearSession[]): Record<Layer, number> {
+/** One day's value on each layer; `you` is the day's timer minutes (`yourMinutesByDay`). */
+export function layerValues(sessions: YearSession[], you = 0): Record<Layer, number> {
   const agent = sessions.reduce((s, x) => s + (Number(x.agent_min) || 0), 0)
-  const you = yourMinutes(sessions)
   return {
     agent,
     you,
-    ratio: ratioOf(sessions.reduce((s, x) => s + agentInDay(x), 0), you),
+    ratio: ratioOf(agent, you),
     lines: sessions.reduce((s, x) => s + (Number(x.git?.add) || 0), 0),
   }
 }
@@ -236,10 +237,30 @@ export function period(days: Map<string, YearSession[]>, n: number, offset = 0, 
 /** The most chats the year asks for; a fuller year shows its latest this many. */
 export const YEAR_LIMIT = 5000
 
-/** A year of rows by day; `truncated` when the server stopped at the limit. */
-export function yearOf(sessions: YearSession[] | undefined) {
+/** The most rows the lens answers in one page. */
+const ENTRIES_PAGE = 5000
+
+type EntryRow = OperatorEntry & { created_date?: string }
+
+/** The operator's timer entries since `from`, paged back by date past the lens's limit. */
+async function operatorEntries(from: string, signal?: AbortSignal): Promise<OperatorEntry[]> {
+  const out = new Map<string, EntryRow>()
+  let to = ''
+  for (;;) {
+    const q = `/api/time-entries?agent_id=operator&from_date=${from}&limit=${ENTRIES_PAGE}${to ? `&to_date=${to}` : ''}`
+    const rows = (await getJson<{ time_entries: EntryRow[] }>(q, signal)).time_entries
+    for (const r of rows) out.set(r.id, r)
+    const oldest = rows[rows.length - 1]?.created_date ?? ''
+    if (rows.length < ENTRIES_PAGE || !oldest || oldest === to) break
+    to = oldest
+  }
+  return [...out.values()]
+}
+
+/** A year of rows by day; `truncated` when the server stopped at the limit; `you` the operator's minutes by day. */
+export function yearOf(sessions: YearSession[] | undefined, you: Map<string, number> = new Map()) {
   const days = byDay(sessions ?? [])
-  return { ready: !!sessions, sessions: sessions ?? [], days, truncated: (sessions?.length ?? 0) >= YEAR_LIMIT }
+  return { ready: !!sessions, sessions: sessions ?? [], days, you, truncated: (sessions?.length ?? 0) >= YEAR_LIMIT }
 }
 
 export function useYear() {
@@ -253,8 +274,18 @@ export function useYear() {
     // At midnight `from` moves a day: keep showing the old year until the new one arrives.
     placeholderData: keepPreviousData,
   })
+  // The operator's time is the timer's, never the chats' spans (tk_42ccddc1).
+  const timer = useQuery({
+    queryKey: ['overview', 'year-you', from],
+    queryFn: ({ signal }) => operatorEntries(from, signal),
+    staleTime: 30_000,
+    refetchInterval: YEAR_SESSIONS_REFETCH_MS,
+    placeholderData: keepPreviousData,
+  })
   const sessions = q.data?.sessions
-  return useMemo(() => yearOf(sessions), [sessions])
+  // A running timer counts up to the last fetch, which comes every minute.
+  const you = useMemo(() => yourMinutesByDay(timer.data ?? [], timer.dataUpdatedAt || Date.now()), [timer.data, timer.dataUpdatedAt])
+  return useMemo(() => yearOf(sessions, you), [sessions, you])
 }
 
 export type Year = ReturnType<typeof useYear>
