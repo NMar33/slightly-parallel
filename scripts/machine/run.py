@@ -38,6 +38,7 @@ from pathlib import Path
 TASKKILL_TIMEOUT_S = 60
 DEFAULT_STAGE_TIMEOUT_S = 900
 STOP_WAIT_TIMEOUT_S = 60
+OPENCODE_SDK_STAGE_TIMEOUT_S = 90
 CHILDREN_QUERY_TIMEOUT_S = 60
 BROWSER_DEPENDENCY_INSTALL_TIMEOUT_S = 1200
 FRESH_USER_STAGE_TIMEOUT_S = 5400
@@ -185,7 +186,7 @@ def run_fresh_user(tools: str, model: str) -> bool:
     with tempfile.TemporaryDirectory(prefix="sp-machine-opencode-sdk-") as seed:
         if not run("Prepare pinned OpenCode SDK (60-second npm limit)",
                    [sys.executable, "scripts/ci/prepare_opencode_sdk.py", "--seed", seed,
-                    "--report", str(OUT / "opencode-sdk.json")], timeout=90):
+                    "--report", str(OUT / "opencode-sdk.json")], timeout=OPENCODE_SDK_STAGE_TIMEOUT_S):
             return False
         return run("fresh-user", argv, timeout=FRESH_USER_STAGE_TIMEOUT_S, env={"SP_OPENCODE_SDK_SEED": seed})
 
