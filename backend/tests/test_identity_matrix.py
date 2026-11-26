@@ -1,11 +1,14 @@
 """The identity-protection matrix (tk_0b8a32d2): every agent write path ×
 every identity field × where the agent puts it.
 
-The paths are not listed by hand: the MCP rows are server._WRITE_TOOLS, and
-each needs a WALK entry below (a new write tool without one fails here); the
-HTTP rows are the requests those tools really post, replayed as an agent's
-own body, and every pattern of server._MCP_WRITE_PATHS plus the lens create
-and update must be among them.
+The paths are not listed by hand: the MCP rows are server._WRITE_TOOLS plus
+standup_material (it posts to claim the day), and each needs a WALK entry
+below (a new write tool without one fails here). The HTTP rows replay, as an
+agent's own body, the first request each of those tools posts: 39 tools,
+38 distinct routes (publish_attach and publish_write post to the same
+/write). Every
+pattern of server._MCP_WRITE_PATHS must be among them. The lens-create rows
+replay write_entry's request for every lens an agent may create.
 
 Each cell sends one write with one forged identity field, top-level or in a
 nested object the tool carries, through the real translator into the real
@@ -15,6 +18,10 @@ did not store it is «stamped over» (through the MCP) or «dropped» (plain
 HTTP). The matrix is never filled in by hand; with IDENTITY_MATRIX_OUT set
 it is written there as JSON. The assertions hold every cell to the one
 decision table, mcp_args.IDENTITY.
+
+Over plain HTTP a create's created_date and created_time are the one
+exception: there the body is the stamp (the translator sends them the same
+way), so the agent's own dates are stored, on every lens create.
 
 Known hole, pinned (tk_fd75ce20): the mark that says «this came through the
 MCP» is a header anyone on this computer can send. A request that carries it
@@ -344,6 +351,8 @@ WALK: dict[str, Walk] = {
                                  "images": [{"path": _picture(x, n), "caption": f"c{n}"}]}, (("images", 0),)),
     "note_image": (lambda x, n: {"id": x.ids["note"], "path": _picture(x, n), "caption": f"c{n}"}, ()),
     "message": (lambda x, n: {"to": B, "text": f"hello {n}"}, ()),
+    # Not a write tool by the list, but it posts: it claims the day for the helper.
+    "standup_material": (lambda x, n: {"date": f"2610-{(n % 28) + 1:02d}", "claim": True}, ()),
     "messages": (_messages, ()),
 }
 
@@ -377,6 +386,10 @@ def _cell(ctx: Ctx, tool: str, args: dict, value: str) -> str:
     return "stamped over" if wrote else "no write"
 
 
+#: The tools walked: every write tool, and the one reading tool that posts.
+WALKED = (*_server._WRITE_TOOLS, "standup_material")
+
+
 def _mcp_rows(ctx: Ctx) -> tuple[dict[str, dict[str, str]], list[tuple[str, str, dict]]]:
     """The MCP rows, and each tool's valid request as it was posted."""
     missing = sorted(set(_server._WRITE_TOOLS) - set(WALK))
@@ -384,7 +397,7 @@ def _mcp_rows(ctx: Ctx) -> tuple[dict[str, dict[str, str]], list[tuple[str, str,
     matrix: dict[str, dict[str, str]] = {}
     posted: list[tuple[str, str, dict]] = []
     n = 0
-    for tool in _server._WRITE_TOOLS:
+    for tool in WALKED:
         make, nested = WALK[tool]
         n += 1
         args = make(ctx, n)
@@ -418,7 +431,7 @@ def _http_rows(ctx: Ctx, posted: list[tuple[str, str, dict]], monkeypatch) -> di
     assert isinstance(api, _Api)
     out: dict[str, dict[str, str]] = {}
     n = 5000
-    for tool in _server._WRITE_TOOLS:
+    for tool in WALKED:
         make, _nested = WALK[tool]
         row: dict[str, str] = {}
         route = ""
@@ -446,6 +459,67 @@ def _http_rows(ctx: Ctx, posted: list[tuple[str, str, dict]], monkeypatch) -> di
             else:
                 row[f"{field}@body"] = "dropped" if wrote else "no write"
         out[f"{route} ({tool})"] = row
+    return out
+
+
+def _lens_fields(ctx: Ctx, lens: dict, n: int) -> dict[str, Any]:
+    first = (lens.get("text_fields") or ["headline"])[0]
+    fields: dict[str, Any] = {first: f"A {lens['name']} entry, {n}."}
+    if lens["name"] == "task":
+        fields["tags"] = "ag_idea"
+    if lens["name"] == "architecture":
+        scan = ctx.call("write_entry", {"lens": "scan", "fields": {"summary": f"A scan for the form, {n}."}})
+        fields = {"trigger_id": _find_id(scan, "sn_"), "trigger_lens": "scan", "changes": [],
+                  "checked": ["does", "owes", "runs", "stores", "talks", "built with", "faces", "holds"]}
+    return fields
+
+
+def _lens_rows(ctx: Ctx, monkeypatch) -> dict[str, dict[str, str]]:
+    """agents.mcp_only off: write_entry's request for every lens an agent may
+    create, replayed as the agent's own body with one forged field."""
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(_server.AgentsViaMcp, "_enforced", lambda self: False)
+    agent = TestClient(ctx.c.app)
+    agent.cookies.clear()
+    api = ctx.tr.api
+    assert isinstance(api, _Api)
+    lenses = [l for l in ctx.c.get("/api/schema").json()["lenses"] if l.get("agent_write", True)]
+    assert len(lenses) >= 10, [l["name"] for l in lenses]
+    out: dict[str, dict[str, str]] = {}
+    n = 9000
+
+    def captured(lens: dict) -> tuple[str, dict]:
+        nonlocal n
+        n += 1
+        fields = _lens_fields(ctx, lens, n)
+        api.capture = True
+        at = len(api.calls)
+        try:
+            ctx.tr.call("write_entry", {"lens": lens["name"], "fields": fields})
+        except _Api.Captured:
+            pass
+        finally:
+            api.capture = False
+        _m, path, body = api.calls[at]
+        return path, dict(body or {})
+
+    for lens in lenses:
+        path, body = captured(lens)
+        r = agent.post(path, json=body)
+        assert r.status_code < 400, (lens["name"], r.text)   # the valid create writes
+        row: dict[str, str] = {}
+        for field, value in FORGED.items():
+            path, body = captured(lens)
+            before = _files(ctx.root)
+            r = agent.post(path, json={**body, field: value})
+            wrote, found = _stored(ctx.root, before, value)
+            if found:
+                row[f"{field}@body"] = "PASSED THROUGH"
+            elif r.status_code >= 400:
+                row[f"{field}@body"] = f"refused ({r.status_code}): {str(r.json().get('detail', ''))[:80]}"
+            else:
+                row[f"{field}@body"] = "dropped" if wrote else "no write"
+        out[f"POST {path} (write_entry lens {lens['name']})"] = row
     return out
 
 
@@ -481,8 +555,10 @@ def test_the_identity_matrix(world, monkeypatch, tmp_path) -> None:  # noqa: F81
     _seed(ctx)
     mcp_rows, posted = _mcp_rows(ctx)
     http_rows = _http_rows(ctx, posted, monkeypatch)
+    lens_rows = _lens_rows(ctx, monkeypatch)
     hole = _known_hole(ctx, monkeypatch)
-    matrix = {"mcp": mcp_rows, "http (mcp_only off)": http_rows, "known hole": hole}
+    matrix = {"mcp": mcp_rows, "http (mcp_only off)": http_rows, "http lens creates (mcp_only off)": lens_rows,
+              "known hole": hole}
     out = os.environ.get("IDENTITY_MATRIX_OUT")
     if out:
         Path(out).write_text(json.dumps(matrix, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -518,15 +594,17 @@ def test_the_identity_matrix(world, monkeypatch, tmp_path) -> None:  # noqa: F81
             else:
                 assert got.startswith("refused (translator)"), (tool, key, got)
 
-    # Plain HTTP: the body is the agent's own claim. Nothing forged is stored,
-    # except a create's created_date/created_time (there the body is the stamp).
-    for route, row in http_rows.items():
+    # Plain HTTP: the body is the agent's own claim. Everything forged is
+    # refused by name, except a lens create's created_date/created_time
+    # (there the body is the stamp): nothing is stored, nothing dropped.
+    for route, row in [*http_rows.items(), *lens_rows.items()]:
         for key, got in row.items():
             field = key.split("@")[0]
-            if route.startswith("POST /api/decisions ") and field in ("created_date", "created_time"):
+            lens_create = route.startswith("POST /api/") and "(write_entry" in route
+            if lens_create and field in ("created_date", "created_time"):
                 assert got == "PASSED THROUGH", (route, key, got)
             else:
-                assert got != "PASSED THROUGH", (route, key, got)
+                assert got.startswith("refused"), (route, key, got)
     # The known hole, pinned: it must not change without this test changing.
     for row in hole.values():
         assert set(row.values()) == {"PASSED THROUGH"}, hole

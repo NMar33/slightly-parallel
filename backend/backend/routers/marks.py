@@ -87,8 +87,10 @@ def marks_list(project: str = Query(""), store: ViewStore = Depends(get_store)) 
 @router.post("/api/marks", status_code=201)
 def marks_add(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     """``{kind, target, project?, agent_id?, session_id?, turn?, excerpt?, actor?}``."""
-    # `agent_id` here is the chat's agent, not the writer: the writer is `actor`.
-    operator_only({"actor": body.get("actor") or "operator"}, "Marking something important",
+    # The writer is judged as the gate judges it (identity_of): an agent_id is
+    # an agent writing, and judging `actor` alone let one pass as the operator
+    # (tk_0b8a32d2). The page names the chat's agent `chat_agent`.
+    operator_only(body,"Marking something important",
                   "the operator types #important in the chat")
     kind, target = str(body.get("kind") or ""), str(body.get("target") or "")
     if kind not in marklib.KINDS:
@@ -113,7 +115,7 @@ def marks_add(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> 
 @router.post("/api/marks/unmark")
 def marks_remove(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     """``{kind, target, actor?}`` — every mark in force on the target is removed."""
-    operator_only({"actor": body.get("actor") or "operator"}, "Unmarking something important")
+    operator_only(body, "Unmarking something important")
     kind, target = str(body.get("kind") or ""), str(body.get("target") or "")
     if kind not in marklib.KINDS or not target:
         raise HTTPException(status_code=422, detail="kind and target are required")

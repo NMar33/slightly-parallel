@@ -114,6 +114,42 @@ def stamped_refusal(keys: list[str]) -> str:
     return f"{', '.join(keys)} are stamped by Slightly Parallel; leave them out"
 
 
+def nested_identity(args: dict, skip: tuple[str, ...] = ()) -> tuple[str, str] | None:
+    """The first identity name inside an object the arguments carry (an
+    evidence item, a map row, a way in …), as (name, where): a stamped name
+    or ``project``. The top level is the caller's to judge; ``skip`` names
+    top-level objects with refusals of their own (write_entry's fields). A
+    map relation's ``from`` names a part, not a writer. The translator and
+    the server's gate both ask this (tk_0b8a32d2)."""
+    def walk(value: object, where: str) -> tuple[str, str] | None:
+        if isinstance(value, list):
+            for i, item in enumerate(value):
+                if (got := walk(item, f"{where}[{i}]")):
+                    return got
+            return None
+        if not isinstance(value, dict):
+            return None
+        for key, inner in value.items():
+            here = f"{where}.{key}"
+            if inner is not None and inner != "" and (key in STAMPED or key == "project") and not (
+                    key == "from" and "relations[" in here):
+                return str(key), where
+            if (got := walk(inner, here)):
+                return got
+        return None
+
+    for key, value in args.items():
+        if key in skip and isinstance(value, dict):
+            # Its own level has its own refusals; what it carries is walked.
+            inner_hits = (walk(v, f"{key}.{k}") for k, v in value.items())
+            got = next((h for h in inner_hits if h), None)
+        else:
+            got = walk(value, key)
+        if got:
+            return got
+    return None
+
+
 def accepts(tool: str) -> frozenset[str]:
     """The top-level arguments ``tool`` takes; empty for a tool there is not."""
     return TOOL_ARGS.get(tool, frozenset())

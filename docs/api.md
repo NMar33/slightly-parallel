@@ -48,6 +48,21 @@ the 200/201 payload. `—` means none beyond the lens shape.
   translator sets on every call; otherwise 422, naming the tools. The
   operator's pages send a house actor and pass. Setting `agents.mcp_only`
   turns the gate off.
+- **Identity in an agent's body** — on every path the MCP writes to (the
+  lens creates and updates and `server._MCP_WRITE_PATHS`), an agent's body
+  names who it is by `agent_id` or `actor` and nothing else of identity.
+  `from`, `from_agent`, `agent`, `created_by`, `session`, `session_id`,
+  `created_date` and `created_time` are refused with 422 «`session_id` is
+  stamped by Slightly Parallel; leave it out»; a lens create's own
+  `created_date`/`created_time` are the exception (the translator stamps
+  them there). The same names, or a `project`, inside an object the body
+  carries (an evidence item, a map row, a way in) are refused with 422 and
+  where they were: «… (inside items[0])». `actor` and `agent_id` naming two
+  different agents is 422. Other routes keep their own rules. A writer
+  Slightly Parallel has no chat of is refused with 403 on every agent write
+  («agent cc-… is not a chat Slightly Parallel has recorded; nothing was
+  written. Tell the operator»). With `agents.mcp_only` off these checks
+  still hold.
 
 ---
 
@@ -1816,7 +1831,9 @@ agent's projects, and a write on a task by its id (`/api/tasks/{id}/…`) must
 be on a task of one; otherwise 403 with one line — «agent cc-… is not a
 member of X; its projects: A, B. The operator adds it on the agent card» (or
 «…; this task is X's. …»). An agent Slightly Parallel has no chat of is
-refused. A `project` that is not text, or `projects` that is not text or a
+refused with 403 on every agent write, a project named or not. Identity in
+an agent's body besides `agent_id`/`actor` is 422 (see «Identity in an
+agent's body» above). A `project` that is not text, or `projects` that is not text or a
 list of texts, is 422. Writes on other rows by id (`update_entry`, notes,
 publishing cards, topics) check the row's project the same way. The MCP
 create tools (`write_entry`, `note_write`, `core_new`, `map_write`,

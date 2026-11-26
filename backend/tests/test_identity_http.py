@@ -70,7 +70,57 @@ def test_identity_inside_a_way_in_is_refused_over_http_too(agent) -> None:
     tr.call("entrypoint_answer", {"number": 1})
     before = tree(root)
     way = {"name": "w", "kind": "page", "url": "http://127.0.0.1:8130/"}
-    for inner, said in (({"agent_id": B}, "agent_id is stamped"), ({"project": "GAMMA"}, "no project of its own")):
+    for inner, said in (({"agent_id": B}, "agent_id is stamped"), ({"project": "GAMMA"}, "not inside way")):
         r = raw.post(f"/api/entrypoints/{eid}/ways", json={"agent_id": A, "way": {**way, **inner}})
         assert r.status_code >= 400 and said in r.json()["detail"], r.text
     assert tree(root) == before
+
+
+@pytest.mark.parametrize("base", ["visions", "problems", "decisions", "ideas", "goals", "tasks", "scans"])
+def test_a_lens_create_refuses_a_stamped_name_even_where_the_lens_has_its_column(agent, base) -> None:
+    """A vision or a problem has a session_id column (the server fills it from
+    the chat), so the forged one was stored (tk_0b8a32d2). Only the create's
+    own dates are the body's to send."""
+    raw, _c, root, _task, _tr = agent
+    before = tree(root)
+    r = raw.post(f"/api/{base}", json={"project": "ALPHA", "agent_id": A, "session_id": "FORGEDSESSION",
+                                       "l1": f"A {base} entry", "decision_text": f"A {base} entry",
+                                       "created_date": "2611-20", "created_time": "10:00"})
+    assert r.status_code == 422 and r.json()["detail"] == "session_id is stamped by Slightly Parallel; leave it out", r.text
+    assert tree(root) == before
+
+
+def test_an_agent_cannot_mark_or_link_as_the_operator(agent) -> None:
+    """/api/marks judged the writer by `actor` alone: a body naming an agent
+    by agent_id passed as the operator (and stored its session_id, or marked
+    another chat). /api/agents/links had no check at all."""
+    raw, _c, root, _task, _tr = agent
+    before = tree(root)
+    r = raw.post("/api/marks", json={"kind": "message", "target": f"{A}#1", "project": "ALPHA", "agent_id": A,
+                                     "session_id": "FORGEDSESSION", "turn": 1})
+    assert r.status_code == 422 and "the operator's" in r.json()["detail"], r.text
+    r = raw.post("/api/marks", json={"kind": "agent", "target": B, "project": "ALPHA", "agent_id": A})
+    assert r.status_code == 422, r.text
+    r = raw.post("/api/marks/unmark", json={"kind": "agent", "target": B, "agent_id": A})
+    assert r.status_code == 422, r.text
+    r = raw.post("/api/agents/links", json={"from": B, "to": A, "kind": "handoff", "agent_id": A})
+    assert r.status_code == 422 and "the operator's" in r.json()["detail"], r.text
+    assert tree(root) == before
+
+
+@pytest.mark.parametrize(("path", "body", "where"), [
+    ("/api/tasks/{task}/evidence", {"items": [{"kind": "text", "title": "t", "body": "b", "agent_id": B}]}, "items[0]"),
+    ("/api/map", {"project": "ALPHA", "map": {"template": "tool", "rows": [
+        {"kind": "module", "name": "calc", "what": "x", "where": "calc.py", "session_id": "FORGEDSESSION"}]},
+        "note": "n"}, "map.rows[0]"),
+])
+def test_identity_inside_an_object_is_refused_over_http_too(agent, path, body, where) -> None:
+    raw, _c, root, task, _tr = agent
+    before = tree(root)
+    r = raw.post(path.format(task=task), json={**body, "agent_id": A})
+    assert r.status_code == 422 and r.json()["detail"].endswith(f"leave it out (inside {where})"), r.text
+    assert tree(root) == before
+    # A map relation's `from` names a part, not a writer.
+    r = raw.post("/api/map", json={"project": "ALPHA", "agent_id": A, "note": "n", "map": {
+        "template": "tool", "rows": [], "relations": [{"from": "a", "to": "b", "verb": "calls"}]}})
+    assert r.status_code < 400, r.text

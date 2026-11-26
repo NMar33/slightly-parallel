@@ -296,30 +296,18 @@ def _nested_identity(name: str, args: dict) -> None:
     """Identity inside an object a tool carries (an evidence item, a map row,
     a way in, an image …) is refused by name, as at the top level: it was
     dropped there without a word (tk_0b8a32d2). ``fields`` and ``changes``
-    have their own refusals (_not_stamped, _one_project); a map's relations
-    name their parts ``from`` and ``to``."""
-    def walk(value: Any, where: str) -> None:
-        if isinstance(value, list):
-            for i, item in enumerate(value):
-                walk(item, f"{where}[{i}]")
-            return
-        if not isinstance(value, dict):
-            return
-        for key, inner in value.items():
-            here = f"{where}.{key}" if where else str(key)
-            if where in ("fields", "changes") and name in ("write_entry", "update_entry"):
-                pass  # their own refusals, with the shape
-            elif key in mcp_args.STAMPED and inner is not None and not (
-                    name == "map_write" and key == "from" and ".relations[" in here):
-                raise ApiError(f"{mcp_args.stamped_refusal([key])} (inside {where})")
-            elif key == "project" and inner is not None:
-                if name in mcp_args.PROJECT_TOOLS:
-                    raise ApiError(f"put project next to the other arguments, not inside {where}")
-                raise ApiError(f"{name} takes no project, inside {where} either")
-            walk(inner, here)
-
-    for key, value in args.items():
-        walk(value, key)
+    have their own refusals (_not_stamped, _one_project). The one reading
+    is mcp_args.nested_identity; the server's gate asks it too."""
+    skip = ("fields", "changes") if name in ("write_entry", "update_entry") else ()
+    hit = mcp_args.nested_identity(args, skip)
+    if hit is None:
+        return
+    key, where = hit
+    if key != "project":
+        raise ApiError(f"{mcp_args.stamped_refusal([key])} (inside {where})")
+    if name in mcp_args.PROJECT_TOOLS:
+        raise ApiError(f"put project next to the other arguments, not inside {where}")
+    raise ApiError(f"{name} takes no project, inside {where} either")
 
 
 def _not_stamped(given: dict) -> None:

@@ -391,7 +391,7 @@ _MCP_WRITE_PATHS = (
     r"/api/next-tasks/make",
     r"/api/cores",
     r"/api/cores/[^/]+/(notes|links|off)",
-    r"/api/publishing/cards/[^/]+/(attach|write)",
+    r"/api/publishing/cards/[^/]+/write",
     r"/api/entrypoints/[^/]+/(stops|ways|shots)",
     r"/api/entrypoints/(ask|answer)",
     r"/api/tasks/[^/]+/topic",
@@ -441,14 +441,33 @@ def stamped_in_body(path: str, data: Any) -> list[str]:
     """Identity an agent's body names besides who it is (agent_id/actor):
     refused by name, as the MCP tools refuse it (mcp_args.IDENTITY). Routers
     used to drop it without a word (tk_0b8a32d2)."""
-    if not isinstance(data, dict) or lens_create(path) or not mcp_may_write(path):
+    if not isinstance(data, dict) or not mcp_may_write(path):
         # Outside the MCP's writes the routes keep their own rules: the
         # page's star names the chat's session, the prompt library refuses
         # an agent with its own reason.
         return []
     from . import mcp_args
-    return sorted(k for k in data if k in mcp_args.STAMPED and k not in ("agent_id", "actor")
-                  and data[k] not in (None, ""))
+    # A lens create's own dates are the body's: the translator stamps them
+    # there. The task, scan and architecture creates have routes of their
+    # own and dropped the rest without a word.
+    own = ("agent_id", "actor", *(("created_date", "created_time") if lens_create(path) else ()))
+    return sorted(k for k in data if k in mcp_args.STAMPED and k not in own and data[k] not in (None, ""))
+
+
+def nested_in_body(path: str, data: Any) -> str:
+    """The refusal for identity inside an object of an agent's body on the
+    MCP's writes (an evidence item, a map row): it was dropped without a
+    word (tk_0b8a32d2). The same reading as the translator's."""
+    if not isinstance(data, dict) or not mcp_may_write(path):
+        return ""
+    from . import mcp_args
+    hit = mcp_args.nested_identity(data)
+    if hit is None:
+        return ""
+    key, where = hit
+    if key == "project":
+        return f"put project next to the other fields, not inside {where}"
+    return f"{mcp_args.stamped_refusal([key])} (inside {where})"
 
 
 def _json_body(content_type: bytes | None) -> bool:
@@ -847,6 +866,10 @@ class AgentsViaMcp:
             if stray:
                 from . import mcp_args
                 await JSONResponse({"detail": mcp_args.stamped_refusal(stray)}, status_code=422)(scope, replay, send)
+                return
+            nested = nested_in_body(path, data)
+            if nested:
+                await JSONResponse({"detail": nested}, status_code=422)(scope, replay, send)
                 return
         await self.app(scope, replay, send)
 

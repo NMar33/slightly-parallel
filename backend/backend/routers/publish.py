@@ -108,8 +108,9 @@ def publishing_card_write(card_id: str, body: dict = Body(...), store: ViewStore
 @router.post("/api/publishing/cards/{card_id}/attach", status_code=201)
 def publishing_card_attach(card_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     """Attachments onto a card: the operator on the page (a drop, a paste,
-    a link typed), or the agent through MCP publish_attach (publish_write's
-    older name). Adopts first: the hook names a card before any read has."""
+    a link typed). The MCP tool publish_attach forwards to publish_write, so
+    no MCP call posts here and the MCP mark is refused (server._MCP_WRITE_PATHS).
+    Adopts first: the hook names a card before any read has."""
     adopt_when_changed(store, "keep", keeplib.adopt)
     try:
         return publishlib.attach(store, card_id, body, identity_of(body) or "operator")
