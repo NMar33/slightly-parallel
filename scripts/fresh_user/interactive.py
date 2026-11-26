@@ -31,22 +31,22 @@ from screen import COLS, DOWN, ENTER, Screen, codex_pty_args
 
 POLL_S = 0.2
 UP = "\x1b[A"
-COMPOSER_SETTLE_S = 1.0
+STARTUP_TIMEOUT_S = 60
 PROMPT_PAINT_TIMEOUT_S = 8
+CLAUDE_MCP_STABLE_S = 1.0
+CODEX_FOLDER_STABLE_S = 0.6
 CLAUDE_MCP_QUESTION = "New MCP server found in this project:"
 CLAUDE_MCP_ACCEPTED = "Claude Code accepted the Slightly Parallel MCP server"
-CLAUDE_MCP_MOVE_RETRY_S = 2.0
-CLAUDE_MCP_MOVE_ATTEMPTS = 3
+CLAUDE_MCP_CHOICES = (
+    "Use this MCP server",
+    "Use this and all future MCP servers in this project",
+    "Continue without using this MCP server",
+)
 WINDOWS_CORE_APPROVAL_COLUMNS = 640
 WINDOWS_CORE_WORK_SECTION = "Calculator core work commands"
-STARTUP_DIALOGS = {
-    "claude-code": (
-        (("choosethetextstyle",), "Claude Code default theme accepted"),
-        (("securitynotes:", "pressentertocontinue"), "Claude Code security notes acknowledged"),
-    ),
-    "codex": ((("trustthisfolder", "trustandcontinue"), "Codex project folder trusted"),),
-    "opencode": (),
-}
+CLAUDE_THEME_SELECTION = re.compile(
+    r"(?im)^ *[❯>] *(?:✔ *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
+)
 STARTUP_FAILURES = (
     (("selectloginmethod:",), "Claude Code requires login"),
     (("doyouwanttousethisapikey?",), "Claude Code API key confirmation"),
@@ -77,7 +77,11 @@ def _recorded_turn(chat: Path, prompt: str, reply: str) -> bool:
 def _last_reply(chat: Path, prompt: str) -> str:
     turn = chat.read_text(encoding="utf-8").rsplit("\n## Turn ", 1)[-1]
     user, _, reply = turn.partition("\n**Agent**: ")
-    return reply.strip() if f"\n**User**: {prompt}\n" in user + "\n" else ""
+    _, separator, captured = user.partition("\n**User**: ")
+    if not separator:
+        return ""
+    paste = re.fullmatch(r'\n*<pasted_content id="([\w-]+)">\n(.*)\n</pasted_content id="\1">\n*', captured, re.S)
+    return reply.strip() if (paste[2] if paste else captured) == prompt else ""
 
 
 def _opencode_turn_evidence(home: Path, session: str) -> dict:
@@ -131,11 +135,13 @@ def _composer(tool: str, text: str, shown: str) -> bool:
 
 def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_config: Path | None = None) -> bool:
     deadline = time.monotonic() + seconds
-    ready_since = None
+    composer_seen = False
     previous_move = ""
+    folder_selection = ""
+    folder_selected_since = 0.0
     previous_mcp_selection = ""
-    next_mcp_move = 0.0
-    mcp_move_attempts = 0
+    mcp_selected_since = 0.0
+    last_mcp_move = ""
     while time.monotonic() < deadline:
         screen.read()
         if getattr(screen, "exited", False):
@@ -144,6 +150,11 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
         shown = re.sub(r"\s+", "", frame.lower())
         trusted = codex_config is None or (codex_config.is_file() and
                                             "trusted_hash" in codex_config.read_text(encoding="utf-8"))
+        folder_dialog = tool.name == "codex" and "trustthisfolder" in shown and "trustandcontinue" in shown
+        if not folder_dialog:
+            folder_selection = ""
+        if "newmcpserverfoundinthisproject:" not in shown:
+            previous_mcp_selection = ""
         if tool.name == "claude-code" and "selectloginmethod:" in shown:
             return False
         if tool.name == "codex" and "trustallandcontinue" in shown:
@@ -155,69 +166,86 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
                 if option == "trustallandcontinue":
                     screen.send(ENTER)
                     answered.append("Codex project hooks trusted")
-                else:
+                elif previous_move != option:
                     screen.send(DOWN if option == "reviewhooks" else UP)
-            elif trusted:
-                ready_since = None
+                    previous_move = option
         elif tool.name == "claude-code" and "doyouwanttousethisapikey?" in shown:
-            if re.search(r"❯(?:\d+\.)?no\(recommended\)", shown):
-                screen.send(UP)
-            elif not re.search(r"❯(?:\d+\.)?yes", shown):
-                return False
-            screen.send(ENTER)
-            answered.append("Claude Code accepted CI API key")
+            action = "Claude Code accepted CI API key"
+            if action not in answered:
+                if re.search(r"[❯>](?:\d+\.)?yes", shown):
+                    screen.send(ENTER)
+                    answered.append(action)
+                elif previous_move != action and re.search(r"[❯>](?:\d+\.)?no\(recommended\)", shown):
+                    screen.send(UP)
+                    previous_move = action
         elif tool.name == "claude-code" and "yes,itrustthisfolder" in shown:
             # Windows can render the choice cursor as an ASCII chevron.
             selected = re.search(r"(?im)^ *[❯>] *(?:\d+\. *)?(no, exit|yes, i trust this folder) *$", frame)
-            if not selected:
-                return False
-            if selected[1].lower() == "no, exit":
-                if previous_move != shown:
+            action = "Claude Code project folder trusted"
+            if selected and action not in answered:
+                choice = selected[1].lower()
+                if choice == "yes, i trust this folder":
+                    screen.send(ENTER)
+                    answered.append(action)
+                elif previous_move != action and "no,exit" in shown:
                     yes_first = shown.find("yes,itrustthisfolder") < shown.find("no,exit")
                     screen.send(UP if yes_first else DOWN)
-                    previous_move = shown
-                time.sleep(POLL_S)
-                continue  # confirm only after the next frame shows the Yes row selected
-            screen.send(ENTER)
-            answered.append("Claude Code project folder trusted")
+                    previous_move = action
         elif tool.name == "claude-code" and "newmcpserverfoundinthisproject:" in shown:
             lines = [line.strip() for line in frame.splitlines()]
             questions = [line for line in lines if line.startswith(CLAUDE_MCP_QUESTION)]
             if questions != [f"{CLAUDE_MCP_QUESTION} slightly-parallel"]:
                 return False
+            choices = [line.lstrip("❯> ") for line in lines if line.lstrip("❯> ") in CLAUDE_MCP_CHOICES]
             selected = [line[1:].strip() for line in lines if line.startswith(("❯", ">"))]
-            if CLAUDE_MCP_ACCEPTED not in answered:
-                if selected == ["Use this MCP server"]:
+            choice = selected[0] if len(selected) == 1 and choices == list(CLAUDE_MCP_CHOICES) else ""
+            now = time.monotonic()
+            if choice != previous_mcp_selection:
+                mcp_selected_since = now
+                previous_mcp_selection = choice
+            # An early key can be dropped while Claude installs the dialog.
+            # Stability is required for each new row, without a retry.
+            if choice and now - mcp_selected_since >= CLAUDE_MCP_STABLE_S and CLAUDE_MCP_ACCEPTED not in answered:
+                if choice == CLAUDE_MCP_CHOICES[0]:
                     screen.send(ENTER)
                     answered.append(CLAUDE_MCP_ACCEPTED)
-                elif selected in (["Continue without using this MCP server"],
-                                  ["Use this and all future MCP servers in this project"]):
-                    now = time.monotonic()
-                    if previous_mcp_selection != selected[0]:
-                        previous_mcp_selection = selected[0]
-                        next_mcp_move = now
-                        mcp_move_attempts = 0
-                    # A key sent on the dialog's first paint can be ignored.
-                    # Give the selection time to repaint before trying it again.
-                    if now >= next_mcp_move and mcp_move_attempts < CLAUDE_MCP_MOVE_ATTEMPTS:
-                        screen.send(UP)
-                        next_mcp_move = time.monotonic() + CLAUDE_MCP_MOVE_RETRY_S
-                        mcp_move_attempts += 1
-        elif dialog := next((name for signature, name in STARTUP_DIALOGS[tool.name]
-                             if all(word in shown for word in signature)), None):
-            screen.send(ENTER)
-            answered.append(dialog)
+                elif choice in CLAUDE_MCP_CHOICES[1:] and choice != last_mcp_move:
+                    screen.send(UP)
+                    last_mcp_move = choice
+        elif folder_dialog:
+            selected = re.findall(r"(?m)^ *[›>❯] *(?:\d+\. *)?(trust and continue|back to agent command center) *$", frame.lower())
+            choice = selected[0] if len(selected) == 1 else ""
+            now = time.monotonic()
+            if choice != folder_selection:
+                folder_selection = choice
+                folder_selected_since = now
+            if choice and now - folder_selected_since >= CODEX_FOLDER_STABLE_S and "Codex project folder trusted" not in answered:
+                if choice == "trust and continue":
+                    screen.send(ENTER)
+                    answered.append("Codex project folder trusted")
+                elif previous_move != choice:
+                    screen.send(UP)
+                    previous_move = choice
+        elif tool.name == "claude-code" and "choosethetextstyle" in shown:
+            action = "Claude Code default theme accepted"
+            if action not in answered and CLAUDE_THEME_SELECTION.search(frame):
+                screen.send(ENTER)
+                answered.append(action)
+        elif tool.name == "claude-code" and "securitynotes:" in shown and "pressentertocontinue" in shown:
+            action = "Claude Code security notes acknowledged"
+            if action not in answered:
+                screen.send(ENTER)
+                answered.append(action)
         elif _composer(tool.name, frame, shown):
             # The composer can draw before a trust modal arrives. For a new
             # Codex home also require the CLI to have persisted hook trust.
             if trusted:
-                now = time.monotonic()
-                ready_since = now if ready_since is None else ready_since
-                if now - ready_since >= COMPOSER_SETTLE_S:
+                if composer_seen:
                     return True
+                composer_seen = True
                 time.sleep(POLL_S)
                 continue
-        ready_since = None
+        composer_seen = False
         time.sleep(POLL_S)
     return False
 
@@ -470,8 +498,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             "opencode": ["opencode"]}[tool.name]
     if chosen:
         args += ["--model", chosen]
-    wait_for_prompt = tool.name == "codex" and (WINDOWS or core)
-    if wait_for_prompt:
+    if tool.name == "codex":
         args += ["-c", "disable_paste_burst=true"]
     policy = None
     workspace_shell = WINDOWS and core and tool.name == "codex"
@@ -511,9 +538,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
 
     def type_prompt(text: str, turn: str) -> bool:
         screen.send(text)
-        if wait_for_prompt and not screen.wait_for(text, PROMPT_PAINT_TIMEOUT_S):
+        if not screen.wait_for(text, PROMPT_PAINT_TIMEOUT_S, tool=tool.name):
             screen.save_frame("prompt paint timed out")
-            return report.add(stage, f"{turn}: Codex did not display the prompt before Enter", False, _screen_tail(screen))
+            return report.add(stage, f"{turn}: {tool.name} did not display the prompt before Enter", False, _screen_tail(screen))
         screen.send(ENTER)
         return True
 
@@ -523,7 +550,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     try:
         answered: list[str] = []
         codex_config = space.home / ".codex" / "config.toml" if tool.name == "codex" else None
-        ready = _ready(screen, tool, seconds, answered, codex_config)
+        ready = _ready(screen, tool, min(seconds, STARTUP_TIMEOUT_S), answered, codex_config)
         report.notes[f"{stage} onboarding"] = answered
         if not ready:
             screen.save_frame("startup failed")

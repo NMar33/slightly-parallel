@@ -226,3 +226,73 @@ def test_wait_for_rendered_prompt_after_incremental_repaint(monkeypatch, tmp_pat
     instance.text = ""
     instance.read = lambda: instance.trace.feed("\x1b[1;4H hello")
     assert instance.wait_for("Say hello", 1)
+
+
+def test_sending_a_key_does_not_sleep_before_the_caller_can_observe_the_repaint(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    terminal = screen.Screen.__new__(screen.Screen)
+    terminal.text = terminal.history = ""
+    terminal.application_cursor = False
+    terminal.trace = None
+    written, sleeps = [], []
+    terminal._write = written.append
+    monkeypatch.setattr(screen.time, "sleep", sleeps.append)
+    terminal.send(screen.ENTER)
+    assert written == [screen.ENTER]
+    assert not sleeps
+
+
+@pytest.mark.parametrize(("complete", "previous_prompt", "split_sidebar"), [
+    (False, True, False), (True, False, False), (True, False, True),
+])
+def test_opencode_waits_for_wrapped_input_in_the_active_composer(monkeypatch, complete, previous_prompt, split_sidebar):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    # Four wrapped rows from the native OpenCode core trace, placed above the
+    # composer status. The transcript can contain the same earlier prompt.
+    rows = [
+        "#task sp-task-5669294b50b8. Call the Slightly Parallel write_entry tool once, with exactly this JSON argument:",
+        '{"lens": "task", "fields": {"title": "sp-task-5669294b50b8", "description": "Verify the disposable calculator',
+        'task is recorded.", "status": "agent", "tags": ["ag_followup"]}}. Do not call any other tool. Reply with only',
+        "the returned task ID.",
+    ]
+    history = "\n".join(rows) if previous_prompt else "Earlier output"
+    composer = [
+        f"  ┃  {rows[0]:<115}LSPs are disabled",
+        *(f"  ┃  {row}" for row in rows[1:] if complete),
+        f"  ┃  {'Build · GPT-6 Luna OpenAI':<115}sample:master",
+        "  ╹" + ("▀" * 113 + "    tmp/sample:master" if split_sidebar else "▀" * 155),
+        "  /tmp/sample   ctrl+p commands   • OpenCode 1.19.3",
+    ]
+    terminal = screen.Screen.__new__(screen.Screen)
+    terminal.trace = None
+    terminal.text = history + "\n\n" + "\n".join(composer)
+    terminal.read = lambda: None
+    monkeypatch.setattr(screen, "SCREEN_POLL_INTERVAL_S", 0)
+    assert terminal.wait_for(" ".join(rows), 0.02, tool="opencode") is complete
+
+
+@pytest.mark.parametrize(("active", "stale", "accepted"), [
+    (True, False, True), (True, True, False), (False, False, False),
+])
+def test_claude_accepts_only_a_new_paste_marker_in_the_composer(monkeypatch, active, stale, accepted):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import screen
+
+    separator = "─" * 80
+    paste = "❯ [Pasted text #1]"
+    terminal = screen.Screen.__new__(screen.Screen)
+    terminal.trace = None
+    terminal.history = ""
+    terminal.application_cursor = False
+    terminal._write = lambda _: None
+    terminal.text = f"{separator}\n{paste if stale else '❯'}\n{separator}\n  ⏸ manual mode on"
+    prompt = "The exact pasted message " * 60
+    terminal.send(prompt)
+    painted = f"{paste}\n{separator}\n{paste if active else '❯'}\n{separator}\n  ⏸ manual mode on"
+    terminal.read = lambda: setattr(terminal, "text", painted)
+    monkeypatch.setattr(screen, "SCREEN_POLL_INTERVAL_S", 0)
+    assert terminal.wait_for(prompt, 0.02, tool="claude-code") is accepted

@@ -168,12 +168,7 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             def prompt(text):
                 nonlocal chat
                 terminal.send(text)
-                # ConPTY writes a whole string in one call. Wait for the new
-                # input to reach the composer before pressing the submit key.
-                if cli == "codex" and os.name == "nt":
-                    assert terminal.wait_for(text, 8), (
-                        f"Codex did not display the prompt: {terminal.rendered}"
-                    )
+                assert terminal.wait_for(text, 8, tool=cli), f"{cli} did not display the prompt: {terminal.rendered}"
                 terminal.send(ENTER)
                 approved = False
 
@@ -200,7 +195,11 @@ def test_interactive_cli_captures_turns_and_board_commands(cli, monkeypatch, tmp
             verdicts[layer] = "pass"
             layer = "L3"
             marker = "sp-stub-task-skill" if cli == "opencode" else "sp-stub-task"
-            prompt(f"#task {plan.TITLE}. {marker}")
+            task = f"#task {plan.TITLE}. {marker}"
+            if cli in {"opencode", "claude-code"}:
+                repeats = 8 if cli == "opencode" else 28
+                task += " " + " ".join(f"Keep the captured prompt intact through wrap {index}." for index in range(repeats))
+            prompt(task)
             cards = get(space, "/api/tasks?project=cli")["tasks"]
             assert len(cards) == 1 and cards[0]["title"] == plan.TITLE and cards[0]["agent_id"] == chat.parent.name
             if cli == "opencode":

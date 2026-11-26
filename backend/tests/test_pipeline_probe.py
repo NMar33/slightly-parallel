@@ -274,3 +274,34 @@ def test_exact_listing_must_match_the_returned_dispatch_id(windows_workflow):
     api = FakeGitHub({"workflow_run_id": RUN_ID + 1}, [])
     with pytest.raises(pp.ProbeError, match="listed probe run 199 does not match dispatch 200"):
         pp.verify(api, PROBE)
+
+
+@pytest.mark.parametrize("workflow", ["agents", "ci", "weekly"])
+def test_live_and_test_workflows_default_to_read_only_repository_access(workflow):
+    import re
+
+    path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / f"{workflow}.yml"
+    policy = re.search(r"(?m)^permissions:\n((?:  [a-z-]+: [a-z-]+\n)+)", path.read_text(encoding="utf-8"))
+    assert policy and policy[1].strip() == "contents: read"
+
+
+def test_live_agent_checkout_does_not_leave_credentials_in_git():
+    import re
+
+    path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "agents.yml"
+    blocks = re.findall(r"(?m)^      - uses: actions/checkout@[^\n]+\n((?:        [^\n]+\n)+)", path.read_text(encoding="utf-8"))
+    assert blocks and all("          persist-credentials: false\n" in block for block in blocks)
+
+
+@pytest.mark.parametrize(("workflow", "job"), [
+    ("ci", "real-cli"), ("ci", "codex"),
+    ("weekly", "codex-latest"), ("weekly", "claude-latest"),
+])
+def test_stub_cli_jobs_discard_checkout_credentials(workflow, job):
+    import re
+
+    path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / f"{workflow}.yml"
+    body = re.search(rf"(?ms)^  {job}:\n(.*?)(?=^  [a-z-]+:\n|\Z)", path.read_text(encoding="utf-8"))
+    assert body
+    checkout = re.search(r"(?m)^      - uses: actions/checkout@[^\n]+\n((?:        [^\n]+\n)+)", body[1])
+    assert checkout and "          persist-credentials: false\n" in checkout[1]

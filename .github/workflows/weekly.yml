@@ -27,6 +27,9 @@ on:
       - backend/tests/test_real_cli.py
       - scripts/ci/stub_model.py
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
@@ -178,6 +181,8 @@ jobs:
           Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
         if: ${{ !inputs.expect_failure }}
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         if: ${{ !inputs.expect_failure }}
         with:
@@ -243,6 +248,8 @@ jobs:
           Write-Output SP_PIPELINE_UNREACHABLE
       - uses: actions/checkout@v7
         if: ${{ !inputs.expect_failure }}
+        with:
+          persist-credentials: false
       - name: Git identity (tests make commits in temporary repositories)
         if: ${{ !inputs.expect_failure }}
         run: git config --global user.email ci@example.com && git config --global user.name CI

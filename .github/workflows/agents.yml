@@ -38,6 +38,9 @@ concurrency:
   group: agents-${{ github.ref }}-${{ inputs.expect_failure && format('probe-{0}', inputs.probe_id) || github.event_name }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
@@ -227,6 +230,7 @@ jobs:
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok) }}
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Git identity (the test makes commits in its sample projects)
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok) }}
         run: git config --global user.email ci@example.com && git config --global user.name CI
