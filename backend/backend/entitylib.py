@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException
 
-from . import entry_fields
+from . import entry_fields, mcp_args
 from .actors import refuse_agent, written_by_agent
 from .answers import create_answer
 from .csvio import append_if_absent
@@ -23,8 +23,7 @@ from .docs_md import build_detail, read_detail, resolve_under, safe_ref_part
 from .entities import Entity
 from .file_entries import assessment_summary, prepare_file_entry
 from .file_safety import atomic_write
-from .refusals import Reasons
-from .vocab import HEADLINE_REQUIRED, check_enum_fields, enum_problems  # noqa: F401
+from .vocab import HEADLINE_REQUIRED, check_enum_fields
 
 # Writes that are the operator's alone. Sprints are planned by a person.
 OPERATOR_ONLY: dict[str, str] = {
@@ -327,6 +326,14 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="send the body as a JSON object")
     refuse_agent_write(ent, body)
+    if written_by_agent(body):
+        # Identity the lens has no column for was kept in the detail file as
+        # if it were the entry's (tk_0b8a32d2): the writer is agent_id/actor,
+        # and the translator stamps created_date/created_time on every create.
+        stray = sorted(k for k in body if k in mcp_args.STAMPED and k not in ent.columns
+                       and k not in ("agent_id", "actor", "created_date", "created_time"))
+        if stray:
+            raise HTTPException(status_code=422, detail=mcp_args.stamped_refusal(stray))
     if (reason := AGENT_CREATE_REFUSED.get(ent.name)) and written_by_agent(body):
         refuse_agent(reason)
     # Agents write what the entry holds by name (entry_fields.py); the names
@@ -354,16 +361,10 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     # Python text ("['a value']") in every lens (round 5, agent-shaped
     # writes); the task update refuses it the same way. After
     # PRE_CREATE, which reads a list where one is meant (a task's projects).
-    # Every such column and every value outside its vocabulary, at once
-    # (tk_90c1ba5f).
-    why = Reasons()
     for col in ent.columns:
         if col not in _SLOTS and isinstance(body.get(col), (list, dict)):
-            why.add(f"{col} is text, not a list or an object", code="shape", field=col)
-    for field, line in enum_problems(ent.name, body):
-        if not any(r.field == field for r in why.items):
-            why.add(line, code="vocabulary", field=field)
-    why.raise_if_any()
+            raise HTTPException(status_code=422, detail=f"{col} is text, not a list or an object")
+    check_enum_fields(ent.name, body)
 
     check = CONTRACT_CHECKS.get(ent.name)
     warnings = check(body) if check else []

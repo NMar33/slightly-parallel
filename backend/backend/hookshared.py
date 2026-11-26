@@ -347,9 +347,8 @@ def brace_refusal_member(agent: str, code: str, members: list[str]) -> str:
 
 def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[str],
                    codes: list[str], aliases: dict[str, str],
-                   lanes_of: Any) -> dict[str, Any]:
-    """``{"project", "lane", "refusal", "ask", "reasons"}`` for the groups of
-    one command.
+                   lanes_of: Any) -> dict[str, str]:
+    """``{"project", "lane", "refusal"}`` for the groups of one command.
 
     Each group, in order: ``{project:x}`` / ``{lane:x}``; an exact project
     code or alias (any case) — a member's, else refused; an exact live lane
@@ -365,22 +364,18 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
     unless another group names a project), and ``ask`` holds what the
     agent asks the operator afterwards, the unclear groups joined
     (tk_970d6b2d: a refused #now card was lost). The target is the project
-    named, else ``home``. ``project`` is "" when none is named; ``ask`` one
-    line, or "". Every refusal is named at once (tk_90c1ba5f): ``reasons``
-    holds each line and ``refusal`` joins them with "; " ("" when none). A
-    project the agent is not a member of is said alone: no access ends the
-    answer."""
+    named, else ``home``. ``project`` is "" when none is named; ``refusal``
+    and ``ask`` one line each, or ""."""
     import difflib
 
     by_name: dict[str, str] = {c.lower(): c for c in codes}
     for alias, code in aliases.items():
         by_name.setdefault(alias.lower(), code)
-    out: dict[str, Any] = {"project": "", "lane": "", "refusal": "", "ask": "", "reasons": []}
+    out = {"project": "", "lane": "", "refusal": "", "ask": ""}
     asks: list[str] = []
-    refused: list[str] = []
 
-    def refuse(lines: list[str]) -> dict[str, Any]:
-        return {"project": "", "lane": "", "refusal": "; ".join(lines), "ask": "", "reasons": lines}
+    def refuse(line: str) -> dict[str, str]:
+        return {"project": "", "lane": "", "refusal": line, "ask": ""}
 
     def as_project(name: str) -> str:
         return by_name.get(name.lower(), "")
@@ -414,14 +409,12 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
             name = g[len(PROJECT_PREFIX):].strip()
             code = as_project(name)
             if not code:
-                refused.append(f"{{{g}}}: {name} is not a project of this agent")
-                continue
+                return refuse(f"{{{g}}}: {name} is not a project of this agent")
             projects.append(code)
         elif low.startswith(LANE_PREFIX):
             name = g[len(LANE_PREFIX):].strip()
             if not name:
-                refused.append(f"{{{g}}} names no lane")
-                continue
+                return refuse(f"{{{g}}} names no lane")
             lanes.append(live.get(name.lower(), name))
         elif as_project(g):
             spelt = both(g) or either.get(low, "")
@@ -436,8 +429,7 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
             best = max(by_name, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
             if best and difflib.SequenceMatcher(None, low, best).ratio() >= NEAR_MISS:
                 hint = {**{c.lower(): c for c in codes}, **{a.lower(): a for a in aliases}}.get(best, best)
-                refused.append(f"{{{g}}} is not a project of this agent — did you mean {hint}?")
-                continue
+                return refuse(f"{{{g}}} is not a project of this agent — did you mean {hint}?")
             # A near miss of a live lane is a typo, not a new lane ({bug} for Bugs).
             close = [n for n in live if not _lane_variant(low, n)]
             lane = max(close, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
@@ -447,14 +439,11 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
                 continue
             lanes.append(g)
     if len(set(projects)) > 1:
-        refused.append(f"two projects in braces ({', '.join(dict.fromkeys(projects))}): name one")
-    elif projects and projects[0] not in members:
-        # No access is said alone, whatever else the braces hold.
-        return refuse([brace_refusal_member(agent, projects[0], members)])
+        return refuse(f"two projects in braces ({', '.join(dict.fromkeys(projects))}): name one")
     if len({x.lower() for x in lanes}) > 1:
-        refused.append(f"two lanes in braces ({', '.join(dict.fromkeys(lanes))}): name one")
-    if refused:
-        return refuse(refused)
+        return refuse(f"two lanes in braces ({', '.join(dict.fromkeys(lanes))}): name one")
+    if projects and projects[0] not in members:
+        return refuse(brace_refusal_member(agent, projects[0], members))
     out["project"] = projects[0] if projects else ""
     # An ask sends the card to the default lane, as the ask says: a lane
     # another group named is not kept beside it (the operator answers).

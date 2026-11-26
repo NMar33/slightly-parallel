@@ -106,15 +106,3 @@ def test_a_hash_in_no_repository_of_the_task_is_refused(world) -> None:
     assert r.status_code == 422 and "is not a commit of the task's repositories" in r.json()["detail"]
     assert (root / "tasks.csv").read_bytes() == before
     assert not (root / taskwork.LINKS_FILE).exists() or loose[:7] not in (root / taskwork.LINKS_FILE).read_text()
-
-
-
-def test_every_bad_hash_is_named_by_its_own_fault(world) -> None:
-    # tk_90c1ba5f: one that is no hash and one no repository holds, together.
-    c, root, _repo_a, _signed, _loose = world
-    before = (root / "tasks.csv").read_bytes()
-    r = c.post(f"/api/tasks/{TASK}/commits", json={"shas": ["zz", "abcdef1"]})
-    assert r.status_code == 422
-    assert r.json()["detail"] == ("not a commit hash: zz\n"
-                                  f"abcdef1 is not a commit of the task's repositories (the last {gitwork.HORIZON_DAYS} days)")
-    assert (root / "tasks.csv").read_bytes() == before

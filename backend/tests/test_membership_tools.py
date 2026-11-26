@@ -116,10 +116,13 @@ def test_a_non_member_project_is_refused_and_writes_nothing(world, tool: str) ->
     assert tree(root) == before
 
 
-def test_fields_project_stays_overwritten(world) -> None:
-    tr, _c, _root = world
-    got = tr.call("write_entry", {"lens": "decision", "fields": {**DECISION["fields"], "project": "GAMMA"}})
-    assert got["metadata"]["project"] == "ALPHA" and got["where"] == f"{got['metadata']['id']} → ALPHA"
+def test_a_fields_project_is_refused_with_the_shape(world) -> None:
+    """It used to be written over by the home without a word (tk_0b8a32d2)."""
+    tr, _c, root = world
+    before = tree(root)
+    with pytest.raises(mcp.ApiError, match=r'put project next to lens.*"project":"GAMMA"'):
+        tr.call("write_entry", {"lens": "decision", "fields": {**DECISION["fields"], "project": "GAMMA"}})
+    assert tree(root) == before
 
 
 def test_a_task_says_its_project(world) -> None:
@@ -138,7 +141,7 @@ def test_a_project_of_the_wrong_shape_dies_in_the_translator(world) -> None:
 
 def test_standups_stay_home(world) -> None:
     tr, _c, _root = world
-    tr.call("standup_material", {"date": "2611-19", "claim": True, "project": "BETA"})
+    tr.call("standup_material", {"date": "2611-19", "claim": True})
     claim = next(b for m, p, b in tr.api.calls if p == "/api/standups/claim")
     assert claim and claim["project"] == "ALPHA"
 

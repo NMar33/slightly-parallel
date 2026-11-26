@@ -51,7 +51,6 @@ from .server_address import DEFAULT_PORT
 from . import __version__, app_settings, backup as backup_engine, logbook, memberships
 from .entitylib import project_codes
 from .csvio import DamagedFile
-from .refusals import Reasons, Refused, refused_response
 from .config import Settings, lan_refusal
 from .db import FIXTURES, ViewStore
 from .routers import (
@@ -661,62 +660,47 @@ PROJECT_SHAPE = "project is one project code, as text"
 PROJECTS_SHAPE = "projects is project codes: comma-separated text or a list of texts"
 
 
-def membership_refusal(store: ViewStore, path: str, data: Any, actor: str) -> Reasons:
+def membership_refusal(store: ViewStore, path: str, data: Any, actor: str) -> tuple[int, str] | None:
     """Why an agent's write may not go where it names (tk_d1d25a4d step 3,
-    note nt_258a7ed7 §2): every reason, or none.
+    note nt_258a7ed7 §2): ``(status, line)``, or None.
 
     A create's ``project`` and every code in its ``projects`` must be the
     agent's member projects (memberships.may_write); a write on a task by
     its id must be on a task of a member project (the operator's answer 1,
     dc_f59e2918). Writes on other rows by id are checked in their libraries
-    (memberships.may_write_row).
-
-    Every code and every row the agent is not a member of is named in one
-    answer (tk_90c1ba5f), and no access ends it: the route's own checks are
-    not run. A body of the wrong shape is the only reason; so is an agent
-    Slightly Parallel has not recorded (the same line for every code)."""
-    out = Reasons()
+    (memberships.may_write_row)."""
     if not isinstance(data, dict):
-        return out
+        return None
     codes: list[str] = []
     project = data.get("project")
     if project not in (None, ""):
         if not isinstance(project, str):
-            return out.add(PROJECT_SHAPE, code="shape", field="project")
+            return 422, PROJECT_SHAPE
         codes.append(project.strip())
     raw = data.get("projects")
     if raw not in (None, ""):
         if not (isinstance(raw, str) or (isinstance(raw, list) and all(isinstance(x, str) for x in raw))):
-            return out.add(PROJECTS_SHAPE, code="shape", field="projects")
+            return 422, PROJECTS_SHAPE
         codes += [c for c in project_codes(raw) if c not in codes]
-
-    def deny(ok: bool, line: str) -> bool:
-        """Add a refusal line once; True when nothing more is to be said
-        (the agent is not recorded at all)."""
-        if ok:
-            return False
-        unindexed = line == memberships.UNINDEXED.format(agent=actor)
-        if unindexed:
-            out.items.clear()
-        if line not in out.lines():
-            out.add(line, status=403, code="unindexed" if unindexed else "not_member")
-        return unindexed
-
     for code in codes:
-        if deny(*memberships.may_write(store, actor, code)):
-            return out
+        ok, line = memberships.may_write(store, actor, code)
+        if not ok:
+            return 403, line
     row = row_of_write(store, path)
     if row is not None and closed_here(store, actor, path):
-        return out
+        return None
     for group in (row[0] if row is not None else []):
-        if deny(*memberships.may_write_row(store, actor, group[0], row[1] if row else "", also=group[1:])):
-            return out
+        ok, line = memberships.may_write_row(store, actor, group[0], row[1] if row else "", also=group[1:])
+        if not ok:
+            return 403, line
     if _LINK_CREATE.fullmatch(path) and isinstance(data.get("to"), str):
         # A link joins two tasks: the other end is checked as the delete checks both.
         other = _task_project(store, data["to"].strip())
         if other is not None:
-            deny(*memberships.may_write_row(store, actor, other[0], "task", also=other[1:]))
-    return out
+            ok, line = memberships.may_write_row(store, actor, other[0], "task", also=other[1:])
+            if not ok:
+                return 403, line
+    return None
 
 
 _LINK_CREATE = re.compile(r"/api/tasks/[^/]+/link")
@@ -785,6 +769,15 @@ class AgentsViaMcp:
         except (ValueError, UnicodeDecodeError):
             data = {}
         actor = deps.identity_of(data)
+        if isinstance(data, dict):
+            claims = {str(data.get(k) or "").strip() for k in ("actor", "agent_id")}
+            agents = sorted(c for c in claims if deps.is_agent(c))
+            if len(agents) > 1:
+                # Two agents named as the writer: the actor used to win in
+                # silence (tk_0b8a32d2). One writer, one name.
+                await JSONResponse({"detail": f"actor and agent_id name different agents ({', '.join(agents)}): "
+                                              "send one of them"}, status_code=422)(scope, replay, send)
+                return
         if via_mcp:
             # The MCP translator stamps the agent on every write. The mark
             # with no agent is a hand-made request: anyone can send the
@@ -811,8 +804,8 @@ class AgentsViaMcp:
             # Every agent writer, through the MCP or (agents.mcp_only off)
             # over plain HTTP: the projects it names must be its own.
             refused = membership_refusal(self.app_ref.state.store, path, data, actor)
-            if refused:
-                await refused.as_response()(scope, replay, send)
+            if refused is not None:
+                await JSONResponse({"detail": refused[1]}, status_code=refused[0])(scope, replay, send)
                 return
         await self.app(scope, replay, send)
 
@@ -912,10 +905,7 @@ def create_app(
     # missing (nowlib.stamp_starts); never on the shipped fixtures.
     if root.resolve() != FIXTURES.resolve():
         from .nowlib import stamp_starts
-        try:
-            stamp_starts(root)
-        except OSError as exc:
-            log.warning("command since-stamps not made at start: %s", exc)
+        stamp_starts(root)
     # Publish cards whose task the server used to guess at every read: the
     # sound guesses frozen into stored links once (publishlib.migrate).
     if root.resolve() != FIXTURES.resolve():
@@ -1100,12 +1090,6 @@ def create_app(
     def _damaged(request: Request, exc: DamagedFile) -> JSONResponse:
         log.warning("refused: %s", exc, extra={"method": request.method, "path": request.url.path, "status": 409})
         return JSONResponse(status_code=409, content={"detail": str(exc)})
-
-    @app.exception_handler(Refused)
-    def _refused(request: Request, exc: Refused) -> JSONResponse:
-        """Every reason of a refusal (refusals.py): ``detail`` as always, plus
-        ``reasons``, one object each."""
-        return refused_response(exc)
 
     # The disk or the folder refuses a write: what to do, not an error id.
     # Atomic writes leave the old file as it was.

@@ -153,7 +153,7 @@ def test_the_whole_conversation(mcp) -> None:
 
     # tasks default to the session's project
     t = client.request("tools/call", {"name": "write_entry", "arguments": {
-        "lens": "task", "l1": "board item",
+        "lens": "task",
         "fields": {"title": "board item", "tags": "ag_idea"},
     }})
     assert t["result"]["isError"] is False
@@ -224,7 +224,7 @@ def test_no_breadcrumb_means_a_clear_refusal(live_api, tmp_path) -> None:
         client.request("initialize", {"protocolVersion": "2025-06-18",
                                       "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})
         reply = client.request("tools/call", {"name": "write_entry", "arguments": {
-            "lens": "note", "l1": "orphan", "fields": {"title": "orphan"},
+            "lens": "note", "fields": {"title": "orphan"},
         }})
         assert reply["result"]["isError"] is True
         assert "hook" in _text(reply)            # the message says what to fix

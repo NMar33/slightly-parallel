@@ -11,6 +11,21 @@ from pathlib import Path
 from uuid import uuid4
 
 
+def _load_mcp_args():
+    """The product's table of MCP tool arguments (backend/backend/mcp_args.py),
+    loaded by path: the guard's allowlist is the product's, never a copy."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[2] / "backend" / "backend" / "mcp_args.py"
+    spec = importlib.util.spec_from_file_location("sp_mcp_args", path)
+    assert spec is not None and spec.loader is not None, path
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+mcp_args = _load_mcp_args()
+
+
 SCAN_SUMMARY = "The calculator now subtracts and has tests for addition and subtraction."
 SCAN_GROUPS = ["does", "owes", "runs", "stores", "talks", "built with", "faces", "holds"]
 RULE_TEXT = "Keep calc.py standalone."
@@ -85,6 +100,15 @@ def requests_for_scan():
     ]
 
 
+def not_taken(name, args):
+    """The top-level arguments the product's tool does not take (mcp_args):
+    refused by name before the exact comparison with the fixture."""
+    if not isinstance(args, dict):
+        return []
+    takes = mcp_args.accepts(name)
+    return sorted(k for k in args if k not in takes)
+
+
 def _argument_mismatch(wanted, actual, path="arguments"):
     """Explain a mismatch using fixture field names, never model text."""
     if type(wanted) is not type(actual):
@@ -151,7 +175,10 @@ class Guard:
                 wanted = self._arguments(template, policy.get("rule"))
             except (KeyError, ValueError):
                 wanted = None
-            if name == expected and wanted is not None and json.dumps(args, sort_keys=True) == json.dumps(wanted, sort_keys=True):
+            extra = not_taken(name, args)
+            if extra:
+                reason = f"{name} takes no argument {', '.join(extra)}"
+            elif name == expected and wanted is not None and json.dumps(args, sort_keys=True) == json.dumps(wanted, sort_keys=True):
                 self.index += 1
                 reply = self.handle(message)
                 result = (reply or {}).get("result") or {}

@@ -62,6 +62,10 @@ def send(request: Request, body: dict = Body(...)) -> dict[str, Any]:
     from .. import memberships
     store = request.app.state.store
     who = memberships.agent_view(store, to if sender == msgledger.OPERATOR else sender)
+    if sender != msgledger.OPERATOR and who is None:
+        # A sender Slightly Parallel has no chat of was filed as written
+        # (tk_0b8a32d2); every other agent write refuses it the same way.
+        raise HTTPException(status_code=403, detail=memberships.UNINDEXED.format(agent=sender))
     project = who.home if who is not None and who.home else str(target.get("project") or "")
     if sender != msgledger.OPERATOR and (who is None or not who.home):
         own = msgdeliver.chat_meta(root, sender)
