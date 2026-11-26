@@ -31,7 +31,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from . import __version__
+from . import __version__, mcp_args
 # This process's parents: the capture hook reads them the same way, and the
 # two find each other by the tool process they share (hookshared.py).
 from .hookshared import ancestors
@@ -225,6 +225,38 @@ PROJECT_ARG = ("one of this chat's projects (whoami's members) when the entry be
 REPEAT_WHERE = " The answer's `where` says where it went: repeat it in your reply."
 
 
+#: The ``project`` argument of the tools that read one project.
+PROJECT_READ = "a project code; leave it out for this chat's project"
+#: Each project tool's ``project``, where it says more than PROJECT_READ.
+_PROJECT_ARG_OF = {
+    **dict.fromkeys(("write_entry", "core_new", "note_write", "map_write", "architecture_page",
+                     "scan_material", "map_material", "architecture_material"), PROJECT_ARG),
+    "usage": "a project code, or all",
+}
+
+
+def _with_project(defs: list[dict]) -> list[dict]:
+    """The tools of mcp_args.PROJECT_TOOLS get their top-level ``project``
+    from the table, and say where it goes; no other tool has one."""
+    for tool in defs:
+        props = tool["inputSchema"].setdefault("properties", {})
+        props.pop("project", None)
+        if tool["name"] in mcp_args.PROJECT_TOOLS:
+            props["project"] = {"type": "string", "description": (
+                _PROJECT_ARG_OF.get(tool["name"], PROJECT_READ) + "; " + mcp_args.PROJECT_TOP)}
+    return defs
+
+
+def _read_project(args: dict) -> str:
+    """The ``project`` a reading tool names, or "" for this chat's own."""
+    raw = args.get("project")
+    if raw is None or raw == "":
+        return ""
+    if not isinstance(raw, str):
+        raise ApiError("project is one project code, as text")
+    return raw.strip()
+
+
 def _target(args: dict, who: dict) -> str:
     """The project a create goes to: the one named, else the chat's home.
     The server checks that it is one of the chat's projects."""
@@ -234,6 +266,77 @@ def _target(args: dict, who: dict) -> str:
     if not isinstance(raw, str):
         raise ApiError("project is one project code, as text")
     return raw.strip()
+
+
+def _only_its_arguments(name: str, args: dict) -> None:
+    """A top-level argument the tool does not take is refused in one line
+    with the ones it takes (mcp_args.TOOL_ARGS), never dropped: a project
+    sent to a tool that has none was read as this chat's project."""
+    if name not in mcp_args.TOOL_ARGS:
+        return  # the unknown tool's own refusal says so
+    takes = mcp_args.accepts(name)
+    # A null is no value: some clients echo every optional key as null.
+    extra = sorted(k for k in args if k not in takes and args[k] is not None)
+    if not extra:
+        _nested_identity(name, args)
+        return
+    stamped = [k for k in extra if k in mcp_args.STAMPED]
+    if stamped:
+        raise ApiError(mcp_args.stamped_refusal(stamped))
+    listed = ", ".join(sorted(takes)) or "nothing"
+    if name == "project" and extra == ["code"]:
+        # Its old name for the same value (tk_0b8a32d2): one name everywhere.
+        raise ApiError(f'project takes the code as project, not code: {{"project":"{args["code"]}"}}')
+    if extra == ["project"]:
+        raise ApiError(f"{name} takes no project: it works in this chat's project; it takes: {listed}")
+    raise ApiError(f"{name} takes no argument {', '.join(extra)} — it takes: {listed}")
+
+
+def _nested_identity(name: str, args: dict) -> None:
+    """Identity inside an object a tool carries (an evidence item, a map row,
+    a way in, an image …) is refused by name, as at the top level: it was
+    dropped there without a word (tk_0b8a32d2). ``fields`` and ``changes``
+    have their own refusals (_not_stamped, _one_project). The one reading
+    is mcp_args.nested_identity; the server's gate asks it too."""
+    skip = ("fields", "changes") if name in ("write_entry", "update_entry") else ()
+    hit = mcp_args.nested_identity(args, skip)
+    if hit is None:
+        return
+    key, where = hit
+    if key != "project":
+        raise ApiError(f"{mcp_args.stamped_refusal([key])} (inside {where})")
+    if name in mcp_args.PROJECT_TOOLS:
+        raise ApiError(f"put project next to the other arguments, not inside {where}")
+    raise ApiError(f"{name} takes no project, inside {where} either")
+
+
+def _not_stamped(given: dict) -> None:
+    """Identity inside ``fields`` or ``changes`` is refused: it was written
+    over in silence (tk_0b8a32d2)."""
+    stamped = sorted(k for k in given if k in mcp_args.STAMPED)
+    if stamped:
+        raise ApiError(mcp_args.stamped_refusal(stamped))
+
+
+def _one_project(lens: str, args: dict) -> dict:
+    """write_entry's ``fields`` without a project: the project has one place,
+    next to ``lens`` (tk_0b8a32d2). A project only inside ``fields`` is refused
+    with that shape, two different ones with both; the same one twice is
+    taken once. The stamp used to write over a ``fields.project`` without a
+    word, so the entry landed in a project the call did not name."""
+    fields = dict(args.get("fields") or {})
+    _not_stamped(fields)
+    inner = fields.pop("project", None)
+    if inner is None or inner == "":
+        return fields
+    top = args.get("project")
+    if top is None or top == "":
+        raise ApiError("put project next to lens, not inside fields: "
+                       + mcp_args.project_shape(lens, str(inner)))
+    if not isinstance(inner, str) or not isinstance(top, str) or inner.strip() != top.strip():
+        raise ApiError(f"project is given twice and differs: {top!r} next to lens, {inner!r} inside fields; "
+                       "send it once, next to lens: " + mcp_args.project_shape(lens, str(top)))
+    return fields
 
 
 def where_of(result: Any, project: str) -> str:
@@ -410,21 +513,19 @@ class Translator:
                          if l["mutable"] and l.get("agent_update", l.get("agent_write", True)))
         task_status = self.vocab.get("task", {}).get("status", [])
         evidence_max = ((self.schema or {}).get("limits") or {}).get("evidence_items", 8)
-        return [
+        return _with_project([
             {"name": "write_entry",
              "description": (
                  "Create one Slightly Parallel entry. Put everything in `fields`, by name: "
                  "what the entry holds and the columns of its lens. Identity "
-                 "(project, agent id, date, time) is stamped from this session; "
+                 "(agent id, date, time) is stamped from this session; "
                  "do not send it. An unknown field is refused by name. The same "
-                 "entry written twice is one entry. `project` (not in `fields`) names another of "
-                 "this chat's projects. What each lens holds: "
+                 "entry written twice is one entry. " + mcp_args.PROJECT_PLACE + " What each lens holds: "
                  + self._lens_digest() + " The rest: sp://schema." + REPEAT_WHERE),
              "inputSchema": {
                  "type": "object",
                  "properties": {
                      "lens": {"type": "string", "enum": lens_names},
-                     "project": {"type": "string", "description": PROJECT_ARG},
                      "fields": {"type": "object",
                                 "description": "the entry, by name (see the description and sp://schema)"},
                  },
@@ -449,7 +550,6 @@ class Translator:
              "inputSchema": {
                  "type": "object",
                  "properties": {
-                     "project": {"type": "string"},
                      "status": {"type": "string", "enum": task_status},
                  }}},
             {"name": "task_story",
@@ -581,7 +681,7 @@ class Translator:
                  "The project's cores (Architecture › cores): id, name, type, reason, tracking, "
                  "the latest note. Read it before core_note, core_attach and core_off to choose "
                  "the matching core; if two match, ask the operator to choose by number."),
-             "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}}},
+             "inputSchema": {"type": "object", "properties": {}}},
             {"name": "pins",
              "description": (
                  "The messages the operator marked, each whole, newest first: `kind` pin (default; "
@@ -593,7 +693,7 @@ class Translator:
              "inputSchema": {"type": "object", "properties": {
                  "kind": {"type": "string", "enum": ["pin", "carry", "fork"]},
                  "scope": {"type": "string", "enum": ["chat", "project"]},
-                 "q": {"type": "string"}, "project": {"type": "string"}}}},
+                 "q": {"type": "string"}}}},
             {"name": "carry_brief",
              "description": (
                  "After #carry-brief (the hook's notice names the message): write the brief of that "
@@ -618,7 +718,6 @@ class Translator:
              "inputSchema": {
                  "type": "object",
                  "properties": {
-                     "project": {"type": "string", "description": PROJECT_ARG},
                      "name": {"type": "string"}, "type": {"type": "string"},
                      "reason": {"type": "string"}, "text": {"type": "string"},
                      "comment": {"type": "string", "description": "your one line under the operator's text"},
@@ -674,7 +773,7 @@ class Translator:
                  "the current page with the claims to check again, and the instructions "
                  "with the layout. Then architecture_page. `project`: another of this chat's "
                  "projects; the answer's folder_warning says when its folder is not where you work."),
-             "inputSchema": {"type": "object", "properties": {"project": {"type": "string", "description": PROJECT_ARG},}}},
+             "inputSchema": {"type": "object", "properties": {}}},
             {"name": "map_material",
              "description": (
                  "#architecture found the map out of date (or the operator typed #map): what the map of the program is "
@@ -683,7 +782,7 @@ class Translator:
                  "current map with what is wrong with it, the kinds, verbs and "
                  "templates, and the instructions. Then map_write. `project`: another of this chat's "
                  "projects; the answer's folder_warning says when its folder is not where you work."),
-             "inputSchema": {"type": "object", "properties": {"project": {"type": "string", "description": PROJECT_ARG},}}},
+             "inputSchema": {"type": "object", "properties": {}}},
             {"name": "map_write",
              "description": (
                  "Write the next version of the map: one object {template, rows, "
@@ -691,7 +790,6 @@ class Translator:
                  "carries warnings (a template kind not answered, a path not found, a "
                  "relation naming no row): fix and write again." + REPEAT_WHERE),
              "inputSchema": {"type": "object", "properties": {
-                 "project": {"type": "string", "description": PROJECT_ARG},
                  "map": {"type": "object", "description": "{template, rows[], relations[], notes{}}"},
                  "note": {"type": "string", "description": "one line: what this version changed"}},
                  "required": ["map"]}},
@@ -702,7 +800,6 @@ class Translator:
                  "`where:` and `seen:`. The answer carries warnings (paths not found, "
                  "items that do not say how you know): fix and write again." + REPEAT_WHERE),
              "inputSchema": {"type": "object", "properties": {
-                 "project": {"type": "string", "description": PROJECT_ARG},
                  "text": {"type": "string", "description": "the whole page, markdown"},
                  "note": {"type": "string", "description": "one line: what this version changed"}},
                  "required": ["text"]}},
@@ -717,7 +814,7 @@ class Translator:
                  "and its architecture form. Then write_entry, three times (with the same "
                  "`project` when you name one). The answer's folder_warning says when the "
                  "project's folder is not where you work."),
-             "inputSchema": {"type": "object", "properties": {"project": {"type": "string", "description": PROJECT_ARG},}}},
+             "inputSchema": {"type": "object", "properties": {}}},
             {"name": "standup_material",
              "description": (
                  "The project's standup for one day (default: yesterday): "
@@ -828,7 +925,6 @@ class Translator:
                  "a new topic, a new version of the record of the topic they chose, or nothing yet "
                  "(pending: entrypoint_ask first) — with the record as it is and what to write."),
              "inputSchema": {"type": "object", "properties": {
-                 "project": {"type": "string"},
                  "id": {"type": "string", "description": "ep_… from the #entrypoint notice"}}}},
             {"name": "entrypoint_stop",
              "description": (
@@ -1091,7 +1187,7 @@ class Translator:
                              "required": ["q"]}},
             {"name": "project",
              "description": "One project's bundle: summary, decisions, activity, agents.",
-             "inputSchema": {"type": "object", "properties": {"code": {"type": "string"}}}},
+             "inputSchema": {"type": "object", "properties": {}}},
             {"name": "doctor",
              "description": "Data-integrity report over the whole data root — run when something looks wrong.",
              "inputSchema": {"type": "object", "properties": {}}},
@@ -1109,7 +1205,6 @@ class Translator:
                  "of the Usage page for `project` (this chat's project, or all) over `range` (today, "
                  "7d or 30d). Reads only."),
              "inputSchema": {"type": "object", "properties": {
-                 "project": {"type": "string", "description": "a project code, or all"},
                  "range": {"type": "string", "enum": ["today", "7d", "30d"]}}}},
             {"name": "usage_prices_material",
              "description": ("Only after the operator's #usage-price: the models the chats used, the API prices "
@@ -1138,7 +1233,6 @@ class Translator:
                  "`id` writes the next version of a note (any chat of the project); `base` is the "
                  "version you read. Then say one line in the chat and the note's id." + REPEAT_WHERE),
              "inputSchema": {"type": "object", "properties": {
-                 "project": {"type": "string", "description": PROJECT_ARG},
                  "text": {"type": "string", "description": "the markdown, first line `# Title`"},
                  "kind": {"type": "string", "enum": ["context", "paste", "review", "plan", "report", "actions"],
                           "description": "context: to know when coming back; paste: a text for another chat or "
@@ -1169,7 +1263,7 @@ class Translator:
                  "ticked or not, each choice's answer, plus `comments` on the note and its items. "
                  "A comment carries the original item label, section and note version. Reads only."),
              "inputSchema": {"type": "object", "properties": {
-                 "id": {"type": "string"}, "project": {"type": "string"}, "task_id": {"type": "string"}}}},
+                 "id": {"type": "string"}, "task_id": {"type": "string"}}}},
             {"name": "message",
              "description": (
                  "Send a message to another chat — an agent, by its agent_id (cc-…, codex-…). Loaded Codex threads receive a wake to read messages. "
@@ -1190,10 +1284,11 @@ class Translator:
                  "message {to: from_agent, text, reply_to: id}."),
              "inputSchema": {"type": "object", "properties": {
                  "recent": {"type": "integer", "description": "how many read messages to show after the unread (default 10)"}}}},
-        ]
+        ])
 
     def call(self, name: str, args: dict) -> Any:
         self.ensure()
+        _only_its_arguments(name, args)
         if name == "interpret":
             lens = str(args.get("lens") or "")
             base = {"vision": "visions", "rule": "rules", "problem": "problems", "entrypoint": "entrypoints"}.get(lens)
@@ -1234,8 +1329,9 @@ class Translator:
                 raise ApiError(f"unknown lens {lens!r} — one of: {', '.join(allowed)}")
             if args.get("fields") is not None and not isinstance(args.get("fields"), dict):
                 raise ApiError("fields is an object: the entry's fields by name")
+            fields = _one_project(lens, args)
             # Identity last, over anything of the same name in `fields`.
-            payload = {**(args.get("fields") or {}), **self._stamp(args)}
+            payload = {**fields, **self._stamp(args)}
             # Fields by name only: the numbered storage slots (l1…l4) are not
             # a way in. A name the lens lacks is refused, never routed around.
             self._check_names(lens, spec, payload)
@@ -1247,6 +1343,7 @@ class Translator:
             if spec is None:
                 raise ApiError(f"unknown lens {lens!r}")
             changes = dict(args.get("changes") or {})
+            _not_stamped(changes)
 
             def _unknown(spec: dict) -> list[str]:
                 texts = spec.get("text_fields") or []
@@ -1272,7 +1369,7 @@ class Translator:
             return self.api.post(f"/api/{spec['base']}/{_id(args)}/update",
                                  {**changes, "agent_id": self.identity()["agent_id"]})
         if name == "tasks":
-            project = args.get("project") or self.identity()["project"]
+            project = _read_project(args) or self.identity()["project"]
             q = f"/api/tasks?project={urllib.parse.quote(str(project))}"
             if args.get("status"):
                 q += f"&status={urllib.parse.quote(str(args['status']))}"
@@ -1371,7 +1468,7 @@ class Translator:
                 raise ApiError("scope is chat or project")
             who = self.identity()
             query = {"full": "true", "q": str(args.get("q") or ""),
-                     "project": str(args.get("project") or who["project"])}
+                     "project": _read_project(args) or str(who["project"])}
             if scope == "chat":
                 query["agent_id"] = who["agent_id"]
             got = self.api.get(f"/api/{path}?{urllib.parse.urlencode(query)}")
@@ -1392,14 +1489,19 @@ class Translator:
         if name == "carry_brief":
             who = self.identity()
             target = str(args.get("message") or "").strip()
+            by_turn = f"{who['agent_id']}#{int(args['turn'])}" if args.get("turn") is not None else ""
+            if target and by_turn and target != by_turn:
+                # Both name the message: one used to win in silence (tk_0b8a32d2).
+                raise ApiError(f"the message is given twice and differs: message {target!r}, turn "
+                               f"{args['turn']} ({by_turn}); send one of them")
             if not target:
-                if args.get("turn") is None:
+                if not by_turn:
                     raise ApiError("carry_brief needs the message (<agent_id>#<turn>) or this chat's turn")
-                target = f"{who['agent_id']}#{int(args['turn'])}"
+                target = by_turn
             return self.api.post("/api/carries/brief", {
                 "agent_id": who["agent_id"], "target": target, "text": str(args.get("text") or "")})
         if name == "cores":
-            code = args.get("project") or self.identity()["project"]
+            code = _read_project(args) or self.identity()["project"]
             return self.api.get(f"/api/cores?project={urllib.parse.quote(str(code))}")
         if name == "core_new":
             who = self.identity()
@@ -1459,7 +1561,7 @@ class Translator:
         if name == "search":
             return self.api.get(f"/api/search?q={urllib.parse.quote(str(args.get('q') or ''))}")
         if name == "project":
-            code = args.get("code") or self.identity()["project"]
+            code = _read_project(args) or self.identity()["project"]
             return self.api.get(f"/api/project/{urllib.parse.quote(str(code))}")
         if name == "doctor":
             return self.api.get("/api/doctor")
@@ -1498,7 +1600,7 @@ class Translator:
                     block = str(chat.get("block") or "")
                 except ApiError:
                     block = ""
-            q = urllib.parse.urlencode({"project": str(args.get("project") or who.get("project") or "all"),
+            q = urllib.parse.urlencode({"project": _read_project(args) or str(who.get("project") or "all"),
                                         "range": rng})
             return {"block": block, "summary": self.api.get(f"/api/usage?{q}")}
         raise ApiError(f"unknown tool: {name}")
@@ -1528,7 +1630,7 @@ class Translator:
         if name == "notes":
             if text("id"):
                 return self.api.get(f"/api/notes/{_id(args)}/agent")
-            project = text("project") or self.identity()["project"]
+            project = _read_project(args) or self.identity()["project"]
             q = urllib.parse.urlencode({"project": project, "task": text("task_id")})
             return self.api.get(f"/api/notes/list?{q}")
         if name == "note_image":
@@ -1648,7 +1750,7 @@ class Translator:
         if name == "entrypoints":
             if text("id"):
                 return self.api.get(f"/api/entrypoints/{_id(args)}/command")
-            project = text("project") or str(who.get("home") or who["project"])
+            project = _read_project(args) or str(who.get("home") or who["project"])
             got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(str(project))}")
             return {"topics": [{k: t.get(k) for k in ("id", "name", "title", "state", "what", "ways", "stops", "open_tasks")}
                                for t in got.get("topics") or []]}

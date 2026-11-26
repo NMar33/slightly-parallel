@@ -218,19 +218,36 @@ def test_the_shared_module_needs_nothing_but_python() -> None:
     chat folder's path is built; membership_fold, the one reading of an
     agent's projects)."""
     import ast
+    import re
 
-    from backend import chatstore, hookshared, membership_fold
-
-    for module in (hookshared, chatstore, membership_fold):
-        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    # Every module a script loads by path, read from the scripts themselves
+    # (_backend_module("…") in the hooks; the CI stand's mcp_args), so a new
+    # one cannot be left out of this list (tk_0b8a32d2).
+    repo = Path(__file__).resolve().parents[2]
+    loaded = set()
+    for script in (repo / "scripts").rglob("*.py"):
+        text = script.read_text(encoding="utf-8")
+        loaded |= set(re.findall(r'_backend_module\("([a-z_]+)"\)', text))
+        loaded |= set(re.findall(r'"backend" / "backend" / "([a-z_]+)\.py"', text))
+    assert {"hookshared", "chatstore", "membership_fold", "mcp_args"} <= loaded, loaded
+    import subprocess
+    for name in sorted(loaded):
+        path = repo / "backend" / "backend" / f"{name}.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         names = set()
-        for node in ast.walk(tree):
+        for node in tree.body:     # what loading the file runs (a function's own imports wait)
             if isinstance(node, ast.Import):
                 names |= {a.name.split(".")[0] for a in node.names}
-            elif isinstance(node, ast.ImportFrom):
-                assert node.level == 0, f"{module.__name__}: a relative import cannot be loaded by path"
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
                 names.add((node.module or "").split(".")[0])
-        assert names <= set(sys.stdlib_module_names), (module.__name__, names - set(sys.stdlib_module_names))
+        assert names <= set(sys.stdlib_module_names), (name, names - set(sys.stdlib_module_names))
+        # And it loads by path, as the hook loads it: no package around it,
+        # no site-packages at all (-S), the operator's own Python.
+        code = ("import importlib.util, sys; p = sys.argv[1]; "
+                "s = importlib.util.spec_from_file_location('probe', p); m = importlib.util.module_from_spec(s); "
+                "s.loader.exec_module(m)")
+        got = subprocess.run([sys.executable, "-I", "-S", "-c", code, str(path)], capture_output=True, text=True)
+        assert got.returncode == 0, (name, got.stderr[-400:])
 
 
 def test_the_model_settings_take_a_typed_model_name() -> None:

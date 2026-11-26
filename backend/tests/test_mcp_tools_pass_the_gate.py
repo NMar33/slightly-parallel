@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import mcp
+from backend import mcp, mcp_args
 from backend import server as _server
 from backend.server import MCP_NEEDS_AGENT, MCP_PATH_REFUSAL, MCP_REFUSAL, _WRITE_TOOLS, create_app
 
@@ -86,7 +86,9 @@ def _run(tr: mcp.Translator, tool: str) -> list[tuple[str, str, int, str]]:
     assert isinstance(api, _GatedApi)
     before = len(api.calls)
     try:
-        tr.call(tool, {"id": "x_none", **ARGS.get(tool, {})})
+        # An id for the tools that take one: another argument is refused (mcp_args).
+        given = {"id": "x_none"} if "id" in mcp_args.accepts(tool) else {}
+        tr.call(tool, {**given, **ARGS.get(tool, {})})
     except mcp.ApiError:
         pass  # refused by its router, or by the translator before a request
     return api.calls[before:]

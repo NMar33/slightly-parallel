@@ -239,18 +239,21 @@ class OpenCode(Tool):
             metadata = sdk_seed / "node_modules" / "@opencode-ai" / "plugin" / "package.json"
             if json.loads(metadata.read_text(encoding="utf-8")).get("version") != version:
                 raise RuntimeError("OpenCode plugin SDK version does not match the CLI")
-        package = f"@opencode-ai/plugin@{version}"
         config = space.home / ".config"
-        for prefix in (config / "opencode", folder / ".opencode"):
-            prefix.mkdir(parents=True, exist_ok=True)
-            if sdk_seed is not None:
+        prefixes = (config / "opencode", folder / ".opencode")
+        if sdk_seed is None:
+            assert npm is not None
+            sdk_seed = prefixes[0]
+            sdk_seed.mkdir(parents=True, exist_ok=True)
+            package = f"@opencode-ai/plugin@{version}"
+            subprocess.run([npm, "install", "--no-audit", "--no-fund", "--ignore-scripts", "--prefix", str(sdk_seed), package],
+                           env=space.env(), check=True, timeout=OPENCODE_SDK_INSTALL_TIMEOUT_S, capture_output=True)
+        for prefix in prefixes:
+            if prefix != sdk_seed:
+                prefix.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(sdk_seed / "node_modules", prefix / "node_modules", dirs_exist_ok=True)
                 for name in ("package.json", "package-lock.json"):
                     shutil.copy2(sdk_seed / name, prefix / name)
-            else:
-                assert npm is not None
-                subprocess.run([npm, "install", "--no-audit", "--no-fund", "--ignore-scripts", "--prefix", str(prefix), package],
-                               env=space.env(), check=True, timeout=OPENCODE_SDK_INSTALL_TIMEOUT_S, capture_output=True)
         exclude = folder / ".git" / "info" / "exclude"
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a", encoding="utf-8") as ignored:

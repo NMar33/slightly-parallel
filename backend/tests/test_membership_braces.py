@@ -181,7 +181,7 @@ def test_the_hook_says_write_now_and_ask_after_for_an_unclear_lane(world) -> Non
         assert "write it now" in notice and notice.endswith("ask the operator in one line: " + ask), notice
     # A new lane the operator names: written there, nothing to ask.
     notice = capture.where_notice(capture.task_where(root, HOME, A, "#now-todo {Growth} plan the launch"))
-    assert notice.startswith(f"→ {HOME} · lane Growth") and "ask" not in notice, notice
+    assert notice.startswith(f"→ {HOME} · lane Growth") and "ask the operator" not in notice, notice
 
 
 def test_a_now_todo_with_an_unclear_lane_is_written_at_once_by_the_server(world) -> None:
@@ -422,3 +422,22 @@ def test_two_processes_race_on_one_alias(world) -> None:
 def test_memberships_alias_map_reads_the_file(world) -> None:
     c, _root = world
     assert memberships.alias_map(c.app.state.store) == {"WT": MEMBER, "release": MEMBER}
+
+
+def test_the_hook_notice_and_the_servers_refusal_name_the_project_alike(world) -> None:
+    """Both say where the project goes, in the same words (tk_0b8a32d2): the
+    notice said only «send that project», and agents put it in `fields`."""
+    from backend import mcp_args
+
+    c, root = world
+    want = mcp_args.send_project(MEMBER)
+    assert '"project": "writing-tracker" next to lens: {"lens":"task","project":"writing-tracker"' in want
+    cap = capture.TurnCapture(root, HOME, A)
+    line = next(x for x in capture.format_signals(cap.open_turn("#task {wt} {docs} fix it")).splitlines()
+                if x.startswith("[slightly-parallel] #task"))
+    assert want in line and "send that project" not in line
+    cap.complete_turn("ok")
+    _say(root, "#task {writing-tracker} {docs} check the login timeout")
+    c.app.state.store.rebuild()
+    r = _agent_task(c, HOME)
+    assert r.status_code == 403 and r.json()["detail"].endswith(want), r.text

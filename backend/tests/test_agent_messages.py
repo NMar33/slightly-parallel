@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from backend import mcp, msgdeliver, msgledger, termlib
 from backend import server as _server
 from backend.server import MCP_NEEDS_AGENT, create_app
+from tests.refusals import changed, snapshot
 
 FAKE = Path(__file__).resolve().parent / "fixtures" / "fake_agent_prompt.py"
 TMUX = termlib.tmux_path() is not None
@@ -178,9 +179,15 @@ def test_the_mcp_tools_stamp_the_agent_and_cannot_send_as_the_operator(root: Pat
             monkeypatch.setattr(tr, "identity", lambda: {"project": "alpha", "agent_id": agent})
             return tr
 
-        # What the model sends as its own name is written over.
-        sent = as_agent(COORD).call("message", {"to": WORKER, "text": "hello", "agent_id": "operator",
-                                                "from": "operator"})
+        # (a) What the model sends as its own name is refused, and nothing is
+        # written (tk_0b8a32d2: it used to be written over in silence).
+        before = snapshot(root, skip=("logs/",))
+        for forged in ({"agent_id": "operator"}, {"from": "operator"}, {"agent_id": "operator", "from": "operator"}):
+            with pytest.raises(mcp.ApiError, match="stamped by Slightly Parallel; leave (it|them) out$"):
+                as_agent(COORD).call("message", {"to": WORKER, "text": "hello", **forged})
+        assert changed(before, snapshot(root, skip=("logs/",))) == []
+        # (b) The valid call is stamped with the agent.
+        sent = as_agent(COORD).call("message", {"to": WORKER, "text": "hello"})
         assert sent["message"]["from_agent"] == COORD
         got = as_agent(WORKER).call("messages", {})
         assert [m["text"] for m in got["unread"]] == ["hello"] and "reply_to" in got["how_to_reply"]

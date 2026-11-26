@@ -14,7 +14,7 @@ from datetime import date
 
 from fastapi import HTTPException
 
-from . import app_settings, hookshared, limits, thinklib, titlelib
+from . import app_settings, hookshared, limits, mcp_args, thinklib, titlelib
 from .actors import HOUSE_ACTORS as _HOUSE_ACTORS
 from .actors import identity_of, refuse_agent
 from .answers import create_answer, not_found
@@ -488,7 +488,8 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
     if braces["project"] and str(body.get("project") or "").strip() != braces["project"]:
         raise HTTPException(status_code=403, detail=(
             f"the operator named {braces['project']} in braces: this task goes to {braces['project']}, "
-            f"not {str(body.get('project') or '').strip() or '(none)'} — send project {braces['project']}"))
+            f"not {str(body.get('project') or '').strip() or '(none)'} — "
+            + mcp_args.send_project(braces["project"])))
     named = braces["lane"]
     _check_level(store, agent, body, braces["project"])
     status = str(body.get("status") or "").strip() or (column if command == "now" else "agent")

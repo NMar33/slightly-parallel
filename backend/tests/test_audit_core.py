@@ -350,8 +350,20 @@ class _Api:
 def test_identity_is_stamped_over_whatever_the_model_sends() -> None:
     api = _Api()
     tr = mcp.Translator(api, "/somewhere")
-    tr.call("write_entry", {"lens": "decision", "fields": {
-        "decision_text": "Use DuckDB.", "agent_id": "cc-someone-else", "project": "beta"}})
+    # (a) Identity the model sends is refused, never written over in silence;
+    # a project inside fields is refused with its one shape (tk_0b8a32d2).
+    api.calls.clear()
+    with pytest.raises(mcp.ApiError, match="^agent_id is stamped by Slightly Parallel; leave it out$"):
+        tr.call("write_entry", {"lens": "decision", "fields": {
+            "decision_text": "Use DuckDB.", "agent_id": "cc-someone-else"}})
+    with pytest.raises(mcp.ApiError, match=r'^put project next to lens, not inside fields: '
+                                           r'\{"lens":"decision","project":"beta","fields":\{…\}\}$'):
+        tr.call("write_entry", {"lens": "decision", "fields": {"decision_text": "Use DuckDB.", "project": "beta"}})
+    with pytest.raises(mcp.ApiError, match="^actor is stamped by Slightly Parallel; leave it out$"):
+        tr.call("task_update", {"id": "tk_12345678", "title": "new", "actor": "operator"})
+    assert not [c for c in api.calls if c[0] == "POST"]
+    # (b) The valid call is stamped.
+    tr.call("write_entry", {"lens": "decision", "fields": {"decision_text": "Use DuckDB."}})
     method, path, body = api.calls[-1]
     assert (method, path) == ("POST", "/api/decisions")
     assert (body["agent_id"], body["project"]) == ("cc-me", "alpha")

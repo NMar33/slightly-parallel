@@ -135,6 +135,18 @@ def test_an_agent_adds_a_way_and_a_shot_and_lists_the_topics(env, tmp_path: Path
     # The agent changes its own way; it cannot remove it (no tool), nor change the state.
     tr.call("entrypoint_way", {"id": eid, "way_id": way["id"], "way": {**{k: way[k] for k in ("name", "kind", "url")}, "port": 8131}})
     assert E.ways_of(root, eid)[0]["port"] == "8131"
+    # The way's id has one place, way_id next to way (tk_0b8a32d2): inside
+    # `way` it was dropped and a second way was added in silence.
+    before = len(E.ways_of(root, eid))
+    with pytest.raises(mcp.ApiError, match=r"put the way's id next to way: \{\"id\":\"ep_"):
+        tr.call("entrypoint_way", {"id": eid, "way": {**{k: way[k] for k in ("id", "name", "kind", "url")}, "port": 8132}})
+    with pytest.raises(mcp.ApiError, match="given twice and differs"):
+        tr.call("entrypoint_way", {"id": eid, "way_id": way["id"], "way": {**{k: way[k] for k in ("name", "kind", "url")},
+                                                                          "id": "ew_other", "port": 8132}})
+    assert len(E.ways_of(root, eid)) == before and E.ways_of(root, eid)[0]["port"] == "8131"
+    tr.call("entrypoint_way", {"id": eid, "way_id": way["id"], "way": {**{k: way[k] for k in ("id", "name", "kind", "url")},
+                                                                      "port": 8133}})
+    assert len(E.ways_of(root, eid)) == before and E.ways_of(root, eid)[0]["port"] == "8133"
     with pytest.raises(mcp.ApiError):
         tr.call("update_entry", {"lens": "entrypoint", "id": eid, "changes": {"status": "closed"}})
 

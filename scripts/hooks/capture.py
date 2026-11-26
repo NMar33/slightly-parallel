@@ -646,8 +646,10 @@ def where_notice(where: dict) -> str:
     if where.get("refusal"):
         return (f"Refused: {where['refusal']}. No card is made for it: tell the operator in one line, "
                 "and do not write the task another way.")
+    # The same words as the server's refusal (mcp_args.send_project, tk_0b8a32d2).
     told = (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
-            + " (the server sets the project and the lane from the braces; send that project).")
+            + " (the braces set the project and the lane; "
+            + _backend_module("mcp_args").send_project(str(where.get("project") or "")) + ").")
     if where.get("ask"):
         # A lane the braces leave unclear: the card is written now, in the
         # default lane, and the operator is asked after (tk_970d6b2d).

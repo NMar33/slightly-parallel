@@ -104,3 +104,87 @@ def test_rejection_reports_the_differing_fixture_field_without_echoing_arguments
     assert guard.dispatch(request("write_entry", {"lens": "task", "fields": fields}))["result"]["isError"]
     assert plan.result() == (0, f"MCP rejected unexpected call in task fixture ({reason})")
     assert not forwarded
+
+
+def test_a_top_level_project_the_fixture_names_passes_and_no_other_shape(policy):
+    """Codex sent write_entry's project top-level, the product's one shape
+    (run 45783161798, tk_0b8a32d2). The fixture names it; any other shape is
+    refused before the product."""
+    plan, guard, forwarded = policy
+    fixture = {"lens": "task", "project": "calc", "fields": {"title": "Fixture"}}
+    plan.start("task fixture", [["write_entry", fixture]])
+    top = request("write_entry", fixture)
+    assert not guard.dispatch(top)["result"]["isError"]
+    assert forwarded == [top]
+    for args in ({"lens": "task", "fields": {"title": "Fixture", "project": "calc"}},
+                 {"lens": "task", "fields": {"title": "Fixture"}}):
+        plan.start("task fixture", [["write_entry", fixture]])
+        guard.failed = False
+        assert guard.dispatch(request("write_entry", args))["result"]["isError"]
+    assert forwarded == [top]
+
+
+def test_an_argument_the_fixture_does_not_name_never_reaches_the_product(policy):
+    """task_done's proposals change cards: a fixture of {} must not let them
+    through, even though the product's tool takes them."""
+    plan, guard, forwarded = policy
+    plan.start("#done", [["task_done", {}]])
+    assert guard.dispatch(request("task_done", {"proposals": [{"title": "x", "line": "y"}]}))["result"]["isError"]
+    assert not forwarded
+
+
+def test_an_argument_the_product_does_not_take_is_refused_without_echoing_it(policy):
+    plan, guard, forwarded = policy
+    plan.start("checkup", [["checkup", {"not_an_argument": 1}]])
+    assert guard.dispatch(request("checkup", {"not_an_argument": 1}))["result"]["isError"]
+    assert not forwarded
+    assert plan.result() == (0, "MCP rejected unexpected call in checkup (arguments has 1 unadvertised field)")
+
+
+def test_the_guards_allowlist_is_the_products_table(monkeypatch):
+    """The stand reads backend/mcp_args.py; it keeps no list of its own."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import core_mcp
+
+    from backend import mcp_args
+
+    assert core_mcp.mcp_args.TOOL_ARGS == mcp_args.TOOL_ARGS
+    assert core_mcp.mcp_args.PROJECT_TOOLS == mcp_args.PROJECT_TOOLS
+    every = set().union(*mcp_args.TOOL_ARGS.values()) | {"not_an_argument"}
+    for tool in mcp_args.TOOL_ARGS:
+        refused = set(core_mcp.not_taken(tool, dict.fromkeys(every, 1)))
+        assert every - refused == mcp_args.accepts(tool), tool
+
+
+def test_refused_call_reports_advertised_argument_keys_without_exporting_payload(policy, tmp_path):
+    from common import Report
+
+    plan, guard, forwarded = policy
+    plan.start("#decision", [["write_entry", {"lens": "decision", "fields": {"weight": "normal"}}]])
+    def handle(message):
+        if message["method"] != "tools/list":
+            forwarded.append(message)
+            return None
+        return {"result": {"tools": [{
+            "name": "write_entry",
+            "inputSchema": {"properties": {"lens": {}, "project": {}, "fields": {}}},
+        }]}}
+
+    guard.handle = handle
+    guard.dispatch({"id": 1, "method": "tools/list"})
+    args = {
+        "lens": "decision",
+        "fields": {"weight": "normal"},
+        "project": "private-project-value",
+        "private-unadvertised-key": "private-unadvertised-value",
+    }
+    assert guard.dispatch(request("write_entry", args))["result"]["isError"]
+    assert not forwarded
+
+    report = Report()
+    report.add("core", "#decision: the operator turn and answer are captured", False, plan.result()[1])
+    path = tmp_path / "report.json"
+    report.write(path)
+    [check] = json.loads(path.read_text(encoding="utf-8"))["checks"]
+    assert 'argument keys: fields, lens, project (1 unadvertised)' in check["detail"]
+    assert "private-" not in check["detail"]

@@ -9,7 +9,7 @@ enabled: true
 Reading is open: the MCP readers and the HTTP `GET` routes both answer.
 
 - `tasks {project?, status?}` — the board; `search {q}` — tasks,
-  decisions and agents by text; `project {code}` — one project's bundle;
+  decisions and agents by text; `project {project}` — one project's bundle;
   `deck` — every running sprint block; `doctor` — the data-integrity report.
 - `sp://rules` — the active rules; `sp://schema` — every lens,
   its fields and what is mutable; `sp://contract` — this file.

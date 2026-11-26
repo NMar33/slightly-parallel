@@ -391,7 +391,7 @@ _MCP_WRITE_PATHS = (
     r"/api/next-tasks/make",
     r"/api/cores",
     r"/api/cores/[^/]+/(notes|links|off)",
-    r"/api/publishing/cards/[^/]+/(attach|write)",
+    r"/api/publishing/cards/[^/]+/write",
     r"/api/entrypoints/[^/]+/(stops|ways|shots)",
     r"/api/entrypoints/(ask|answer)",
     r"/api/tasks/[^/]+/topic",
@@ -420,6 +420,54 @@ def mcp_may_write(path: str) -> bool:
         lens = rf"/api/({'|'.join(bases)})(/[^/]+/update)?"
         _mcp_paths = re.compile("|".join((lens, *_MCP_WRITE_PATHS)))
     return _mcp_paths.fullmatch(path) is not None
+
+
+_lens_creates: "re.Pattern[str] | None" = None
+
+
+def lens_create(path: str) -> bool:
+    """Is ``path`` a lens's create (POST /api/<base>)? There the translator's
+    stamp (created_date, created_time) is in the body, and a lens's own
+    columns are checked by entitylib."""
+    global _lens_creates
+    if _lens_creates is None:
+        from .routers.schema_api import build_schema
+        bases = sorted({re.escape(str(l["base"])) for l in build_schema()["lenses"]})
+        _lens_creates = re.compile(rf"/api/({'|'.join(bases)})")
+    return _lens_creates.fullmatch(path) is not None
+
+
+def stamped_in_body(path: str, data: Any) -> list[str]:
+    """Identity an agent's body names besides who it is (agent_id/actor):
+    refused by name, as the MCP tools refuse it (mcp_args.IDENTITY). Routers
+    used to drop it without a word (tk_0b8a32d2)."""
+    if not isinstance(data, dict) or not mcp_may_write(path):
+        # Outside the MCP's writes the routes keep their own rules: the
+        # page's star names the chat's session, the prompt library refuses
+        # an agent with its own reason.
+        return []
+    from . import mcp_args
+    # A lens create's own dates are the body's: the translator stamps them
+    # there. The task, scan and architecture creates have routes of their
+    # own and dropped the rest without a word.
+    own = ("agent_id", "actor", *(("created_date", "created_time") if lens_create(path) else ()))
+    return sorted(k for k in data if k in mcp_args.STAMPED and k not in own and data[k] not in (None, ""))
+
+
+def nested_in_body(path: str, data: Any) -> str:
+    """The refusal for identity inside an object of an agent's body on the
+    MCP's writes (an evidence item, a map row): it was dropped without a
+    word (tk_0b8a32d2). The same reading as the translator's."""
+    if not isinstance(data, dict) or not mcp_may_write(path):
+        return ""
+    from . import mcp_args
+    hit = mcp_args.nested_identity(data)
+    if hit is None:
+        return ""
+    key, where = hit
+    if key == "project":
+        return f"put project next to the other fields, not inside {where}"
+    return f"{mcp_args.stamped_refusal([key])} (inside {where})"
 
 
 def _json_body(content_type: bytes | None) -> bool:
@@ -769,6 +817,15 @@ class AgentsViaMcp:
         except (ValueError, UnicodeDecodeError):
             data = {}
         actor = deps.identity_of(data)
+        if isinstance(data, dict):
+            claims = {str(data.get(k) or "").strip() for k in ("actor", "agent_id")}
+            agents = sorted(c for c in claims if deps.is_agent(c))
+            if len(agents) > 1:
+                # Two agents named as the writer: the actor used to win in
+                # silence (tk_0b8a32d2). One writer, one name.
+                await JSONResponse({"detail": f"actor and agent_id name different agents ({', '.join(agents)}): "
+                                              "send one of them"}, status_code=422)(scope, replay, send)
+                return
         if via_mcp:
             # The MCP translator stamps the agent on every write. The mark
             # with no agent is a hand-made request: anyone can send the
@@ -797,6 +854,22 @@ class AgentsViaMcp:
             refused = membership_refusal(self.app_ref.state.store, path, data, actor)
             if refused is not None:
                 await JSONResponse({"detail": refused[1]}, status_code=refused[0])(scope, replay, send)
+                return
+            if memberships.agent_view(self.app_ref.state.store, actor) is None:
+                # A writer Slightly Parallel has no chat of: the project gate
+                # refused it, a write that names no project took it as it came
+                # (usage prices, messages; tk_0b8a32d2).
+                await JSONResponse({"detail": memberships.UNINDEXED.format(agent=actor)},
+                                   status_code=403)(scope, replay, send)
+                return
+            stray = stamped_in_body(path, data)
+            if stray:
+                from . import mcp_args
+                await JSONResponse({"detail": mcp_args.stamped_refusal(stray)}, status_code=422)(scope, replay, send)
+                return
+            nested = nested_in_body(path, data)
+            if nested:
+                await JSONResponse({"detail": nested}, status_code=422)(scope, replay, send)
                 return
         await self.app(scope, replay, send)
 

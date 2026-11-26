@@ -51,7 +51,8 @@ def test_the_list_holds_every_path_the_translator_posts_to() -> None:
                  "/api/skills/sk_1/draft", "/api/visions/v_1/interpretation", "/api/scans",
                  "/api/undo/propose", "/api/undo/apply", "/api/undo/restore"):
         assert mcp_may_write(path), path
+    # publish_attach forwards to publish_write: no MCP call posts to /attach.
     for path in ("/api/settings", "/api/backup/run", "/api/tasks/tk_1/delete",
-                 "/api/decisions/x/y/update", "/api/terminal/sessions"):
+                 "/api/decisions/x/y/update", "/api/terminal/sessions", "/api/publishing/cards/pu_1/attach"):
         assert not mcp_may_write(path), path
 

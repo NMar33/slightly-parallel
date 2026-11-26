@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException
 
-from . import entry_fields
+from . import entry_fields, mcp_args
 from .actors import refuse_agent, written_by_agent
 from .answers import create_answer
 from .csvio import append_if_absent
@@ -326,6 +326,15 @@ def create_entity(store: ViewStore, ent: Entity, body: dict, seed_extra: str = "
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="send the body as a JSON object")
     refuse_agent_write(ent, body)
+    if written_by_agent(body):
+        # Identity an agent sends is refused (tk_0b8a32d2), a lens's own
+        # column included: a vision's session_id is the server's to fill, and
+        # a forged one was stored. The writer is agent_id/actor, and the
+        # translator stamps created_date/created_time on every create.
+        stray = sorted(k for k in body if k in mcp_args.STAMPED and body[k] not in (None, "")
+                       and k not in ("agent_id", "actor", "created_date", "created_time"))
+        if stray:
+            raise HTTPException(status_code=422, detail=mcp_args.stamped_refusal(stray))
     if (reason := AGENT_CREATE_REFUSED.get(ent.name)) and written_by_agent(body):
         refuse_agent(reason)
     # Agents write what the entry holds by name (entry_fields.py); the names

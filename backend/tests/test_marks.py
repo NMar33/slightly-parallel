@@ -123,7 +123,8 @@ def test_a_star_moves_the_chats_etag(env) -> None:
     first = c.get("/api/sessions?project=alpha")
     etag = first.headers.get("etag")
     c.post("/api/marks", json={"kind": "message", "target": f"{AGENT}#1", "project": "alpha",
-                               "agent_id": AGENT, "session_id": first.json()["sessions"][0]["id"], "turn": 1})
+                               "chat_agent": AGENT, "actor": "operator",
+                               "session_id": first.json()["sessions"][0]["id"], "turn": 1})
     again = c.get("/api/sessions?project=alpha", headers={"If-None-Match": etag})
     assert again.status_code == 200 and again.headers.get("etag") != etag
 

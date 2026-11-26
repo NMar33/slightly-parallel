@@ -180,8 +180,13 @@ def test_an_agent_posts_a_version_with_doc_version(client: TestClient, start_of_
     assert tool["inputSchema"]["required"] == ["id", "body"]
     assert set(tool["inputSchema"]["properties"]) == {"id", "body", "note"}
 
-    out = tr.call("doc_version", {"id": did, "body": "# Launch\n\nFirst draft.", "note": "first pass",
-                                  "agent_id": "cc-someone-else"})
+    # (a) Identity the model sends is refused before any request (tk_0b8a32d2).
+    with pytest.raises(ApiError, match="^agent_id is stamped by Slightly Parallel; leave it out$"):
+        tr.call("doc_version", {"id": did, "body": "# Launch\n\nFirst draft.", "note": "first pass",
+                                "agent_id": "cc-someone-else"})
+    assert calls == [] and client.get(f"/api/docs/{did}").json()["versions"] == []
+    # (b) The valid call is stamped.
+    out = tr.call("doc_version", {"id": did, "body": "# Launch\n\nFirst draft.", "note": "first pass"})
     assert calls[-1][0] == f"/api/docs/{did}/versions"
     # Identity is stamped, never taken from the arguments.
     assert out["version"]["agent_id"] == "cc-writer01" and out["n"] == 1

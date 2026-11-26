@@ -39,7 +39,7 @@ from ..file_safety import acquire_flock, atomic_write_json
 from .deps import (
     not_found,
     clean_agent, create_answer, etag_for, get_store, json_response, maybe_304,
-    rewrite_one, rows_or_empty, to_int,
+    operator_only, rewrite_one, rows_or_empty, to_int,
 )
 
 router = APIRouter()
@@ -461,6 +461,8 @@ def agent_link_create(
     to the one that continued). Idempotent on (from, to, kind) — posting
     again returns the stored row; use update to change its note or style.
     """
+    # The operator draws the lanes; no MCP tool writes here (tk_0b8a32d2).
+    operator_only(body, "Linking lanes on the Agents page", "tell the operator which chats belong together")
     frm = str(body.get("from") or "").strip()
     to = str(body.get("to") or "").strip()
     kind = str(body.get("kind") or "").strip()
@@ -531,6 +533,7 @@ def agent_link_update(
     store: ViewStore = Depends(get_store),
 ) -> dict:
     """Change a link's kind, style, note or anchors; the ends stay."""
+    operator_only(body, "Changing a link between lanes", "tell the operator")
     patch: dict[str, str] = {}
     if "kind" in body:
         kind = str(body.get("kind") or "").strip()

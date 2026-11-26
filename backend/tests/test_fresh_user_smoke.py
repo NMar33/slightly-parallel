@@ -374,11 +374,13 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
     chat.with_name("meta.json").write_text(json.dumps({"session_ref": "core-session"}), encoding="utf-8")
     card = {"id": task, "agent_id": agent, "project": "calc", "status": "agent"}
     typed, submitted, frames, planned = [], [], [], []
+    mcp_calls = {}
     initial_contract = (Path(interactive.__file__).resolve().parents[2] / contract.name).read_text(encoding="utf-8")
 
     class ModelPlan(core_mcp.Plan):
-        def start(self, name, *args, **kwargs):
-            super().start(name, *args, **kwargs)
+        def start(self, name, calls=(), **kwargs):
+            super().start(name, calls, **kwargs)
+            mcp_calls[name] = calls
             if name == scenario.WORK[0]:
                 planned.extend(kwargs["shell"])
 
@@ -418,7 +420,7 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
             pass
 
     def wait_for_turn(_screen, check, _seconds, **_):
-        if len(submitted) == 3:
+        if len(submitted) == 4:
             return "stop after submitting the work prompt"
         return "" if check() else "missing simulated turn"
 
@@ -431,11 +433,19 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
     monkeypatch.setattr(interactive, "get", lambda *_: {"tasks": [], "agents": [{"agent_id": agent, "session_ref": "core-session"}]})
     monkeypatch.setattr(interactive, "new_task_rows", lambda *_: [card])
     monkeypatch.setattr(core_mcp, "Plan", ModelPlan)
-    monkeypatch.setattr(scenario, "CORE", [scenario.WORK])
+    decision = (*scenario.DECISION[:2], lambda *_: None)
+    monkeypatch.setattr(scenario, "CORE", [decision, scenario.WORK])
 
     report = Report()
     interactive.smoke(space, report, "calc", folder, tool, "stub", tmp_path, 1, core=True)
-    assert len(typed) == 3 and typed[-1].startswith("Write the tests")
+    assert len(typed) == 4 and typed[-1].startswith("Write the tests")
+    for index, lens in ((1, "task"), (2, "decision")):
+        [[method, arguments]] = mcp_calls[f"#{lens}"]
+        assert method == "write_entry"
+        assert arguments.keys() == {"lens", "project", "fields"}
+        assert arguments["project"] == "calc"
+        assert arguments["lens"] == lens
+        assert json.dumps(arguments) in typed[index]
     assert "SLIGHTLY-PARALLEL.md" in typed[-1] and all(command not in typed[-1] for command in planned)
     updated = contract.read_text(encoding="utf-8")
     assert updated.startswith(initial_contract)
@@ -447,7 +457,7 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
     if paint_work:
         assert submitted == typed and not frames
     else:
-        assert submitted == typed[:2]
+        assert submitted == typed[:3]
         [(label, frame)] = frames
         assert label == "prompt paint timed out" and frame == typed[-1][:30]
         assert any("before Enter" in check.name for check in report.failed())
@@ -513,15 +523,27 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     for cli in ("codex", "opencode", "claude-code"):
         state = scenario.State("calc", space.sample, scenario.tools()[cli])
         prompt = interactive._operator_core_prompt(space, state, scenario.SCAN)
-        assert prompt.startswith("#scan ") and "Call scan_material without arguments" in prompt
+        assert prompt.startswith("#scan ")
         assert "No other MCP calls" in prompt
         directory = tmp_path if cli == "codex" and not windows else space.sample
         fixture = directory / "scan-payloads.json"
         assert json.dumps(str(fixture)) in prompt
         plan = json.loads(fixture.read_text(encoding="utf-8"))
-        assert list(plan) == ["scan", "file", "architecture"]
-        assert plan["scan"]["files_n"] == "COUNTER"
-        assert plan["architecture"]["trigger_id"] == "SCAN_ID"
+        if cli == "codex":
+            assert "Call scan_material with the exact arguments" in prompt
+            assert plan["scan_material"] == {"project": "calc"}
+            assert list(plan) == ["scan_material", "scan", "file", "architecture"]
+            for lens in ("scan", "file", "architecture"):
+                assert plan[lens].keys() == {"lens", "project", "fields"}
+                assert plan[lens]["lens"] == lens
+                assert plan[lens]["project"] == "calc"
+            assert plan["scan"]["fields"]["files_n"] == "COUNTER"
+            assert plan["architecture"]["fields"]["trigger_id"] == "SCAN_ID"
+        else:
+            assert "Call scan_material without arguments" in prompt
+            assert list(plan) == ["scan", "file", "architecture"]
+            assert plan["scan"]["files_n"] == "COUNTER"
+            assert plan["architecture"]["trigger_id"] == "SCAN_ID"
     assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
 
 
@@ -640,15 +662,58 @@ def test_opencode_prepares_the_pinned_plugin_before_the_interactive_tty(monkeypa
     monkeypatch.setattr(tool, "version", lambda: "1.19.3")
     monkeypatch.setattr(agents.shutil, "which", lambda _: "npm")
     calls = []
-    monkeypatch.setattr(agents.subprocess, "run", lambda args, **_: calls.append(args))
+    artifacts = {
+        "node_modules/@opencode-ai/plugin/package.json": '{"version": "1.19.3"}',
+        "package.json": '{"dependencies": {"@opencode-ai/plugin": "1.19.3"}}',
+        "package-lock.json": '{"lockfileVersion": 3}',
+    }
+
+    def install(args, *, timeout, **_kwargs):
+        calls.append((args, timeout))
+        prefix = Path(args[args.index("--prefix") + 1])
+        for name, content in artifacts.items():
+            path = prefix / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(agents.subprocess, "run", install)
     space = Space(tmp_path, 1)
     env = {}
     tool.prepare_interactive(space, space.sample, env)
-    for directory, command in zip((space.home / ".config" / "opencode", space.sample / ".opencode"), calls, strict=True):
-        assert command[-2:] == [str(directory), "@opencode-ai/plugin@1.19.3"]
+    [(command, timeout)] = calls
+    home_package = space.home / ".config" / "opencode"
+    assert command[-2:] == [str(home_package), "@opencode-ai/plugin@1.19.3"]
+    assert timeout == 60
+    for directory in (home_package, space.sample / ".opencode"):
+        for name, content in artifacts.items():
+            assert (directory / name).read_text(encoding="utf-8") == content
     assert env["XDG_DATA_HOME"] == str(space.home / ".local" / "share")
     excludes = (space.sample / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert "/.opencode/node_modules/" in excludes
+
+
+def test_opencode_sdk_install_timeout_reaches_report_without_child_output(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import agents
+    import interactive
+    from common import Report, Space
+
+    tool = agents.tools()["opencode"]
+    monkeypatch.setattr(tool, "version", lambda: "1.19.3")
+    monkeypatch.setattr(agents.shutil, "which", lambda _: "npm")
+    monkeypatch.setattr(interactive, "WINDOWS", True)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+
+    def timed_out(command, *, timeout, **_kwargs):
+        raise agents.subprocess.TimeoutExpired(command, timeout, output=b"private-npm-output")
+
+    monkeypatch.setattr(agents.subprocess, "run", timed_out)
+    space = Space(tmp_path, 1)
+    report = Report()
+    assert interactive.smoke(space, report, "calc", space.sample, tool, "", space.home, 10) is None
+    [failure] = report.failed()
+    assert failure.name == "L1 the pinned OpenCode plugin is ready"
+    assert failure.detail == "npm install for the pinned OpenCode plugin SDK timed out after 60 seconds"
 
 
 @pytest.mark.parametrize("version", ["1.19.3", "1.19.4"])
@@ -1228,12 +1293,20 @@ def test_composer_waits_for_the_next_ready_frame_without_one_second_delay(script
     assert scripted_onboarding._ready(screen, tools()["claude-code"], 0.7, [])
 
 
-def test_claude_theme_waits_for_the_selected_row_and_confirms_once(scripted_onboarding):
+@pytest.mark.parametrize("selected_row", ["❯ ✔ Auto (match terminal)", " > √   Auto (match terminal)"])
+def test_claude_theme_waits_for_the_selected_row_and_confirms_once(scripted_onboarding, selected_row):
     from agents import tools
 
     title = "Choose the text style that looks best with your terminal"
-    selected = f"{title}\n❯ ✔ Auto (match terminal)\n    Dark mode"
-    frames = iter((title, selected, selected, "Claude Code\n❯ Try a test\n? for shortcuts"))
+    selected = f"{title}\n{selected_row}\n    Dark mode"
+    frames = iter((
+        title,
+        f"{title}\n    √ Auto (match terminal)",
+        f"{title}\n{selected_row[:-1]}",
+        selected,
+        selected,
+        "Claude Code\n❯ Try a test\n? for shortcuts",
+    ))
     accepted = []
     screen = SimpleNamespace(text="", send=lambda key: accepted.append((key, screen.text)))
     screen.read = lambda: setattr(screen, "text", next(frames, screen.text))

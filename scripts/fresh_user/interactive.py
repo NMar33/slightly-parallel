@@ -45,7 +45,7 @@ CLAUDE_MCP_CHOICES = (
 WINDOWS_CORE_APPROVAL_COLUMNS = 640
 WINDOWS_CORE_WORK_SECTION = "Calculator core work commands"
 CLAUDE_THEME_SELECTION = re.compile(
-    r"(?im)^ *[❯>] *(?:✔ *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
+    r"(?im)^ *[❯>] *(?:[✔√] *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
 )
 STARTUP_FAILURES = (
     (("selectloginmethod:",), "Claude Code requires login"),
@@ -317,13 +317,22 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a", encoding="utf-8") as ignored:
             ignored.write(f"\n/{filename}\n")
-    spec.write_text(json.dumps({
+    fields_by_lens = {
         "scan": core_mcp.scan_fields(dict.fromkeys(("files_n", "lines_add", "lines_del", "decisions_n"), "COUNTER")),
         "file": core_mcp.file_fields("SCAN_ID"),
         "architecture": core_mcp.form_fields("SCAN_ID"),
-    }, indent=2), encoding="utf-8")
-    return (message + " Call scan_material without arguments. Read the exact fields from "
-            f"{json.dumps(str(spec))}. Write the scan, file entry, and architecture form in order. "
+    }
+    if state.tool.name == "codex":
+        payload = {"scan_material": {"project": state.code}}
+        for lens, fields in fields_by_lens.items():
+            payload[lens] = {"lens": lens, "project": state.code, "fields": fields}
+        instructions = (f" Read {json.dumps(str(spec))}. Call scan_material with the exact arguments under "
+                        '"scan_material". Use the other objects as the complete write_entry arguments.')
+    else:
+        payload = fields_by_lens
+        instructions = f" Call scan_material without arguments. Read the exact fields from {json.dumps(str(spec))}."
+    spec.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return (message + instructions + " Write the scan, file entry, and architecture form in order. "
             "Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with "
             "the returned scan ID. Copy all other values exactly. No other MCP calls.")
 
@@ -459,6 +468,10 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     if WINDOWS and isinstance(tool, OpenCode):
         try:
             tool.prepare_interactive(space, folder, env)
+        except subprocess.TimeoutExpired as error:
+            report.add(stage, "L1 the pinned OpenCode plugin is ready", False,
+                       f"npm install for the pinned OpenCode plugin SDK timed out after {error.timeout:g} seconds")
+            return None
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             report.add(stage, "L1 the pinned OpenCode plugin is ready", False, type(error).__name__)
             return None
@@ -606,6 +619,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             if policy or opencode_core_task:
                 arguments = {"lens": "task", "fields": task_fields}
                 if policy:
+                    arguments["project"] = code
                     policy.start("#task", [["write_entry", arguments]])
                 task_prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool once, "
                                f"with exactly this JSON argument: {json.dumps(arguments)}.")
@@ -704,10 +718,12 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                             message += f" Run this exact command to stage and commit: {command}"
                     elif name == "#decision":
                         fields = {"decision": scenario.DECISION_TEXT, "weight": "normal"}
-                        calls = [["write_entry", {"lens": "decision", "fields": fields}]]
-                        message += " Call write_entry with lens decision and exactly these fields: " + json.dumps(fields)
+                        arguments = {"lens": "decision", "project": code, "fields": fields}
+                        calls = [["write_entry", arguments]]
+                        message += " Call write_entry with exactly this JSON argument: " + json.dumps(arguments) + "."
                     elif name == "#scan":
-                        calls = core_mcp.requests_for_scan()
+                        calls = [[method, {**arguments, "project": code}]
+                                 for method, arguments in core_mcp.requests_for_scan()]
                         if workspace_shell:
                             scan = f"Get-Content -LiteralPath {_powershell_path(_workspace_file(folder, 'scan-payloads.json'))}"
                             read_commands += (scan, f"{scan} -Raw")

@@ -24,8 +24,9 @@ lens:
 
 Section 4 says what goes in each, per lens. `sp://schema` lists every
 lens with its names and columns. A name the lens does not have is refused,
-and the refusal lists the names it has. Do not send project, agent id,
-date or time: the tool stamps them.
+and the refusal lists the names it has. Do not send agent id, date or
+time: the tool stamps them. The project is this chat's home unless you name another of its projects: put `project` next to lens, never inside `fields`: `{"lens":"task","project":"<code>","fields":{…}}`.
+The answer's `where` says where the entry went.
 
 Two rules hold everywhere. The first field is one sentence: what happened,
 or what it is. A field you cannot fill is left out: the wrong kind of

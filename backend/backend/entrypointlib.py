@@ -306,7 +306,14 @@ def checked_way(raw: Any) -> dict[str, str]:
     """A way in from a request, every field checked; nothing written yet."""
     if not isinstance(raw, dict):
         raise EntryRefused("way is an object: {name, kind, url?, path?, command?, folder?, port?, note?}")
-    kind = _text(raw, "kind", 20, required=True).lower()
+    from . import mcp_args
+    # Identity inside the way was dropped without a word (tk_0b8a32d2).
+    stamped = sorted(k for k in raw if k in mcp_args.STAMPED and raw[k] not in (None, ""))
+    if stamped:
+        raise EntryRefused(mcp_args.stamped_refusal(stamped) + " (inside way)")
+    if raw.get("project") not in (None, ""):
+        raise EntryRefused("a way in has no project of its own: it is the topic's; leave it out (inside way)")
+    kind =_text(raw, "kind", 20, required=True).lower()
     if kind not in ENTRYPOINT_WAY_KINDS:
         raise EntryRefused(f"kind is one of {', '.join(ENTRYPOINT_WAY_KINDS)}")
     url = _text(raw, "url", URL_MAX)
@@ -611,6 +618,16 @@ def put_way(store: ViewStore, ep_id: str, body: Any) -> dict[str, Any]:
     who = identity_of(body) or "operator"
     _member_of_row(store, row, who)
     way_id = _text(body, "id", 40)
+    # The way's id has one place, next to way (tk_0b8a32d2): inside `way` it
+    # was dropped, and a second way was added in silence.
+    inner = body["way"].get("id")
+    if inner not in (None, ""):
+        shape = f'{{"id":"{ep_id}","way_id":"{inner}","way":{{…}}}}'
+        if not way_id:
+            raise EntryRefused(f"put the way's id next to way: {shape}")
+        if str(inner).strip() != way_id:
+            raise EntryRefused(f"the way's id is given twice and differs: {way_id!r} next to way, "
+                               f"{inner!r} inside it; send it once, next to way")
     now = now_iso()
     current = ways_of(store, ep_id)
     if way_id:
