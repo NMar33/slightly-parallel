@@ -312,15 +312,8 @@ def test_stop_wakes_once_without_running_tags(root, tool, session, agent, monkey
     result = stop(False)
     assert result["decision"] == "block" and row["id"] in result["reason"]
     assert "#done" not in result["reason"]
-    # Claude Code shows the reason as a Stop hook problem: it opens with the
-    # line saying it is a message (tk_40450bfa). Codex's comes back as the
-    # prompt itself, so it is the notice exactly.
-    notice = result["reason"]
-    if tool == "claude-code":
-        opening, notice = notice.split("\n", 1)
-        assert opening == msgledger.stop_opening(row)
-    assert ascii(notice) == ascii(msgledger.wake_text(row))
-    _run_hook(root, tool, session, notice)
+    assert ascii(result["reason"]) == ascii(msgledger.wake_text(row))
+    _run_hook(root, tool, session, result["reason"])
     errors = root / ".capture" / "errors.jsonl"
     assert _turns(root, agent)[-1].user_summary.startswith("<sp-message"), (
         f"reason {result['reason']!r}; ledger row {msgledger.find(root, row['id'])}; "

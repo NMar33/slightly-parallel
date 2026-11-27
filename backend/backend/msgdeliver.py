@@ -31,12 +31,6 @@ When in doubt, nothing is typed. A message that waits is tried again on the
 server's next round (``retry_waiting``) and is handed over by the hook on the
 chat's next prompt, whichever comes first (each takes it once, under the
 ledger's lock).
-
-The Stop hook asks the same check before it blocks a Claude Code Stop
-(``stop_leaves``, ``GET /api/messages/terminal``): where this server types
-into the chat's terminal, now or once the operator's line is empty, the
-message is left for that typed prompt, and Claude Code shows no "Stop hook
-reported a problem" for it (tk_40450bfa).
 """
 
 from __future__ import annotations
@@ -250,12 +244,6 @@ def occupant_why(data_root: Path, agent_id: str, pane_pid: int) -> str:
     return ""
 
 
-#: Why nothing is typed now that passes: the server's next round types it.
-WHY_INPUT = "the input line is not empty (or cannot be read)"
-WHY_COPY_MODE = "the terminal is in copy mode"
-_PASSING = (WHY_INPUT, WHY_COPY_MODE)
-
-
 def check(data_root: Path, agent_id: str) -> tuple[str, str]:
     """(terminal id, why not) for typing into this chat's terminal now:
     why is '' when it may be typed into."""
@@ -278,33 +266,16 @@ def check(data_root: Path, agent_id: str) -> tuple[str, str]:
     if not name or name in termlib.SHELLS:
         return sid, "a shell is in front: the agent is not running there"
     if pane["in_mode"] == "1":
-        return sid, WHY_COPY_MODE
+        return sid, "the terminal is in copy mode"
     screen = termlib.tmux_read(data_root, "capture-pane", "-p", "-e", "-t", termlib.PREFIX + sid).stdout or ""
     if not input_empty(screen, tool):
-        return sid, WHY_INPUT
+        return sid, "the input line is not empty (or cannot be read)"
     try:
         pane_pid = int(pane["pid"])
     except ValueError:
         return sid, "the pane's process cannot be read"
     why = occupant_why(data_root, agent_id, pane_pid)
     return sid, why
-
-
-def stop_leaves(data_root: Path, agent_id: str) -> tuple[str, str]:
-    """(terminal id, why not) for leaving this chat's waiting messages to
-    its terminal instead of a Stop hook's block: why is '' when this server
-    types them there, now or on a later round — the operator's half-typed
-    line or copy mode only delays it. Every other reason the terminal is
-    refused (no live terminal, another chat in the pane, a shell in front)
-    keeps the block."""
-    if not msgledger.AGENT_RE.match(agent_id or "") or agent_id.startswith("codex-"):
-        # Codex is woken through its app-server (codexdelivery), not here.
-        return "", "not a chat whose terminal this server types into"
-    try:
-        sid, why = check(data_root, agent_id)
-    except termlib.TmuxError as exc:
-        return "", str(exc)
-    return sid, "" if why in _PASSING else why
 
 
 def _type(data_root: Path, sid: str, text: str) -> bool:

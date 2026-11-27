@@ -13,11 +13,6 @@ read ones.
 
 ``GET /api/messages`` (``?agent_id=&project=&limit=``) is the ledger,
 newest first, for a page to show: no write.
-
-``GET /api/messages/terminal`` (``?agent_id=``) is what the Stop hook asks
-before it blocks a Claude Code Stop for a waiting message: whether this
-server types that chat's messages into its terminal (msgdeliver.stop_leaves).
-No write, nothing typed.
 """
 
 from __future__ import annotations
@@ -123,17 +118,6 @@ def listing(request: Request, agent_id: str = Query(""), project: str = Query(""
                 or listed.has(r["project"], r["to_agent"])]
     rows.sort(key=lambda r: (r["sent_at"], r["id"]), reverse=True)
     return {"total": len(rows), "messages": rows[:limit]}
-
-
-@router.get("/api/messages/terminal")
-def terminal(request: Request, agent_id: str = Query("")) -> dict[str, Any]:
-    """Does this server type the chat's waiting messages into its terminal?
-    ``types`` false names why (``why``); the hook then blocks Stop as before.
-    ``data_root`` lets the hook check it asked the server of its own data."""
-    root = _root(request)
-    sid, why = msgdeliver.stop_leaves(root, agent_id.strip())
-    return {"agent_id": agent_id.strip(), "terminal": sid, "types": not why, "why": why,
-            "data_root": str(root)}
 
 
 @router.get("/api/messages/{message_id}")
