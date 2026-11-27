@@ -11,7 +11,9 @@ reached the chat — ``delivered_via``:
   hook sees it come in as a prompt and records the turn as the sender's
   (``landed_at``, ``landed_turn``);
 - ``codex``    — the local app-server accepted the wake; the inbox supplies the body;
-- ``stop``     — the Stop hook asked the chat to continue and read its inbox;
+- ``stop``     — the Stop hook asked the chat to continue and read its inbox
+  (only where no terminal takes it: a chat in Slightly Parallel's own
+  terminal gets the terminal's typed prompt instead, ``stop_waiting``);
 - ``hook``     — handed to the agent as a notice on its next prompt;
 - ``inbox``    — read by the agent itself (the MCP tool ``messages``).
 
@@ -33,11 +35,13 @@ needed, nothing that costs time at import.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import os
 import re
 import secrets
 import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -52,12 +56,14 @@ except ImportError:  # loaded by path (the capture hook): no package
     _spec.loader.exec_module(_shared)  # type: ignore[union-attr]
 
 LEDGER = "messages.csv"
+STOP_TOKEN_FILE = ".stop-terminal-token.json"
+STOP_PROOF_HEADER = "X-SP-Stop-Proof"
 
 MESSAGE_LEDGER_LOCK_TIMEOUT_S = 3.0
 COLUMNS: tuple[str, ...] = (
     "id", "project", "from_agent", "to_agent", "text", "sent_at", "reply_to",
     "delivered_at", "delivered_via", "landed_at", "landed_turn", "read_at",
-    "strayed", "codex_thread", "codex_checked",
+    "strayed", "codex_thread", "codex_checked", "terminal_sid", "terminal_state",
 )
 #: The sender of a message written on Slightly Parallel's own page.
 OPERATOR = "operator"
@@ -67,6 +73,7 @@ TEXT_MAX = 8000
 #: How long the server keeps trying a message's chat's terminal; after that
 #: only the hook (the chat's next prompt) or the inbox hands it over.
 TERMINAL_RETRY_S = 24 * 3600
+_TERMINAL_IN_FLIGHT = ("reserved", "sending")
 
 ID_RE = re.compile(r"^msg_[0-9a-f]{8}$")
 AGENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
@@ -112,6 +119,11 @@ def ledger_path(data_root: Any) -> Path:
     return Path(data_root) / LEDGER
 
 
+def stop_proof(data_root: Any, token: str) -> str:
+    """A Stop proof is usable only at the server of the hook's own data root."""
+    return hashlib.sha256(os.fsencode(Path(data_root).resolve()) + b"\0" + token.encode("ascii")).hexdigest()
+
+
 def _read(path: Path) -> list[dict[str, str]]:
     with open(path, encoding="utf-8", newline="") as fh:
         return [{c: str(r.get(c) or "") for c in COLUMNS} for r in csv.DictReader(fh)]
@@ -148,17 +160,27 @@ def _write_rows(path: Path, rows: list[dict[str, str]]) -> None:
 def editing(data_root: Any) -> Iterator[list[dict[str, str]]]:
     """The rows under the ledger's lock; written back when the block changed them."""
     path = ledger_path(data_root)
-    with _shared.locked(path, timeout_s=MESSAGE_LEDGER_LOCK_TIMEOUT_S):
+    # Capture's append lock can proceed unlocked at its deadline. A claim
+    # cannot: the other holder may be handing this same message over.
+    with open(path.with_suffix(".csv.lock"), "a", encoding="utf-8") as lock:
+        deadline = time.monotonic() + MESSAGE_LEDGER_LOCK_TIMEOUT_S
+        while not _shared.try_lock(lock):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("the message ledger is busy")
+            time.sleep(_shared.HOOK_LOCK_POLL_INTERVAL_S)
         # Read strictly: a ledger that cannot be read is never written over
         # with what little was read of it.
         try:
-            rows = _read(path)
-        except FileNotFoundError:
-            rows = []
-        before = [dict(r) for r in rows]
-        yield rows
-        if rows != before:
-            _write_rows(path, rows)
+            try:
+                rows = _read(path)
+            except FileNotFoundError:
+                rows = []
+            before = [dict(r) for r in rows]
+            yield rows
+            if rows != before:
+                _write_rows(path, rows)
+        finally:
+            _shared.unlock(lock)
 
 
 #: Control characters a message never carries into a terminal: an escape
@@ -201,6 +223,8 @@ def _deliver(row: dict[str, str], via: str, at: str) -> None:
 def _return_terminal_claim(row: dict[str, str]) -> None:
     read = row["read_at"]
     _deliver(row, "inbox" if read else "", read)
+    row["terminal_sid"] = ""
+    row["terminal_state"] = ""
 
 
 # ---------------------------------------------------------------------------
@@ -241,23 +265,46 @@ def checked_absent(data_root: Any, msg_id: str) -> None:
             row["codex_checked"] = "1"
 
 
-def claim_terminal(data_root: Any, msg_id: str) -> dict[str, str] | None:
-    """Take a message for the terminal, before it is typed: None when another
-    way took it first."""
+def claim_terminal(data_root: Any, msg_id: str, sid: str) -> dict[str, str] | None:
+    """Reserve a pending message while the sender holds its pane lock."""
     with editing(data_root) as rows:
         row = next((r for r in rows if r["id"] == msg_id), None)
-        if row is None or row["delivered_via"] or row["codex_thread"]:
+        if row is None or row["delivered_via"] or row["codex_thread"] or row["terminal_state"] or row["strayed"]:
             return None
-        _deliver(row, "terminal", now_local())
+        row["terminal_sid"] = sid
+        row["terminal_state"] = "reserved"
         return dict(row)
 
 
-def release_terminal(data_root: Any, msg_id: str) -> None:
-    """Release a failed paste. A body read meanwhile stays delivered."""
+def begin_terminal(data_root: Any, msg_id: str) -> bool:
+    """Before any input reaches the pane, make a later resend unsafe."""
     with editing(data_root) as rows:
         row = next((r for r in rows if r["id"] == msg_id), None)
-        if row is not None and row["delivered_via"] == "terminal" and not row["landed_at"]:
+        if row is None or row["terminal_state"] != "reserved":
+            return False
+        row["terminal_state"] = "sending"
+        return True
+
+
+def finish_terminal(data_root: Any, msg_id: str, *, sent: bool = False) -> None:
+    """Confirm a successful send, or reconcile a claim under its pane lock.
+
+    A reservation had no possible effect on input and can be retried. A
+    send may still land. Make its body available via the inbox or a hook
+    without typing that notice again.
+    """
+    with editing(data_root) as rows:
+        row = next((r for r in rows if r["id"] == msg_id), None)
+        if row is None or row["terminal_state"] not in _TERMINAL_IN_FLIGHT:
+            return  # the prompt (or a stray) may have arrived already
+        if sent:
+            _deliver(row, "terminal", now_local())
+            row["terminal_state"] = row["terminal_sid"] = ""
+        else:
+            attempted = row["terminal_state"] == "sending"
             _return_terminal_claim(row)
+            if attempted:
+                row["terminal_state"] = "uncertain"
 
 
 def claim_for_hook(data_root: Any, agent_id: str) -> list[dict[str, str]]:
@@ -269,25 +316,56 @@ def claim_for_hook(data_root: Any, agent_id: str) -> list[dict[str, str]]:
     with editing(data_root) as rows:
         at = now_local()
         for row in rows:
-            if row["to_agent"] == agent_id and not row["delivered_via"] and (not row["codex_thread"] or row["codex_checked"]):
+            if (row["to_agent"] == agent_id and not row["delivered_via"]
+                    and row["terminal_state"] not in _TERMINAL_IN_FLIGHT
+                    and (not row["codex_thread"] or row["codex_checked"])):
                 row["codex_thread"] = ""
                 _deliver(row, "hook", at)
                 out.append(dict(row))
     return out
 
 
-def stop_notice(data_root: Any, agent_id: str) -> str:
-    """Reserve pending messages for one tag-free wake. MCP supplies the bodies."""
+def _stop_pending(rows: list[dict[str, str]], agent_id: str) -> list[dict[str, str]]:
+    return [r for r in rows if r["to_agent"] == agent_id and not r["delivered_via"] and not r["codex_thread"]
+            and not r["terminal_state"]]
+
+
+def stop_waiting(data_root: Any, agent_id: str) -> bool:
+    """Would the Stop hook have a message to hand over now? A read only: the
+    hook asks the terminal first (msgdeliver.stop_leaves) only when it would."""
+    return bool(_stop_pending(read_rows(data_root), agent_id))
+
+
+def stop_needs_wake(data_root: Any, agent_id: str) -> bool:
+    """A pending message the terminal retry loop will not pick up."""
+    now = _shared.now_dt()
+    return any(not retryable(row, now) for row in _stop_pending(read_rows(data_root), agent_id))
+
+
+def stop_opening(row: dict[str, str]) -> str:
+    """The line a blocked Stop's reason opens with in Claude Code, which
+    shows every Stop hook that continues a turn as a problem: what this is,
+    before the notice. Not for Codex, whose continuation comes back as a
+    prompt that must be the notice exactly (take_marker)."""
+    who = ("the operator, sent from Slightly Parallel's page" if row["from_agent"] == OPERATOR
+           else f"another agent ({row['from_agent']}), sent through Slightly Parallel")
+    return f"Not an error: this is a message from {who}."
+
+
+def stop_notice(data_root: Any, agent_id: str, *, opening: bool = False) -> str:
+    """Reserve pending messages for one tag-free wake. MCP supplies the bodies.
+    ``opening``: the reason opens with stop_opening's line (Claude Code)."""
     if not ledger_path(data_root).exists():
         return ""
     with editing(data_root) as rows:
-        pending = [r for r in rows if r["to_agent"] == agent_id and not r["delivered_via"] and not r["codex_thread"]]
+        pending = _stop_pending(rows, agent_id)
         if not pending:
             return ""
         at = now_local()
         for row in pending:
             _deliver(row, "stop", at)
-        return wake_text(pending[0])
+        notice = wake_text(pending[0])
+        return f"{stop_opening(pending[0])}\n{notice}" if opening else notice
 
 
 def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = None) -> dict[str, str] | None:
@@ -303,10 +381,13 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
     with editing(data_root) as rows:
         row = next((r for r in rows if r["id"] == msg_id), None)
         if (row is None or row["to_agent"] != agent_id or row["from_agent"] != sender
-                or row["landed_at"] or (not row["codex_checked"] and row["delivered_via"] not in ("", "terminal", "codex", "stop"))):
+                or row["landed_at"] or row["terminal_state"] == "reserved"
+                or (not row["codex_checked"] and row["terminal_state"] != "uncertain"
+                    and row["delivered_via"] not in ("", "terminal", "codex", "stop"))):
             return None
         at = now_local()
-        wake = bool(row["codex_thread"] or row["codex_checked"]) or row["delivered_via"] in ("codex", "stop")
+        wake = (bool(row["codex_thread"] or row["codex_checked"]) or row["delivered_via"] in ("codex", "stop")
+                or row["terminal_state"] == "uncertain")
         submitted = prompt.strip()
         notice = wake_text(row)
         if wake and submitted != notice:
@@ -316,6 +397,7 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
             row["codex_thread"] = ""
         elif not row["delivered_via"]:
             _deliver(row, "terminal", at)
+        row["terminal_state"] = row["terminal_sid"] = ""
         row["landed_at"] = at
         row["landed_turn"] = str(turn) if turn is not None else ""
         if submitted == notice:
@@ -344,7 +426,8 @@ def take_stray(data_root: Any, agent_id: str, prompt: str, turn: int | None = No
     with editing(data_root) as rows:
         row = next((r for r in rows if r["id"] == msg_id), None)
         if (row is None or row["to_agent"] == agent_id or row["from_agent"] != sender
-                or row["landed_at"] or row["delivered_via"] != "terminal"):
+                or row["landed_at"] or (row["delivered_via"] != "terminal"
+                                        and row["terminal_state"] not in ("sending", "uncertain"))):
             return None
         _return_terminal_claim(row)
         note = f"{agent_id} {now_local()}" + (f" turn {turn}" if turn is not None else "")
@@ -376,7 +459,7 @@ def inbox(data_root: Any, agent_id: str, recent: int = 10) -> dict[str, list[dic
             if row["codex_thread"] and not row["codex_checked"]:
                 flying.append({k: row[k] for k in ("id", "from_agent", "sent_at", "delivered_at")})
                 continue
-            if not row["delivered_via"]:
+            if not row["delivered_via"] and row["terminal_state"] not in _TERMINAL_IN_FLIGHT:
                 row["codex_thread"] = ""
                 _deliver(row, "inbox", at)
             row["read_at"] = at
@@ -385,18 +468,18 @@ def inbox(data_root: Any, agent_id: str, recent: int = 10) -> dict[str, list[dic
     return {"unread": unread, "recent": seen[:max(0, recent)], "in_flight": flying}
 
 
+def retryable(row: dict[str, str], now: datetime | None = None) -> bool:
+    if row["delivered_via"] or row["strayed"] or row["codex_checked"] or row["terminal_state"] == "uncertain":
+        return False
+    try:
+        age = ((now or _shared.now_dt()) - datetime.fromisoformat(row["sent_at"])).total_seconds()
+    except (TypeError, ValueError):
+        return False
+    return bool(row["codex_thread"]) or age <= TERMINAL_RETRY_S
+
+
 def waiting(data_root: Any, now: datetime | None = None) -> list[dict[str, str]]:
     """Messages no way has taken that the terminal may still try: not one
     that strayed into another chat's terminal once."""
     now = now or _shared.now_dt()
-    out = []
-    for r in read_rows(data_root):
-        if r["delivered_via"] or r["strayed"] or r["codex_checked"]:
-            continue
-        try:
-            age = (now - datetime.fromisoformat(r["sent_at"])).total_seconds()
-        except ValueError:
-            continue
-        if r["codex_thread"] or age <= TERMINAL_RETRY_S:
-            out.append(r)
-    return out
+    return [row for row in read_rows(data_root) if row["terminal_state"] in _TERMINAL_IN_FLIGHT or retryable(row, now)]

@@ -2233,6 +2233,49 @@ def _read_done_outcome(root: str, agent: str, turn: int) -> dict:
     return {}
 
 
+def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
+    """Does Slightly Parallel's server type this chat's waiting messages into
+    the terminal it runs in? Asked by Claude Code's Stop hook before it blocks
+    a Stop for a message (tk_40450bfa): a block shows as "Stop hook reported a
+    problem", the typed prompt does not. True only when the hook itself runs
+    in an SP terminal (SP_TERMINAL), the chat's meta names that terminal (the
+    one the server types into), and the server of this data root says it
+    types there (GET /api/messages/terminal, msgdeliver.stop_leaves: the same
+    check that picks "terminal"). Anything else, an unreachable server
+    included, is False: the Stop blocks as before."""
+    from http.client import HTTPException
+    from secrets import token_hex
+    from urllib.parse import urlencode
+    from urllib.request import ProxyHandler, Request, build_opener
+
+    here = os.environ.get("SP_TERMINAL", "").strip()
+    if not here:
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(meta, dict) or str(meta.get("terminal") or "") != here:
+        return False
+    try:
+        key = meta_path.parent / msgs.STOP_TOKEN_FILE
+        try:
+            token = json.loads(key.read_text(encoding="utf-8"))["token"]
+        except FileNotFoundError:
+            token = token_hex(32)
+            _atomic_write_json(key, {"token": token})
+        if not isinstance(token, str):
+            return False
+        params = urlencode({"agent_id": agent, "terminal": here})
+        request = Request(f"{server_url()}/api/messages/terminal?{params}",
+                          headers={msgs.STOP_PROOF_HEADER: msgs.stop_proof(root, token)})
+        with build_opener(ProxyHandler({})).open(request, timeout=DONE_LOOKUP_TIMEOUT_S) as response:
+            got = json.load(response)
+    except (OSError, ValueError, TypeError, KeyError, HTTPException):
+        return False
+    return isinstance(got, dict) and got.get("types") is True
+
+
 def _done_outcome_notice(outcome: dict) -> str:
     tasks = outcome.get("tasks") or []
     moved = [row["id"] for row in tasks if row["result"] == "moved"]

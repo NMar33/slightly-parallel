@@ -56,6 +56,14 @@ def _turns(root: Path, agent: str) -> list:
     return parse_turns(root / "projects" / "alpha" / "chats" / agent / "chat.md")
 
 
+def _confirmed_terminal(root: Path, msg_id: str):
+    claimed = msgledger.claim_terminal(root, msg_id, "t0000aaaa")
+    if claimed is not None:
+        assert msgledger.begin_terminal(root, msg_id)
+        msgledger.finish_terminal(root, msg_id, sent=True)
+    return claimed
+
+
 @pytest.mark.parametrize("body", [
     "short advice",
     "one line\nanother line\n" + "long advice " * 300,
@@ -63,7 +71,7 @@ def _turns(root: Path, agent: str) -> list:
 ], ids=["short", "long-multiline", "quoted-message-with-tag"])
 def test_terminal_notice_leaves_the_body_for_one_mcp_read(root: Path, body: str) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text=body)
-    claimed = msgledger.claim_terminal(root, row["id"])
+    claimed = _confirmed_terminal(root, row["id"])
     assert claimed is not None
     notice = msgledger.terminal_text(claimed)
     assert notice == msgledger.wake_text(row)
@@ -87,7 +95,7 @@ def test_prompt_hook_notifies_two_messages_without_their_bodies(root: Path) -> N
 @pytest.mark.parametrize("recipient_holds_terminal", [True, False], ids=["recipient", "wrong-terminal"])
 def test_commands_in_the_operators_text_after_a_notice_still_act(root: Path, recipient_holds_terminal: bool) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="advice")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     cap = capture.TurnCapture(root, "alpha", WORKER if recipient_holds_terminal else CODEX)
     sig = cap.open_turn(msgledger.wake_text(row) + "\n#task operator request", deliver=True)
     assert sig["message_in"] is None and sig["message_stray"] is None and "task" in sig["commands"]
@@ -110,7 +118,7 @@ def test_opencode_prompt_receives_only_the_notice(root: Path) -> None:
 
 def test_a_real_marker_is_the_senders_turn_and_its_tags_do_nothing(root: Path) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="run #task now #mute")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     prompt = msgledger.terminal_text(row)
     cap = capture.TurnCapture(root, "alpha", WORKER)
     sig = cap.open_turn(prompt, deliver=True)
@@ -166,7 +174,7 @@ def test_a_waiting_message_comes_with_the_next_prompt_once(root: Path) -> None:
     got = msgledger.find(root, row["id"])
     assert got is not None and got["delivered_via"] == "hook" and not got["read_at"]
     # Taken by the hook: the terminal and a marker no longer take it.
-    assert msgledger.claim_terminal(root, row["id"]) is None
+    assert _confirmed_terminal(root, row["id"]) is None
     cap.complete_turn("ok")
     assert cap.open_turn(msgledger.terminal_text(row))["message_in"] is None
 
@@ -180,7 +188,7 @@ def test_an_adapter_that_cannot_show_a_notice_hands_nothing_over(root: Path) -> 
 
 def test_typed_into_the_terminal_the_marker_lands_once(root: Path) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="x")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     assert msgledger.claim_for_hook(root, WORKER) == []
     cap = capture.TurnCapture(root, "alpha", WORKER)
     prompt = msgledger.terminal_text(row)
@@ -197,7 +205,7 @@ def test_two_combined_terminal_notices_leave_both_bodies_available_once(root: Pa
     rows = [msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text=body)
             for body in ("first advice", "second advice")]
     for row in rows:
-        assert msgledger.claim_terminal(root, row["id"]) is not None
+        assert _confirmed_terminal(root, row["id"]) is not None
     prompt = "\n".join(msgledger.wake_text(row) for row in rows)
     capture.TurnCapture(root, "alpha", WORKER).open_turn(prompt, deliver=True)
     assert [m["id"] for m in msgledger.inbox(root, WORKER)["unread"]] == [row["id"] for row in rows]
@@ -221,7 +229,7 @@ def _run_hook(root: Path, tool: str, session: str, prompt: str) -> str:
 ])
 def test_the_prompt_hooks_of_claude_code_and_codex(root: Path, tool: str, session: str, agent: str) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="typed in #task")
-    msgledger.claim_terminal(root, row["id"])
+    _confirmed_terminal(root, row["id"])
     waiting = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="the second one")
     out = _run_hook(root, tool, session, msgledger.terminal_text(row))
     if tool == "codex":
@@ -243,7 +251,7 @@ def test_a_marker_typed_into_another_chats_terminal_is_a_stray_and_goes_back(roo
     wrong chat records a stray (tags muted), the ledger notes it, and the
     message reaches its own chat once."""
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="for the worker #task #decision x")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     other = capture.TurnCapture(root, "alpha", CODEX)
     sig = other.open_turn(msgledger.terminal_text(row), deliver=True)
     assert sig["message_in"] is None
@@ -272,11 +280,12 @@ def test_a_marker_typed_into_another_chats_terminal_is_a_stray_and_goes_back(roo
 @pytest.mark.parametrize("typing_failed", [True, False], ids=["paste-failed", "wrong-terminal"])
 def test_read_during_pending_terminal_notice_never_requeues_the_body(root: Path, typing_failed: bool) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="typed")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert msgledger.claim_terminal(root, row["id"], "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, row["id"])
     got = msgledger.inbox(root, WORKER)
     assert [m["id"] for m in got["unread"]] == [row["id"]] and got["in_flight"] == []
     if typing_failed:
-        msgledger.release_terminal(root, row["id"])
+        msgledger.finish_terminal(root, row["id"])
     else:
         msgledger.take_stray(root, CODEX, msgledger.terminal_text(row), 3)
     assert msgledger.find(root, row["id"])["delivered_via"] == "inbox"  # type: ignore[index]
@@ -312,8 +321,15 @@ def test_stop_wakes_once_without_running_tags(root, tool, session, agent, monkey
     result = stop(False)
     assert result["decision"] == "block" and row["id"] in result["reason"]
     assert "#done" not in result["reason"]
-    assert ascii(result["reason"]) == ascii(msgledger.wake_text(row))
-    _run_hook(root, tool, session, result["reason"])
+    # Claude Code shows the reason as a Stop hook problem: it opens with the
+    # line saying it is a message (tk_40450bfa). Codex's comes back as the
+    # prompt itself, so it is the notice exactly.
+    notice = result["reason"]
+    if tool == "claude-code":
+        opening, notice = notice.split("\n", 1)
+        assert opening == msgledger.stop_opening(row)
+    assert ascii(notice) == ascii(msgledger.wake_text(row))
+    _run_hook(root, tool, session, notice)
     errors = root / ".capture" / "errors.jsonl"
     assert _turns(root, agent)[-1].user_summary.startswith("<sp-message"), (
         f"reason {result['reason']!r}; ledger row {msgledger.find(root, row['id'])}; "

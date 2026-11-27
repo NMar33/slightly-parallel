@@ -660,6 +660,13 @@ One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
 - `GET /api/messages/{message_id}` — `{message, thread}`. The thread is the
   connected replies between the same two participants, in ledger order.
   Returns 404 for an unknown message. Does not mark messages read.
+- `GET /api/messages/terminal?agent_id=&terminal=` — `{types}`: whether
+  this server types the calling chat's waiting messages into that terminal.
+  Claude Code's Stop hook sends a proof for its own chat and data root in
+  `X-SP-Stop-Proof`. With `types: true`, the terminal delivers the notice
+  once input is empty and copy mode has ended. Otherwise the Stop block
+  opens with a line saying the message is not an error. The lookup changes
+  no files and types nothing.
 
 The capture hook reads a prompt that opens with the marker as the sender's
 message only when the ledger holds that id, for this chat, from that
