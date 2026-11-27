@@ -107,5 +107,15 @@
       "Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/scan-payloads.json' -Raw"
     ],
     "decision": ""
+  },
+  {
+    "sha": "dbc05790",
+    "run": 45915316843,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ $p = 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ' + [char]0xFC + '-sn375xb8/sample/scan-payloads.json'; Get-Content -LiteralPath $p -Raw\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-sn375xb8/sample/scan-payloads.json' -Raw"
+    ],
+    "decision": "unexpected Codex command approval"
   }
 ]

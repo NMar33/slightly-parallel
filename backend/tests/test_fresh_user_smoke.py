@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,25 +33,23 @@ def test_claude_onboarding_reaches_the_prompt(scripted_onboarding, dialog, keys,
     from agents import tools
 
     class Screen:
-        text = ""
+        text = dialog
         keys = []
-        frames = deque([dialog])
-        if "use this API key" in dialog:
-            frames.append("Do you want to use this API key? ❯ Yes No (recommended)")
-        if "I trust this folder" in dialog:
-            frames.extend([dialog, "1. No, exit\n❯ 2. Yes, I trust this folder"])
-        frames.append("❯ Try writing a test\nctrl+g to edit in VS Code")
 
         def read(self):
-            if self.frames:
-                self.text = self.frames.popleft()
+            pass
 
         def send(self, key):
             self.keys.append(key)
+            if len(self.keys) == 1:
+                self.text = ("Do you want to use this API key? ❯ Yes No (recommended)"
+                             if "use this API key" in dialog else "1. No, exit\n❯ 2. Yes, I trust this folder")
+            else:
+                self.text = "❯ Try writing a test\nctrl+g to edit in VS Code"
 
     screen = Screen()
     answered: list[str] = []
-    assert scripted_onboarding._ready(screen, tools()["claude-code"], 2, answered)
+    assert scripted_onboarding._ready(screen, tools()["claude-code"], 3, answered)
     assert screen.keys == keys
     assert answered == [f"Claude Code {action}"]
 
@@ -137,7 +134,7 @@ def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_pa
 
 @pytest.mark.parametrize(("server", "cursor", "drop_move", "moves", "expected"), [
     ("slightly-parallel", "❯", 0, 2, True),
-    ("slightly-parallel", "❯", 1, 1, False),
+    ("slightly-parallel", "❯", 1, 2, False),
     ("slightly-parallel", ">", 0, 2, True),
     ("unexpected-server", ">", 0, 0, False),
     ("slightly-parallel\nNew MCP server found in this project: unexpected-server", "❯", 0, 0, False),
@@ -182,7 +179,10 @@ def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding
     assert [key for key, _ in seen] == [interactive.UP] * moves + ([interactive.ENTER] if expected else [])
     if seen:
         assert seen[0][1] >= 6
-    assert report == (["Claude Code accepted the Slightly Parallel MCP server"] if expected else [])
+    if drop_move:
+        assert report == ["Claude Code accepted the Slightly Parallel MCP server: key not taken, retrying direction once"]
+    else:
+        assert report == (["Claude Code accepted the Slightly Parallel MCP server"] if expected else [])
 
 
 def test_new_cards_include_a_late_duplicate(monkeypatch) -> None:
@@ -202,26 +202,38 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(sc
 
     config = tmp_path / "config.toml"
 
+    folder = "Trust this folder?\n› 1. Trust and continue\n  2. Back to Agent Command Center"
+    hooks = ("Hooks need review\n› 1. Review hooks\n  2. Trust all and continue\n"
+             "  3. Continue without trusting (hooks won't run)\n  enter confirm · esc skip")
+    trust = hooks.replace("› 1.", "  1.").replace("  2. Trust", "› 2. Trust")
+    composer = "› Ask Codex to do anything · ? for shortcuts"
+
     class Screen:
-        text = ""
+        text = composer
         keys = []
-        frames = deque(["› Ask Codex to do anything · ? for shortcuts"]
-                       + ["Trust this folder?\n› 1. Trust and continue\n  2. Back to Agent Command Center"] * 5
-                       + ["› 1. Review hooks 2. Trust all and continue", "1. Review hooks › 2. Trust all and continue",
-                          "› Ask Codex to do anything · ? for shortcuts"])
+        paints = 0
 
         def read(self):
-            if self.frames:
-                self.text = self.frames.popleft()
-                if not self.frames:
-                    config.write_text('trusted_hash = "example"\n', encoding="utf-8")
+            self.paints += 1
+            if self.paints == 2:
+                self.text = folder
 
         def send(self, key):
             self.keys.append(key)
+            if len(self.keys) == 1:
+                assert self.text == folder
+                self.text = hooks
+            elif len(self.keys) == 2:
+                assert self.text == hooks
+                self.text = trust
+            else:
+                assert self.text == trust
+                config.write_text('trusted_hash = "example"\n', encoding="utf-8")
+                self.text = composer
 
     screen = Screen()
     answered: list[str] = []
-    assert scripted_onboarding._ready(screen, tools()["codex"], 3, answered, config)
+    assert scripted_onboarding._ready(screen, tools()["codex"], 5, answered, config)
     assert screen.keys == ["\r", "\x1b[B", "\r"]
     assert answered == ["Codex project folder trusted", "Codex project hooks trusted"]
 
@@ -517,17 +529,22 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     from common import Space
 
     monkeypatch.setattr(interactive, "WINDOWS", windows)
-    space = Space(tmp_path, 1)
-    space.sample.mkdir()
+    space = Space(tmp_path / "scratch ü", 1)
+    space.sample.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=space.sample, check=True)
     for cli in ("codex", "opencode", "claude-code"):
         state = scenario.State("calc", space.sample, scenario.tools()[cli])
         prompt = interactive._operator_core_prompt(space, state, scenario.SCAN)
         assert prompt.startswith("#scan ")
         assert "No other MCP calls" in prompt
-        directory = tmp_path if cli == "codex" and not windows else space.sample
+        directory = space.root if cli == "codex" and not windows else space.sample
         fixture = directory / "scan-payloads.json"
-        assert json.dumps(str(fixture)) in prompt
+        if cli == "codex" and windows:
+            literal = fixture.resolve().as_posix().replace("'", "''")
+            assert f"Get-Content -LiteralPath '{literal}' -Raw" in prompt
+        else:
+            assert json.dumps(str(fixture), ensure_ascii=False) in prompt
+        assert "ü" in prompt and r"\u00fc" not in prompt
         plan = json.loads(fixture.read_text(encoding="utf-8"))
         if cli == "codex":
             assert "Call scan_material with the exact arguments" in prompt
@@ -1398,8 +1415,7 @@ def test_claude_theme_waits_for_the_selected_row_and_confirms_once(scripted_onbo
         title,
         f"{title}\n    √ Auto (match terminal)",
         f"{title}\n{selected_row[:-1]}",
-        selected,
-        selected,
+        *([selected] * 6),
         "Claude Code\n❯ Try a test\n? for shortcuts",
     ))
     accepted = []
@@ -1428,17 +1444,14 @@ def test_claude_folder_trust_tolerates_partial_frames_and_does_not_move_twice(sc
 
     interactive = scripted_onboarding
     keys = []
-    frames = iter((
-        "Accessing workspace:\n  No, exit\n  Yes, I trust this folder",
-        "Accessing workspace:\n  > No, exit\n  Yes, I trust this folder",
-        "Accessing workspace /tmp/sample:\n  > No, exit\n  Yes, I trust this folder\nEsc to cancel",
-        "Accessing workspace /tmp/sample:\n  No, exit\n  > Yes, I trust this folder",
-        "Claude Code\n❯ Try writing a test\n? for shortcuts",
-    ))
+    no = "Accessing workspace /tmp/sample:\n  > No, exit\n  Yes, I trust this folder\nEsc to cancel"
+    yes = "Accessing workspace /tmp/sample:\n  No, exit\n  > Yes, I trust this folder"
+    frames = iter(["Accessing workspace:\n  No, exit\n  Yes, I trust this folder"]
+                  + [no] * 6 + [yes] * 6 + ["Claude Code\n❯ Try writing a test\n? for shortcuts"])
     screen = SimpleNamespace(text="", send=keys.append)
     screen.read = lambda: setattr(screen, "text", next(frames, screen.text))
     answered = []
-    assert interactive._ready(screen, tools()["claude-code"], 3, answered)
+    assert interactive._ready(screen, tools()["claude-code"], 5, answered)
     assert keys == [interactive.DOWN, interactive.ENTER]
     assert answered == ["Claude Code project folder trusted"]
 
@@ -1518,3 +1531,44 @@ def test_windows_read_approval_matches_only_the_same_literal_operation(scripted_
     )
     assert (approve() == "") is accepted
     assert keys == ([scripted_onboarding.ENTER] if accepted else [])
+
+
+@pytest.mark.parametrize("persisted", [True, False])
+def test_codex_hook_trust_retries_one_dropped_directional_key(scripted_onboarding, tmp_path, persisted):
+    from agents import tools
+
+    interactive = scripted_onboarding
+    config = tmp_path / "config.toml"
+    review = ("Hooks need review\n  2 hooks are new or changed.\n\n"
+              "› 1. Review hooks\n  2. Trust all and continue\n"
+              "  3. Continue without trusting (hooks won't run)\n\n  enter confirm · esc skip")
+    trust = review.replace("› 1.", "  1.").replace("  2. Trust", "› 2. Trust")
+    keys = []
+
+    class Screen:
+        text = ""
+        rendered = review.split("  3.", 1)[0]
+        complete_since = None
+
+        def read(self):
+            if self.complete_since is None and interactive.time.monotonic() >= 0.4:
+                self.rendered = review
+                self.complete_since = interactive.time.monotonic()
+
+        def send(self, key):
+            assert self.complete_since is not None
+            assert interactive.time.monotonic() - self.complete_since >= interactive.MENU_SELECTION_STABLE_S
+            keys.append(key)
+            if keys == [interactive.DOWN, interactive.DOWN]:
+                self.rendered = trust
+            elif key == interactive.ENTER:
+                assert self.rendered == trust
+                if persisted:
+                    config.write_text('trusted_hash = "fixture"\n', encoding="utf-8")
+                self.rendered = "› Ask Codex to do anything · ? for shortcuts"
+
+    answered = []
+    assert interactive._ready(Screen(), tools()["codex"], 5, answered, config) is persisted
+    assert keys == [interactive.DOWN, interactive.DOWN, interactive.ENTER]
+    assert any("key not taken" in entry for entry in answered)
+    assert "Codex project hooks trusted" in answered

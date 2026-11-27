@@ -37,7 +37,8 @@ UP = "\x1b[A"
 STARTUP_TIMEOUT_S = 60
 PROMPT_PAINT_TIMEOUT_S = 8
 CLAUDE_MCP_STABLE_S = 1.0
-CODEX_FOLDER_STABLE_S = 0.6
+MENU_SELECTION_STABLE_S = 0.6
+MENU_DIRECTION_RETRY_S = 1.0
 CLAUDE_MCP_QUESTION = "New MCP server found in this project:"
 CLAUDE_MCP_ACCEPTED = "Claude Code accepted the Slightly Parallel MCP server"
 CLAUDE_MCP_CHOICES = (
@@ -46,6 +47,7 @@ CLAUDE_MCP_CHOICES = (
     "Continue without using this MCP server",
 )
 WINDOWS_CORE_APPROVAL_COLUMNS = 640
+SCAN_PAYLOADS_NAME = "scan-payloads.json"
 WINDOWS_CORE_WORK_SECTION = "Calculator core work commands"
 CLAUDE_THEME_SELECTION = re.compile(
     r"(?im)^ *[❯>] *(?:[✔√] *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
@@ -158,15 +160,50 @@ def _composer(tool: str, text: str, shown: str) -> bool:
     return "askanything" in shown and "tabagents" in shown and "ctrl+pcommands" in shown
 
 
+@dataclass
+class _MenuSelection:
+    row: str = ""
+    since: float = 0.0
+    moved_from: str = ""
+    moved_at: float = 0.0
+    retried: bool = False
+
+    def stable(self, row: str, now: float, seconds: float) -> bool:
+        if row != self.row:
+            self.row, self.since = row, now
+        return bool(row and now - self.since >= seconds)
+
+    def move(self, screen: Screen, key: str, now: float, action: str, answered: list[str]) -> None:
+        if self.moved_from == self.row:
+            if self.retried or now - self.moved_at < MENU_DIRECTION_RETRY_S:
+                return
+            self.retried = True
+            answered.append(f"{action}: key not taken, retrying direction once")
+        self.moved_from, self.moved_at = self.row, now
+        screen.send(key)
+
+
 def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_config: Path | None = None) -> bool:
     deadline = time.monotonic() + seconds
     composer_seen = False
-    previous_move = ""
-    folder_selection = ""
-    folder_selected_since = 0.0
-    previous_mcp_selection = ""
-    mcp_selected_since = 0.0
-    last_mcp_move = ""
+    selections: dict[str, _MenuSelection] = {}
+    previous_action = ""
+
+    def choose(action: str, row: str, *, move: str = "", stable_for: float = MENU_SELECTION_STABLE_S) -> None:
+        nonlocal previous_action
+        if previous_action and previous_action != action:
+            selections[previous_action].row = ""
+        previous_action = action
+        state = selections.setdefault(action, _MenuSelection())
+        now = time.monotonic()
+        if action in answered or not state.stable(row, now, stable_for):
+            return
+        if move:
+            state.move(screen, move, now, action, answered)
+        else:
+            screen.send(ENTER)
+            answered.append(action)
+
     while time.monotonic() < deadline:
         screen.read()
         if getattr(screen, "exited", False):
@@ -176,46 +213,26 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
         trusted = codex_config is None or (codex_config.is_file() and
                                             "trusted_hash" in codex_config.read_text(encoding="utf-8"))
         folder_dialog = tool.name == "codex" and "trustthisfolder" in shown and "trustandcontinue" in shown
-        if not folder_dialog:
-            folder_selection = ""
-        if "newmcpserverfoundinthisproject:" not in shown:
-            previous_mcp_selection = ""
         if tool.name == "claude-code" and "selectloginmethod:" in shown:
             return False
         if tool.name == "codex" and "trustallandcontinue" in shown:
-            # A redraw can contain both the old menu and the composer. Read
-            # the selected row before sending Enter, once for this dialog.
-            selected = re.findall(r"›\d+\.(reviewhooks|trustallandcontinue|continuewithouttrusting)", shown)
-            if selected and not trusted and "Codex project hooks trusted" not in answered:
-                option = selected[-1]
-                if option == "trustallandcontinue":
-                    screen.send(ENTER)
-                    answered.append("Codex project hooks trusted")
-                elif previous_move != option:
-                    screen.send(DOWN if option == "reviewhooks" else UP)
-                    previous_move = option
+            actions = ("review hooks", "trust all and continue", "continue without trusting")
+            selected = re.findall(r"(?m)^ *› *[1-3]\. *(review hooks|trust all and continue|continue without trusting)",
+                                  frame.lower())
+            complete = all(name.replace(" ", "") in shown for name in actions) and "enterconfirm" in shown
+            row = selected[0] if complete and len(selected) == 1 and not trusted else ""
+            direction = DOWN if row == actions[0] else UP if row == actions[-1] else ""
+            choose("Codex project hooks trusted", row, move=direction)
         elif tool.name == "claude-code" and "doyouwanttousethisapikey?" in shown:
-            action = "Claude Code accepted CI API key"
-            if action not in answered:
-                if re.search(r"[❯>](?:\d+\.)?yes", shown):
-                    screen.send(ENTER)
-                    answered.append(action)
-                elif previous_move != action and re.search(r"[❯>](?:\d+\.)?no\(recommended\)", shown):
-                    screen.send(UP)
-                    previous_move = action
+            selected = re.findall(r"[❯>](?:\d+\.)?(yes|no\(recommended\))", shown)
+            row = selected[0] if len(selected) == 1 else ""
+            choose("Claude Code accepted CI API key", row, move=UP if row == "no(recommended)" else "")
         elif tool.name == "claude-code" and "yes,itrustthisfolder" in shown:
-            # Windows can render the choice cursor as an ASCII chevron.
-            selected = re.search(r"(?im)^ *[❯>] *(?:\d+\. *)?(no, exit|yes, i trust this folder) *$", frame)
-            action = "Claude Code project folder trusted"
-            if selected and action not in answered:
-                choice = selected[1].lower()
-                if choice == "yes, i trust this folder":
-                    screen.send(ENTER)
-                    answered.append(action)
-                elif previous_move != action and "no,exit" in shown:
-                    yes_first = shown.find("yes,itrustthisfolder") < shown.find("no,exit")
-                    screen.send(UP if yes_first else DOWN)
-                    previous_move = action
+            selected = re.findall(r"(?im)^ *[❯>] *(?:\d+\. *)?(no, exit|yes, i trust this folder) *$", frame.lower())
+            row = selected[0] if len(selected) == 1 and "no,exit" in shown else ""
+            yes_first = shown.find("yes,itrustthisfolder") < shown.find("no,exit")
+            direction = (UP if yes_first else DOWN) if row == "no, exit" else ""
+            choose("Claude Code project folder trusted", row, move=direction)
         elif tool.name == "claude-code" and "newmcpserverfoundinthisproject:" in shown:
             lines = [line.strip() for line in frame.splitlines()]
             questions = [line for line in lines if line.startswith(CLAUDE_MCP_QUESTION)]
@@ -223,48 +240,24 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
                 return False
             choices = [line.lstrip("❯> ") for line in lines if line.lstrip("❯> ") in CLAUDE_MCP_CHOICES]
             selected = [line[1:].strip() for line in lines if line.startswith(("❯", ">"))]
-            choice = selected[0] if len(selected) == 1 and choices == list(CLAUDE_MCP_CHOICES) else ""
-            now = time.monotonic()
-            if choice != previous_mcp_selection:
-                mcp_selected_since = now
-                previous_mcp_selection = choice
-            # An early key can be dropped while Claude installs the dialog.
-            # Stability is required for each new row, without a retry.
-            if choice and now - mcp_selected_since >= CLAUDE_MCP_STABLE_S and CLAUDE_MCP_ACCEPTED not in answered:
-                if choice == CLAUDE_MCP_CHOICES[0]:
-                    screen.send(ENTER)
-                    answered.append(CLAUDE_MCP_ACCEPTED)
-                elif choice in CLAUDE_MCP_CHOICES[1:] and choice != last_mcp_move:
-                    screen.send(UP)
-                    last_mcp_move = choice
+            row = selected[0] if len(selected) == 1 and choices == list(CLAUDE_MCP_CHOICES) else ""
+            choose(CLAUDE_MCP_ACCEPTED, row, move=UP if row in CLAUDE_MCP_CHOICES[1:] else "",
+                   stable_for=CLAUDE_MCP_STABLE_S)
         elif folder_dialog:
             selected = re.findall(r"(?m)^ *[›>❯] *(?:\d+\. *)?(trust and continue|back to agent command center) *$", frame.lower())
-            choice = selected[0] if len(selected) == 1 else ""
-            now = time.monotonic()
-            if choice != folder_selection:
-                folder_selection = choice
-                folder_selected_since = now
-            if choice and now - folder_selected_since >= CODEX_FOLDER_STABLE_S and "Codex project folder trusted" not in answered:
-                if choice == "trust and continue":
-                    screen.send(ENTER)
-                    answered.append("Codex project folder trusted")
-                elif previous_move != choice:
-                    screen.send(UP)
-                    previous_move = choice
+            row = selected[0] if len(selected) == 1 and "backtoagentcommandcenter" in shown else ""
+            choose("Codex project folder trusted", row, move=UP if row == "back to agent command center" else "")
         elif tool.name == "claude-code" and "choosethetextstyle" in shown:
-            action = "Claude Code default theme accepted"
-            if action not in answered and CLAUDE_THEME_SELECTION.search(frame):
-                screen.send(ENTER)
-                answered.append(action)
+            selected = CLAUDE_THEME_SELECTION.findall(frame)
+            choose("Claude Code default theme accepted", selected[0] if len(selected) == 1 else "")
         elif tool.name == "claude-code" and "securitynotes:" in shown and "pressentertocontinue" in shown:
-            action = "Claude Code security notes acknowledged"
-            if action not in answered:
-                screen.send(ENTER)
-                answered.append(action)
-        elif _composer(tool.name, frame, shown):
-            # The composer can draw before a trust modal arrives. For a new
-            # Codex home also require the CLI to have persisted hook trust.
-            if trusted:
+            choose("Claude Code security notes acknowledged", "security notes")
+        else:
+            if previous_action:
+                selections[previous_action].row = ""
+                previous_action = ""
+            if _composer(tool.name, frame, shown) and trusted:
+                # A composer can draw briefly before the next trust modal.
                 if composer_seen:
                     return True
                 composer_seen = True
@@ -297,6 +290,11 @@ def _workspace_file(folder: Path, name: str) -> Path:
     target = (folder / name).resolve()
     target.relative_to(folder.resolve())
     return target
+
+
+def _windows_scan_command(folder: Path) -> str:
+    path = _powershell_path(_workspace_file(folder, SCAN_PAYLOADS_NAME))
+    return f"Get-Content -LiteralPath {path} -Raw"
 
 
 def _windows_read_commands(folder: Path, *names: str) -> tuple[str, ...]:
@@ -341,7 +339,7 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
         message += " " + _core_toolchain_hint()
     if step[0] != "#scan":
         return message
-    filename = "scan-payloads.json"
+    filename = SCAN_PAYLOADS_NAME
     if state.tool.name == "codex" and not WINDOWS:
         spec = space.root / filename
     else:
@@ -357,15 +355,17 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
         "file": core_mcp.file_fields("SCAN_ID"),
         "architecture": core_mcp.form_fields("SCAN_ID"),
     }
+    shown_path = json.dumps(str(spec), ensure_ascii=False)
     if state.tool.name == "codex":
         payload = {"scan_material": {"project": state.code}}
         for lens, fields in fields_by_lens.items():
             payload[lens] = {"lens": lens, "project": state.code, "fields": fields}
-        instructions = (f" Read {json.dumps(str(spec))}. Call scan_material with the exact arguments under "
+        read = f"Run `{_windows_scan_command(state.folder)}`" if WINDOWS else f"Read {shown_path}"
+        instructions = (f" {read}. Call scan_material with the exact arguments under "
                         '"scan_material". Use the other objects as the complete write_entry arguments.')
     else:
         payload = fields_by_lens
-        instructions = f" Call scan_material without arguments. Read the exact fields from {json.dumps(str(spec))}."
+        instructions = f" Call scan_material without arguments. Read the exact fields from {shown_path}."
     spec.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return (message + instructions + " Write the scan, file entry, and architecture form in order. "
             "Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with "
@@ -825,8 +825,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         calls = [[method, {**arguments, "project": code}]
                                  for method, arguments in core_mcp.requests_for_scan()]
                         if workspace_shell:
-                            scan = f"Get-Content -LiteralPath {_powershell_path(_workspace_file(folder, 'scan-payloads.json'))}"
-                            read_commands += (scan, f"{scan} -Raw")
+                            scan = _windows_scan_command(folder)
+                            read_commands += (scan, scan.removesuffix(" -Raw"))
                             if offline_provider:
                                 offline_command = scan
                     elif name == "#sp":
