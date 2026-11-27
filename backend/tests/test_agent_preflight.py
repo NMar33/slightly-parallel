@@ -30,7 +30,9 @@ def test_preflight_classifies_provider_errors(status, error, expected):
 @pytest.mark.parametrize(("provider", "endpoint", "model", "token_field", "limit", "input_fields"), [
     ("anthropic", "https://api.anthropic.com/v1/messages", "claude-haiku-5-5", "max_tokens", 1,
      {"messages": [{"role": "user", "content": "ping"}]}),
-    ("openai", "https://api.openai.com/v1/responses", "gpt-6-luna", "max_output_tokens", 16,
+    ("openai-codex", "https://api.openai.com/v1/responses", "gpt-6-luna", "max_output_tokens", 16,
+     {"input": "ping", "store": False}),
+    ("openai-opencode", "https://api.openai.com/v1/responses", "gpt-6-luna", "max_output_tokens", 16,
      {"input": "ping", "store": False}),
 ])
 def test_preflight_uses_only_the_authorized_requests(monkeypatch, provider, endpoint, model, token_field, limit,
@@ -44,6 +46,7 @@ def test_preflight_uses_only_the_authorized_requests(monkeypatch, provider, endp
             assert request.full_url == endpoint
             assert request.get_method() == "POST"
             assert 0 < timeout <= 6
+            assert request.get_header("Originator") == ("codex-tui" if provider == "openai-codex" else None)
             body = json.loads(request.data)
             assert body == {"model": body["model"], token_field: limit, **input_fields}
             if provider == "anthropic":
@@ -75,6 +78,7 @@ def test_preflight_uses_only_the_authorized_requests(monkeypatch, provider, endp
     report = preflight(key, model, provider=provider)
     assert report["passed"]
     assert report["provider"] == provider
+    assert report["checks"][0]["check"] == ("Codex eligibility" if provider == "openai-codex" else "real request")
     assert [check["http"] for check in report["checks"]] == [200, 401, 404]
     assert calls[:2] == [(key, model), ("sp-ci-invalid-key-control", model)]
     assert calls[2][0] == key
@@ -148,6 +152,21 @@ def test_pty_wait_reports_the_api_credit_error_without_waiting_for_timeout(monke
     assert interactive._turn_failure_class(verdict) == "outside (billing)"
 
 
+def test_codex_paid_machine_eligibility_error_fails_fast(monkeypatch):
+    monkeypatch.syspath_prepend(str(SCRIPT.parents[1] / "fresh_user"))
+    import interactive
+
+    path = Path(__file__).with_name("fixtures") / "terminal-approvals" / "paid-machine-codex-eligibility.json"
+    response = json.loads(path.read_text(encoding="utf-8"))
+    saved = []
+    screen = SimpleNamespace(text="", rendered="■ " + json.dumps(response), read=lambda: None, save_frame=saved.append)
+    monkeypatch.setattr(interactive.time, "sleep", lambda _: pytest.fail("eligibility should fail before timeout"))
+    verdict = interactive._wait_for_turn(screen, lambda: False, 30)
+    assert saved == [verdict]
+    assert interactive._turn_failure_class(verdict) == "outside (billing/eligibility)"
+    assert run_path(str(SCRIPT))["classify"](response["status"], response["error"]) == "L0-eligibility"
+
+
 def test_redaction_preserves_json_delimiters(monkeypatch):
     monkeypatch.syspath_prepend(str(SCRIPT.parents[1] / "fresh_user"))
     from common import redact_diagnostics
@@ -167,3 +186,58 @@ def test_preflight_writes_only_to_the_file_until_the_audit(monkeypatch, tmp_path
     assert run() == 1
     assert json.loads(output.read_text(encoding="utf-8")) == private
     assert "provider evidence" not in capsys.readouterr().out and not summary.exists()
+
+
+@pytest.mark.parametrize(("provider", "secret"), [
+    ("openai-codex", "CODEX_OPENAI_API_KEY"),
+    ("openai-opencode", "OPENAI_API_KEY"),
+])
+def test_l0_selects_only_the_named_openai_key(monkeypatch, tmp_path, provider, secret):
+    run = run_path(str(SCRIPT))["main"]
+    output = tmp_path / "report.json"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CODEX_OPENAI_API_KEY", "codex-fixture-only")
+    monkeypatch.setenv("OPENAI_API_KEY", "opencode-fixture-only")
+    monkeypatch.setattr("sys.argv", [str(SCRIPT), "--provider", provider, "--output", str(output)])
+    expected = {"CODEX_OPENAI_API_KEY": "codex-fixture-only", "OPENAI_API_KEY": "opencode-fixture-only"}[secret]
+    original = run.__globals__["preflight"]
+
+    def check(key, model, *, provider):
+        assert key == expected
+        return {"passed": True}
+
+    monkeypatch.setitem(run.__globals__, "preflight", check)
+    assert run() == 0
+    monkeypatch.delenv(secret)
+    monkeypatch.setitem(run.__globals__, "preflight", original)
+    assert run() == 1
+    report = json.loads(output.read_bytes())
+    assert report["checks"][0]["message"] == f"secret {secret} is not set"
+    assert report["credential"] == f"openai/{provider.split('-')[1]} key"
+
+
+
+def test_codex_l0_retains_the_eligibility_refusal_and_redacts_both_keys(monkeypatch):
+    run = run_path(str(SCRIPT))
+    preflight = run["preflight"]
+    response_path = Path(__file__).with_name("fixtures") / "terminal-approvals" / "paid-machine-codex-eligibility.json"
+    envelope = json.loads(response_path.read_bytes())
+    codex_key = "codex-private-extra-fixture-value"
+    opencode_key = "opencode-private-extra-fixture-value"
+    monkeypatch.setenv("CODEX_OPENAI_API_KEY", codex_key)
+    monkeypatch.setenv("OPENAI_API_KEY", opencode_key)
+
+    class EligibilityOpener:
+        def open(self, request, *, timeout):
+            assert request.get_header("Originator") == "codex-tui"
+            error = {**envelope["error"], "message": envelope["error"]["message"] + f" {codex_key} {opencode_key}"}
+            response = io.BytesIO(json.dumps({"error": error}).encode())
+            raise HTTPError(request.full_url, envelope["status"], "", {}, response)
+
+    monkeypatch.setitem(preflight.__globals__, "build_opener", lambda *_: EligibilityOpener())
+    report = preflight(codex_key, "gpt-6-luna", provider="openai-codex")
+    assert not report["passed"]
+    assert report["checks"][0]["verdict"] == "L0-eligibility"
+    assert report["checks"][0]["message"].endswith("[redacted] [redacted]")
+    assert codex_key not in json.dumps(report)
+    assert opencode_key not in json.dumps(report)

@@ -120,7 +120,7 @@ def versions() -> dict[str, str]:
 def secrets() -> list[str]:
     """Every value that must not leave the machine: the keys in the
     environment and the strings in the agents' login files."""
-    found = [os.environ.get(k, "") for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "SP_TOKEN")]
+    found = [os.environ.get(k, "") for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "SP_TOKEN")]
     home = Path.home()
     for rel in (".claude/.credentials.json", ".codex/auth.json", ".local/share/opencode/auth.json"):
         try:

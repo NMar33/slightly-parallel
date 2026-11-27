@@ -1,0 +1,43 @@
+name: Provider preflight
+description: Make a bounded provider request and publish only a credential-checked report
+inputs:
+  provider:
+    description: Credential profile to check
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Probe the selected provider
+      shell: bash
+      env:
+        PROVIDER: ${{ inputs.provider }}
+      run: python scripts/ci/agent_preflight.py --provider "$PROVIDER" --output "$RUNNER_TEMP/sp-l0/$PROVIDER.json"
+    - name: Check the L0 report before upload
+      id: audit
+      if: always()
+      shell: bash
+      env:
+        PROVIDER: ${{ inputs.provider }}
+      run: python scripts/ci/guard_agent_artifacts.py "$RUNNER_TEMP/sp-l0/$PROVIDER.json" "$RUNNER_TEMP/sp-audited-l0"
+    - name: Show the audited L0 report
+      if: always() && steps.audit.outcome == 'success'
+      shell: python
+      env:
+        AUDITED_REPORT: ${{ runner.temp }}/sp-audited-l0/${{ inputs.provider }}.json
+      run: |
+        import json
+        import os
+        from pathlib import Path
+        report = Path(os.environ['AUDITED_REPORT'])
+        if report.is_file():
+            payload = report.read_text(encoding='utf-8')
+            print(payload, end='')
+            with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+                summary.write(f"### L0 {json.loads(payload)['credential']}\n\n```json\n{payload}```\n")
+    - name: Keep the audited L0 report
+      if: always() && steps.audit.outcome == 'success'
+      uses: actions/upload-artifact@v7
+      with:
+        name: l0-${{ inputs.provider }}
+        path: ${{ runner.temp }}/sp-audited-l0/
+        if-no-files-found: ignore

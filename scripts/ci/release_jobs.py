@@ -11,6 +11,7 @@ CORE_TOOLCHAIN = "Prepare core Python, pytest and Git identity (60-second instal
 OFFLINE_TOOLCHAIN = "Check core Python, pytest and Git identity"
 AGENTS_CORE = "An agent from clone to its work on the pages (core, pinned)"
 AGENTS_PREFLIGHT = "Check provider access, authentication and model errors"
+PREFLIGHT_JOBS = {f"L0 {label} key": (AGENTS_PREFLIGHT,) for label in ("anthropic", "openai/codex", "openai/opencode")}
 OFFLINE_CORE = "Run full Codex core through the guarded MCP on a local stub"
 INTERACTIVE_STUB = "Capture a real PTY turn, task, decision, rule and done on a local stub"
 OPENCODE_SDK = "Prepare pinned OpenCode SDK (60-second npm limit)"
@@ -24,12 +25,15 @@ def required_jobs(workflow: str) -> dict[str, tuple[str, ...]]:
     if workflow == "agents.yml":
         return {
             "L0 CLI versions": ("Record the CLI package versions",),
-            **{f"L0 {provider}": (AGENTS_PREFLIGHT,) for provider in ("anthropic", "openai")},
+            **PREFLIGHT_JOBS,
             **{f"{tool} ({os})": (CORE_TOOLCHAIN, AGENTS_CORE) for tool in TOOLS for os in SYSTEMS},
         }
     if workflow == "machine.yml":
-        return {f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS", MACHINE_COST)
-                for os in SYSTEMS}
+        return {
+            **PREFLIGHT_JOBS,
+            **{f"Machine full ({os})": ("The kit, Windows" if os.startswith("windows") else "The kit, Linux and macOS", MACHINE_COST)
+               for os in SYSTEMS},
+        }
     if workflow == "pipeline-self-test.yml":
         return {"Verify pipeline failure propagation": ("Require every native probe to fail and prove why",)}
     if workflow == "user-profiles.yml":

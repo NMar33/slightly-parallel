@@ -72,7 +72,14 @@ _WRAPPED_KEY_PREFIX = re.compile(
         for kind in ("ant", "proj", "svcacct", "admin", "live", "test")
     ) + r")"
 )
-BILLING_FAILURE_CLASS = "outside (billing)"
+PROVIDER_ACCOUNT_FAILURE_CLASSES = {
+    "L0-billing": "outside (billing)",
+    "L0-eligibility": "outside (billing/eligibility)",
+}
+_ELIGIBILITY_ERROR = re.compile(
+    r"\b(?:codex_byok_restricted_by_api_credit_promo|(?:account|organization)_(?:not_eligible|ineligible))\b",
+    re.IGNORECASE,
+)
 _BILLING_ERROR = re.compile(
     r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota|billing_hard_limit_reached"
     r"|quota\s+exceeded\.\s*check\s+your\s+plan\s+and\s+billing\s+details"
@@ -80,13 +87,15 @@ _BILLING_ERROR = re.compile(
 )
 
 
-def is_provider_billing_failure(text: str) -> bool:
-    return bool(_BILLING_ERROR.search(text))
+def provider_account_error(text: str) -> str:
+    if _ELIGIBILITY_ERROR.search(text):
+        return "L0-eligibility"
+    return "L0-billing" if _BILLING_ERROR.search(text) else ""
 
 
 def _known_key_spans(text: str, known_key: str) -> list[tuple[int, int]]:
     keys = {known_key, _DIAGNOSTIC_OPENAI_KEY, os.environ.get("ANTHROPIC_API_KEY", ""),
-            os.environ.get("OPENAI_API_KEY", "")} - {""}
+            os.environ.get("OPENAI_API_KEY", ""), os.environ.get("CODEX_OPENAI_API_KEY", "")} - {""}
     if not keys:
         return []
     needles = {"".join(ch for ch in key if ch in _KEY_ALPHABET)

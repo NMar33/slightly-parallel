@@ -15,7 +15,8 @@ REPO_URL="${SP_REPO_URL:-https://github.com/NMar33/slightly-parallel.git}"
 DEST="${SP_DEST:-$HOME/slightly-parallel}"
 # SP_LOCAL=1: run from the repository this script sits in (a CI checkout),
 # no clone. CI or SP_NONINTERACTIVE: no login prompts — the keys come from
-# ANTHROPIC_API_KEY and OPENAI_API_KEY.
+# ANTHROPIC_API_KEY for Claude Code, CODEX_OPENAI_API_KEY for Codex,
+# and OPENAI_API_KEY for OpenCode.
 if [[ -n ${SP_LOCAL:-} ]]; then DEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; fi
 QUIET="${SP_NONINTERACTIVE:-${CI:-}}"
 say() { printf '\n\033[1m[sp] %s\033[0m\n' "$*"; }
@@ -71,8 +72,8 @@ npm install -g --silent "${packages[@]}"
 
 if [[ -n $QUIET ]]; then
   say "No login prompts: the keys come from the environment"
-  if [[ -n ${OPENAI_API_KEY:-} && ! -f $HOME/.codex/auth.json ]]; then
-    printenv OPENAI_API_KEY | codex login --with-api-key
+  if [[ -n ${CODEX_OPENAI_API_KEY:-} && ( ${GITHUB_ACTIONS:-} == true || ! -f $HOME/.codex/auth.json ) ]]; then
+    printenv CODEX_OPENAI_API_KEY | env -u OPENAI_API_KEY -u CODEX_OPENAI_API_KEY codex login --with-api-key
   fi
 else
 say "Log in to each agent now — the only step that needs you"

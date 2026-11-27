@@ -19,8 +19,8 @@ WORKFLOWS = {
     "ci.yml": (21, 10, 9),
     "terminal.yml": (1, 1, 1),
     "weekly.yml": (4, 4, 4),
-    "agents.yml": (6, 3, 3),
-    "machine.yml": (1, 1, 1),
+    "agents.yml": (7, 3, 3),
+    "machine.yml": (4, 1, 1),
     "user-profiles.yml": (1, 1, 2),
     "terminal-bench.yml": (1, 1, 1),
 }

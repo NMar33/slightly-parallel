@@ -13,11 +13,15 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fresh_user"))
-from common import is_provider_billing_failure, redact_diagnostics  # noqa: E402
+from common import provider_account_error, redact_diagnostics  # noqa: E402
 
 REQUEST_TIMEOUT_S = 6
 MAX_RESPONSE_BYTES = 65536
-DEFAULT_MODELS = {"anthropic": "claude-haiku-5-5", "openai": "gpt-6-luna"}
+CREDENTIALS = {
+    "anthropic": ("ANTHROPIC_API_KEY", "anthropic key", "claude-haiku-5-5"),
+    "openai-codex": ("CODEX_OPENAI_API_KEY", "openai/codex key", "gpt-6-luna"),
+    "openai-opencode": ("OPENAI_API_KEY", "openai/opencode key", "gpt-6-luna"),
+}
 FAKE_KEY = "sp-ci-invalid-key-control"
 
 
@@ -27,7 +31,9 @@ def classify(status: int, error: dict) -> str:
     message = str(error.get("message") or "").lower()
     if status == 401:
         return "L0-auth"
-    if status == 402 or is_provider_billing_failure(f"{kind}\n{code}\n{message}"):
+    if account_error := provider_account_error(f"{kind}\n{code}\n{message}"):
+        return account_error
+    if status == 402:
         return "L0-billing"
     if status == 404 and (code == "model_not_found" or "model" in message):
         return "L0-model"
@@ -53,6 +59,10 @@ def probe(key: str, model: str, *, provider: str) -> dict:
     else:
         endpoint = "https://api.openai.com/v1/responses"
         headers = {"Authorization": f"Bearer {key}"}
+        if provider == "openai-codex":
+            # The real PTY identifies itself as codex-tui. A generic Responses
+            # request can succeed for an organization that is ineligible for Codex.
+            headers["originator"] = "codex-tui"
         body = {"model": model, "max_output_tokens": 16, "input": "ping", "store": False}
     request = Request(endpoint, method="POST", headers={**headers, "Content-Type": "application/json"},
                       data=json.dumps(body).encode())
@@ -84,10 +94,11 @@ def probe(key: str, model: str, *, provider: str) -> dict:
 
 
 def preflight(key: str, model: str, *, provider: str) -> dict:
+    secret, label, _model = CREDENTIALS[provider]
     checks = []
     if key:
         for name, credential, target, verdict, status in (
-            ("real request", key, model, "pass", None),
+            ("Codex eligibility" if provider == "openai-codex" else "real request", key, model, "pass", None),
             ("invalid key", FAKE_KEY, model, "L0-auth", 401),
             ("nonexistent model", key, f"sp-preflight-nonexistent-{uuid4().hex}", "L0-model", 404),
         ):
@@ -96,20 +107,21 @@ def preflight(key: str, model: str, *, provider: str) -> dict:
                            "ok": result["verdict"] == verdict and (status is None or result["http"] == status)})
     else:
         checks.append({"check": "configured key", "http": None, "type": "missing_key",
-                       "message": f"{provider.upper()}_API_KEY is empty", "verdict": "L0-auth", "ok": False})
-    return {"provider": provider, "model": _redact(model, key),
+                       "message": f"secret {secret} is not set", "verdict": "L0-auth", "ok": False})
+    return {"provider": provider, "credential": label, "model": _redact(model, key),
             "passed": all(c["ok"] for c in checks), "checks": checks}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=DEFAULT_MODELS, required=True)
+    parser.add_argument("--provider", choices=CREDENTIALS, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true":
         parser.error("live probes run only in GitHub Actions")
-    model = (os.environ.get("CODEX_MODEL") if args.provider == "openai" else None) or DEFAULT_MODELS[args.provider]
-    result = preflight(os.environ.get(f"{args.provider.upper()}_API_KEY", ""), model, provider=args.provider)
+    secret, _, default_model = CREDENTIALS[args.provider]
+    model = (os.environ.get("CODEX_MODEL") if args.provider != "anthropic" else None) or default_model
+    result = preflight(os.environ.get(secret, ""), model, provider=args.provider)
     output = json.dumps(result, ensure_ascii=True, indent=2)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(output + "\n", encoding="utf-8")

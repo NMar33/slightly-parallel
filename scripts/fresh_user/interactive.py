@@ -20,20 +20,21 @@ import scenario
 import core_mcp
 from agents import OpenCode, OpenCodeSDKError, Tool, give_login, model_for
 from common import (
-    BILLING_FAILURE_CLASS,
+    PROVIDER_ACCOUNT_FAILURE_CLASSES,
     Report,
     Space,
     WINDOWS,
     chatstore,
     get,
-    is_provider_billing_failure,
+    provider_account_error,
     new_task_rows,
     redact_diagnostics,
     rows,
 )
 from screen import COLS, DOWN, ENTER, Screen, codex_pty_args
 
-PROVIDER_BILLING_ERROR = "L4 provider error (L0-billing)"
+_PROVIDER_TURN_FAILURES = {f"L4 provider error ({code})": classification
+                           for code, classification in PROVIDER_ACCOUNT_FAILURE_CLASSES.items()}
 POLL_S = 0.2
 UP = "\x1b[A"
 STARTUP_TIMEOUT_S = 60
@@ -211,7 +212,7 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
         if getattr(screen, "exited", False):
             return False
         frame = getattr(screen, "rendered", "") or screen.text
-        if is_provider_billing_failure(frame):
+        if provider_account_error(frame):
             return False
         shown = re.sub(r"\s+", "", frame.lower())
         trusted = codex_config is None or (codex_config.is_file() and
@@ -400,8 +401,8 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int,
     while time.monotonic() < end:
         # Drain the PTY while the CLI is working so a full buffer cannot hold up the hook.
         screen.read()
-        if is_provider_billing_failure(screen.rendered + "\n" + screen.text):
-            verdict = PROVIDER_BILLING_ERROR
+        if account_error := provider_account_error(screen.rendered + "\n" + screen.text):
+            verdict = f"L4 provider error ({account_error})"
             break
         if approval is not None and (verdict := approval()):
             break
@@ -423,13 +424,13 @@ def _opencode_permission_failure(screen: Screen) -> str:
 
 
 def _turn_failure_class(error: str) -> str:
-    if error == PROVIDER_BILLING_ERROR:
-        return BILLING_FAILURE_CLASS
+    if error in _PROVIDER_TURN_FAILURES:
+        return _PROVIDER_TURN_FAILURES[error]
     return "stand" if error == "tool missing in the stand" else "unclassified"
 
 
 def _recover_core_composer(screen: Screen, tool: str, error: str) -> bool:
-    if screen.exited or error == PROVIDER_BILLING_ERROR:
+    if screen.exited or error in _PROVIDER_TURN_FAILURES:
         return False
     # Interrupt or dismiss the failed turn. An unapproved prompt is never accepted.
     screen.send("\x1b")
@@ -720,7 +721,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         if not ready:
             screen.save_frame("startup failed")
         detail = "" if ready else _startup_failure(screen)
-        failure_class = BILLING_FAILURE_CLASS if is_provider_billing_failure(detail) else "unclassified"
+        failure_class = PROVIDER_ACCOUNT_FAILURE_CLASSES.get(provider_account_error(detail), "unclassified")
         if not report.add(stage, "L1 CLI composer", ready, detail, failure_class=failure_class):
             return None
         verdicts.update(L1="pass", L2="fail")
@@ -909,7 +910,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                                   failure_class=_turn_failure_class(error)):
                     if _recover_core_composer(screen, tool.name, error):
                         continue
-                    blocked_by = f"{name}: {error}" if error == PROVIDER_BILLING_ERROR else f"{name}: terminal did not recover an empty composer"
+                    blocked_by = f"{name}: {error}" if error in _PROVIDER_TURN_FAILURES else f"{name}: terminal did not recover an empty composer"
                     break
                 state.said.append(_last_reply(chat, message))
                 if name == "#scan":
