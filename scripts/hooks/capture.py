@@ -1052,7 +1052,9 @@ class TurnCapture:
             if tell_identity else None,
             # This prompt is a message from another agent (its marker).
             "message_in": {"id": message_in["id"], "from": message_in["from_agent"],
-                           "reply_to": message_in.get("reply_to") or ""} if message_in else None,
+                           "reply_to": message_in.get("reply_to") or ""}
+            if message_in and not message_in.get("already_notified") else None,
+            "message_late": message_in["id"] if message_in and message_in.get("already_notified") else None,
             # This prompt is a message for another chat, typed here by mistake.
             "message_stray": {"id": message_stray["id"], "from": message_stray["from_agent"],
                               "to": message_stray["to_agent"]} if message_stray else None,
@@ -2273,7 +2275,8 @@ def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
             got = json.load(response)
     except (OSError, ValueError, TypeError, KeyError, HTTPException):
         return False
-    return isinstance(got, dict) and got.get("types") is True
+    # Older servers return a broader verdict without checking the proof.
+    return isinstance(got, dict) and len(got) == 1 and got.get("types") is True
 
 
 def _done_outcome_notice(outcome: dict) -> str:
@@ -2428,6 +2431,8 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"{w.get('turn')}; give it a title now (≤ 80 characters, what it is about, in the operator's "
             f"language) with task_update {{id: \"{w.get('task_id')}\", title}}. Its title for now: "
             f"\"{w.get('provisional') or ''}\". The skill write-a-task holds the rule.")
+    if late := signals.get("message_late"):
+        notes.append(f"[slightly-parallel] message {late} was already delivered. Ignore this late terminal notice.")
     got = signals.get("message_in")
     if got:
         notes.append(

@@ -17,10 +17,11 @@ reached the chat — ``delivered_via``:
 - ``hook``     — handed to the agent as a notice on its next prompt;
 - ``inbox``    — read by the agent itself (the MCP tool ``messages``).
 
-Each message is taken once, under the ledger's lock, by whichever of the
-three comes first (``claim_*``): one never reaches a chat twice. A message
-typed into a terminal is the terminal's until its prompt lands: the inbox
-names it (``in_flight``) without handing its text over again.
+The ledger keeps the body until the intended chat can read it. The inbox
+marks it read once, under the ledger's lock. Automatic terminal wakes are
+best effort. After a crash mid-send, when the terminal may have received
+the paste, the next prompt or the inbox can still deliver the message.
+A late terminal notice does not create a second actionable notification.
 
 A marker that lands in another chat — the message was typed into a pane
 where that chat runs now — is no delivery: the ledger notes where it
@@ -221,8 +222,9 @@ def _deliver(row: dict[str, str], via: str, at: str) -> None:
 
 
 def _return_terminal_claim(row: dict[str, str]) -> None:
-    read = row["read_at"]
-    _deliver(row, "inbox" if read else "", read)
+    if row["delivered_via"] in ("", "terminal"):
+        read = row["read_at"]
+        _deliver(row, "inbox" if read else "", read)
     row["terminal_sid"] = ""
     row["terminal_state"] = ""
 
@@ -386,6 +388,7 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
                     and row["delivered_via"] not in ("", "terminal", "codex", "stop"))):
             return None
         at = now_local()
+        late = row["terminal_state"] == "uncertain" and row["delivered_via"] in ("hook", "inbox")
         wake = (bool(row["codex_thread"] or row["codex_checked"]) or row["delivered_via"] in ("codex", "stop")
                 or row["terminal_state"] == "uncertain")
         submitted = prompt.strip()
@@ -401,7 +404,7 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
         row["landed_at"] = at
         row["landed_turn"] = str(turn) if turn is not None else ""
         if submitted == notice:
-            return dict(row)
+            return {**row, "already_notified": "1"} if late else dict(row)
         if submitted.startswith(notice):
             # The terminal notice arrived, with the operator's own input
             # appended. Leave that prompt to the normal command parser.

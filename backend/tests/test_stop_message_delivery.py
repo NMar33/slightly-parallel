@@ -4,8 +4,8 @@ Claude Code labels every blocked Stop as a problem ("Stop hook reported a
 problem"). In Slightly Parallel's own terminal the Stop hook no longer
 blocks for a message: the server types it as the next prompt once the input
 line is empty. Where the block stays, its reason opens with a line saying it
-is a message, not an error. Each message reaches the chat once, whichever
-way takes it; races are run many times, in a sandbox tmux (SHELL=/bin/sh)
+is a message, not an error. The inbox delivers each message body once.
+Races are run many times, in a sandbox tmux (SHELL=/bin/sh)
 with a stand-in for the agent's input box. No real agent runs."""
 
 from __future__ import annotations
@@ -177,8 +177,14 @@ def test_stop_keeps_the_wake_for_a_message_the_retry_loop_will_not_take(root, mo
     assert msgledger.find(root, row["id"])["delivered_via"] == "stop"
 
 
-@pytest.mark.parametrize("interrupted", ["load-buffer", "send-keys"])
-def test_terminal_reconciles_an_interrupted_send_without_repeating_a_possible_wake(root, monkeypatch, interrupted):
+@pytest.mark.parametrize(("interrupted", "recover_via"), [
+    ("load-buffer", "terminal"),
+    ("send-keys", "hook"),
+    ("send-keys", "inbox"),
+])
+def test_after_a_crash_the_message_arrives_once_by_terminal_next_prompt_or_inbox(
+    root, monkeypatch, interrupted, recover_via,
+):
     sid = "t0000aaaa"
     _chat(root, WORKER, terminal=sid)
     monkeypatch.setattr(msgdeliver, "check", lambda *_: (sid, ""))
@@ -195,17 +201,54 @@ def test_terminal_reconciles_an_interrupted_send_without_repeating_a_possible_wa
     with pytest.raises(SystemExit):
         msgdeliver.try_terminal(root, row["id"])
     assert not msgledger.find(root, row["id"])["delivered_via"]
-    if interrupted == "load-buffer":
+    if recover_via == "terminal":
         assert msgdeliver.retry_waiting(root) == 1
         assert msgledger.find(root, row["id"])["delivered_via"] == "terminal"
     else:
         assert msgdeliver.retry_waiting(root) == 0
-        assert [r["id"] for r in msgledger.claim_for_hook(root, WORKER)] == [row["id"]]
-        assert msgledger.take_marker(root, WORKER, msgledger.wake_text(row)) is not None
-        assert [r["id"] for r in msgledger.inbox(root, WORKER)["unread"]] == [row["id"]]
+        def prompt(text: str):
+            return _hook(root, {"hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+                                "prompt": text}, _env()).stdout
+
+        notice = msgledger.wake_text(row)
+        if recover_via == "hook":
+            assert prompt("the operator's next prompt").count(notice) == 1
+        else:
+            assert [r["id"] for r in msgledger.inbox(root, WORKER)["unread"]] == [row["id"]]
+        late = prompt(notice)
+        assert "Read it first with MCP tool messages" not in late
+        assert "Answer it when it asks" not in late
+        assert "already delivered" in late
+        saved = msgledger.find(root, row["id"])
+        assert saved is not None and saved["delivered_via"] == recover_via and saved["landed_at"]
+        chat = root / "projects" / "alpha" / "chats" / WORKER / "chat.md"
+        assert f'<sp-message from="{COORD}" id="{row["id"]}">' in chat.read_text(encoding="utf-8")
+        if recover_via == "hook":
+            assert [r["id"] for r in msgledger.inbox(root, WORKER)["unread"]] == [row["id"]]
         assert not msgledger.inbox(root, WORKER)["unread"]
     assert calls.count("send-keys") == 1
     assert msgdeliver.retry_waiting(root) == 0
+
+
+@pytest.mark.parametrize("delivered_via", ["hook", "inbox"])
+def test_a_late_stray_does_not_reopen_a_delivered_message(root, delivered_via):
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="already delivered")
+    mid = row["id"]
+    assert msgledger.claim_terminal(root, mid, "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, mid)
+    msgledger.finish_terminal(root, mid)
+    if delivered_via == "hook":
+        assert [r["id"] for r in msgledger.claim_for_hook(root, WORKER)] == [mid]
+    else:
+        assert [r["id"] for r in msgledger.inbox(root, WORKER)["unread"]] == [mid]
+
+    assert msgledger.take_stray(root, "cc-other", msgledger.wake_text(row)) is not None
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["delivered_via"] == delivered_via and saved["strayed"]
+    assert not msgledger.stop_waiting(root, WORKER)
+    assert msgledger.stop_notice(root, WORKER) == ""
+    assert msgledger.claim_for_hook(root, WORKER) == []
+    assert [r["id"] for r in msgledger.inbox(root, WORKER)["unread"]] == ([mid] if delivered_via == "hook" else [])
 
 
 def test_two_terminal_sends_cannot_overlap_in_one_pane(root, monkeypatch):
@@ -274,7 +317,11 @@ def test_terminal_verdict_rejects_an_unscoped_lookup(root, monkeypatch):
     assert str(root) not in response.text and WORKER not in response.text
 
 
-def test_stop_falls_back_if_the_terminal_verdict_body_is_cut_short(root, monkeypatch):
+@pytest.mark.parametrize("payload", [
+    None,
+    {"types": True, "terminal": "t0000bbbb", "data_root": "another root"},
+], ids=["truncated", "unbound-legacy-verdict"])
+def test_stop_falls_back_if_the_terminal_verdict_is_unreliable(root, monkeypatch, payload):
     from urllib import request
 
     spec = importlib.util.spec_from_file_location("sp_cc_stop_msg", _HOOK)
@@ -291,7 +338,7 @@ def test_stop_falls_back_if_the_terminal_verdict_body_is_cut_short(root, monkeyp
 
     class Opener:
         def open(self, *_args, **_kwargs):
-            return Truncated()
+            return Truncated() if payload is None else io.BytesIO(json.dumps(payload).encode())
 
     monkeypatch.setattr(request, "build_opener", lambda *_: Opener())
     assert cc.terminal_types(str(root), WORKER, meta) is False
