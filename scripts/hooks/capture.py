@@ -460,16 +460,20 @@ def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]
             pending = not legacy
             if append_at is not None:
                 pending = rows.fieldnames is not None and fh.tell() == append_at
+            malformed_tail = False
             for row in rows:
-                if None in row or None in row.values():
-                    raise csv.Error("task ledger row does not match its header")
+                # A later valid row turns a short write into a broken record
+                # in the middle. Only a broken last row can still be finished.
+                malformed_tail = None in row or None in row.values()
                 task_id = row.get("id")
-                if row.get("agent_id") == agent and task_id and task_id not in seen:
+                if not malformed_tail and row.get("agent_id") == agent and task_id and task_id not in seen:
                     seen[task_id] = None
                     if pending:
                         new.append(row)
                 if append_at is not None and not pending:
                     pending = fh.tell() == append_at
+            if malformed_tail:
+                return []
     except (OSError, csv.Error, UnicodeError):
         return []
 
@@ -481,15 +485,9 @@ def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 
 
-def _board_lanes(data_root: Path, project: str) -> list[str]:
-    lanes: dict[str, str] = {}
-    for r in _read_csv(data_root / "tasks.csv"):
-        if r.get("project") != project or (r.get("archived_at") or "").strip():
-            continue
-        name = (r.get("lane") or r.get("assignee") or "").strip()
-        if name:
-            lanes.setdefault(name.lower(), name)
-    return sorted(lanes.values(), key=str.lower)
+def _board_lanes(data_root: Path, project: str) -> dict[str, str]:
+    return shared.board_lanes(_read_csv(data_root / "tasks.csv"), project,
+                              shared.saved_board_lanes(data_root, project))
 
 
 def task_where(data_root: Path, project: str, agent: str, user_text: str,
@@ -702,7 +700,16 @@ def where_notice(where: dict) -> str:
     told = (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
             + " (the braces set the project and the lane; "
             + _backend_module("mcp_args").send_project(str(where.get("project") or "")) + ").")
-    if where.get("ask"):
+    if lane := where.get("promote_lane"):
+        told += f" Writing the card moves lane „{lane}“ from agents to the board."
+    if choice := where.get("lane_choice"):
+        told += " Write it now, with no lane."
+        if question := where.get("project_ask"):
+            told += f" Once it is filed, first ask the operator in one line: {question} Then tell the operator: "
+        else:
+            told += " Once it is filed, tell the operator: "
+        told += shared.lane_choice_notice(choice)
+    elif where.get("ask"):
         # A lane the braces leave unclear: the card is written now, in the
         # default lane, and the operator is asked after (tk_970d6b2d).
         told += (" The lane is unclear, so the card goes to the default lane: write it now, with no lane, "

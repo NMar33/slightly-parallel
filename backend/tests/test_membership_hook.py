@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import memberships, mcp
+from backend import csvio, memberships, mcp
 from backend import membership_fold as mf
 from backend.server import create_app
 
@@ -285,4 +285,27 @@ def test_upgrade_waits_for_a_complete_appended_task(root: Path, incomplete: str)
     ]
     with tasks.open("a", encoding="utf-8", newline="") as fh:
         csv.writer(fh).writerow(["tk_other004", "alpha", "cc-other", "theirs", "agent", ""])
+    assert "where the tasks" not in _turn(cap, "the ledger changed again")
+
+
+def test_task_placement_resumes_after_a_short_record(root: Path) -> None:
+    cap, tasks, before = _legacy_task_ledger(root, 150)
+    interrupted = "tk_interrupted"
+    with tasks.open("ab") as fh:
+        fh.write(f"{interrupted},beta,{A},Short write".encode("utf-8"))
+    assert "where the tasks" not in _turn(cap, "append is incomplete")
+
+    columns = ["id", "project", "agent_id", "title", "status", "lane"]
+    csvio.append_row(tasks, columns, {
+        "id": "tk_next", "project": "beta", "agent_id": A,
+        "title": "Next task", "status": "agent", "lane": "docs",
+    })
+    assert [line for line in _turn(cap, "the next task was made").splitlines() if "where the tasks" in line] == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_next → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    after = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+    assert after["tasks_seen"] != before["tasks_seen"]
+    assert interrupted not in after["where_told"]
+    csvio.append_row(tasks, columns, {"id": "tk_other", "project": "alpha", "agent_id": "cc-other"})
     assert "where the tasks" not in _turn(cap, "the ledger changed again")
