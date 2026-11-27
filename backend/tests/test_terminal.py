@@ -344,6 +344,15 @@ temp.replace(out)
         assert received.read_bytes() == b"first input"
 
 
+def _set_range_test_prompt(root: Path, sid: str) -> None:
+    # GitHub's macOS hostname once included A5. Keep that collision in both
+    # fixtures so a prompt on its own cannot pass for the command's output.
+    row = termlib.get(root, sid)
+    assert row and termlib.type_into(root, row, "PS1='runner-A5$ '", enter=True)
+    termlib.wait_for_prompt(root, sid)
+    assert termlib.capture(root, sid)["text"].splitlines()[-1].strip() == "runner-A5$"
+
+
 @pytest.mark.skipif(not TMUX, reason="tmux is not installed")
 def test_a_wrapped_line_above_does_not_shift_the_lines_cut_out(env) -> None:
     """What the page copies goes by the screen's rows. A command wider than the
@@ -353,11 +362,12 @@ def test_a_wrapped_line_above_does_not_shift_the_lines_cut_out(env) -> None:
     _on(c)
     sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
     termlib.wait_for_prompt(root, sid)
+    _set_range_test_prompt(root, sid)
     tok = c.get("/api/terminal/state").json()["token"]
     with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}") as ws:
         ws.send_text(json.dumps({"type": "input", "data": f"printf 'A%s\\n' 1 2 3 4 5 # {'x' * 240}\r"}))
-        deadline = time.time() + 5
-        while time.time() < deadline and "A5" not in termlib.capture(root, sid)["text"]:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "A5" not in termlib.capture(root, sid)["text"].splitlines():
             time.sleep(0.1)
     target = termlib.PREFIX + sid
     rows = termlib.tmux(root, "capture-pane", "-p", "-t", target).stdout.split("\n")
@@ -379,19 +389,20 @@ def test_lines_are_cut_out_by_their_absolute_ids(env) -> None:
     _on(c)
     sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
     termlib.wait_for_prompt(root, sid)
+    _set_range_test_prompt(root, sid)
     tok = c.get("/api/terminal/state").json()["token"]
     log = root / "pane-bytes.log"
     termlib.tmux(root, "pipe-pane", "-t", termlib.PREFIX + sid, f"cat >> {shlex.quote(str(log))}")
     # Typed over the socket, as the page types: the Enter stamps the history.
     with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}") as ws:
         ws.send_text(json.dumps({"type": "input", "data": "printf 'A%s\\n' 1 2 3 4 5\r"}))
-        deadline = time.time() + 5
-        while time.time() < deadline and "A5" not in termlib.capture(root, sid)["text"]:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "A5" not in termlib.capture(root, sid)["text"].splitlines():
             time.sleep(0.1)
         inside = _pane_state(root, sid, log)
     screen = termlib.capture(root, sid)
     after = _pane_state(root, sid, log)
-    assert screen["lines"] >= 5 and "A5" in screen["text"], f"INSIDE THE SOCKET\n{inside}\nAFTER IT\n{after}"
+    assert screen["lines"] >= 5 and "A5" in screen["text"].splitlines(), f"INSIDE THE SOCKET\n{inside}\nAFTER IT\n{after}"
 
     # The row that shows A2, anchored to an absolute id, survives arithmetic.
     pos = c.get(f"/api/terminal/sessions/{sid}/pos").json()
