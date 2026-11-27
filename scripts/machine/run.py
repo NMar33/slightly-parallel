@@ -30,6 +30,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -37,6 +38,7 @@ from pathlib import Path
 TASKKILL_TIMEOUT_S = 60
 DEFAULT_STAGE_TIMEOUT_S = 900
 STOP_WAIT_TIMEOUT_S = 60
+OPENCODE_SDK_STAGE_TIMEOUT_S = 90
 CHILDREN_QUERY_TIMEOUT_S = 60
 BROWSER_DEPENDENCY_INSTALL_TIMEOUT_S = 1200
 FRESH_USER_STAGE_TIMEOUT_S = 5400
@@ -84,7 +86,8 @@ def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = DEFAULT_STA
         except OSError as exc:
             fh.write(f"\n[run.py] {type(exc).__name__}: {exc}\n")
     steps = json.loads((OUT / "steps.json").read_text(encoding="utf-8")) if (OUT / "steps.json").is_file() else []
-    steps.append({"step": name, "ok": ok, "seconds": round(time.time() - t0), "log": log.name})
+    steps.append({"step": name, "ok": ok, "seconds": round(time.time() - t0), "log": log.name,
+                  "failure_class": "" if ok else "unclassified"})
     (OUT / "steps.json").write_text(json.dumps(steps, indent=1), encoding="utf-8")
     print(f"   {'ok' if ok else 'FAILED'} in {round(time.time() - t0)} s - {log}", flush=True)
     return ok
@@ -117,7 +120,7 @@ def versions() -> dict[str, str]:
 def secrets() -> list[str]:
     """Every value that must not leave the machine: the keys in the
     environment and the strings in the agents' login files."""
-    found = [os.environ.get(k, "") for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "SP_TOKEN")]
+    found = [os.environ.get(k, "") for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "SP_TOKEN")]
     home = Path.home()
     for rel in (".claude/.credentials.json", ".codex/auth.json", ".local/share/opencode/auth.json"):
         try:
@@ -175,6 +178,20 @@ def bundle(fresh_root: Path | None) -> Path:
     return name
 
 
+def run_fresh_user(tools: str, model: str) -> bool:
+    argv = [sys.executable, "scripts/fresh_user/run.py", "--tools", tools, "--scenario", "smoke",
+            "--model", model, "--keep"]
+    if not WINDOWS or "opencode" not in {item.strip() for item in tools.split(",")}:
+        return run("fresh-user", argv, timeout=FRESH_USER_STAGE_TIMEOUT_S)
+
+    with tempfile.TemporaryDirectory(prefix="sp-machine-opencode-sdk-") as seed:
+        if not run("Prepare pinned OpenCode SDK (60-second npm limit)",
+                   [sys.executable, "scripts/ci/prepare_opencode_sdk.py", "--seed", seed,
+                    "--report", str(OUT / "opencode-sdk.json")], timeout=OPENCODE_SDK_STAGE_TIMEOUT_S):
+            return False
+        return run("fresh-user", argv, timeout=FRESH_USER_STAGE_TIMEOUT_S, env={"SP_OPENCODE_SDK_SEED": seed})
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--tools", default="claude-code,codex,opencode")
@@ -189,12 +206,13 @@ def main() -> int:
     run("browser", ["npm", "ci"], cwd=REPO / "frontend", timeout=BROWSER_DEPENDENCY_INSTALL_TIMEOUT_S)
     run("browser-chromium", ["npx", "playwright", "install", *([] if WINDOWS or sys.platform == "darwin" else ["--with-deps"]), "chromium"],
         cwd=REPO / "frontend")
-    run("fresh-user", [py, "scripts/fresh_user/run.py", "--tools", args.tools, "--scenario", "smoke",
-                       "--model", args.model, "--keep"], timeout=FRESH_USER_STAGE_TIMEOUT_S)
+    run_fresh_user(args.tools, args.model)
     fresh_root = None
     try:
-        notes = json.loads((REPO / ".sp" / "fresh-user" / "report.json").read_text(encoding="utf-8")).get("notes", {})
-        fresh_root = Path(notes["root"]) if notes.get("root") else None
+        report = REPO / ".sp" / "fresh-user" / "report.json"
+        if report.stat().st_mtime >= STARTED:
+            notes = json.loads(report.read_text(encoding="utf-8")).get("notes", {})
+            fresh_root = Path(notes["root"]) if notes.get("root") else None
     except (OSError, ValueError, KeyError):
         pass
 
@@ -213,7 +231,7 @@ def main() -> int:
 
     archive = bundle(fresh_root)
     steps = json.loads((OUT / "steps.json").read_text(encoding="utf-8"))
-    bad = [s["step"] for s in steps if not s["ok"]]
+    bad = [f"[{s.get('failure_class') or 'unclassified'}] {s['step']}" for s in steps if not s["ok"]]
     print(f"\n{len(steps) - len(bad)} of {len(steps)} steps passed" + (f"; failed: {', '.join(bad)}" if bad else ""))
     print(f"send this file: {archive}")
     # Only the folder this run's test made and named in its report.

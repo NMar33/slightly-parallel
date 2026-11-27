@@ -133,12 +133,12 @@ def test_an_argument_the_fixture_does_not_name_never_reaches_the_product(policy)
     assert not forwarded
 
 
-def test_an_argument_the_product_does_not_take_is_refused_by_name(policy):
+def test_an_argument_the_product_does_not_take_is_refused_without_echoing_it(policy):
     plan, guard, forwarded = policy
     plan.start("checkup", [["checkup", {"not_an_argument": 1}]])
     assert guard.dispatch(request("checkup", {"not_an_argument": 1}))["result"]["isError"]
     assert not forwarded
-    assert plan.result() == (0, "MCP rejected unexpected call in checkup (checkup takes no argument not_an_argument)")
+    assert plan.result() == (0, "MCP rejected unexpected call in checkup (arguments has 1 unadvertised field)")
 
 
 def test_the_guards_allowlist_is_the_products_table(monkeypatch):
@@ -154,3 +154,37 @@ def test_the_guards_allowlist_is_the_products_table(monkeypatch):
     for tool in mcp_args.TOOL_ARGS:
         refused = set(core_mcp.not_taken(tool, dict.fromkeys(every, 1)))
         assert every - refused == mcp_args.accepts(tool), tool
+
+
+def test_refused_call_reports_advertised_argument_keys_without_exporting_payload(policy, tmp_path):
+    from common import Report
+
+    plan, guard, forwarded = policy
+    plan.start("#decision", [["write_entry", {"lens": "decision", "fields": {"weight": "normal"}}]])
+    def handle(message):
+        if message["method"] != "tools/list":
+            forwarded.append(message)
+            return None
+        return {"result": {"tools": [{
+            "name": "write_entry",
+            "inputSchema": {"properties": {"lens": {}, "project": {}, "fields": {}}},
+        }]}}
+
+    guard.handle = handle
+    guard.dispatch({"id": 1, "method": "tools/list"})
+    args = {
+        "lens": "decision",
+        "fields": {"weight": "normal"},
+        "project": "private-project-value",
+        "private-unadvertised-key": "private-unadvertised-value",
+    }
+    assert guard.dispatch(request("write_entry", args))["result"]["isError"]
+    assert not forwarded
+
+    report = Report()
+    report.add("core", "#decision: the operator turn and answer are captured", False, plan.result()[1])
+    path = tmp_path / "report.json"
+    report.write(path)
+    [check] = json.loads(path.read_text(encoding="utf-8"))["checks"]
+    assert 'argument keys: fields, lens, project (1 unadvertised)' in check["detail"]
+    assert "private-" not in check["detail"]

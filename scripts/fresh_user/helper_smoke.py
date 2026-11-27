@@ -8,7 +8,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from agents import Tool, give_login, model_for
-from common import Report, Space, chatstore, eventually, get, new_task_rows, redact_diagnostics, rows
+from common import (PROVIDER_ACCOUNT_FAILURE_CLASSES, Report, Space, chatstore, eventually, get, new_task_rows,
+                    provider_account_error, redact_diagnostics, rows)
 
 HELPER_KINDS = {"claude-code": "claude-print", "codex": "codex-exec", "opencode": "opencode-run"}
 
@@ -81,7 +82,10 @@ def helper_smoke(space: Space, report: Report, code: str, folder: Path, tool: To
     prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool with lens task and exactly these fields: "
               f"{json.dumps(fields)}. Report its result exactly.")
     turn = tool.say(prompt, model_for(tool.name, model), space, env, seconds, folder)
-    if not report.add(stage, "the headless helper answers", turn.ok, turn.error):
+    account_error = provider_account_error(turn.error + "\n" + turn.text)
+    detail = turn.error or (f"Provider account error: {account_error}" if account_error else "")
+    if not report.add(stage, "the headless helper answers", turn.ok and not account_error, detail,
+                      failure_class=PROVIDER_ACCOUNT_FAILURE_CLASSES.get(account_error, "unclassified")):
         return
 
     def captured() -> tuple[str, Path, dict] | None:

@@ -1,0 +1,121 @@
+[
+  {
+    "sha": "1134088c",
+    "run": 45837389742,
+    "platform": "agent-codex-macos-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ git add calc.py test_calc.py && git commit -m 'Add calculator tests' -m 'Task: tk_3a59a469' -m 'Agent: codex-ee1d4156'\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "git add calc.py test_calc.py && git commit -m 'Add calculator tests' -m 'Task: tk_3a59a469' -m 'Agent: codex-ee1d4156'"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "1134088c",
+    "run": 45837389742,
+    "platform": "agent-codex-ubuntu-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ git add calc.py test_calc.py && git commit -m 'Add calculator tests' -m 'Task: tk_d5aead89' -m 'Agent: codex-c8cab9f3'\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "git add calc.py test_calc.py && git commit -m 'Add calculator tests' -m 'Task: tk_d5aead89' -m 'Agent: codex-c8cab9f3'"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "1134088c",
+    "run": 45837389742,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-bucbxpz2/sample/calc.py'\n  Add-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-bucbxpz2/sample/calc.py' -Value @('', 'def sub(a, b):', '    return a - b')\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-bucbxpz2/sample/calc.py'",
+      "  Add-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-bucbxpz2/sample/calc.py' -Value @('', 'def sub(a, b):', '    return a - b')"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-macos-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ python3 -m pip install --user pytest\n\n› 1. Yes, proceed (y)",
+    "commands": [],
+    "decision": "tool missing in the stand"
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-ubuntu-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ git add calc.py test_calc.py && git commit -m 'Add calculator tests' -m 'Task: tk_46edf91e' -m 'Agent: codex-ad459e38'\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "git add calc.py test_calc.py && git commit -m 'Add calculator tests' -m 'Task: tk_46edf91e' -m 'Agent: codex-ad459e38'"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/calc.py'\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/calc.py'"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ Add-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/calc.py' -Value @('', 'def sub(a, b):', '    return a - b')\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Add-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/calc.py' -Value @('', 'def sub(a, b):', '    return a - b')"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/SLIGHTLY-PARALLEL.md'\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/SLIGHTLY-PARALLEL.md'"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ Set-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/test_calc.py' -Value @('from calc import add, sub', '', 'def test_calc():', '    assert add(2, 3) == 5', '    assert sub(3, 2) == 1')\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Set-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/test_calc.py' -Value @('from calc import add, sub', '', 'def test_calc():', '    assert add(2, 3) == 5', '    assert sub(3, 2) == 1')"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ git -c core.hooksPath=NUL -c protocol.allow=never -c commit.gpgsign=false -C 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample' add calc.py test_calc.py && git -c core.hooksPath=NUL -c protocol.allow=never -c commit.gpgsign=false -C 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample' commit -m 'Add calculator tests' -m 'Task: tk_b48c1f0b' -m 'Agent: codex-a4fe4fc0'\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "git -c core.hooksPath=NUL -c protocol.allow=never -c commit.gpgsign=false -C 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample' add calc.py test_calc.py && git -c core.hooksPath=NUL -c protocol.allow=never -c commit.gpgsign=false -C 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample' commit -m 'Add calculator tests' -m 'Task: tk_b48c1f0b' -m 'Agent: codex-a4fe4fc0'"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "03a26fba",
+    "run": 45908842404,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ Get-Content -LiteralPath 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\sp fresh ü-esx6e3qv\\sample\\scan-payloads.json' -Raw\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-esx6e3qv/sample/scan-payloads.json' -Raw"
+    ],
+    "decision": ""
+  },
+  {
+    "sha": "dbc05790",
+    "run": 45915316843,
+    "platform": "agent-codex-windows-latest",
+    "frame": "Would you like to run the following command?\nEnvironment: local\n\n  $ $p = 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ' + [char]0xFC + '-sn375xb8/sample/scan-payloads.json'; Get-Content -LiteralPath $p -Raw\n\n› 1. Yes, proceed (y)",
+    "commands": [
+      "Get-Content -LiteralPath 'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-sn375xb8/sample/scan-payloads.json' -Raw"
+    ],
+    "decision": "unexpected Codex command approval"
+  }
+]

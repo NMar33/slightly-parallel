@@ -95,7 +95,7 @@ jobs:
           python scripts/ci/agent_packages.py "$CHANNEL" --github-output "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
 
   preflight:
-    name: L0 ${{ matrix.provider }}
+    name: L0 ${{ matrix.label }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -103,7 +103,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        provider: [anthropic, openai]
+        include:
+          - provider: anthropic
+            label: anthropic key
+          - provider: openai-codex
+            label: openai/codex key
+          - provider: openai-opencode
+            label: openai/opencode key
     steps:
       - name: Pipeline probe starts
         if: inputs.expect_failure
@@ -136,36 +142,39 @@ jobs:
         if: ${{ !inputs.expect_failure }}
         timeout-minutes: 1
         env:
+          PROVIDER: ${{ matrix.provider }}
           ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
-          OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_OPENAI_API_KEY: ${{ matrix.provider == 'openai-codex' && secrets.CODEX_OPENAI_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai-opencode' && secrets.OPENAI_API_KEY || '' }}
           CODEX_MODEL: gpt-6-luna
-        run: python scripts/ci/agent_preflight.py --provider ${{ matrix.provider }} --output preflight/${{ matrix.provider }}.json
+        run: python scripts/ci/agent_preflight.py --provider "$PROVIDER" --output "$RUNNER_TEMP/sp-l0/$PROVIDER.json"
       - name: Check the L0 report before upload
-        id: artifact-audit
-        if: ${{ !inputs.expect_failure && (always()) }}
+        id: audit
+        if: ${{ !inputs.expect_failure && always() }}
         shell: bash
         env:
+          PROVIDER: ${{ matrix.provider }}
           ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
-          OPENAI_API_KEY: ${{ matrix.provider == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-l0
-        run: python scripts/ci/guard_agent_artifacts.py preflight/${{ matrix.provider }}.json "$AUDITED_ARTIFACTS"
+          CODEX_OPENAI_API_KEY: ${{ matrix.provider == 'openai-codex' && secrets.CODEX_OPENAI_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai-opencode' && secrets.OPENAI_API_KEY || '' }}
+        run: python scripts/ci/guard_agent_artifacts.py "$RUNNER_TEMP/sp-l0/$PROVIDER.json" "$RUNNER_TEMP/sp-audited-l0"
       - name: Show the audited L0 report
-        if: ${{ !inputs.expect_failure && (always() && steps.artifact-audit.outcome == 'success') }}
+        if: ${{ !inputs.expect_failure && always() && steps.audit.outcome == 'success' }}
         shell: python
         env:
-          PROVIDER: ${{ matrix.provider }}
           AUDITED_REPORT: ${{ runner.temp }}/sp-audited-l0/${{ matrix.provider }}.json
         run: |
+          import json
           import os
           from pathlib import Path
           report = Path(os.environ['AUDITED_REPORT'])
           if report.is_file():
-              text = report.read_text(encoding='utf-8')
-              print(text, end='')
+              payload = report.read_text(encoding='utf-8')
+              print(payload, end='')
               with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
-                  summary.write(f"### L0 {os.environ['PROVIDER']}\n\n```json\n{text}```\n")
-      - name: Keep the L0 report
-        if: ${{ !inputs.expect_failure && (always() && steps.artifact-audit.outcome == 'success') }}
+                  summary.write(f"### L0 {json.loads(payload)['credential']}\n\n```json\n{payload}```\n")
+      - name: Keep the audited L0 report
+        if: ${{ !inputs.expect_failure && always() && steps.audit.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: l0-${{ matrix.provider }}
@@ -219,12 +228,9 @@ jobs:
         id: key
         shell: bash
         env:
-          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TOOL_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || matrix.tool == 'codex' && secrets.CODEX_OPENAI_API_KEY || matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
         run: |
-          KEY="$OPENAI_KEY"
-          if [ "${{ matrix.tool }}" = claude-code ]; then KEY="$ANTHROPIC_KEY"; fi
-          if [ -z "$KEY" ]; then echo "No key for ${{ matrix.tool }}." >&2; exit 1; fi
+          if [ -z "$TOOL_KEY" ]; then echo "No key for ${{ matrix.tool }}." >&2; exit 1; fi
           echo "ok=1" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok) }}
@@ -255,6 +261,10 @@ jobs:
       - name: PTY renderer and Windows ConPTY driver
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok) }}
         run: python -m pip install -r scripts/fresh_user/requirements-pty.txt
+      - name: Prepare core Python, pytest and Git identity (60-second install limit)
+        if: ${{ !inputs.expect_failure && (steps.key.outputs.ok && env.SCENARIO == 'core') }}
+        timeout-minutes: 2
+        run: python scripts/ci/prepare_core_toolchain.py
       - name: Claude Code
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok && matrix.tool == 'claude-code') }}
         shell: bash
@@ -265,12 +275,12 @@ jobs:
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok && matrix.tool == 'codex') }}
         shell: bash
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_OPENAI_API_KEY: ${{ secrets.CODEX_OPENAI_API_KEY }}
           CLI_PACKAGE: ${{ needs.cli-versions.outputs.codex }}
         run: |
           npm install -g "$CLI_PACKAGE"
           # The login lands in ~/.codex/auth.json, which the test copies into its own home.
-          printenv OPENAI_API_KEY | codex login --with-api-key
+          printenv CODEX_OPENAI_API_KEY | env -u CODEX_OPENAI_API_KEY codex login --with-api-key
       - name: OpenCode
         if: ${{ !inputs.expect_failure && (steps.key.outputs.ok && matrix.tool == 'opencode') }}
         shell: bash
@@ -287,7 +297,7 @@ jobs:
           # Codex uses its login file. The test harness uses the key to redact diagnostics.
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
           OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
-          SP_DIAGNOSTIC_OPENAI_KEY: ${{ matrix.tool == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_OPENAI_API_KEY: ${{ matrix.tool == 'codex' && secrets.CODEX_OPENAI_API_KEY || '' }}
           CODEX_MODEL: gpt-6-luna
           SP_AGENT_PREFLIGHT_RESULT: ${{ needs.preflight.result }}
         run: |
@@ -305,7 +315,8 @@ jobs:
         shell: bash
         env:
           ANTHROPIC_API_KEY: ${{ matrix.tool == 'claude-code' && secrets.ANTHROPIC_API_KEY || '' }}
-          OPENAI_API_KEY: ${{ matrix.tool != 'claude-code' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_OPENAI_API_KEY: ${{ matrix.tool == 'codex' && secrets.CODEX_OPENAI_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.tool == 'opencode' && secrets.OPENAI_API_KEY || '' }}
           AUDITED_ARTIFACTS: ${{ runner.temp }}/sp-audited-agent
         run: python scripts/ci/guard_agent_artifacts.py .sp/fresh-user "$AUDITED_ARTIFACTS"
       - name: Where to find failure details

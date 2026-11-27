@@ -161,11 +161,18 @@ def kept(lens: str, key: str, words: str) -> Checker:
     return check
 
 
-def after_work(space: Space, report: Report, s: str, st: State) -> None:
+def after_work(space: Space, report: Report, s: str, st: State, *, codex_git_approval: bool | None = None) -> None:
     tests = st.folder / "test_calc.py"
     report.add(s, "the agent wrote the tests", tests.is_file() and "def test" in tests.read_text(encoding="utf-8"))
     log = sh(["git", "log", "--oneline"], st.folder, space.env()).stdout.strip().splitlines()
-    report.add(s, "the agent committed", len(log) >= 2, "\n".join(log))
+    committed = len(log) >= 2
+    reply = st.said[-1].lower().replace("\\", "/") if st.said else ""
+    missing_request = not committed and codex_git_approval is False and ".git/index.lock" in reply and "read-only" in reply
+    detail = "\n".join(log)
+    if missing_request:
+        detail = "The agent did not request the wired approval after reporting a read-only Git index.\n" + detail
+    report.add(s, "the agent committed", committed, detail,
+               failure_class="model variance" if missing_request else "unclassified")
 
 
 def after_evidence(space: Space, report: Report, s: str, st: State) -> None:

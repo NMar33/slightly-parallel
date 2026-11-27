@@ -305,3 +305,37 @@ def test_stub_cli_jobs_discard_checkout_credentials(workflow, job):
     assert body
     checkout = re.search(r"(?m)^      - uses: actions/checkout@[^\n]+\n((?:        [^\n]+\n)+)", body[1])
     assert checkout and "          persist-credentials: false\n" in checkout[1]
+
+
+def test_live_openai_credentials_are_routed_to_separate_tools():
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    agents = yaml.safe_load((root / ".github/workflows/agents.yml").read_text(encoding="utf-8"))
+    machine = yaml.safe_load((root / ".github/workflows/machine.yml").read_text(encoding="utf-8"))
+    codex = "CODEX_OPENAI_API_KEY"
+    opencode = "OPENAI_API_KEY"
+    login = next(step for step in agents["jobs"]["agent"]["steps"] if step.get("name") == "Codex, logged in with the key")
+    assert login["env"].get(codex) == "${{ secrets.CODEX_OPENAI_API_KEY }}"
+    assert opencode not in login["env"]
+    assert f"printenv {codex}" in login["run"]
+    agent_steps = agents["jobs"]["agent"]["steps"]
+    for step in agent_steps:
+        for name, tool in ((codex, "codex"), (opencode, "opencode")):
+            if name not in step.get("env", {}) or step is login:
+                continue
+            assert f"matrix.tool == '{tool}' && secrets.{name}" in step["env"][name]
+    assert machine["jobs"]["machine"]["needs"] == "preflight"
+    assert "needs.preflight.result == 'success'" in machine["jobs"]["machine"]["if"]
+    for workflow in (agents, machine):
+        job = workflow["jobs"]["preflight"]
+        probe = next(step for step in job["steps"] if step.get("name") == "Check provider access, authentication and model errors")
+        assert "uses" not in probe
+        assert "scripts/ci/agent_preflight.py" in probe["run"]
+        for name, profile in ((codex, "openai-codex"), (opencode, "openai-opencode")):
+            assert f"matrix.provider == '{profile}' && secrets.{name}" in probe["env"][name]
+    for name, bootstrap in (("bootstrap.sh", f"printenv {codex}"), ("bootstrap.ps1", "$env:CODEX_OPENAI_API_KEY | codex.cmd")):
+        source = (root / "scripts/machine" / name).read_text(encoding="utf-8")
+        assert bootstrap in source
+        assert f"printenv {opencode} | codex" not in source
+        assert "$env:OPENAI_API_KEY | codex" not in source

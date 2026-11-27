@@ -72,20 +72,30 @@ _WRAPPED_KEY_PREFIX = re.compile(
         for kind in ("ant", "proj", "svcacct", "admin", "live", "test")
     ) + r")"
 )
+PROVIDER_ACCOUNT_FAILURE_CLASSES = {
+    "L0-billing": "outside (billing)",
+    "L0-eligibility": "outside (billing/eligibility)",
+}
+_ELIGIBILITY_ERROR = re.compile(
+    r"\b(?:codex_byok_restricted_by_api_credit_promo|(?:account|organization)_(?:not_eligible|ineligible))\b",
+    re.IGNORECASE,
+)
 _BILLING_ERROR = re.compile(
     r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota|billing_hard_limit_reached"
     r"|quota\s+exceeded\.\s*check\s+your\s+plan\s+and\s+billing\s+details"
-    r"|exceeded\s+your\s+current\s+quota)\b", re.IGNORECASE,
+    r"|exceeded\s+your\s+current\s+quota|402\s*:?\s+payment\s+required)\b", re.IGNORECASE,
 )
 
 
-def is_provider_billing_failure(text: str) -> bool:
-    return bool(_BILLING_ERROR.search(text))
+def provider_account_error(text: str) -> str:
+    if _ELIGIBILITY_ERROR.search(text):
+        return "L0-eligibility"
+    return "L0-billing" if _BILLING_ERROR.search(text) else ""
 
 
 def _known_key_spans(text: str, known_key: str) -> list[tuple[int, int]]:
     keys = {known_key, _DIAGNOSTIC_OPENAI_KEY, os.environ.get("ANTHROPIC_API_KEY", ""),
-            os.environ.get("OPENAI_API_KEY", "")} - {""}
+            os.environ.get("OPENAI_API_KEY", ""), os.environ.get("CODEX_OPENAI_API_KEY", "")} - {""}
     if not keys:
         return []
     needles = {"".join(ch for ch in key if ch in _KEY_ALPHABET)
@@ -137,6 +147,7 @@ class Check:
     #: A soft check is reported and does not fail the run: an agent may word
     #: or order things differently and still be right.
     soft: bool = False
+    failure_class: str = ""
 
 
 @dataclass
@@ -150,10 +161,11 @@ class Report:
             return ""
         return "See the audited report artifact." if os.environ.get("GITHUB_ACTIONS") == "true" else detail
 
-    def add(self, stage: str, name: str, ok: bool, detail: str = "", soft: bool = False) -> bool:
+    def add(self, stage: str, name: str, ok: bool, detail: str = "", soft: bool = False,
+            *, failure_class: str = "unclassified") -> bool:
         stage, name = redact_diagnostics(stage), redact_diagnostics(name)
         detail = redact_diagnostics(detail)
-        self.checks.append(Check(stage, name, bool(ok), detail, soft))
+        self.checks.append(Check(stage, name, bool(ok), detail, soft, "" if ok else failure_class))
         mark = "ok  " if ok else ("soft" if soft else "FAIL")
         print(f"  [{mark}] {name}" + (f" — {self.console_detail(detail)}" if detail and not ok else ""), flush=True)
         return bool(ok)

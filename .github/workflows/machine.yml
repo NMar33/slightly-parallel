@@ -39,7 +39,96 @@ defaults:
     shell: bash
 
 jobs:
+  preflight:
+    name: L0 ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: anthropic
+            label: anthropic key
+          - provider: openai-codex
+            label: openai/codex key
+          - provider: openai-opencode
+            label: openai/opencode key
+    steps:
+      - name: Pipeline probe starts
+        if: inputs.expect_failure
+        working-directory: .
+        run: echo SP_PIPELINE_PROBE_STARTED
+      - name: Pipeline probe rejects a failed native command
+        if: inputs.expect_failure
+        working-directory: .
+        run: |
+          bash -c 'echo SP_PIPELINE_NATIVE_FAILURE; exit 73'
+          echo SP_PIPELINE_UNREACHABLE
+      - name: Pipeline probe rejects a failed PowerShell command
+        if: failure() && inputs.expect_failure && runner.os == 'Windows'
+        shell: pwsh
+        working-directory: .
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pwsh -NoProfile -Command 'Write-Output SP_PIPELINE_POWERSHELL_FAILURE; exit 73'
+          Write-Output SP_PIPELINE_UNREACHABLE
+      - uses: actions/checkout@v7
+        if: ${{ !inputs.expect_failure }}
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        if: ${{ !inputs.expect_failure }}
+        with:
+          python-version: "3.12"
+      - name: Check provider access, authentication and model errors
+        if: ${{ !inputs.expect_failure }}
+        timeout-minutes: 1
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CODEX_OPENAI_API_KEY: ${{ matrix.provider == 'openai-codex' && secrets.CODEX_OPENAI_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai-opencode' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_MODEL: gpt-6-luna
+        run: python scripts/ci/agent_preflight.py --provider "$PROVIDER" --output "$RUNNER_TEMP/sp-l0/$PROVIDER.json"
+      - name: Check the L0 report before upload
+        id: audit
+        if: ${{ !inputs.expect_failure && always() }}
+        shell: bash
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          ANTHROPIC_API_KEY: ${{ matrix.provider == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CODEX_OPENAI_API_KEY: ${{ matrix.provider == 'openai-codex' && secrets.CODEX_OPENAI_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ matrix.provider == 'openai-opencode' && secrets.OPENAI_API_KEY || '' }}
+        run: python scripts/ci/guard_agent_artifacts.py "$RUNNER_TEMP/sp-l0/$PROVIDER.json" "$RUNNER_TEMP/sp-audited-l0"
+      - name: Show the audited L0 report
+        if: ${{ !inputs.expect_failure && always() && steps.audit.outcome == 'success' }}
+        shell: python
+        env:
+          AUDITED_REPORT: ${{ runner.temp }}/sp-audited-l0/${{ matrix.provider }}.json
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          report = Path(os.environ['AUDITED_REPORT'])
+          if report.is_file():
+              payload = report.read_text(encoding='utf-8')
+              print(payload, end='')
+              with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+                  summary.write(f"### L0 {json.loads(payload)['credential']}\n\n```json\n{payload}```\n")
+      - name: Keep the audited L0 report
+        if: ${{ !inputs.expect_failure && always() && steps.audit.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: l0-${{ matrix.provider }}
+          path: ${{ runner.temp }}/sp-audited-l0/
+          if-no-files-found: ignore
+
   machine:
+    needs: preflight
+    if: always() && !cancelled() && (inputs.expect_failure || needs.preflight.result == 'success')
     name: Machine${{ inputs.full && ' full' || '' }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -55,6 +144,7 @@ jobs:
       # Every agent on Linux; on macOS and Windows Claude Code alone, unless full.
       TOOLS: ${{ (inputs.full || matrix.os == 'ubuntu-latest') && 'claude-code,codex,opencode' || 'claude-code' }}
       ANTHROPIC_API_KEY: ${{ !inputs.expect_failure && secrets.ANTHROPIC_API_KEY || '' }}
+      CODEX_OPENAI_API_KEY: ${{ !inputs.expect_failure && secrets.CODEX_OPENAI_API_KEY || '' }}
       OPENAI_API_KEY: ${{ !inputs.expect_failure && secrets.OPENAI_API_KEY || '' }}
       SP_CLAUDE_MODEL: claude-haiku-5-5
       CODEX_MODEL: gpt-6-luna

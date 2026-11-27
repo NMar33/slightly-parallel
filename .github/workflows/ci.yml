@@ -413,10 +413,14 @@ jobs:
           npm install -g "$spec"
           if [[ "$CLI" == opencode ]]; then
             python scripts/ci/setup_opencode_ripgrep.py
-            sdk="$RUNNER_TEMP/sp-opencode-sdk"
-            npm install --no-audit --no-fund --ignore-scripts --prefix "$sdk" "@opencode-ai/plugin@${spec##*@}"
-            echo "SP_OPENCODE_SDK_SEED=$sdk" >> "$GITHUB_ENV"
           fi
+      - name: Prepare pinned OpenCode SDK (60-second npm limit)
+        if: ${{ !inputs.expect_failure && (matrix.cli == 'opencode') }}
+        timeout-minutes: 2
+        run: |
+          sdk="$RUNNER_TEMP/sp-opencode-sdk"
+          python scripts/ci/prepare_opencode_sdk.py --seed "$sdk" --report "$RUNNER_TEMP/sp-interactive-stub/opencode-sdk.json"
+          echo "SP_OPENCODE_SDK_SEED=$sdk" >> "$GITHUB_ENV"
       - name: Capture a real PTY turn, task, decision, rule and done on a local stub
         if: ${{ !inputs.expect_failure }}
         shell: bash
@@ -430,6 +434,15 @@ jobs:
         run: |
           python -m pytest -q -s -rs -o addopts='' --junitxml=interactive.xml "tests/test_interactive_agents.py::test_interactive_cli_captures_turns_and_board_commands[$CLI]"
           python ../scripts/ci/check_skips.py interactive.xml --one-passed
+      - name: Check core Python, pytest and Git identity
+        if: ${{ !inputs.expect_failure && (matrix.cli == 'codex') }}
+        timeout-minutes: 2
+        env:
+          GIT_AUTHOR_NAME: Fresh User
+          GIT_AUTHOR_EMAIL: fresh@example.com
+          GIT_COMMITTER_NAME: Fresh User
+          GIT_COMMITTER_EMAIL: fresh@example.com
+        run: python scripts/ci/prepare_core_toolchain.py --check-only
       - name: Run full Codex core through the guarded MCP on a local stub
         if: ${{ !inputs.expect_failure && (matrix.cli == 'codex') }}
         working-directory: backend

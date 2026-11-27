@@ -69,3 +69,90 @@ def test_machine_archive_keeps_chat_files_from_distinct_projects(monkeypatch, tm
     with zipfile.ZipFile(audited / archive.name) as checked:
         for project in ("first", "second"):
             assert json.loads(checked.read(f"projects/{project}/chats/cc-f0e1d2c3/meta.json")) == {"project": project}
+
+
+@pytest.mark.parametrize("outcome", ["success", "timeout", "wrong-version"])
+def test_pinned_sdk_prerequisite_records_bounded_redacted_diagnostics(monkeypatch, tmp_path, outcome):
+    script = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "prepare_opencode_sdk.py"
+    prepare = run_path(str(script))["prepare"]
+    ns = prepare.__globals__
+    seed = tmp_path / "seed"
+    report = tmp_path / "results" / "opencode-sdk.json"
+    secret = "sk-proj-SyntheticOpenAIKey1234567890"
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    monkeypatch.setattr(ns["shutil"], "which", lambda name: name)
+
+    calls = []
+
+    class Npm:
+        pid = 1789
+
+        def __init__(self, argv, *, stderr, env, **_kwargs):
+            assert argv[-2:] == [str(seed), "@opencode-ai/plugin@1.19.3"]
+            assert "OPENAI_API_KEY" not in env
+            stderr.write((f"npm error registry 503 {secret}\n").encode("utf-8"))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def wait(self, timeout):
+            assert timeout == 60
+            if outcome == "timeout":
+                raise ns["subprocess"].TimeoutExpired("npm", timeout)
+            package = seed / "node_modules" / "@opencode-ai" / "plugin" / "package.json"
+            package.parent.mkdir(parents=True)
+            package.write_text(json.dumps({"version": "1.19.4" if outcome == "wrong-version" else "1.19.3"}), encoding="utf-8")
+            (seed / "package.json").write_text("{}", encoding="utf-8")
+            (seed / "package-lock.json").write_text("{}", encoding="utf-8")
+            return 0
+
+        def kill(self):
+            calls.append("kill")
+
+    monkeypatch.setattr(ns["subprocess"], "Popen", Npm)
+    monkeypatch.setattr(ns["subprocess"], "run", lambda argv, **_kwargs: calls.append(argv[0]))
+    assert prepare(seed, report, "1.19.3") is (outcome == "success")
+    text = report.read_text(encoding="utf-8")
+    data = json.loads(text)
+    assert data["timeout_seconds"] == 60
+    assert data["elapsed_seconds"] >= 0
+    assert data["status"] == {"success": "ready", "timeout": "timed out", "wrong-version": "invalid seed"}[outcome]
+    assert "registry 503" in data["stderr_tail"]
+    assert secret not in text
+    if outcome == "timeout":
+        assert calls[-1] == "kill"
+
+
+def test_windows_machine_seeds_opencode_before_running_fresh_user(monkeypatch, tmp_path):
+    machine = Path(__file__).resolve().parents[2] / "scripts" / "machine" / "run.py"
+    fresh = run_path(str(machine))["run_fresh_user"]
+    ns = fresh.__globals__
+    monkeypatch.setitem(ns, "WINDOWS", True)
+    monkeypatch.setitem(ns, "OUT", tmp_path / "reports")
+    calls = []
+    steps_ok = True
+
+    def run(name, argv, **kwargs):
+        calls.append((name, argv, kwargs))
+        return steps_ok
+
+    monkeypatch.setitem(ns, "run", run)
+    fresh("codex,opencode", "haiku")
+    (preparation, command, _), (stage, _, options) = calls
+    assert "Prepare pinned OpenCode SDK" in preparation and "60" in preparation
+    assert command[1] == "scripts/ci/prepare_opencode_sdk.py"
+    assert stage == "fresh-user"
+    assert options["env"]["SP_OPENCODE_SDK_SEED"] == command[command.index("--seed") + 1]
+    assert command[command.index("--report") + 1] == str(tmp_path / "reports" / "opencode-sdk.json")
+
+    calls.clear()
+    fresh("codex", "haiku")
+    assert [name for name, _, _ in calls] == ["fresh-user"]
+
+    calls.clear()
+    steps_ok = False
+    assert not fresh("opencode", "haiku")
+    assert [name for name, _, _ in calls] == [preparation]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,25 +33,23 @@ def test_claude_onboarding_reaches_the_prompt(scripted_onboarding, dialog, keys,
     from agents import tools
 
     class Screen:
-        text = ""
+        text = dialog
         keys = []
-        frames = deque([dialog])
-        if "use this API key" in dialog:
-            frames.append("Do you want to use this API key? ❯ Yes No (recommended)")
-        if "I trust this folder" in dialog:
-            frames.extend([dialog, "1. No, exit\n❯ 2. Yes, I trust this folder"])
-        frames.append("❯ Try writing a test\nctrl+g to edit in VS Code")
 
         def read(self):
-            if self.frames:
-                self.text = self.frames.popleft()
+            pass
 
         def send(self, key):
             self.keys.append(key)
+            if len(self.keys) == 1:
+                self.text = ("Do you want to use this API key? ❯ Yes No (recommended)"
+                             if "use this API key" in dialog else "1. No, exit\n❯ 2. Yes, I trust this folder")
+            else:
+                self.text = "❯ Try writing a test\nctrl+g to edit in VS Code"
 
     screen = Screen()
     answered: list[str] = []
-    assert scripted_onboarding._ready(screen, tools()["claude-code"], 2, answered)
+    assert scripted_onboarding._ready(screen, tools()["claude-code"], 3, answered)
     assert screen.keys == keys
     assert answered == [f"Claude Code {action}"]
 
@@ -137,7 +134,7 @@ def test_fresh_user_page_walk_limits_browser_load_on_windows(monkeypatch, tmp_pa
 
 @pytest.mark.parametrize(("server", "cursor", "drop_move", "moves", "expected"), [
     ("slightly-parallel", "❯", 0, 2, True),
-    ("slightly-parallel", "❯", 1, 1, False),
+    ("slightly-parallel", "❯", 1, 2, False),
     ("slightly-parallel", ">", 0, 2, True),
     ("unexpected-server", ">", 0, 0, False),
     ("slightly-parallel\nNew MCP server found in this project: unexpected-server", "❯", 0, 0, False),
@@ -182,7 +179,10 @@ def test_claude_confirms_only_the_single_expected_mcp_server(scripted_onboarding
     assert [key for key, _ in seen] == [interactive.UP] * moves + ([interactive.ENTER] if expected else [])
     if seen:
         assert seen[0][1] >= 6
-    assert report == (["Claude Code accepted the Slightly Parallel MCP server"] if expected else [])
+    if drop_move:
+        assert report == ["Claude Code accepted the Slightly Parallel MCP server: key not taken, retrying direction once"]
+    else:
+        assert report == (["Claude Code accepted the Slightly Parallel MCP server"] if expected else [])
 
 
 def test_new_cards_include_a_late_duplicate(monkeypatch) -> None:
@@ -202,26 +202,38 @@ def test_codex_waits_for_folder_and_hook_trust_after_the_composer_first_draws(sc
 
     config = tmp_path / "config.toml"
 
+    folder = "Trust this folder?\n› 1. Trust and continue\n  2. Back to Agent Command Center"
+    hooks = ("Hooks need review\n› 1. Review hooks\n  2. Trust all and continue\n"
+             "  3. Continue without trusting (hooks won't run)\n  enter confirm · esc skip")
+    trust = hooks.replace("› 1.", "  1.").replace("  2. Trust", "› 2. Trust")
+    composer = "› Ask Codex to do anything · ? for shortcuts"
+
     class Screen:
-        text = ""
+        text = composer
         keys = []
-        frames = deque(["› Ask Codex to do anything · ? for shortcuts"]
-                       + ["Trust this folder?\n› 1. Trust and continue\n  2. Back to Agent Command Center"] * 5
-                       + ["› 1. Review hooks 2. Trust all and continue", "1. Review hooks › 2. Trust all and continue",
-                          "› Ask Codex to do anything · ? for shortcuts"])
+        paints = 0
 
         def read(self):
-            if self.frames:
-                self.text = self.frames.popleft()
-                if not self.frames:
-                    config.write_text('trusted_hash = "example"\n', encoding="utf-8")
+            self.paints += 1
+            if self.paints == 2:
+                self.text = folder
 
         def send(self, key):
             self.keys.append(key)
+            if len(self.keys) == 1:
+                assert self.text == folder
+                self.text = hooks
+            elif len(self.keys) == 2:
+                assert self.text == hooks
+                self.text = trust
+            else:
+                assert self.text == trust
+                config.write_text('trusted_hash = "example"\n', encoding="utf-8")
+                self.text = composer
 
     screen = Screen()
     answered: list[str] = []
-    assert scripted_onboarding._ready(screen, tools()["codex"], 3, answered, config)
+    assert scripted_onboarding._ready(screen, tools()["codex"], 5, answered, config)
     assert screen.keys == ["\r", "\x1b[B", "\r"]
     assert answered == ["Codex project folder trusted", "Codex project hooks trusted"]
 
@@ -351,8 +363,8 @@ def test_windows_machine_codex_waits_for_the_pasted_prompt_before_enter(monkeypa
     assert "disable_paste_burst=true" in commands
 
 
-@pytest.mark.parametrize("paint_work", [True, False])
-def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monkeypatch, tmp_path, paint_work):
+@pytest.mark.parametrize(("windows", "paint_work"), [(True, True), (True, False), (False, True)])
+def test_codex_core_submits_work_prompt_or_keeps_failed_frame(monkeypatch, tmp_path, windows, paint_work):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     import json
     import re
@@ -374,11 +386,13 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
     chat.with_name("meta.json").write_text(json.dumps({"session_ref": "core-session"}), encoding="utf-8")
     card = {"id": task, "agent_id": agent, "project": "calc", "status": "agent"}
     typed, submitted, frames, planned = [], [], [], []
+    mcp_calls = {}
     initial_contract = (Path(interactive.__file__).resolve().parents[2] / contract.name).read_text(encoding="utf-8")
 
     class ModelPlan(core_mcp.Plan):
-        def start(self, name, *args, **kwargs):
-            super().start(name, *args, **kwargs)
+        def start(self, name, calls=(), **kwargs):
+            super().start(name, calls, **kwargs)
+            mcp_calls[name] = calls
             if name == scenario.WORK[0]:
                 planned.extend(kwargs["shell"])
 
@@ -408,7 +422,7 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
         def wait_for(self, value, _timeout, **_kwargs):
             self.rendered = value
             if value.startswith("Write the tests"):
-                self.rendered = value[:self.columns] if paint_work else value[:30]
+                self.rendered = (value[:self.columns] if windows else value) if paint_work else value[:30]
             return value in self.rendered
 
         def save_frame(self, label):
@@ -418,39 +432,147 @@ def test_windows_codex_core_submits_short_work_prompt_or_keeps_failed_frame(monk
             pass
 
     def wait_for_turn(_screen, check, _seconds, **_):
-        if len(submitted) == 3:
+        if len(submitted) == 4:
             return "stop after submitting the work prompt"
         return "" if check() else "missing simulated turn"
 
     monkeypatch.setattr(tool, "installed", lambda: True)
     monkeypatch.setattr(interactive, "give_login", lambda *_: True)
-    monkeypatch.setattr(interactive, "WINDOWS", True)
+    monkeypatch.setattr(interactive, "WINDOWS", windows)
     monkeypatch.setattr(interactive, "Screen", Screen)
     monkeypatch.setattr(interactive, "_ready", lambda *_: True)
     monkeypatch.setattr(interactive, "_wait_for_turn", wait_for_turn)
+    monkeypatch.setattr(interactive, "_recover_core_composer", lambda *_: False)
     monkeypatch.setattr(interactive, "get", lambda *_: {"tasks": [], "agents": [{"agent_id": agent, "session_ref": "core-session"}]})
     monkeypatch.setattr(interactive, "new_task_rows", lambda *_: [card])
     monkeypatch.setattr(core_mcp, "Plan", ModelPlan)
-    monkeypatch.setattr(scenario, "CORE", [scenario.WORK])
+    decision = (*scenario.DECISION[:2], lambda *_: None)
+    monkeypatch.setattr(scenario, "CORE", [decision, scenario.WORK])
 
     report = Report()
     interactive.smoke(space, report, "calc", folder, tool, "stub", tmp_path, 1, core=True)
-    assert len(typed) == 3 and typed[-1].startswith("Write the tests")
-    assert "SLIGHTLY-PARALLEL.md" in typed[-1] and all(command not in typed[-1] for command in planned)
-    updated = contract.read_text(encoding="utf-8")
-    assert updated.startswith(initial_contract)
-    assert [line for line in updated[len(initial_contract):].splitlines() if line in planned] == planned
-    assert len(planned) == 2 and f"Task: {task}" in planned[1] and f"Agent: {agent}" in planned[1]
-    work_instructions = updated[len(initial_contract):]
+    assert len(typed) == 4 and typed[-1].startswith("Write the tests")
+    for index, lens in ((1, "task"), (2, "decision")):
+        [[method, arguments]] = mcp_calls[f"#{lens}"]
+        assert method == "write_entry"
+        assert arguments.keys() == {"lens", "project", "fields"}
+        assert arguments["project"] == "calc"
+        assert arguments["lens"] == lens
+        assert json.dumps(arguments) in typed[index]
+    assert f"Task: {task}" in planned[-1] and f"Agent: {agent}" in planned[-1]
+    fallback = "If the sandbox refuses the Git command, ask once to run that exact command."
+    if windows:
+        assert "SLIGHTLY-PARALLEL.md" in typed[-1] and all(command not in typed[-1] for command in planned)
+        updated = contract.read_text(encoding="utf-8")
+        assert updated.startswith(initial_contract)
+        work_instructions = updated[len(initial_contract):]
+        assert [line for line in work_instructions.splitlines() if line in planned] == planned
+        assert len(planned) == 2
+        assert "/SLIGHTLY-PARALLEL.md" in exclude.read_text(encoding="utf-8").splitlines()
+    else:
+        assert len(planned) == 1 and planned[0] in typed[-1]
+        work_instructions = typed[-1]
+    assert fallback in work_instructions
     assert "Once the commit command succeeds, reply in chat without running any further commands." in work_instructions
-    assert "/SLIGHTLY-PARALLEL.md" in exclude.read_text(encoding="utf-8").splitlines()
     if paint_work:
         assert submitted == typed and not frames
     else:
-        assert submitted == typed[:2]
+        assert submitted == typed[:3]
         [(label, frame)] = frames
         assert label == "prompt paint timed out" and frame == typed[-1][:30]
         assert any("before Enter" in check.name for check in report.failed())
+
+
+@pytest.mark.parametrize("recovered", [True, False])
+def test_core_runs_later_turns_only_after_recovering_the_composer(monkeypatch, tmp_path, recovered):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import interactive
+    import scenario
+    from common import Report, Space
+
+    space = Space(tmp_path, 1)
+    folder = space.sample
+    folder.mkdir()
+    tool = scenario.tools()["claude-code"]
+    agent = "cc-test"
+    chat = tmp_path / "chat.md"
+    chat.with_name("meta.json").write_text('{"session_ref":"core-session"}', encoding="utf-8")
+    prompts, checks = [], []
+    card = {"id": "tk_test", "agent_id": agent, "project": "calc", "status": "agent"}
+
+    class Screen:
+        rendered = history = ""
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def send(self, value, **_kwargs):
+            if value != interactive.ENTER:
+                prompts.append(value)
+                if "sp-task-" in value:
+                    card["title"] = value.removeprefix("#task ").split(".", 1)[0]
+
+        def wait_for(self, *_args, **_kwargs):
+            return True
+
+        def close(self):
+            pass
+
+    def wait_for_turn(_screen, check, _seconds, **_kwargs):
+        if len(prompts) == 4:
+            return "unexpected fixture approval"
+        assert check()
+        return ""
+
+    def steps():
+        for name in ("before the failure", "middle failure", "after the failure"):
+            yield (name, lambda _state, name=name: name, lambda *_args, name=name: checks.append(name))
+
+    monkeypatch.setattr(tool, "installed", lambda: True)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+    monkeypatch.setattr(interactive, "Screen", Screen)
+    monkeypatch.setattr(interactive, "_ready", lambda *_: True)
+    monkeypatch.setattr(interactive, "_wait_for_turn", wait_for_turn)
+    monkeypatch.setattr(interactive, "_recover_core_composer", lambda *_: recovered, raising=False)
+    monkeypatch.setattr(interactive, "_recorded_turn", lambda *_: True)
+    monkeypatch.setattr(interactive, "_last_reply", lambda *_: "Captured")
+    monkeypatch.setattr(interactive.chatstore, "iter_chats", lambda *_args, **_kw: [(None, agent, tmp_path)])
+    monkeypatch.setattr(interactive, "get", lambda *_: {"tasks": [], "agents": [{"agent_id": agent, "session_ref": "core-session"}]})
+    monkeypatch.setattr(interactive, "new_task_rows", lambda *_: [card])
+    monkeypatch.setattr(scenario, "CORE", list(steps()))
+    tool.session = "core-session"
+
+    report = Report()
+    interactive.smoke(space, report, "calc", folder, tool, "stub", tmp_path, 1, core=True)
+    assert any(c.name.startswith("middle failure:") for c in report.failed())
+    if recovered:
+        assert checks == ["before the failure", "after the failure"]
+        assert any(c.ok and c.name.startswith("after the failure:") for c in report.checks)
+    else:
+        assert checks == ["before the failure"]
+        assert any(c.name == "after the failure: blocked" for c in report.failed())
+
+
+@pytest.mark.parametrize("approval_confirmed", [True, False])
+def test_paid_linux_git_trace_reports_a_missing_approval_request(monkeypatch, tmp_path, approval_confirmed):
+    import json
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import scenario
+    from common import Report, Space
+
+    trace_path = Path(__file__).with_name("fixtures") / "terminal-approvals" / "paid-linux-git.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    state = scenario.State("calc", tmp_path, scenario.tools()["codex"])
+    state.said.append(trace["reply"])
+    (tmp_path / "test_calc.py").write_text("def test_sub(): pass\n", encoding="utf-8")
+    monkeypatch.setattr(scenario, "sh", lambda *_: SimpleNamespace(stdout=trace["commits"]))
+    report = Report()
+    scenario.after_work(Space(tmp_path, 1), report, "core", state, codex_git_approval=approval_confirmed)
+    [failure] = report.failed()
+    assert failure.name == "the agent committed"
+    assert ("the agent did not request the wired approval" in failure.detail.lower()) is not approval_confirmed
+    assert failure.failure_class == ("unclassified" if approval_confirmed else "model variance")
 
 
 def test_upgrade_stage_without_its_requested_base_is_red(monkeypatch, tmp_path) -> None:
@@ -507,22 +629,59 @@ def test_interactive_core_scan_gives_the_agent_a_bounded_write_plan(monkeypatch,
     from common import Space
 
     monkeypatch.setattr(interactive, "WINDOWS", windows)
-    space = Space(tmp_path, 1)
-    space.sample.mkdir()
+    space = Space(tmp_path / "scratch ü", 1)
+    space.sample.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=space.sample, check=True)
     for cli in ("codex", "opencode", "claude-code"):
         state = scenario.State("calc", space.sample, scenario.tools()[cli])
         prompt = interactive._operator_core_prompt(space, state, scenario.SCAN)
-        assert prompt.startswith("#scan ") and "Call scan_material without arguments" in prompt
+        assert prompt.startswith("#scan ")
         assert "No other MCP calls" in prompt
-        directory = tmp_path if cli == "codex" and not windows else space.sample
+        directory = space.root if cli == "codex" and not windows else space.sample
         fixture = directory / "scan-payloads.json"
-        assert json.dumps(str(fixture)) in prompt
+        if cli == "codex" and windows:
+            literal = fixture.resolve().as_posix().replace("'", "''")
+            assert f"Get-Content -LiteralPath '{literal}' -Raw" in prompt
+        else:
+            assert json.dumps(str(fixture), ensure_ascii=False) in prompt
+        assert "ü" in prompt and r"\u00fc" not in prompt
         plan = json.loads(fixture.read_text(encoding="utf-8"))
-        assert list(plan) == ["scan", "file", "architecture"]
-        assert plan["scan"]["files_n"] == "COUNTER"
-        assert plan["architecture"]["trigger_id"] == "SCAN_ID"
+        if cli == "codex":
+            assert prompt.endswith(
+                'Call scan_material with the exact arguments under "scan_material". '
+                'Use the other objects as the complete write_entry arguments. '
+                'Write the scan, file entry, and architecture form in order. '
+                'Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with '
+                'the returned scan ID. Copy all other values exactly. No other MCP calls.'
+            )
+            assert plan["scan_material"] == {"project": "calc"}
+            assert list(plan) == ["scan_material", "scan", "file", "architecture"]
+            for lens in ("scan", "file", "architecture"):
+                assert plan[lens].keys() == {"lens", "project", "fields"}
+                assert plan[lens]["lens"] == lens
+                assert plan[lens]["project"] == "calc"
+            assert plan["scan"]["fields"]["files_n"] == "COUNTER"
+            assert plan["architecture"]["fields"]["trigger_id"] == "SCAN_ID"
+        else:
+            assert "Call scan_material without arguments" in prompt
+            assert list(plan) == ["scan", "file", "architecture"]
+            assert plan["scan"]["files_n"] == "COUNTER"
+            assert plan["architecture"]["trigger_id"] == "SCAN_ID"
     assert subprocess.check_output(["git", "status", "--porcelain"], cwd=space.sample) == b""
+
+
+def test_opencode_core_edit_requests_only_the_file_edit(scripted_onboarding, tmp_path):
+    import scenario
+    from common import Space
+
+    space = Space(tmp_path, 1)
+    state = scenario.State("calc", space.sample, scenario.tools()["opencode"])
+    edit = scripted_onboarding._operator_core_prompt(space, state, scenario.EDIT)
+    work = scripted_onboarding._operator_core_prompt(space, state, scenario.WORK)
+    assert "Edit calc.py with the file editing tool" in edit
+    assert "Do not run shell commands or tests in this turn" in edit
+    assert work.startswith(scenario.step_prompt(space, state, scenario.WORK))
+    assert "-m pytest -q test_calc.py" in work and "Do not install packages" in work
 
 
 def test_windows_codex_core_tells_the_agent_its_actual_workspace(monkeypatch, tmp_path):
@@ -584,6 +743,52 @@ def test_windows_fallback_confirms_only_literal_workspace_commands_once(monkeypa
     assert keys == [ENTER, ENTER]
 
 
+@pytest.mark.parametrize("variant", ["exact", "third", "wrong_indent", "foreign", "reversed", "read_already_approved"])
+def test_windows_edit_approval_accepts_only_the_exact_pending_read_and_edit(monkeypatch, variant):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    from core_mcp import EDIT_POWERSHELL
+    from interactive import ENTER, _core_approval
+
+    calc = "'C:/Users/runneradmin/AppData/Local/Temp/sp fresh ü-bucbxpz2/sample/calc.py'"
+    read = f"Get-Content -LiteralPath {calc}"
+    edit = EDIT_POWERSHELL.format(path=calc)
+    keys = []
+    screen = SimpleNamespace(rendered="", send=keys.append)
+    check = _core_approval(screen, "a plain request", offline_command=read, command=edit)
+
+    def ask(command):
+        screen.rendered = ("Would you like to run the following command?\n"
+                           "Environment: local\n"
+                           "Reason: The sandbox denied access to calc.py.\n\n"
+                           f"  $ {command}\n\n"
+                           "› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)")
+        return check()
+
+    lines = [read, edit]
+    if variant == "third":
+        lines.append(read)
+    elif variant == "wrong_indent":
+        lines[1] = edit.replace("    return", " return")
+    elif variant == "foreign":
+        lines[0] = read.replace("/sample/calc.py", "/other/calc.py")
+    elif variant == "reversed":
+        lines.reverse()
+    elif variant == "read_already_approved":
+        assert ask(read) == ""
+
+    batch = "\n  ".join(lines)
+    if variant == "exact":
+        assert ask(batch) == ""
+        assert ask(batch) == ""
+        assert keys == [ENTER]
+        assert ask(edit) == "unexpected Codex command approval"
+        assert ask(read) == "unexpected Codex command approval"
+        assert keys == [ENTER]
+    else:
+        assert ask(batch) == "unexpected Codex command approval"
+        assert keys == ([ENTER] if variant == "read_already_approved" else [])
+
+
 def test_screen_diagnostic_hides_the_visible_suffix_of_a_masked_key(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
     from interactive import _screen_tail
@@ -640,15 +845,58 @@ def test_opencode_prepares_the_pinned_plugin_before_the_interactive_tty(monkeypa
     monkeypatch.setattr(tool, "version", lambda: "1.19.3")
     monkeypatch.setattr(agents.shutil, "which", lambda _: "npm")
     calls = []
-    monkeypatch.setattr(agents.subprocess, "run", lambda args, **_: calls.append(args))
+    artifacts = {
+        "node_modules/@opencode-ai/plugin/package.json": '{"version": "1.19.3"}',
+        "package.json": '{"dependencies": {"@opencode-ai/plugin": "1.19.3"}}',
+        "package-lock.json": '{"lockfileVersion": 3}',
+    }
+
+    def install(args, *, timeout, **_kwargs):
+        calls.append((args, timeout))
+        prefix = Path(args[args.index("--prefix") + 1])
+        for name, content in artifacts.items():
+            path = prefix / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(agents.subprocess, "run", install)
     space = Space(tmp_path, 1)
     env = {}
     tool.prepare_interactive(space, space.sample, env)
-    for directory, command in zip((space.home / ".config" / "opencode", space.sample / ".opencode"), calls, strict=True):
-        assert command[-2:] == [str(directory), "@opencode-ai/plugin@1.19.3"]
+    [(command, timeout)] = calls
+    home_package = space.home / ".config" / "opencode"
+    assert command[-2:] == [str(home_package), "@opencode-ai/plugin@1.19.3"]
+    assert timeout == 60
+    for directory in (home_package, space.sample / ".opencode"):
+        for name, content in artifacts.items():
+            assert (directory / name).read_text(encoding="utf-8") == content
     assert env["XDG_DATA_HOME"] == str(space.home / ".local" / "share")
     excludes = (space.sample / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert "/.opencode/node_modules/" in excludes
+
+
+def test_opencode_sdk_install_timeout_reaches_report_without_child_output(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
+    import agents
+    import interactive
+    from common import Report, Space
+
+    tool = agents.tools()["opencode"]
+    monkeypatch.setattr(tool, "version", lambda: "1.19.3")
+    monkeypatch.setattr(agents.shutil, "which", lambda _: "npm")
+    monkeypatch.setattr(interactive, "WINDOWS", True)
+    monkeypatch.setattr(interactive, "give_login", lambda *_: True)
+
+    def timed_out(command, *, timeout, **_kwargs):
+        raise agents.subprocess.TimeoutExpired(command, timeout, output=b"private-npm-output")
+
+    monkeypatch.setattr(agents.subprocess, "run", timed_out)
+    space = Space(tmp_path, 1)
+    report = Report()
+    assert interactive.smoke(space, report, "calc", space.sample, tool, "", space.home, 10) is None
+    [failure] = report.failed()
+    assert failure.name == "L1 the pinned OpenCode plugin is ready"
+    assert failure.detail == "npm install for the pinned OpenCode plugin SDK timed out after 60 seconds"
 
 
 @pytest.mark.parametrize("version", ["1.19.3", "1.19.4"])
@@ -1035,7 +1283,8 @@ def test_codex_helper_requires_the_error_flag_and_number_in_structured_stderr(
     assert _mcp_refused(Space(tmp_path, 1), agent, reason) is refused
 
 
-def test_helper_refusal_requests_a_valid_task_payload_first(monkeypatch, tmp_path):
+@pytest.mark.parametrize("billing", [False, True])
+def test_helper_refusal_requests_a_valid_task_payload_first(monkeypatch, tmp_path, billing):
     import json
 
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "fresh_user"))
@@ -1046,13 +1295,16 @@ def test_helper_refusal_requests_a_valid_task_payload_first(monkeypatch, tmp_pat
 
     def say(prompt, *_):
         prompts.append(prompt)
-        return SimpleNamespace(ok=False, error="probe ended after collecting the prompt")
+        return SimpleNamespace(ok=False, error="probe ended after collecting the prompt",
+                               text="HTTP 402 Payment Required" if billing else "")
 
     monkeypatch.setattr(helper_smoke, "give_login", lambda *_: True)
     monkeypatch.setattr(helper_smoke, "get", lambda *_: {"tasks": []})
     tool = SimpleNamespace(name="codex", installed=lambda: True, say=say)
     space = Space(tmp_path, 1)
-    helper_smoke.helper_smoke(space, Report(), "calc", space.sample, tool, "stub", space.home, 1, "codex-operator")
+    report = Report()
+    helper_smoke.helper_smoke(space, report, "calc", space.sample, tool, "stub", space.home, 1, "codex-operator")
+    assert report.failed()[-1].failure_class == ("outside (billing)" if billing else "unclassified")
     prompt, = prompts
     payload = json.JSONDecoder().raw_decode(prompt[prompt.index("{"):])[0]
     assert payload == {"title": prompt.split()[1].rstrip("."), "description": "Verify that a helper cannot create a task."}
@@ -1110,6 +1362,7 @@ def test_opencode_timeout_keeps_only_latest_turn_statuses(scripted_onboarding, t
     from contextlib import closing
 
     home = tmp_path / "тест ü"
+    workspace = tmp_path / "scratch" / "sample"
     database = home / ".local/share/opencode/opencode.db"
     database.parent.mkdir(parents=True)
     with closing(sqlite3.connect(database)) as connection:
@@ -1131,7 +1384,12 @@ def test_opencode_timeout_keeps_only_latest_turn_statuses(scripted_onboarding, t
             ("write", "mcp", "wanted", 4, {"type": "tool", "tool": "slightly-parallel_write_entry",
                                            "state": {"status": "completed", "output": "private raw payload"}}),
             ("skill", "skill", "wanted", 5, {"type": "tool", "tool": "skill", "state": {"status": "running"}}),
-            ("stray", "skill", "unrelated", 6, {"type": "text", "text": "private continuation"}),
+            ("first-shell", "skill", "wanted", 6, {"type": "tool", "tool": "bash", "state": {
+                "status": "completed", "input": {"command": "private command", "description": "private text"}}}),
+            ("blocked-shell", "skill", "wanted", 7, {"type": "tool", "tool": "bash", "state": {
+                "status": "running", "input": {"command": "pytest -q", "workdir": "../..//private-path/sample",
+                                               "description": "private notes"}}}),
+            ("stray", "skill", "unrelated", 8, {"type": "text", "text": "private continuation"}),
         ]
         connection.executemany("INSERT INTO part VALUES (?, ?, ?, ?, ?)",
                                [(pid, mid, sid, ts, json.dumps(row)) for pid, mid, sid, ts, row in parts])
@@ -1142,13 +1400,23 @@ def test_opencode_timeout_keeps_only_latest_turn_statuses(scripted_onboarding, t
             {"finished": True, "error": False, "text_emitted": False,
              "tools": [{"tool": "write_entry", "status": "completed"}]},
             {"finished": False, "error": False, "text_emitted": False,
-             "tools": [{"tool": "skill", "status": "running"}]},
+             "tools": [{"tool": "skill", "status": "running"}, {"tool": "other", "status": "completed"},
+                       {"tool": "other", "status": "running"}]},
         ],
     }
+    diagnostic = scripted_onboarding._opencode_turn_evidence(home, "wanted", workspace=workspace)
+    shell_history = diagnostic["assistant"][-1]["tools"][1:]
+    assert shell_history == [
+        {"tool": "shell", "status": "completed",
+         "arguments": {"command": "[redacted]", "workdir": "default workspace"}},
+        {"tool": "shell", "status": "running",
+         "arguments": {"command": "pytest -q", "workdir": "../[redacted]/sample"}},
+    ]
+    assert "private" not in json.dumps(diagnostic)
     assert scripted_onboarding._opencode_turn_evidence(tmp_path, "wanted") == {"state": "unavailable"}
 
 
-@pytest.mark.parametrize("invalid", ["", "reply ID", "tag", "description"])
+@pytest.mark.parametrize("invalid", ["", "reply ID", "tag", "description", "permission"])
 def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onboarding, monkeypatch, tmp_path, invalid):
     import json
     import re
@@ -1165,19 +1433,31 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
     chat.parent.mkdir(parents=True)
     chat.with_name("meta.json").write_text(json.dumps({"session_ref": session}), encoding="utf-8")
     card = {"id": task, "agent_id": agent, "project": "calc", "status": "agent"}
-    typed = []
+    typed, frames, cancellation = [], [], []
 
     class Screen:
-        rendered = history = ""
+        rendered = history = text = ""
+        exited = False
 
         def __init__(self, *_args, **_kwargs):
             pass
 
         def send(self, value, **_kwargs):
+            if value == "\x1b":
+                cancellation.append(value)
+                self.exited = True
+                return
             if value != interactive.ENTER:
                 typed.append(value)
                 return
             prompt = typed[-1]
+            if prompt.startswith("Add a function sub"):
+                self.rendered = (
+                    "  ┃  △ Permission required\n"
+                    "  ┃  ← Access external directory /private/var/folders/runner/sample\n"
+                    "  ┃  Allow once  Allow always  Reject ctrl+f fullscreen"
+                )
+                return
             if prompt.startswith("#task"):
                 card["title"] = prompt.split()[1].rstrip(".")
                 reply = "tk_00000000" if invalid == "reply ID" else task
@@ -1188,6 +1468,12 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
 
         def wait_for(self, line, _timeout, **_kwargs):
             return line == typed[-1]
+
+        def read(self):
+            pass
+
+        def save_frame(self, reason):
+            frames.append(reason)
 
         def close(self):
             pass
@@ -1203,15 +1489,22 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
     monkeypatch.setattr(interactive, "WINDOWS", False)
     monkeypatch.setattr(interactive, "Screen", Screen)
     monkeypatch.setattr(interactive, "_ready", lambda *_: True)
-    monkeypatch.setattr(interactive, "_wait_for_turn", lambda _screen, check, _seconds: "" if check() else "missing turn")
     monkeypatch.setattr(interactive, "get", get)
     monkeypatch.setattr(interactive, "new_task_rows", lambda *_: [card])
-    monkeypatch.setattr(scenario, "CORE", [])
+    monkeypatch.setattr(scenario, "CORE", [scenario.EDIT] if invalid == "permission" else [])
 
     report = Report()
     result = interactive.smoke(space, report, "calc", tmp_path, tool, "stub", space.home, 1, core=True)
-    assert bool(result) is not bool(invalid)
-    if invalid:
+    assert bool(result) is (not invalid or invalid == "permission")
+    if invalid == "permission":
+        [failure] = report.failed()
+        assert failure.name == "a plain request: the operator turn and answer are captured"
+        assert failure.detail.startswith("unexpected OpenCode permission prompt\n")
+        assert "Access external directory" in failure.detail
+        assert frames == ["unexpected OpenCode permission prompt"]
+        assert cancellation == ["\x1b"]
+        assert interactive.time.monotonic() == 0
+    elif invalid:
         assert report.failed()[-1].name == "OpenCode recorded the ID and fields of the created task"
     prompt = typed[1]
     assert "Call the Slightly Parallel write_entry tool once" in prompt
@@ -1221,6 +1514,22 @@ def test_opencode_core_requires_the_captured_id_and_requested_card(scripted_onbo
                                               "status": "agent", "tags": ["ag_followup"]}}
 
 
+
+def test_core_recovery_only_cancels_and_waits_for_the_empty_composer(scripted_onboarding):
+    screen_module = scripted_onboarding
+    ready = "› Ask Codex to do anything\n? for shortcuts"
+    approval = ("Would you like to run the following command?\n"
+                "Environment: local\n\n$ echo unexpected\n\n› 1. Yes, proceed (y)\n3. No")
+    frames = iter((approval + "\n" + ready, ready, ready))
+    keys = []
+    screen = SimpleNamespace(exited=False, rendered=approval, send=keys.append)
+    screen.read = lambda: setattr(screen, "rendered", next(frames))
+    assert screen_module._recover_core_composer(screen, "codex", "unexpected Codex command approval")
+    assert keys == ["\x1b"]
+    assert not screen_module._recover_core_composer(screen, "codex", "L4 provider error (L0-billing)")
+    assert keys == ["\x1b"]
+
+
 def test_composer_waits_for_the_next_ready_frame_without_one_second_delay(scripted_onboarding):
     from agents import tools
 
@@ -1228,12 +1537,19 @@ def test_composer_waits_for_the_next_ready_frame_without_one_second_delay(script
     assert scripted_onboarding._ready(screen, tools()["claude-code"], 0.7, [])
 
 
-def test_claude_theme_waits_for_the_selected_row_and_confirms_once(scripted_onboarding):
+@pytest.mark.parametrize("selected_row", ["❯ ✔ Auto (match terminal)", " > √   Auto (match terminal)"])
+def test_claude_theme_waits_for_the_selected_row_and_confirms_once(scripted_onboarding, selected_row):
     from agents import tools
 
     title = "Choose the text style that looks best with your terminal"
-    selected = f"{title}\n❯ ✔ Auto (match terminal)\n    Dark mode"
-    frames = iter((title, selected, selected, "Claude Code\n❯ Try a test\n? for shortcuts"))
+    selected = f"{title}\n{selected_row}\n    Dark mode"
+    frames = iter((
+        title,
+        f"{title}\n    √ Auto (match terminal)",
+        f"{title}\n{selected_row[:-1]}",
+        *([selected] * 6),
+        "Claude Code\n❯ Try a test\n? for shortcuts",
+    ))
     accepted = []
     screen = SimpleNamespace(text="", send=lambda key: accepted.append((key, screen.text)))
     screen.read = lambda: setattr(screen, "text", next(frames, screen.text))
@@ -1260,17 +1576,14 @@ def test_claude_folder_trust_tolerates_partial_frames_and_does_not_move_twice(sc
 
     interactive = scripted_onboarding
     keys = []
-    frames = iter((
-        "Accessing workspace:\n  No, exit\n  Yes, I trust this folder",
-        "Accessing workspace:\n  > No, exit\n  Yes, I trust this folder",
-        "Accessing workspace /tmp/sample:\n  > No, exit\n  Yes, I trust this folder\nEsc to cancel",
-        "Accessing workspace /tmp/sample:\n  No, exit\n  > Yes, I trust this folder",
-        "Claude Code\n❯ Try writing a test\n? for shortcuts",
-    ))
+    no = "Accessing workspace /tmp/sample:\n  > No, exit\n  Yes, I trust this folder\nEsc to cancel"
+    yes = "Accessing workspace /tmp/sample:\n  No, exit\n  > Yes, I trust this folder"
+    frames = iter(["Accessing workspace:\n  No, exit\n  Yes, I trust this folder"]
+                  + [no] * 6 + [yes] * 6 + ["Claude Code\n❯ Try writing a test\n? for shortcuts"])
     screen = SimpleNamespace(text="", send=keys.append)
     screen.read = lambda: setattr(screen, "text", next(frames, screen.text))
     answered = []
-    assert interactive._ready(screen, tools()["claude-code"], 3, answered)
+    assert interactive._ready(screen, tools()["claude-code"], 5, answered)
     assert keys == [interactive.DOWN, interactive.ENTER]
     assert answered == ["Claude Code project folder trusted"]
 
@@ -1305,3 +1618,89 @@ def test_capture_checks_a_claude_paste_with_literal_text_after_the_envelope(scri
     )
     assert scripted_onboarding._last_reply(chat, "#task The exact original visible tail") == "done"
     assert scripted_onboarding._last_reply(chat, "#task The exact original wrong tail") == ""
+
+
+def _paid_core_approval_frames():
+    import json
+
+    fixture = Path(__file__).parent / "fixtures" / "terminal-approvals" / "paid-core-shell.json"
+    return [pytest.param(frame, id=f"{frame['sha']}-{frame['platform']}-{i}")
+            for i, frame in enumerate(json.loads(fixture.read_text(encoding="utf-8")))]
+
+
+@pytest.mark.parametrize("case", _paid_core_approval_frames())
+def test_paid_core_shell_approval_frames(scripted_onboarding, case):
+    keys = []
+    screen = SimpleNamespace(rendered=case["frame"], send=keys.append)
+    if len(case["commands"]) == 2:
+        read, edit = case["commands"]
+        approve = scripted_onboarding._core_approval(screen, "a plain request",
+                                                      offline_command=read.strip(), command=edit.strip())
+    else:
+        approve = scripted_onboarding._core_approval(screen, "the work", read_commands=tuple(case["commands"]))
+    assert approve() == case["decision"]
+    assert keys == ([] if case["decision"] else [scripted_onboarding.ENTER])
+
+
+@pytest.mark.parametrize(("command", "accepted"), [
+    (r"Get-Content -LiteralPath 'C:\Temp\sample\scan-payloads.json' -Raw", True),
+    (r'Get-Content -LiteralPath "C:\Temp\sample\scan-payloads.json" -Raw', True),
+    (r"Get-Content -LiteralPath 'C:\Temp\outside\scan-payloads.json' -Raw", False),
+    (r"Get-Content -LiteralPath 'C:\Temp\sample\..\sample\scan-payloads.json' -Raw", False),
+    (r'Get-Content -LiteralPath "$env:TEMP\sample\scan-payloads.json" -Raw', False),
+    ("Get-Content -LiteralPath 'scan-payloads.json' -Raw", False),
+    ("Get-Content -LiteralPath 'C:/Temp/sample/scan-payloads.json'", False),
+    ("Get-Content -LiteralPath 'C:/Temp/sample/scan-payloads.json' -Raw; Get-Location", False),
+    ("Get-ChildItem -LiteralPath 'C:/Temp/sample/scan-payloads.json' -Raw", False),
+])
+def test_windows_read_approval_matches_only_the_same_literal_operation(scripted_onboarding, command, accepted):
+    keys = []
+    frame = ("Would you like to run the following command?\n"
+             f"  $ {command}\n\n› 1. Yes, proceed (y)")
+    screen = SimpleNamespace(rendered=frame, send=keys.append)
+    approve = scripted_onboarding._core_approval(
+        screen, "#scan", read_commands=("Get-Content -LiteralPath 'C:/Temp/sample/scan-payloads.json' -Raw",),
+    )
+    assert (approve() == "") is accepted
+    assert keys == ([scripted_onboarding.ENTER] if accepted else [])
+
+
+@pytest.mark.parametrize("persisted", [True, False])
+def test_codex_hook_trust_retries_one_dropped_directional_key(scripted_onboarding, tmp_path, persisted):
+    from agents import tools
+
+    interactive = scripted_onboarding
+    config = tmp_path / "config.toml"
+    review = ("Hooks need review\n  2 hooks are new or changed.\n\n"
+              "› 1. Review hooks\n  2. Trust all and continue\n"
+              "  3. Continue without trusting (hooks won't run)\n\n  enter confirm · esc skip")
+    trust = review.replace("› 1.", "  1.").replace("  2. Trust", "› 2. Trust")
+    keys = []
+
+    class Screen:
+        text = ""
+        rendered = review.split("  3.", 1)[0]
+        complete_since = None
+
+        def read(self):
+            if self.complete_since is None and interactive.time.monotonic() >= 0.4:
+                self.rendered = review
+                self.complete_since = interactive.time.monotonic()
+
+        def send(self, key):
+            assert self.complete_since is not None
+            assert interactive.time.monotonic() - self.complete_since >= interactive.MENU_SELECTION_STABLE_S
+            keys.append(key)
+            if keys == [interactive.DOWN, interactive.DOWN]:
+                self.rendered = trust
+            elif key == interactive.ENTER:
+                assert self.rendered == trust
+                if persisted:
+                    config.write_text('trusted_hash = "fixture"\n', encoding="utf-8")
+                self.rendered = "› Ask Codex to do anything · ? for shortcuts"
+
+    answered = []
+    assert interactive._ready(Screen(), tools()["codex"], 5, answered, config) is persisted
+    assert keys == [interactive.DOWN, interactive.DOWN, interactive.ENTER]
+    assert any("key not taken" in entry for entry in answered)
+    assert "Codex project hooks trusted" in answered

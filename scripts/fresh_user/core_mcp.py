@@ -87,6 +87,9 @@ class Plan:
         if errors:
             first = errors[0]
             detail = f" ({first['reason']})" if first.get("reason") else ""
+            if "argument_keys" in first:
+                keys = ", ".join(first["argument_keys"]) or "(none)"
+                detail += f"\nMCP argument keys: {keys} ({first['unadvertised_keys']} unadvertised)"
             return 0, f"MCP {first['result']} in {first['name']}{detail}"
         return sum(event["turn"] == self.turn for event in events), ""
 
@@ -102,7 +105,7 @@ def requests_for_scan():
 
 def not_taken(name, args):
     """The top-level arguments the product's tool does not take (mcp_args):
-    refused by name before the exact comparison with the fixture."""
+    refused before the exact comparison with the fixture."""
     if not isinstance(args, dict):
         return []
     takes = mcp_args.accepts(name)
@@ -135,6 +138,7 @@ class Guard:
         self.scan_id = ""
         self.counters = {}
         self.failed = False
+        self.advertised_arguments: dict[str, set[str]] = {}
 
     def _arguments(self, template, rule):
         if "$rule_id" in template:
@@ -157,8 +161,13 @@ class Guard:
         return template
 
     def dispatch(self, message):
-        if message.get("method") != "tools/call":
-            return self.handle(message)
+        method = message.get("method")
+        if method != "tools/call":
+            response = self.handle(message)
+            if method == "tools/list" and response:
+                for tool in (response.get("result") or {}).get("tools", []):
+                    self.advertised_arguments[tool["name"]] = set(tool["inputSchema"].get("properties", {}))
+            return response
         policy = json.loads(self.policy.read_text(encoding="utf-8"))
         if policy["turn"] != self.turn:
             self.turn, self.index = policy["turn"], 0
@@ -175,9 +184,9 @@ class Guard:
                 wanted = self._arguments(template, policy.get("rule"))
             except (KeyError, ValueError):
                 wanted = None
-            extra = not_taken(name, args)
+            extra = not_taken(expected, args) if name == expected else ()
             if extra:
-                reason = f"{name} takes no argument {', '.join(extra)}"
+                reason = f"arguments has {len(extra)} unadvertised field" + ("s" if len(extra) > 1 else "")
             elif name == expected and wanted is not None and json.dumps(args, sort_keys=True) == json.dumps(wanted, sort_keys=True):
                 self.index += 1
                 reply = self.handle(message)
@@ -198,10 +207,15 @@ class Guard:
                 reason = _argument_mismatch(wanted, args)
         if outcome != "accepted":
             self.failed = True
+        event = {"turn": self.turn, "name": policy["name"], "result": outcome,
+                 "reason": reason, "request": message, "scan_id": self.scan_id, "counters": self.counters}
+        advertised = self.advertised_arguments.get(name) if isinstance(name, str) else None
+        if outcome != "accepted" and isinstance(args, dict) and advertised is not None:
+            # Only the server's own schema can contribute text to the public report.
+            event.update(argument_keys=sorted(args.keys() & advertised),
+                         unadvertised_keys=len(args.keys() - advertised))
         with self.trace.open("a", encoding="utf-8") as log:
-            log.write(json.dumps({"turn": self.turn, "name": policy["name"], "result": outcome,
-                                  "reason": reason, "request": message, "scan_id": self.scan_id,
-                                  "counters": self.counters}, ensure_ascii=False) + "\n")
+            log.write(json.dumps(event, ensure_ascii=False) + "\n")
         if reply is not None:
             return reply
         return {"jsonrpc": "2.0", "id": message.get("id"), "result": {

@@ -1,0 +1,10 @@
+{
+  "type": "error",
+  "error": {
+    "message": "This organization cannot be used for Codex usage because it is enrolled in the monthly API Credits benefit with ChatGPT subscriptions. To enable Codex usage, an Organization Owner must cancel the benefit on https://platform.openai.com/settings/organization/billing/overview.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": "codex_byok_restricted_by_api_credit_promo"
+  },
+  "status": 400
+}

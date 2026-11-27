@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import ntpath
+import os
 import re
 import sqlite3
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from contextlib import closing
@@ -15,26 +18,30 @@ from uuid import uuid4
 
 import scenario
 import core_mcp
-from agents import OpenCode, Tool, give_login, model_for
+from agents import OpenCode, OpenCodeSDKError, Tool, give_login, model_for
 from common import (
+    PROVIDER_ACCOUNT_FAILURE_CLASSES,
     Report,
     Space,
     WINDOWS,
     chatstore,
     get,
-    is_provider_billing_failure,
+    provider_account_error,
     new_task_rows,
     redact_diagnostics,
     rows,
 )
 from screen import COLS, DOWN, ENTER, Screen, codex_pty_args
 
+_PROVIDER_TURN_FAILURES = {f"L4 provider error ({code})": classification
+                           for code, classification in PROVIDER_ACCOUNT_FAILURE_CLASSES.items()}
 POLL_S = 0.2
 UP = "\x1b[A"
 STARTUP_TIMEOUT_S = 60
 PROMPT_PAINT_TIMEOUT_S = 8
 CLAUDE_MCP_STABLE_S = 1.0
-CODEX_FOLDER_STABLE_S = 0.6
+MENU_SELECTION_STABLE_S = 0.6
+MENU_DIRECTION_RETRY_S = 1.0
 CLAUDE_MCP_QUESTION = "New MCP server found in this project:"
 CLAUDE_MCP_ACCEPTED = "Claude Code accepted the Slightly Parallel MCP server"
 CLAUDE_MCP_CHOICES = (
@@ -43,9 +50,10 @@ CLAUDE_MCP_CHOICES = (
     "Continue without using this MCP server",
 )
 WINDOWS_CORE_APPROVAL_COLUMNS = 640
+SCAN_PAYLOADS_NAME = "scan-payloads.json"
 WINDOWS_CORE_WORK_SECTION = "Calculator core work commands"
 CLAUDE_THEME_SELECTION = re.compile(
-    r"(?im)^ *[❯>] *(?:✔ *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
+    r"(?im)^ *[❯>] *(?:[✔√] *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
 )
 STARTUP_FAILURES = (
     (("selectloginmethod:",), "Claude Code requires login"),
@@ -85,7 +93,23 @@ def _last_reply(chat: Path, prompt: str) -> str:
     return reply.strip() if prompt in (captured, expanded) else ""
 
 
-def _opencode_turn_evidence(home: Path, session: str) -> dict:
+def _opencode_shell_arguments(command: object, workdir: object, workspace: Path) -> dict[str, str]:
+    location = "[redacted]"
+    if workdir is None or workdir == "":
+        location = "default workspace"
+    elif isinstance(workdir, str):
+        try:
+            relative = os.path.relpath(workspace / workdir, workspace.parent)
+        except ValueError:
+            pass  # Windows drive mismatch or invalid path.
+        else:
+            # Keep the shape of an external path without publishing its names.
+            known = {"..", workspace.name}
+            location = "/".join(part if part in known else "[redacted]" for part in Path(relative).parts) or "."
+    return {"command": "pytest -q" if command == "pytest -q" else "[redacted]", "workdir": location}
+
+
+def _opencode_turn_evidence(home: Path, session: str, *, workspace: Path | None = None) -> dict:
     """Summarize the failed turn from the disposable CLI profile without exporting its payloads."""
     path = home / ".local" / "share" / "opencode" / "opencode.db"
     unavailable = {"state": "unavailable"}
@@ -107,18 +131,23 @@ def _opencode_turn_evidence(home: Path, session: str) -> dict:
             for message, finished, error in reversed(messages):
                 parts = list(database.execute(
                     "SELECT json_extract(data, '$.type'), json_extract(data, '$.tool'), "
-                    "json_extract(data, '$.state.status'), length(json_extract(data, '$.text')) > 0 "
+                    "json_extract(data, '$.state.status'), length(json_extract(data, '$.text')) > 0, "
+                    "json_extract(data, '$.state.input.command'), json_extract(data, '$.state.input.workdir') "
                     "FROM part WHERE session_id = ? AND message_id = ? ORDER BY time_created DESC, id DESC LIMIT 16",
                     (session, message),
                 ))
                 tools = []
-                for part, tool, status, _ in reversed(parts):
+                for part, tool, status, _, command, workdir in reversed(parts):
                     if part == "tool":
                         name = {"slightly-parallel_write_entry": "write_entry", "skill": "skill"}.get(tool, "other")
                         phase = status if status in {"pending", "running", "completed", "error"} else "unknown"
-                        tools.append({"tool": name, "status": phase})
+                        if workspace is not None and tool in {"bash", "shell"}:
+                            tools.append({"tool": "shell", "status": phase,
+                                          "arguments": _opencode_shell_arguments(command, workdir, workspace)})
+                        else:
+                            tools.append({"tool": name, "status": phase})
                 assistant.append({"finished": bool(finished), "error": bool(error),
-                                  "text_emitted": any(kind == "text" and text for kind, _, _, text in parts),
+                                  "text_emitted": any(kind == "text" and text for kind, _, _, text, *_ in parts),
                                   "tools": tools})
     except (OSError, ValueError, sqlite3.Error):
         return unavailable
@@ -134,64 +163,81 @@ def _composer(tool: str, text: str, shown: str) -> bool:
     return "askanything" in shown and "tabagents" in shown and "ctrl+pcommands" in shown
 
 
+@dataclass
+class _MenuSelection:
+    row: str = ""
+    since: float = 0.0
+    moved_from: str = ""
+    moved_at: float = 0.0
+    retried: bool = False
+
+    def stable(self, row: str, now: float, seconds: float) -> bool:
+        if row != self.row:
+            self.row, self.since = row, now
+        return bool(row and now - self.since >= seconds)
+
+    def move(self, screen: Screen, key: str, now: float, action: str, answered: list[str]) -> None:
+        if self.moved_from == self.row:
+            if self.retried or now - self.moved_at < MENU_DIRECTION_RETRY_S:
+                return
+            self.retried = True
+            answered.append(f"{action}: key not taken, retrying direction once")
+        self.moved_from, self.moved_at = self.row, now
+        screen.send(key)
+
+
 def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_config: Path | None = None) -> bool:
     deadline = time.monotonic() + seconds
     composer_seen = False
-    previous_move = ""
-    folder_selection = ""
-    folder_selected_since = 0.0
-    previous_mcp_selection = ""
-    mcp_selected_since = 0.0
-    last_mcp_move = ""
+    selections: dict[str, _MenuSelection] = {}
+    previous_action = ""
+
+    def choose(action: str, row: str, *, move: str = "", stable_for: float = MENU_SELECTION_STABLE_S) -> None:
+        nonlocal previous_action
+        if previous_action and previous_action != action:
+            selections[previous_action].row = ""
+        previous_action = action
+        state = selections.setdefault(action, _MenuSelection())
+        now = time.monotonic()
+        if action in answered or not state.stable(row, now, stable_for):
+            return
+        if move:
+            state.move(screen, move, now, action, answered)
+        else:
+            screen.send(ENTER)
+            answered.append(action)
+
     while time.monotonic() < deadline:
         screen.read()
         if getattr(screen, "exited", False):
             return False
         frame = getattr(screen, "rendered", "") or screen.text
+        if provider_account_error(frame):
+            return False
         shown = re.sub(r"\s+", "", frame.lower())
         trusted = codex_config is None or (codex_config.is_file() and
                                             "trusted_hash" in codex_config.read_text(encoding="utf-8"))
         folder_dialog = tool.name == "codex" and "trustthisfolder" in shown and "trustandcontinue" in shown
-        if not folder_dialog:
-            folder_selection = ""
-        if "newmcpserverfoundinthisproject:" not in shown:
-            previous_mcp_selection = ""
         if tool.name == "claude-code" and "selectloginmethod:" in shown:
             return False
         if tool.name == "codex" and "trustallandcontinue" in shown:
-            # A redraw can contain both the old menu and the composer. Read
-            # the selected row before sending Enter, once for this dialog.
-            selected = re.findall(r"›\d+\.(reviewhooks|trustallandcontinue|continuewithouttrusting)", shown)
-            if selected and not trusted and "Codex project hooks trusted" not in answered:
-                option = selected[-1]
-                if option == "trustallandcontinue":
-                    screen.send(ENTER)
-                    answered.append("Codex project hooks trusted")
-                elif previous_move != option:
-                    screen.send(DOWN if option == "reviewhooks" else UP)
-                    previous_move = option
+            actions = ("review hooks", "trust all and continue", "continue without trusting")
+            selected = re.findall(r"(?m)^ *› *[1-3]\. *(review hooks|trust all and continue|continue without trusting)",
+                                  frame.lower())
+            complete = all(name.replace(" ", "") in shown for name in actions) and "enterconfirm" in shown
+            row = selected[0] if complete and len(selected) == 1 and not trusted else ""
+            direction = DOWN if row == actions[0] else UP if row == actions[-1] else ""
+            choose("Codex project hooks trusted", row, move=direction)
         elif tool.name == "claude-code" and "doyouwanttousethisapikey?" in shown:
-            action = "Claude Code accepted CI API key"
-            if action not in answered:
-                if re.search(r"[❯>](?:\d+\.)?yes", shown):
-                    screen.send(ENTER)
-                    answered.append(action)
-                elif previous_move != action and re.search(r"[❯>](?:\d+\.)?no\(recommended\)", shown):
-                    screen.send(UP)
-                    previous_move = action
+            selected = re.findall(r"[❯>](?:\d+\.)?(yes|no\(recommended\))", shown)
+            row = selected[0] if len(selected) == 1 else ""
+            choose("Claude Code accepted CI API key", row, move=UP if row == "no(recommended)" else "")
         elif tool.name == "claude-code" and "yes,itrustthisfolder" in shown:
-            # Windows can render the choice cursor as an ASCII chevron.
-            selected = re.search(r"(?im)^ *[❯>] *(?:\d+\. *)?(no, exit|yes, i trust this folder) *$", frame)
-            action = "Claude Code project folder trusted"
-            if selected and action not in answered:
-                choice = selected[1].lower()
-                if choice == "yes, i trust this folder":
-                    screen.send(ENTER)
-                    answered.append(action)
-                elif previous_move != action and "no,exit" in shown:
-                    yes_first = shown.find("yes,itrustthisfolder") < shown.find("no,exit")
-                    screen.send(UP if yes_first else DOWN)
-                    previous_move = action
+            selected = re.findall(r"(?im)^ *[❯>] *(?:\d+\. *)?(no, exit|yes, i trust this folder) *$", frame.lower())
+            row = selected[0] if len(selected) == 1 and "no,exit" in shown else ""
+            yes_first = shown.find("yes,itrustthisfolder") < shown.find("no,exit")
+            direction = (UP if yes_first else DOWN) if row == "no, exit" else ""
+            choose("Claude Code project folder trusted", row, move=direction)
         elif tool.name == "claude-code" and "newmcpserverfoundinthisproject:" in shown:
             lines = [line.strip() for line in frame.splitlines()]
             questions = [line for line in lines if line.startswith(CLAUDE_MCP_QUESTION)]
@@ -199,48 +245,24 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
                 return False
             choices = [line.lstrip("❯> ") for line in lines if line.lstrip("❯> ") in CLAUDE_MCP_CHOICES]
             selected = [line[1:].strip() for line in lines if line.startswith(("❯", ">"))]
-            choice = selected[0] if len(selected) == 1 and choices == list(CLAUDE_MCP_CHOICES) else ""
-            now = time.monotonic()
-            if choice != previous_mcp_selection:
-                mcp_selected_since = now
-                previous_mcp_selection = choice
-            # An early key can be dropped while Claude installs the dialog.
-            # Stability is required for each new row, without a retry.
-            if choice and now - mcp_selected_since >= CLAUDE_MCP_STABLE_S and CLAUDE_MCP_ACCEPTED not in answered:
-                if choice == CLAUDE_MCP_CHOICES[0]:
-                    screen.send(ENTER)
-                    answered.append(CLAUDE_MCP_ACCEPTED)
-                elif choice in CLAUDE_MCP_CHOICES[1:] and choice != last_mcp_move:
-                    screen.send(UP)
-                    last_mcp_move = choice
+            row = selected[0] if len(selected) == 1 and choices == list(CLAUDE_MCP_CHOICES) else ""
+            choose(CLAUDE_MCP_ACCEPTED, row, move=UP if row in CLAUDE_MCP_CHOICES[1:] else "",
+                   stable_for=CLAUDE_MCP_STABLE_S)
         elif folder_dialog:
             selected = re.findall(r"(?m)^ *[›>❯] *(?:\d+\. *)?(trust and continue|back to agent command center) *$", frame.lower())
-            choice = selected[0] if len(selected) == 1 else ""
-            now = time.monotonic()
-            if choice != folder_selection:
-                folder_selection = choice
-                folder_selected_since = now
-            if choice and now - folder_selected_since >= CODEX_FOLDER_STABLE_S and "Codex project folder trusted" not in answered:
-                if choice == "trust and continue":
-                    screen.send(ENTER)
-                    answered.append("Codex project folder trusted")
-                elif previous_move != choice:
-                    screen.send(UP)
-                    previous_move = choice
+            row = selected[0] if len(selected) == 1 and "backtoagentcommandcenter" in shown else ""
+            choose("Codex project folder trusted", row, move=UP if row == "back to agent command center" else "")
         elif tool.name == "claude-code" and "choosethetextstyle" in shown:
-            action = "Claude Code default theme accepted"
-            if action not in answered and CLAUDE_THEME_SELECTION.search(frame):
-                screen.send(ENTER)
-                answered.append(action)
+            selected = CLAUDE_THEME_SELECTION.findall(frame)
+            choose("Claude Code default theme accepted", selected[0] if len(selected) == 1 else "")
         elif tool.name == "claude-code" and "securitynotes:" in shown and "pressentertocontinue" in shown:
-            action = "Claude Code security notes acknowledged"
-            if action not in answered:
-                screen.send(ENTER)
-                answered.append(action)
-        elif _composer(tool.name, frame, shown):
-            # The composer can draw before a trust modal arrives. For a new
-            # Codex home also require the CLI to have persisted hook trust.
-            if trusted:
+            choose("Claude Code security notes acknowledged", "security notes")
+        else:
+            if previous_action:
+                selections[previous_action].row = ""
+                previous_action = ""
+            if _composer(tool.name, frame, shown) and trusted:
+                # A composer can draw briefly before the next trust modal.
                 if composer_seen:
                     return True
                 composer_seen = True
@@ -275,6 +297,11 @@ def _workspace_file(folder: Path, name: str) -> Path:
     return target
 
 
+def _windows_scan_command(folder: Path) -> str:
+    path = _powershell_path(_workspace_file(folder, SCAN_PAYLOADS_NAME))
+    return f"Get-Content -LiteralPath {path} -Raw"
+
+
 def _windows_read_commands(folder: Path, *names: str) -> tuple[str, ...]:
     listing = f"Get-ChildItem -LiteralPath {_powershell_path(folder)}"
     reads = tuple(f"Get-Content -LiteralPath {_powershell_path(_workspace_file(folder, name))}" for name in names)
@@ -299,14 +326,43 @@ def _windows_core_contract(folder: Path) -> Path:
     return contract
 
 
+def _core_toolchain_hint() -> str:
+    return (f"Pytest is already prepared. To run the tests within your sandbox, use `{sys.executable}` with"
+            " arguments `-m pytest -q test_calc.py` from the current workspace. If execution is blocked, report it in chat."
+            " Do not install packages or request permission to run the tests outside your sandbox.")
+
+
+def _codex_work_prompt(message: str, command: str, tests: str, contract: Path) -> str:
+    followup = ("If the sandbox refuses the Git command, ask once to run that exact command. "
+                "Once the commit command succeeds, reply in chat without running any further commands.")
+    if not WINDOWS:
+        return f"{message} Run this exact command to stage and commit: `{command}`. {followup}"
+    # Keep the Windows PTY prompt short, and put the exact commands in the
+    # allowed, Git-excluded contract which the prompt tells the agent to read.
+    with contract.open("a", encoding="utf-8") as instructions:
+        instructions.write(f"\n\n## {WINDOWS_CORE_WORK_SECTION}\n\n"
+                           f"{_core_toolchain_hint()}\n\n"
+                           "Run these commands exactly, in order:\n"
+                           f"```powershell\n{tests}\n{command}\n```\n\n"
+                           f"{followup}\nThe test runner checks the files and commit separately.\n")
+    return (f"{message} Use Get-Content -LiteralPath to read {contract.name} and run the two exact"
+            f" commands in its {WINDOWS_CORE_WORK_SECTION} section, in order."
+            " If the sandbox refuses either, ask once for that exact command.")
+
+
 def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step) -> str:
     message = scenario.step_prompt(space, state, step)
     if WINDOWS and state.tool.name == "codex" and step in (scenario.EDIT, scenario.WORK):
         message += (f" Set the command working directory to `{state.folder.resolve()}`"
                     " and use absolute paths under that directory for the calculator files.")
+    if state.tool.name == "opencode" and step == scenario.EDIT:
+        message += (" Edit calc.py with the file editing tool in the current workspace."
+                    " Do not run shell commands or tests in this turn. Report the edit in chat.")
+    if step == scenario.WORK and not (WINDOWS and state.tool.name == "codex"):
+        message += " " + _core_toolchain_hint()
     if step[0] != "#scan":
         return message
-    filename = "scan-payloads.json"
+    filename = SCAN_PAYLOADS_NAME
     if state.tool.name == "codex" and not WINDOWS:
         spec = space.root / filename
     else:
@@ -317,13 +373,24 @@ def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.St
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a", encoding="utf-8") as ignored:
             ignored.write(f"\n/{filename}\n")
-    spec.write_text(json.dumps({
+    fields_by_lens = {
         "scan": core_mcp.scan_fields(dict.fromkeys(("files_n", "lines_add", "lines_del", "decisions_n"), "COUNTER")),
         "file": core_mcp.file_fields("SCAN_ID"),
         "architecture": core_mcp.form_fields("SCAN_ID"),
-    }, indent=2), encoding="utf-8")
-    return (message + " Call scan_material without arguments. Read the exact fields from "
-            f"{json.dumps(str(spec))}. Write the scan, file entry, and architecture form in order. "
+    }
+    shown_path = json.dumps(str(spec), ensure_ascii=False)
+    if state.tool.name == "codex":
+        payload = {"scan_material": {"project": state.code}}
+        for lens, fields in fields_by_lens.items():
+            payload[lens] = {"lens": lens, "project": state.code, "fields": fields}
+        read = f"Run `{_windows_scan_command(state.folder)}`" if WINDOWS else f"Read {shown_path}"
+        instructions = (f" {read}. Call scan_material with the exact arguments under "
+                        '"scan_material". Use the other objects as the complete write_entry arguments.')
+    else:
+        payload = fields_by_lens
+        instructions = f" Call scan_material without arguments. Read the exact fields from {shown_path}."
+    spec.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return (message + instructions + " Write the scan, file entry, and architecture form in order. "
             "Replace COUNTER with the corresponding number from scan_material, and SCAN_ID with "
             "the returned scan ID. Copy all other values exactly. No other MCP calls.")
 
@@ -334,8 +401,8 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int,
     while time.monotonic() < end:
         # Drain the PTY while the CLI is working so a full buffer cannot hold up the hook.
         screen.read()
-        if is_provider_billing_failure(screen.rendered + "\n" + screen.text):
-            verdict = "L4 provider error (L0-billing)"
+        if account_error := provider_account_error(screen.rendered + "\n" + screen.text):
+            verdict = f"L4 provider error ({account_error})"
             break
         if approval is not None and (verdict := approval()):
             break
@@ -346,6 +413,40 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int,
         verdict = "turn timed out"
     screen.save_frame(verdict)
     return verdict
+
+
+def _opencode_permission_failure(screen: Screen) -> str:
+    frame = screen.rendered or screen.text
+    if (re.search(r"(?m)^ *┃ *△ Permission required\b", frame)
+            and re.search(r"(?m)^ *┃ *Allow once +Allow always +Reject\b", frame)):
+        return "unexpected OpenCode permission prompt"
+    return ""
+
+
+def _turn_failure_class(error: str) -> str:
+    if error in _PROVIDER_TURN_FAILURES:
+        return _PROVIDER_TURN_FAILURES[error]
+    return "stand" if error == "tool missing in the stand" else "unclassified"
+
+
+def _recover_core_composer(screen: Screen, tool: str, error: str) -> bool:
+    if screen.exited or error in _PROVIDER_TURN_FAILURES:
+        return False
+    # Interrupt or dismiss the failed turn. An unapproved prompt is never accepted.
+    screen.send("\x1b")
+    deadline = time.monotonic() + PROMPT_PAINT_TIMEOUT_S
+    ready = False
+    while not screen.exited and time.monotonic() < deadline:
+        screen.read()
+        frame = screen.rendered
+        empty = (_composer(tool, frame, re.sub(r"\s+", "", frame.lower()))
+                 and not (_COMMAND_APPROVAL.search(frame) or _MCP_APPROVAL.search(frame))
+                 and not _opencode_permission_failure(screen))
+        if empty and ready:
+            return True
+        ready = empty
+        time.sleep(POLL_S)
+    return False
 
 
 def _approve_task_write(screen: Screen, title: str) -> bool:
@@ -378,14 +479,55 @@ RULE_INTERPRETATION = core_mcp.RULE_TEXT
 def _command_text(value: str) -> str:
     # Ignore renderer wrapping outside literals. In particular, a different
     # path or Python indentation inside a quoted argument is a different command.
-    parts = re.split(r"('(?:[^']|'')*')", value)
+    parts = re.split(r'''('(?:[^']|'')*'|"[^"\r\n]*")''', value)
     return "".join(part if index % 2 else re.sub(r"\s+", " ", part)
                    for index, part in enumerate(parts)).strip()
 
 
+_QUOTED_WINDOWS_PATH = r'''(?:'(?:[^'\r\n]|'')*'|"[^"$`\r\n]*")'''
+_WINDOWS_FILE_COMMAND = re.compile(
+    rf"(?P<operation>Get-ChildItem|Get-Content|Add-Content|Set-Content) -LiteralPath "
+    rf"(?P<path>{_QUOTED_WINDOWS_PATH})(?P<options>.*)"
+)
+_WINDOWS_GIT_COMMAND = re.compile(
+    rf"git -c core\.hooksPath=NUL -c protocol\.allow=never -c commit\.gpgsign=false "
+    rf"-C (?P<path>{_QUOTED_WINDOWS_PATH}) (?P<operation>add|commit)(?P<options> .*)"
+)
+_PACKAGE_INSTALL = re.compile(r"^(?:(?:python(?:3(?:\.\d+)?)? -m )?pip(?:3)? install|npm (?:install|ci)|uv pip install)\b")
+
+
+def _windows_absolute_literal(token: str) -> str | None:
+    path = token[1:-1]
+    if token.startswith("'"):
+        path = path.replace("''", "'")
+    path = path.replace("\\", "/")
+    if re.fullmatch(r'[A-Za-z]:/[^\x00-\x1f:"<>|?*]+', path) is None:
+        return None
+    if any(part in {".", ".."} or part.endswith((" ", ".")) for part in path[3:].split("/")):
+        return None
+    return ntpath.normpath(path).replace("\\", "/")
+
+
+def _approval_command(value: str) -> str | tuple:
+    literal = _command_text(value)
+    if (match := _WINDOWS_FILE_COMMAND.fullmatch(literal)) and (path := _windows_absolute_literal(match["path"])):
+        # The generated fixture gives the only allowed file and option
+        # text. Normalize the path spelling, never a write's contents.
+        return ("powershell", match["operation"], path, match["options"])
+    git_commands = literal.split(" && ")
+    if len(git_commands) == 2:
+        matches = [_WINDOWS_GIT_COMMAND.fullmatch(command) for command in git_commands]
+        if all(matches):
+            pairs = tuple((m["operation"], _windows_absolute_literal(m["path"]), m["options"])
+                          for m in matches if m is not None)
+            if all(path is not None for _, path, _ in pairs):
+                return ("git", pairs)
+    return literal
+
+
 def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None,
                    *, command: str = "", offline_command: str = "",
-                   read_commands: tuple[str, ...] = ()) -> Callable[[], str]:
+                   read_commands: tuple[str, ...] = (), confirmed: set[str | tuple] | None = None) -> Callable[[], str]:
     expected = {
         "#decision": ("write_entry", {
             "lens": "decision",
@@ -398,17 +540,30 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
     handled_shell = ""
     handled_mcp = ""
     # An earlier command can finish under the sandbox without a dialog.
-    pending = {_command_text(value) for value in (*read_commands, offline_command, command) if value}
+    pending = {_approval_command(value) for value in (*read_commands, offline_command, command) if value}
+    edit_batch = ()
+    if step == "a plain request" and offline_command and command:
+        edit_batch = (_approval_command(offline_command), _approval_command(command))
 
     def check() -> str:
         nonlocal handled_shell, handled_mcp
         if shell := _COMMAND_APPROVAL.search(screen.rendered):
             if shell.group() == handled_shell:
                 return ""
-            shown = _command_text(shell["command"])
-            if shown not in pending or shell["choice"].strip() != "1. Yes, proceed (y)":
+            shown = _approval_command(shell["command"])
+            if shell["choice"].strip() != "1. Yes, proceed (y)":
                 return "unexpected Codex command approval"
-            pending.remove(shown)
+            approved = (shown,)
+            if shown not in pending:
+                lines = tuple(_approval_command(line) for line in shell["command"].strip().splitlines())
+                if not edit_batch or lines != edit_batch or not pending.issuperset(edit_batch):
+                    if isinstance(shown, str) and _PACKAGE_INSTALL.match(shown):
+                        return "tool missing in the stand"
+                    return "unexpected Codex command approval"
+                approved = edit_batch
+            pending.difference_update(approved)
+            if confirmed is not None:
+                confirmed.update(approved)
             handled_shell = shell.group()
             screen.send(ENTER)
             return ""
@@ -457,8 +612,16 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     if not report.add(stage, "the CLI has a login", bool(offline_provider or give_login(tool, home, space, env))):
         return None
     if WINDOWS and isinstance(tool, OpenCode):
+        seed = os.environ.get("SP_OPENCODE_SDK_SEED")
         try:
-            tool.prepare_interactive(space, folder, env)
+            tool.prepare_interactive(space, folder, env, sdk_seed=Path(seed) if seed is not None else None)
+        except OpenCodeSDKError as error:
+            report.add(stage, "L1 the pinned OpenCode plugin is ready", False, str(error))
+            return None
+        except subprocess.TimeoutExpired as error:
+            report.add(stage, "L1 the pinned OpenCode plugin is ready", False,
+                       f"npm install for the pinned OpenCode plugin SDK timed out after {error.timeout:g} seconds")
+            return None
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             report.add(stage, "L1 the pinned OpenCode plugin is ready", False, type(error).__name__)
             return None
@@ -548,6 +711,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     def cards() -> list[dict]:
         return rows(get(space, f"/api/tasks?project={code}"), "tasks")
 
+    attempted: set[str] = set()
+    blocked_by = "interactive setup did not establish a captured session and task"
     try:
         answered: list[str] = []
         codex_config = space.home / ".codex" / "config.toml" if tool.name == "codex" else None
@@ -555,7 +720,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         report.notes[f"{stage} onboarding"] = answered
         if not ready:
             screen.save_frame("startup failed")
-        if not report.add(stage, "L1 CLI composer", ready, "" if ready else _startup_failure(screen)):
+        detail = "" if ready else _startup_failure(screen)
+        failure_class = PROVIDER_ACCOUNT_FAILURE_CLASSES.get(provider_account_error(detail), "unclassified")
+        if not report.add(stage, "L1 CLI composer", ready, detail, failure_class=failure_class):
             return None
         verdicts.update(L1="pass", L2="fail")
         existing = {row.get("id") for row in cards()} if one_turn else set()
@@ -583,7 +750,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                  else _wait_for_turn(screen, find_chat, seconds))
         if not report.add(stage, "the chat contains the exact prompt and final reply in one turn",
                           not error and len(captured) == 1,
-                          f"{error}\n{captured or [chatstore.chats_root(space.data, code)]}\n{_screen_tail(screen)}"):
+                          f"{error}\n{captured or [chatstore.chats_root(space.data, code)]}\n{_screen_tail(screen)}",
+                          failure_class=_turn_failure_class(error)):
             return None
         agent, chat = captured[0]
         meta = json.loads(chat.with_name("meta.json").read_text(encoding="utf-8"))
@@ -606,6 +774,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             if policy or opencode_core_task:
                 arguments = {"lens": "task", "fields": task_fields}
                 if policy:
+                    arguments["project"] = code
                     policy.start("#task", [["write_entry", arguments]])
                 task_prompt = (f"#task {title}. Call the Slightly Parallel write_entry tool once, "
                                f"with exactly this JSON argument: {json.dumps(arguments)}.")
@@ -613,6 +782,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     task_prompt += " Do not call any other tool. Reply with only the returned task ID."
                 else:
                     task_prompt += " Report the task ID."
+            attempted.add("#task")
             if not type_prompt(task_prompt, "#task"):
                 return None
 
@@ -627,7 +797,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             if error == "turn timed out" and tool.name == "opencode":
                 report.notes["OpenCode task timeout"] = _opencode_turn_evidence(space.home, str(session))
             if not report.add(stage, "the operator task turn is captured to completion", not error,
-                              f"{error}\n{agent}\n{_screen_tail(screen)}"):
+                              f"{error}\n{agent}\n{_screen_tail(screen)}", failure_class=_turn_failure_class(error)):
                 return None
         initial = new_task_rows(space, code, existing)
         match = [t for t in initial if t.get("agent_id") == agent and t.get("project") == code
@@ -651,10 +821,12 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 name, _, check = step
                 if name == "#task":
                     continue
+                attempted.add(name)
                 message = _operator_core_prompt(space, state, step)
                 approval = None
+                confirmed: set[str | tuple] = set()
+                command = ""
                 if policy:
-                    command = ""
                     offline_command = ""
                     contract_read = ""
                     read_commands = workspace_reads
@@ -688,29 +860,18 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                                if workspace_shell else "git")
                         command = (f"{git} add calc.py test_calc.py && {git} commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
-                        if workspace_shell:
-                            # Put the literal commands in the already approved, Git-excluded project contract.
-                            # The PTY must still see the entire prompt before it presses Enter.
-                            with project_contract.open("a", encoding="utf-8") as instructions:
-                                instructions.write(f"\n\n## {WINDOWS_CORE_WORK_SECTION}\n\n"
-                                                   "Run these commands exactly, in order:\n\n"
-                                                   f"```powershell\n{offline_command}\n{command}\n```\n\n"
-                                                   "Once the commit command succeeds, reply in chat without running any further commands.\n"
-                                                   "The test runner checks the files and commit separately.\n")
-                            message += (f" Use Get-Content -LiteralPath to read {project_contract.name} and run the two exact"
-                                        f" commands in its {WINDOWS_CORE_WORK_SECTION} section, in order."
-                                        " If the sandbox refuses either, ask once for that exact command.")
-                        else:
-                            message += f" Run this exact command to stage and commit: {command}"
+                        message = _codex_work_prompt(message, command, offline_command, project_contract)
                     elif name == "#decision":
                         fields = {"decision": scenario.DECISION_TEXT, "weight": "normal"}
-                        calls = [["write_entry", {"lens": "decision", "fields": fields}]]
-                        message += " Call write_entry with lens decision and exactly these fields: " + json.dumps(fields)
+                        arguments = {"lens": "decision", "project": code, "fields": fields}
+                        calls = [["write_entry", arguments]]
+                        message += " Call write_entry with exactly this JSON argument: " + json.dumps(arguments) + "."
                     elif name == "#scan":
-                        calls = core_mcp.requests_for_scan()
+                        calls = [[method, {**arguments, "project": code}]
+                                 for method, arguments in core_mcp.requests_for_scan()]
                         if workspace_shell:
-                            scan = f"Get-Content -LiteralPath {_powershell_path(_workspace_file(folder, 'scan-payloads.json'))}"
-                            read_commands += (scan, f"{scan} -Raw")
+                            scan = _windows_scan_command(folder)
+                            read_commands += (scan, scan.removesuffix(" -Raw"))
                             if offline_provider:
                                 offline_command = scan
                     elif name == "#sp":
@@ -724,27 +885,48 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     policy.start(name, calls, rule=rule, shell=tuple(filter(None, (offline_command, contract_read, command))))
 
                     command_approval = _core_approval(screen, name, command=command, offline_command=offline_command,
-                                                      read_commands=read_commands)
+                                                      read_commands=read_commands, confirmed=confirmed)
 
                     def approval(command_approval=command_approval):
                         return policy_error() or command_approval()
+                elif tool.name == "opencode":
+                    def approval():
+                        return _opencode_permission_failure(screen)
 
                 if not type_prompt(message, name):
+                    if _recover_core_composer(screen, tool.name, "prompt paint timed out"):
+                        continue
+                    blocked_by = f"{name}: terminal did not recover an empty composer"
                     return None
                 error = _wait_for_turn(screen, lambda message=message: policy_complete() and bool(_last_reply(chat, message)), seconds,
                                        approval=approval)
+                if error and tool.name == "opencode":
+                    report.notes["OpenCode failed core turn"] = {
+                        "step": name, **_opencode_turn_evidence(space.home, str(session), workspace=folder),
+                    }
+                reason = f"Approval refused: {error}" if error.startswith("unexpected Codex command approval") else error
                 if not report.add(stage, f"{name}: the operator turn and answer are captured", not error,
-                                  f"{error}\n{_screen_tail(screen)}"):
+                                  f"{reason}\n{_screen_tail(screen)}",
+                                  failure_class=_turn_failure_class(error)):
+                    if _recover_core_composer(screen, tool.name, error):
+                        continue
+                    blocked_by = f"{name}: {error}" if error in _PROVIDER_TURN_FAILURES else f"{name}: terminal did not recover an empty composer"
                     break
                 state.said.append(_last_reply(chat, message))
                 if name == "#scan":
                     scenario.after_scan(space, report, stage, state, soft=True)
                 elif name == "#sp":
                     scenario.after_sp(space, report, stage, state, soft=True)
+                elif check is scenario.after_work and policy:
+                    check(space, report, stage, state, codex_git_approval=_approval_command(command) in confirmed)
                 else:
                     check(space, report, stage, state)
     finally:
         screen.close()
+        if core:
+            for name, _, _ in scenario.CORE:
+                if name not in attempted:
+                    report.add(stage, f"{name}: blocked", False, blocked_by)
     added = new_task_rows(space, code, existing)
     ok = len(added) == 1 and added[0].get("id") == task
     if report.add(stage, "exactly one task reaches the board under the same agent", ok, str(added)[:1000]):

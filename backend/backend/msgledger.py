@@ -11,7 +11,9 @@ reached the chat — ``delivered_via``:
   hook sees it come in as a prompt and records the turn as the sender's
   (``landed_at``, ``landed_turn``);
 - ``codex``    — the local app-server accepted the wake; the inbox supplies the body;
-- ``stop``     — the Stop hook asked the chat to continue and read its inbox;
+- ``stop``     — the Stop hook asked the chat to continue and read its inbox
+  (only where no terminal takes it: a chat in Slightly Parallel's own
+  terminal gets the terminal's typed prompt instead, ``stop_waiting``);
 - ``hook``     — handed to the agent as a notice on its next prompt;
 - ``inbox``    — read by the agent itself (the MCP tool ``messages``).
 
@@ -276,18 +278,40 @@ def claim_for_hook(data_root: Any, agent_id: str) -> list[dict[str, str]]:
     return out
 
 
-def stop_notice(data_root: Any, agent_id: str) -> str:
-    """Reserve pending messages for one tag-free wake. MCP supplies the bodies."""
+def _stop_pending(rows: list[dict[str, str]], agent_id: str) -> list[dict[str, str]]:
+    return [r for r in rows if r["to_agent"] == agent_id and not r["delivered_via"] and not r["codex_thread"]]
+
+
+def stop_waiting(data_root: Any, agent_id: str) -> bool:
+    """Would the Stop hook have a message to hand over now? A read only: the
+    hook asks the terminal first (msgdeliver.stop_leaves) only when it would."""
+    return bool(_stop_pending(read_rows(data_root), agent_id))
+
+
+def stop_opening(row: dict[str, str]) -> str:
+    """The line a blocked Stop's reason opens with in Claude Code, which
+    shows every Stop hook that continues a turn as a problem: what this is,
+    before the notice. Not for Codex, whose continuation comes back as a
+    prompt that must be the notice exactly (take_marker)."""
+    who = ("the operator, sent from Slightly Parallel's page" if row["from_agent"] == OPERATOR
+           else f"another agent ({row['from_agent']}), sent through Slightly Parallel")
+    return f"Not an error: this is a message from {who}."
+
+
+def stop_notice(data_root: Any, agent_id: str, *, opening: bool = False) -> str:
+    """Reserve pending messages for one tag-free wake. MCP supplies the bodies.
+    ``opening``: the reason opens with stop_opening's line (Claude Code)."""
     if not ledger_path(data_root).exists():
         return ""
     with editing(data_root) as rows:
-        pending = [r for r in rows if r["to_agent"] == agent_id and not r["delivered_via"] and not r["codex_thread"]]
+        pending = _stop_pending(rows, agent_id)
         if not pending:
             return ""
         at = now_local()
         for row in pending:
             _deliver(row, "stop", at)
-        return wake_text(pending[0])
+        notice = wake_text(pending[0])
+        return f"{stop_opening(pending[0])}\n{notice}" if opening else notice
 
 
 def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = None) -> dict[str, str] | None:

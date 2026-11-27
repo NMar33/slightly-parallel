@@ -27,3 +27,16 @@ def test_summary_reports_a_cost_limit_and_fails_closed(usage, ok):
     assert module["budget_passed"](notes, 0.10) is ok
     verdict = "pass" if ok else "fail"
     assert f"estimated spend limit: $0.10 per job ({verdict})" in module["summary_line"](notes, 0.10)
+
+
+
+def test_summary_lists_each_hard_failure_even_after_a_later_pass():
+    script = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "agent_summary.py"
+    failure_lines = run_path(str(script))["failure_lines"]
+    report = {"checks": [
+        {"stage": "machine", "name": "optional observation", "ok": False, "soft": True},
+        {"stage": "core", "name": "middle check", "ok": False, "failure_class": "stand"},
+        {"stage": "core", "name": "later check", "ok": True},
+        {"stage": "machine", "name": "shutdown", "ok": False},
+    ]}
+    assert failure_lines(report) == ["FAIL [stand] core / middle check", "FAIL [unclassified] machine / shutdown"]

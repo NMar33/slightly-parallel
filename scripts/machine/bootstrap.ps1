@@ -12,7 +12,8 @@ $RepoUrl = if ($env:SP_REPO_URL) { $env:SP_REPO_URL } else { "https://github.com
 $Dest = if ($env:SP_DEST) { $env:SP_DEST } else { Join-Path $HOME "slightly-parallel" }
 # SP_LOCAL=1: run from the repository this script sits in (a CI checkout), no
 # clone. CI or SP_NONINTERACTIVE: no login prompts; the keys come from
-# ANTHROPIC_API_KEY and OPENAI_API_KEY.
+# ANTHROPIC_API_KEY for Claude Code, CODEX_OPENAI_API_KEY for Codex,
+# and OPENAI_API_KEY for OpenCode.
 $Local = [bool]$env:SP_LOCAL
 if ($Local) { $Dest = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
 $Quiet = [bool]($env:SP_NONINTERACTIVE -or $env:CI)
@@ -65,7 +66,14 @@ Refresh-Path
 
 if ($Quiet) {
   Say "No login prompts: the keys come from the environment"
-  if ($env:OPENAI_API_KEY -and -not (Test-Path (Join-Path $HOME ".codex\auth.json"))) { $env:OPENAI_API_KEY | codex.cmd login --with-api-key; Must "codex login" }
+  if ($env:CODEX_OPENAI_API_KEY -and ($env:GITHUB_ACTIONS -eq "true" -or -not (Test-Path (Join-Path $HOME ".codex\auth.json")))) {
+    $openCodeKey = $env:OPENAI_API_KEY
+    try {
+      Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
+      $env:CODEX_OPENAI_API_KEY | codex.cmd login --with-api-key
+      Must "codex login"
+    } finally { $env:OPENAI_API_KEY = $openCodeKey }
+  }
 } else {
 Say "Log in to each agent now - the only step that needs you"
 if (-not (Test-Path (Join-Path $HOME ".claude\.credentials.json"))) {

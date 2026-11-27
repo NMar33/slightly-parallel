@@ -179,7 +179,7 @@ def test_machine_cannot_release_without_measuring_all_model_costs(world) -> None
     assert world(**expected).returncode == 0
     machine = world.fake / "jobs_55"
     page = json.loads(machine.read_text())
-    job = page["jobs"][0]
+    job = next(job for job in page["jobs"] if job["name"] == "Machine full (ubuntu-latest)")
     job["steps"] = [step for step in job["steps"] if step["name"] != "Report CLI version and model cost"]
     machine.write_text(json.dumps(page))
     r = world(**expected)
