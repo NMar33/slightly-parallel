@@ -158,7 +158,7 @@ function Composer({ data, year }: { data: OverviewData; year: Year }) {
       const { dateStr, timeStr } = nowStamp()
       const answer = await postJson<{ metadata?: { id?: string } }>('/api/tasks', {
         project: chosen, projects: chosen, agent_id: OPERATOR_ACTOR, created_date: dateStr, created_time: timeStr,
-        title, status: 'doing', priority: 'med', assignee: '', lane: 'unassigned', actor: OPERATOR_ACTOR,
+        title, status: 'doing', priority: 'med', assignee: '', lane: '', actor: OPERATOR_ACTOR,
       })
       const id = answer.metadata?.id
       if (!id) throw new Error(t('the task was not created'))

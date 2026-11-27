@@ -119,6 +119,14 @@ export function useBoardData(boardKey: string, projects: string[], withBodies: b
     placeholderData: (prev, prevQuery) => sameBoard(prev, prevQuery, boardKey),
   })
   const q = (code: string) => encodeURIComponent(code)
+  const lanesQ = useQuery({
+    queryKey: [...BOARD_KEY, 'lanes', boardKey, joined],
+    queryFn: async ({ signal }) => Object.fromEntries(
+      (await each<{ lanes: string[] }>(projects, (code) => `/api/tasks/lanes?project=${q(code)}`, signal))
+        .map((result, i) => [projects[i], result.lanes]),
+    ),
+    placeholderData: (prev, prevQuery) => sameBoard(prev, prevQuery, boardKey),
+  })
   const mentionsQ = useSummary<MentionSummary>('mentions', boardKey, projects, (c) => `/api/tasks/mentions/summary?project=${q(c)}`, 'mentions')
   const sinceQ = useSummary<string>('since', boardKey, projects, (c) => `/api/tasks/status-since?project=${q(c)}`, 'since')
   const notesQ = useSummary<number>('notes', boardKey, projects, (c) => `/api/tasks/notes/summary?project=${q(c)}`, 'notes')
@@ -144,7 +152,7 @@ export function useBoardData(boardKey: string, projects: string[], withBodies: b
   // What could not be read, said once per failure — not on every retry.
   const failed = [
     mentionsQ.failed && t('chat mentions'), sinceQ.failed && t('time in the column'), notesQ.failed && t('notes'),
-    evidenceQ.failed && t('evidence'), linksQ.isError && t('links'),
+    evidenceQ.failed && t('evidence'), linksQ.isError && t('links'), lanesQ.isError && t('swim lanes'),
   ].filter(Boolean).join(', ')
   useEffect(() => {
     if (failed) toast.error(t('Could not load: {what}', { what: failed }), { description: t('The cards show the last loaded values.') })
@@ -167,6 +175,7 @@ export function useBoardData(boardKey: string, projects: string[], withBodies: b
     loadError: tasksQ.error ? String((tasksQ.error as Error).message ?? tasksQ.error) : null,
     mentions: mentionsQ.data, statusSince: sinceQ.data, noteCounts: notesQ.data, evidenceCounts: evidenceQ.data,
     links: linksQ.data ?? (EMPTY_TASKS as unknown as TaskLink[]),
+    savedLanes: lanesQ.data ?? EMPTY as Record<string, string[]>,
     refresh, reloadLinks,
   }
 }
