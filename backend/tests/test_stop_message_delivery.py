@@ -34,7 +34,7 @@ from backend.server import create_app
 _HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
 _HOOK = _HOOKS / "claude-code-capture.py"
 FAKE = Path(__file__).resolve().parent / "fixtures" / "fake_agent_prompt.py"
-needs_tmux = pytest.mark.skipif(termlib.tmux_path() is None or os.name == "nt", reason="needs tmux")
+needs_tmux = pytest.mark.skipif(termlib.tmux_path() is None or os.name == "nt", reason="tmux is not installed")
 
 COORD = "cc-c00rd001"
 WORKER = "cc-w0rker01"
