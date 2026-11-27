@@ -185,3 +185,37 @@ def test_a_resumed_chat_reads_the_same_origins_as_the_server(root: Path) -> None
     members, home, _aliases, _codes = capture.agent_projects(root, "alpha", A)
     assert members == ["alpha", "beta"] and home == "alpha"
     assert "→ beta (" in _turn(cap, "#task {beta} check it")
+
+
+@pytest.mark.parametrize("legacy_truncated", [False, True])
+def test_a_long_chat_only_announces_the_new_task(root: Path, legacy_truncated: bool) -> None:
+    tasks = root / "tasks.csv"
+    old_ids = [f"tk_{i:08x}" for i in range(150)]
+    tasks.write_text(
+        "id,project,agent_id,title,status,lane,assignee\n"
+        + "".join(f"{task_id},alpha,{A},old,agent,,\n" for task_id in old_ids),
+        encoding="utf-8",
+    )
+    cap = _cap(root)
+    if legacy_truncated:
+        # An affected installation may have rotated out newer ids too.
+        meta = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+        meta["where_told"] = old_ids[20:120]
+        meta.pop("where_told_complete", None)
+        cap.meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        assert "where the tasks" not in _turn(cap, "first turn after upgrading")
+
+    with tasks.open("a", encoding="utf-8") as fh:
+        fh.write("tk_other001,beta,cc-other,theirs,agent,,\n")
+    assert "where the tasks" not in _turn(cap, "an unrelated task changed the ledger")
+    with tasks.open("a", encoding="utf-8") as fh:
+        fh.write(f"tk_made0002,beta,{A},new,agent,docs,docs\n")
+    out = _turn(cap, "the chat made a new task")
+    notices = [line for line in out.splitlines() if "where the tasks" in line]
+    assert notices == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_made0002 → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    with tasks.open("a", encoding="utf-8") as fh:
+        fh.write("tk_other002,beta,cc-other,theirs,agent,,\n")
+    assert "where the tasks" not in _turn(cap, "the ledger changed again")

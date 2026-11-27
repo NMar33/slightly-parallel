@@ -405,26 +405,44 @@ def ledger_stats(data_root: Path) -> list | str | None:
     return [st.st_size, st.st_mtime_ns, st.st_ino]
 
 
+_LEGACY_WHERE_TOLD_LIMIT = 100
+
+
 def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
-    """The tasks this chat made that it was not told the place of yet:
-    «tk_… → project · lane» on the next turn (note nt_258a7ed7 §6). tasks.csv
-    is read only when its stat moved; the first look marks what is there
-    as told."""
+    """Announce each task this chat makes once, with its project and lane."""
+    path = data_root / "tasks.csv"
     try:
-        st = os.stat(data_root / "tasks.csv")
-        sig = [st.st_size, st.st_mtime_ns, st.st_ino]
-    except OSError:
+        st = path.stat()
+    except FileNotFoundError:
         meta.setdefault("where_told", [])    # no tasks yet: the first look is done
         return []
-    if meta.get("tasks_seen") == sig:
+    except OSError:
         return []
+    sig = [st.st_size, st.st_mtime_ns, st.st_ino]
     first = "where_told" not in meta
-    told = [t for t in meta.get("where_told") or [] if isinstance(t, str)]
-    mine = [r for r in _read_csv(data_root / "tasks.csv") if (r.get("agent_id") or "") == agent]
-    new = [r for r in mine if r.get("id") and r["id"] not in told]
+    told = meta.get("where_told") or []
+    # The old hook discarded ids and could rotate them out in any order.
+    # Take the current ledger as the baseline once for a potentially capped chat.
+    legacy = not meta.get("where_told_complete") and len(told) == _LEGACY_WHERE_TOLD_LIMIT
+    if not legacy and meta.get("tasks_seen") == sig:
+        return []
+
+    seen = dict.fromkeys(task_id for task_id in told if isinstance(task_id, str))
+    new = []
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                task_id = row.get("id")
+                if row.get("agent_id") == agent and task_id and task_id not in seen:
+                    seen[task_id] = None
+                    new.append(row)
+    except (OSError, csv.Error, UnicodeError):
+        return []
+
     meta["tasks_seen"] = sig
-    meta["where_told"] = (told + [r["id"] for r in new])[-100:]
-    if first:
+    meta["where_told"] = list(seen)
+    meta["where_told_complete"] = True
+    if first or legacy:
         return []
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 
@@ -2231,44 +2249,6 @@ def _read_done_outcome(root: str, agent: str, turn: int) -> dict:
     if isinstance(outcome, dict) and outcome.get("turn") == turn and not outcome.get("pending"):
         return outcome
     return {}
-
-
-def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
-    """Does Slightly Parallel's server type this chat's waiting messages into
-    the terminal it runs in? Asked by Claude Code's Stop hook before it blocks
-    a Stop for a message (tk_40450bfa): a block shows as "Stop hook reported a
-    problem", the typed prompt does not. True only when the hook itself runs
-    in an SP terminal (SP_TERMINAL), the chat's meta names that terminal (the
-    one the server types into), and the server of this data root says it
-    types there (GET /api/messages/terminal, msgdeliver.stop_leaves: the same
-    check that picks "terminal"). Anything else, an unreachable server
-    included, is False: the Stop blocks as before."""
-    from urllib.parse import urlencode
-    from urllib.request import ProxyHandler, build_opener
-
-    here = os.environ.get("SP_TERMINAL", "").strip()
-    if not here:
-        return False
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(meta, dict) or str(meta.get("terminal") or "") != here:
-        return False
-    try:
-        with build_opener(ProxyHandler({})).open(
-            f"{server_url()}/api/messages/terminal?{urlencode({'agent_id': agent})}", timeout=DONE_LOOKUP_TIMEOUT_S,
-        ) as response:
-            got = json.load(response)
-    except (OSError, ValueError):
-        return False
-    if not isinstance(got, dict) or got.get("types") is not True or got.get("terminal") != here:
-        return False
-    try:
-        # Another data root's server (a sandbox beside the live one) knows nothing of this chat.
-        return Path(str(got.get("data_root") or "")).resolve() == Path(root).resolve()
-    except (OSError, ValueError):
-        return False
 
 
 def _done_outcome_notice(outcome: dict) -> str:
