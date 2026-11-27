@@ -255,7 +255,7 @@ REPEAT_WHERE = " The answer's `where` says where it went: repeat it in your repl
 
 
 #: The ``project`` argument of the tools that read one project.
-PROJECT_READ = "a project code; leave it out for this chat's project"
+PROJECT_READ = "a project code; leave it out for this chat's home"
 #: Each project tool's ``project``, where it says more than PROJECT_READ.
 _PROJECT_ARG_OF = {
     **dict.fromkeys(("write_entry", "core_new", "note_write", "map_write", "architecture_page",
@@ -274,27 +274,6 @@ def _with_project(defs: list[dict]) -> list[dict]:
             props["project"] = {"type": "string", "description": (
                 _PROJECT_ARG_OF.get(tool["name"], PROJECT_READ) + "; " + mcp_args.PROJECT_TOP)}
     return defs
-
-
-def _read_project(args: dict) -> str:
-    """The ``project`` a reading tool names, or "" for this chat's own."""
-    raw = args.get("project")
-    if raw is None or raw == "":
-        return ""
-    if not isinstance(raw, str):
-        raise ApiError("project is one project code, as text")
-    return raw.strip()
-
-
-def _target(args: dict, who: dict) -> str:
-    """The project a create goes to: the one named, else the chat's home.
-    The server checks that it is one of the chat's projects."""
-    raw = args.get("project")
-    if raw is None or raw == "":
-        return str(who.get("home") or who.get("project") or "")
-    if not isinstance(raw, str):
-        raise ApiError("project is one project code, as text")
-    return raw.strip()
 
 
 def _argument_problems(name: str, args: dict) -> list[str]:
@@ -318,7 +297,7 @@ def _argument_problems(name: str, args: dict) -> list[str]:
         # Its old name for the same value (tk_0b8a32d2): one name everywhere.
         out.append(f'project takes the code as project, not code: {{"project":"{args["code"]}"}}')
     elif rest == ["project"]:
-        out.append(f"{name} takes no project: it works in this chat's project; it takes: {listed}")
+        out.append(f"{name} takes no project: it works in this chat's home; it takes: {listed}")
     elif rest:
         out.append(f"{name} takes no argument {', '.join(rest)} — it takes: {listed}")
     return out + _nested_identity(name, {k: v for k, v in args.items() if k not in extra})
@@ -463,6 +442,17 @@ class Translator:
         pids = ",".join(str(p) for p in ancestors())
         return self.api.get(f"/api/whoami?cwd={q}" + (f"&pids={pids}" if pids else ""))
 
+    def _target(self, args: dict, who: dict | None = None) -> str:
+        """Use the named project or the chat's membership home."""
+        project = args.get("project")
+        if project is not None and not isinstance(project, str):
+            raise ApiError("project is one project code, as text")
+        if project and (code := project.strip()):
+            return code
+        if who is None:
+            who = self.identity()
+        return str(who.get("home") or who.get("project") or "")
+
     def _stamp(self, args: dict | None = None) -> dict:
         """agent_id / project / date / time — stamped, never asked of the
         model: whatever it sends under these names is written over. The
@@ -471,7 +461,7 @@ class Translator:
         who = self.identity()
         now = _time.localtime()
         return {
-            "project": _target(args or {}, who),
+            "project": self._target(args or {}, who),
             "agent_id": who["agent_id"],
             "created_date": f"{now.tm_year % 100:02d}{now.tm_mon:02d}-{now.tm_mday:02d}",
             "created_time": f"{now.tm_hour:02d}:{now.tm_min:02d}",
@@ -1248,7 +1238,7 @@ class Translator:
                  "The tokens this chat used, the plan limits and the project's day. `block` is the text "
                  "#usage prints: give it as it is, in a code block, and add nothing but one line when "
                  "something stands out (a cache rebuild, a limit over 80%). `summary` holds the numbers "
-                 "of the Usage page for `project` (this chat's project, or all) over `range` (today, "
+                 "of the Usage page for `project` (this chat's home, or all) over `range` (today, "
                  "7d or 30d). Reads only."),
              "inputSchema": {"type": "object", "properties": {
                  "range": {"type": "string", "enum": ["today", "7d", "30d"]}}}},
@@ -1425,8 +1415,8 @@ class Translator:
             return self.api.post(f"/api/{spec['base']}/{_id(args)}/update",
                                  {**changes, "agent_id": self.identity()["agent_id"]})
         if name == "tasks":
-            project = _read_project(args) or self.identity()["project"]
-            q = f"/api/tasks?project={urllib.parse.quote(str(project))}"
+            project = self._target(args)
+            q = f"/api/tasks?project={urllib.parse.quote(project)}"
             if args.get("status"):
                 q += f"&status={urllib.parse.quote(str(args['status']))}"
             return self.api.get(q)
@@ -1451,10 +1441,10 @@ class Translator:
             return self.api.post("/api/undo/restore", {"agent_id": who, "id": _id(args)})
         if name == "architecture_status":
             return self.api.get(
-                f"/api/architecture/status?project={urllib.parse.quote(str(self.identity()['project']))}")
+                f"/api/architecture/status?project={urllib.parse.quote(self._target(args))}")
         if name in ("architecture_material", "architecture_page"):
             who = self.identity()
-            target = _target(args, who)
+            target = self._target(args, who)
             if name == "architecture_material":
                 return self.api.get("/api/architecture/page/material?" + self._material_query(who, target))
             return _with_where(self.api.post("/api/architecture/page", {
@@ -1462,7 +1452,7 @@ class Translator:
                 "text": args.get("text") or "", "note": args.get("note") or ""}), target)
         if name in ("map_material", "map_write"):
             who = self.identity()
-            target = _target(args, who)
+            target = self._target(args, who)
             if name == "map_material":
                 return self.api.get("/api/map/material?" + self._material_query(who, target))
             return _with_where(self.api.post("/api/map", {
@@ -1470,25 +1460,26 @@ class Translator:
                 "map": args.get("map") or {}, "note": args.get("note") or ""}), target)
         if name == "scan_material":
             who = self.identity()
-            return self.api.get("/api/scans/material?" + self._material_query(who, _target(args, who)))
+            return self.api.get("/api/scans/material?" + self._material_query(who, self._target(args, who)))
         if name in ("standup_material", "standup_postpone"):
             who = self.identity()
             # A standup is the home's only: no `project` argument (note §2).
-            who = {**who, "project": str(who.get("home") or who["project"])}
-            project = urllib.parse.quote(str(who["project"]))
+            project = self._target(args, who)
             date = str(args.get("date") or "")
             if name == "standup_postpone":
                 return self.api.post("/api/standups/postpone",
-                                     {"project": who["project"], "date": date,
+                                     {"project": project, "date": date,
                                       "hours": args.get("hours") or 4})
             if args.get("claim"):
                 got = self.api.post("/api/standups/claim",
-                                    {"project": who["project"], "date": date,
+                                    {"project": project, "date": date,
                                      "agent_id": who["agent_id"]})
                 if not got.get("claimed"):
                     return got  # written already, or another agent is writing it
-            clip = "&clip=true" if args.get("clip") else ""
-            return self.api.get(f"/api/standups/material?project={project}&date={urllib.parse.quote(date)}{clip}")
+            query = {"project": project, "date": date}
+            if args.get("clip"):
+                query["clip"] = "true"
+            return self.api.get("/api/standups/material?" + urllib.parse.urlencode(query))
         if name == "task_evidence_ask":
             return self.api.get(f"/api/tasks/{_id(args)}/evidence/ask")
         if name == "task_work":
@@ -1524,7 +1515,7 @@ class Translator:
                 raise ApiError("scope is chat or project")
             who = self.identity()
             query = {"full": "true", "q": str(args.get("q") or ""),
-                     "project": _read_project(args) or str(who["project"])}
+                     "project": self._target(args, who)}
             if scope == "chat":
                 query["agent_id"] = who["agent_id"]
             got = self.api.get(f"/api/{path}?{urllib.parse.urlencode(query)}")
@@ -1557,11 +1548,11 @@ class Translator:
             return self.api.post("/api/carries/brief", {
                 "agent_id": who["agent_id"], "target": target, "text": str(args.get("text") or "")})
         if name == "cores":
-            code = _read_project(args) or self.identity()["project"]
-            return self.api.get(f"/api/cores?project={urllib.parse.quote(str(code))}")
+            code = self._target(args)
+            return self.api.get(f"/api/cores?project={urllib.parse.quote(code)}")
         if name == "core_new":
             who = self.identity()
-            target = _target(args, who)
+            target = self._target(args, who)
             return _with_where(self.api.post("/api/cores", {
                 "project": target, "agent_id": who["agent_id"],
                 "name": str(args.get("name") or ""), "type": str(args.get("type") or ""),
@@ -1617,8 +1608,8 @@ class Translator:
         if name == "search":
             return self.api.get(f"/api/search?q={urllib.parse.quote(str(args.get('q') or ''))}")
         if name == "project":
-            code = _read_project(args) or self.identity()["project"]
-            return self.api.get(f"/api/project/{urllib.parse.quote(str(code))}")
+            code = self._target(args)
+            return self.api.get(f"/api/project/{urllib.parse.quote(code)}")
         if name == "doctor":
             return self.api.get("/api/doctor")
         if name == "checkup":
@@ -1656,7 +1647,7 @@ class Translator:
                     block = str(chat.get("block") or "")
                 except ApiError:
                     block = ""
-            q = urllib.parse.urlencode({"project": _read_project(args) or str(who.get("project") or "all"),
+            q = urllib.parse.urlencode({"project": self._target(args, who) or "all",
                                         "range": rng})
             return {"block": block, "summary": self.api.get(f"/api/usage?{q}")}
         raise ApiError(f"unknown tool: {name}")
@@ -1686,7 +1677,7 @@ class Translator:
         if name == "notes":
             if text("id"):
                 return self.api.get(f"/api/notes/{_id(args)}/agent")
-            project = _read_project(args) or self.identity()["project"]
+            project = self._target(args)
             q = urllib.parse.urlencode({"project": project, "task": text("task_id")})
             return self.api.get(f"/api/notes/list?{q}")
         if name == "note_image":
@@ -1708,7 +1699,7 @@ class Translator:
         if base is not None and (isinstance(base, bool) or not isinstance(base, int)):
             raise ApiError("base is the version number you read, a number")
         who = self.identity()
-        target = _target(args, who)
+        target = self._target(args, who)
         body: dict[str, Any] = {"agent_id": who["agent_id"], "project": target,
                                 "text": text("text", True), "kind": text("kind", True), "title": text("title"),
                                 "id": text("id"), "images": images}
@@ -1806,13 +1797,14 @@ class Translator:
         if name == "entrypoints":
             if text("id"):
                 return self.api.get(f"/api/entrypoints/{_id(args)}/command")
-            project = _read_project(args) or str(who.get("home") or who["project"])
-            got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(str(project))}")
+            project = self._target(args, who)
+            got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(project)}")
             return {"topics": [{k: t.get(k) for k in ("id", "name", "title", "state", "what", "ways", "stops", "open_tasks")}
                                for t in got.get("topics") or []]}
         if name == "entrypoint_offer":
+            project = self._target(args, who)
             words = " — ".join(x for x in (text("name", True), text("why")) if x)
-            q = urllib.parse.urlencode({"project": who["project"], "text": words})
+            q = urllib.parse.urlencode({"project": project, "text": words})
             return self.api.get(f"/api/entrypoints/similar?{q}")
         if name == "task_topic":
             return self.api.post(f"/api/tasks/{_id(args)}/topic",

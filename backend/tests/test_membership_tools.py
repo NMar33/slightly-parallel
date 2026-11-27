@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -169,3 +170,29 @@ def test_the_create_tools_ask_to_repeat_where(world) -> None:
         assert "project" in defs[tool]["inputSchema"]["properties"], tool
     for tool in ("standup_material", "standup_postpone"):
         assert "project" not in defs[tool]["inputSchema"].get("properties", {}), tool
+
+
+
+@pytest.mark.parametrize(("tool", "args", "path"), [
+    ("tasks", {}, "/api/tasks"),
+    ("cores", {}, "/api/cores"),
+    ("pins", {}, "/api/pins"),
+    ("notes", {}, "/api/notes/list"),
+    ("usage", {}, "/api/usage"),
+    ("project", {}, "/api/project"),
+    ("architecture_status", {}, "/api/architecture/status"),
+    ("entrypoint_offer", {"name": "Terminal"}, "/api/entrypoints/similar"),
+    ("entrypoints", {}, "/api/entrypoints/desk"),
+])
+def test_project_reads_default_to_home(world, monkeypatch, tool, args, path) -> None:
+    tr, _c, _root = world
+    who = tr.identity()
+    monkeypatch.setattr(tr, "identity", lambda: {**who, "home": "BETA"})
+    for given, code in (({}, "BETA"), ({"project": "ALPHA"}, "ALPHA")):
+        tr.call(tool, {**args, **given})
+        request = urlsplit(tr.api.calls[-1][1])
+        if tool == "project":
+            assert request.path == f"{path}/{code}"
+        else:
+            assert request.path == path
+            assert parse_qs(request.query)["project"] == [code]

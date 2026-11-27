@@ -2233,44 +2233,6 @@ def _read_done_outcome(root: str, agent: str, turn: int) -> dict:
     return {}
 
 
-def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
-    """Does Slightly Parallel's server type this chat's waiting messages into
-    the terminal it runs in? Asked by Claude Code's Stop hook before it blocks
-    a Stop for a message (tk_40450bfa): a block shows as "Stop hook reported a
-    problem", the typed prompt does not. True only when the hook itself runs
-    in an SP terminal (SP_TERMINAL), the chat's meta names that terminal (the
-    one the server types into), and the server of this data root says it
-    types there (GET /api/messages/terminal, msgdeliver.stop_leaves: the same
-    check that picks "terminal"). Anything else, an unreachable server
-    included, is False: the Stop blocks as before."""
-    from urllib.parse import urlencode
-    from urllib.request import ProxyHandler, build_opener
-
-    here = os.environ.get("SP_TERMINAL", "").strip()
-    if not here:
-        return False
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(meta, dict) or str(meta.get("terminal") or "") != here:
-        return False
-    try:
-        with build_opener(ProxyHandler({})).open(
-            f"{server_url()}/api/messages/terminal?{urlencode({'agent_id': agent})}", timeout=DONE_LOOKUP_TIMEOUT_S,
-        ) as response:
-            got = json.load(response)
-    except (OSError, ValueError):
-        return False
-    if not isinstance(got, dict) or got.get("types") is not True or got.get("terminal") != here:
-        return False
-    try:
-        # Another data root's server (a sandbox beside the live one) knows nothing of this chat.
-        return Path(str(got.get("data_root") or "")).resolve() == Path(root).resolve()
-    except (OSError, ValueError):
-        return False
-
-
 def _done_outcome_notice(outcome: dict) -> str:
     tasks = outcome.get("tasks") or []
     moved = [row["id"] for row in tasks if row["result"] == "moved"]
