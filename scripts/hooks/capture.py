@@ -429,15 +429,9 @@ def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 
 
-def _board_lanes(data_root: Path, project: str) -> list[str]:
-    lanes: dict[str, str] = {}
-    for r in _read_csv(data_root / "tasks.csv"):
-        if r.get("project") != project or (r.get("archived_at") or "").strip():
-            continue
-        name = (r.get("lane") or r.get("assignee") or "").strip()
-        if name:
-            lanes.setdefault(name.lower(), name)
-    return sorted(lanes.values(), key=str.lower)
+def _board_lanes(data_root: Path, project: str) -> dict[str, str]:
+    return shared.board_lanes(_read_csv(data_root / "tasks.csv"), project,
+                              shared.saved_board_lanes(data_root, project))
 
 
 def task_where(data_root: Path, project: str, agent: str, user_text: str,
@@ -650,7 +644,16 @@ def where_notice(where: dict) -> str:
     told = (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
             + " (the braces set the project and the lane; "
             + _backend_module("mcp_args").send_project(str(where.get("project") or "")) + ").")
-    if where.get("ask"):
+    if lane := where.get("promote_lane"):
+        told += f" Writing the card moves lane „{lane}“ from agents to the board."
+    if choice := where.get("lane_choice"):
+        told += " Write it now, with no lane."
+        if question := where.get("project_ask"):
+            told += f" Once it is filed, first ask the operator in one line: {question} Then tell the operator: "
+        else:
+            told += " Once it is filed, tell the operator: "
+        told += shared.lane_choice_notice(choice)
+    elif where.get("ask"):
         # A lane the braces leave unclear: the card is written now, in the
         # default lane, and the operator is asked after (tk_970d6b2d).
         told += (" The lane is unclear, so the card goes to the default lane: write it now, with no lane, "
@@ -866,12 +869,12 @@ class TurnCapture:
                 self._lost("message marker not read", exc)
             if message_stray is not None:
                 user_text = msgs.wrap_stray(message_stray, user_text)
-        late_notices = []
+        late_notice = None
         if message_in and message_in.get("already_notified"):
-            late_notices = [message_in["id"]]
+            late_notice = message_in["id"]
         elif not quiet and message_in is None and message_stray is None:
             try:
-                user_text, late_notices = msgs.strip_late_notices(
+                user_text, late_notice = msgs.strip_late_notice(
                     self.data_root, self.agent_name, user_text, int(meta.get("message_count", 0)) + 1,
                 )
             except Exception as exc:  # noqa: BLE001 — keep the operator's prompt
@@ -1064,7 +1067,7 @@ class TurnCapture:
             "message_in": {"id": message_in["id"], "from": message_in["from_agent"],
                            "reply_to": message_in.get("reply_to") or ""}
             if message_in and not message_in.get("already_notified") else None,
-            "message_late": late_notices,
+            "message_late": late_notice,
             # This prompt is a message for another chat, typed here by mistake.
             "message_stray": {"id": message_stray["id"], "from": message_stray["from_agent"],
                               "to": message_stray["to_agent"]} if message_stray else None,
@@ -2441,7 +2444,7 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"{w.get('turn')}; give it a title now (≤ 80 characters, what it is about, in the operator's "
             f"language) with task_update {{id: \"{w.get('task_id')}\", title}}. Its title for now: "
             f"\"{w.get('provisional') or ''}\". The skill write-a-task holds the rule.")
-    for late in signals.get("message_late") or []:
+    if late := signals.get("message_late"):
         notes.append(f"[slightly-parallel] message {late} was already delivered. Ignore this late terminal notice.")
     got = signals.get("message_in")
     if got:

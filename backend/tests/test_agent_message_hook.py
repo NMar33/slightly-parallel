@@ -324,13 +324,13 @@ def test_an_edited_notice_in_the_wrong_chat_preserves_the_operator_command(root:
     assert saved is not None and saved["delivered_via"] == "hook" and not saved["strayed"]
 
 
-@pytest.mark.parametrize(("agent", "notice_first", "muted"), [
-    (WORKER, True, False),
-    (WORKER, False, True),
-    (CODEX, True, True),
-    (CODEX, False, False),
+@pytest.mark.parametrize(("agent", "muted"), [
+    (WORKER, False),
+    (WORKER, True),
+    (CODEX, True),
+    (CODEX, False),
 ])
-def test_a_mixed_late_notice_keeps_only_the_operator_text_and_tag_behavior(root, agent, notice_first, muted):
+def test_a_mixed_late_notice_keeps_only_the_operator_text_and_tag_behavior(root, agent, muted):
     from backend.sessions import _operator_text
 
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="recover")
@@ -345,7 +345,7 @@ def test_a_mixed_late_notice_keeps_only_the_operator_text_and_tag_behavior(root,
         said += "\n#mute"
     notice = msgledger.wake_text(row)
     cap = capture.TurnCapture(root, "alpha", agent)
-    signals = cap.open_turn("\n".join((notice, said) if notice_first else (said, notice)), deliver=True)
+    signals = cap.open_turn(f"{notice}\n{said}", deliver=True)
     cap.complete_turn("noted")
 
     assert signals["message_in"] is None and signals["message_stray"] is None
@@ -367,6 +367,41 @@ def test_a_quoted_notice_without_a_terminal_attempt_stays_in_the_operators_text(
     cap.complete_turn("noted")
     assert not signals["message_late"] and "task" in signals["commands"]
     assert _turns(root, WORKER)[-1].user_summary == said
+
+
+@pytest.mark.parametrize(("quote", "via", "agent"), [
+    ('Translate "{notice}" into French.', "hook", WORKER),
+    ("```text\n{notice}\n```", "inbox", WORKER),
+    ("Here is a message:\n> {notice}", "hook", CODEX),
+    ("#task Investigate this log\n{notice}", "inbox", WORKER),
+    ("    {notice}\n    end of the quoted log", "hook", WORKER),
+])
+def test_a_quoted_late_notice_stays_in_history_and_does_not_spend_the_real_marker(root, quote, via, agent):
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="recover")
+    mid = row["id"]
+    assert msgledger.claim_terminal(root, mid, "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, mid)
+    msgledger.finish_terminal(root, mid)
+    if via == "hook":
+        assert [r["id"] for r in msgledger.claim_for_hook(root, WORKER)] == [mid]
+    else:
+        assert [r["id"] for r in msgledger.inbox(root, WORKER)["unread"]] == [mid]
+
+    notice = msgledger.wake_text(row)
+    quoted = quote.format(notice=notice)
+    cap = capture.TurnCapture(root, "alpha", agent)
+    signals = cap.open_turn(quoted, deliver=True)
+    cap.complete_turn("noted")
+    assert _turns(root, agent)[-1].user_summary == quoted.strip()
+    assert "already delivered" not in capture.format_signals(signals)
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["terminal_state"] == "uncertain" and not saved["landed_at"]
+
+    recipient = capture.TurnCapture(root, "alpha", WORKER)
+    late = recipient.open_turn(notice, deliver=True)
+    assert f"message {mid} was already delivered" in capture.format_signals(late)
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["delivered_via"] == via and saved["landed_at"]
 
 
 @pytest.mark.parametrize("tool,session,agent", [

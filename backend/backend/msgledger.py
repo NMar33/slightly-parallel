@@ -405,7 +405,7 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
                 or row["terminal_state"] == "uncertain")
         submitted = prompt.strip()
         notice = wake_text(row)
-        if wake and submitted != notice:
+        if wake and (submitted != notice or (late and not prompt.startswith(notice))):
             return None
         if row["codex_thread"]:
             _deliver(row, "codex", at)
@@ -424,28 +424,22 @@ def take_marker(data_root: Any, agent_id: str, prompt: str, turn: int | None = N
         return dict(row)
 
 
-def strip_late_notices(data_root: Any, agent_id: str, prompt: str, turn: int) -> tuple[str, list[str]]:
-    """Separate exact late wakes from operator text in a mixed submission."""
-    if not _WAKE_RE.search(prompt) or not _WAKE_RE.sub("", prompt).strip() or not ledger_path(data_root).exists():
-        return prompt, []
+def strip_late_notice(data_root: Any, agent_id: str, prompt: str, turn: int) -> tuple[str, str | None]:
+    """Separate a complete leading late wake from the operator's input."""
+    match = _WAKE_RE.match(prompt)
+    if match is None or not ledger_path(data_root).exists():
+        return prompt, None
+    operator_text = prompt[match.end():]
+    if not operator_text.strip():
+        return prompt, None
+    sender, msg_id = match.groups()
     with editing(data_root) as rows:
-        by_id = {r["id"]: r for r in rows}
-        late: dict[str, dict[str, str]] = {}
-
-        def replace(match: re.Match[str]) -> str:
-            sender, msg_id = match.groups()
-            row = by_id.get(msg_id)
-            if row is None or row["from_agent"] != sender or row["landed_at"] or not _was_delivered_before_late_notice(row):
-                return match[0]
-            late[msg_id] = row
-            # A space keeps the original words and tags from joining.
-            return " "
-
-        cleaned = _WAKE_RE.sub(replace, prompt)
-        for row in late.values():
-            if row["to_agent"] == agent_id:
-                _land_marker(row, now_local(), turn)
-        return (cleaned.strip(), list(late)) if late else (prompt, [])
+        row = next((r for r in rows if r["id"] == msg_id), None)
+        if row is None or row["from_agent"] != sender or row["landed_at"] or not _was_delivered_before_late_notice(row):
+            return prompt, None
+        if row["to_agent"] == agent_id:
+            _land_marker(row, now_local(), turn)
+        return operator_text.lstrip(), msg_id
 
 
 def take_stray(data_root: Any, agent_id: str, prompt: str, turn: int | None = None) -> dict[str, str] | None:
@@ -463,7 +457,7 @@ def take_stray(data_root: Any, agent_id: str, prompt: str, turn: int | None = No
         if (row is None or row["to_agent"] == agent_id or row["from_agent"] != sender
                 or row["landed_at"] or (row["delivered_via"] != "terminal"
                                         and row["terminal_state"] not in ("sending", "uncertain"))
-                or prompt.strip() != wake_text(row)):
+                or prompt.rstrip() != wake_text(row)):
             return None
         _return_terminal_claim(row)
         note = f"{agent_id} {now_local()}" + (f" turn {turn}" if turn is not None else "")
