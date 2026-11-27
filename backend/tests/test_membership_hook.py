@@ -222,8 +222,7 @@ def test_a_long_chat_only_announces_the_new_task(root: Path, legacy_truncated: b
     assert "where the tasks" not in _turn(cap, "the ledger changed again")
 
 
-@pytest.mark.parametrize("old_count", [100, 150])
-def test_upgrade_announces_task_appended_after_legacy_observation(root: Path, old_count: int) -> None:
+def _legacy_task_ledger(root: Path, old_count: int):
     tasks = root / "tasks.csv"
     old_ids = [f"tk_{i:08x}" for i in range(old_count)]
     with tasks.open("w", encoding="utf-8-sig", newline="") as fh:
@@ -238,7 +237,12 @@ def test_upgrade_announces_task_appended_after_legacy_observation(root: Path, ol
     meta["where_told"] = old_ids[start:start + 100]
     meta.pop("where_told_complete", None)
     cap.meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    return cap, tasks, meta
 
+
+@pytest.mark.parametrize("old_count", [100, 150])
+def test_upgrade_announces_task_appended_after_legacy_observation(root: Path, old_count: int) -> None:
+    cap, tasks, _meta = _legacy_task_ledger(root, old_count)
     with tasks.open("a", encoding="utf-8", newline="") as fh:
         csv.writer(fh).writerow(["tk_made0003", "beta", A, "Новая\nзадача", "agent", "docs"])
     out = _turn(cap, "first turn after upgrading")
@@ -249,3 +253,36 @@ def test_upgrade_announces_task_appended_after_legacy_observation(root: Path, ol
     with tasks.open("a", encoding="utf-8", newline="") as fh:
         csv.writer(fh).writerow(["tk_other003", "alpha", "cc-other", "theirs", "agent", ""])
     assert "where the tasks" not in _turn(cap, "an unrelated task changed the ledger")
+
+
+@pytest.mark.parametrize("incomplete", ["open_quote", "missing_column", "missing_terminator"])
+def test_upgrade_waits_for_a_complete_appended_task(root: Path, incomplete: str) -> None:
+    cap, tasks, before = _legacy_task_ledger(root, 150)
+    prefix = f'tk_made0004,beta,{A},"Новая\n'
+    ends = {
+        "open_quote": ("", 'задача",agent,docs\r\n'),
+        "missing_column": ('задача",agent\r\n', ',docs\r\n'),
+        "missing_terminator": ('задача",agent,docs', '\r\n'),
+    }
+    partial, rest = ends[incomplete]
+    with tasks.open("ab") as fh:
+        fh.write((prefix + partial).encode("utf-8"))
+    assert "where the tasks" not in _turn(cap, "append is incomplete")
+    after = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+    for field in ("tasks_seen", "where_told", "where_told_complete"):
+        assert after.get(field) == before.get(field)
+
+    with tasks.open("r+b") as fh:
+        # A short row that already has a terminator is repaired in place.
+        if incomplete == "missing_column":
+            fh.seek(-len("\r\n"), 2)
+        else:
+            fh.seek(0, 2)
+        fh.write(rest.encode("utf-8"))
+    assert [line for line in _turn(cap, "append is complete").splitlines() if "where the tasks" in line] == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_made0004 → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    with tasks.open("a", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerow(["tk_other004", "alpha", "cc-other", "theirs", "agent", ""])
+    assert "where the tasks" not in _turn(cap, "the ledger changed again")

@@ -409,7 +409,11 @@ _LEGACY_WHERE_TOLD_LIMIT = 100
 
 
 def _task_append_offset(previous: object, current: os.stat_result) -> int | None:
-    """The old byte boundary when the same ledger grew by appending."""
+    """The saved boundary of a ledger that appears to have grown by appending.
+
+    Product edits replace the file atomically. An external in-place truncate
+    and regrow can look like an append in the legacy stat and re-announce old ids.
+    """
     if not isinstance(previous, list) or len(previous) != 3:
         return None
     size, modified, inode = previous
@@ -445,15 +449,20 @@ def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]
     try:
         with path.open(encoding="utf-8-sig", newline="") as fh:
             append_at = _task_append_offset(meta.get("tasks_seen"), os.fstat(fh.fileno())) if legacy else None
-            if append_at is None:
-                rows = csv.DictReader(fh)
-                pending = not legacy
-            else:
-                # readline keeps tell available. Check the recorded offset
-                # at CSV record boundaries, including quoted multiline rows.
-                rows = csv.DictReader(iter(fh.readline, ""))
+            def complete_lines():
+                # readline keeps tell available at each CSV record boundary.
+                for line in iter(fh.readline, ""):
+                    if not line.endswith(("\n", "\r")):
+                        raise csv.Error("task ledger has an unterminated line")
+                    yield line
+
+            rows = csv.DictReader(complete_lines(), strict=True)
+            pending = not legacy
+            if append_at is not None:
                 pending = rows.fieldnames is not None and fh.tell() == append_at
             for row in rows:
+                if None in row or None in row.values():
+                    raise csv.Error("task ledger row does not match its header")
                 task_id = row.get("id")
                 if row.get("agent_id") == agent and task_id and task_id not in seen:
                     seen[task_id] = None
