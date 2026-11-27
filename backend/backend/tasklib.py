@@ -8,9 +8,11 @@ undolib call them here, so neither imports a router."""
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import date
+from threading import Lock
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,12 +21,12 @@ from . import app_settings, hookshared, limits, mcp_args, thinklib, titlelib
 from .actors import HOUSE_ACTORS as _HOUSE_ACTORS
 from .actors import AGENT_REFUSED, identity_of, refuse_agent
 from .answers import create_answer, not_found
-from .csvio import as_int, rewrite_rows
+from .csvio import as_int, read_rows, rewrite_rows
 from .db import ViewStore
 from .docs_md import build_detail, resolve_under
 from .entities import ENTITIES, is_done
 from .entitylib import create_entity
-from .file_safety import atomic_write
+from .file_safety import atomic_write, edit_json
 from .refusals import Reasons
 from .frontmatter import block as fm_block
 from .taskevents import DEFAULT_ACTOR as _DEFAULT_ACTOR
@@ -36,6 +38,7 @@ TASK_STATUSES = ENUM_FIELDS["task"]["status"]
 TITLE_MAX = limits.MAX_TASK_TITLE
 DESCRIPTION_MAX = limits.MAX_TASK_DESCRIPTION
 log = logging.getLogger("sp.tasks")
+_LANE_CREATE = Lock()
 
 
 def _set_archived(store: ViewStore, task_id: str, value: str, actor: str) -> dict:
@@ -337,18 +340,94 @@ def _not_captured(agent: str, status: str) -> tuple[str, str]:
     )
 
 
-def _board_lanes(store: ViewStore, project: str) -> list[str]:
-    """The lanes the project's board shows: every assignee (lane) a live card has."""
-    rows = store.query(
-        "SELECT lane, assignee, archived_at FROM tasks_mutual WHERE project = ?", (project,))
-    seen: dict[str, str] = {}
-    for r in rows:
-        if str(r.get("archived_at") or "").strip():
-            continue
-        name = str(r.get("lane") or r.get("assignee") or "").strip()
-        if name:
-            seen.setdefault(name.lower(), name)
-    return sorted(seen.values(), key=str.lower)
+def _board_lanes(store: ViewStore, project: str) -> dict[str, str]:
+    return hookshared.board_lanes(read_rows(store.data_root / ENTITIES["task"].csv), project,
+                                  hookshared.saved_board_lanes(store.data_root, project))
+
+
+def save_board_lane(store: ViewStore, project: str, lane: str, op: str, previous: str = "") -> list[str]:
+    """The names the operator added to the board, including its empty lanes."""
+    if project not in {folder.code for folder in store.projects}:
+        raise not_found("project", project)
+
+    def change(data: dict[str, Any]) -> None:
+        current = data.get(project)
+        lanes = [name for name in current if isinstance(name, str)] if isinstance(current, list) else []
+        removed = previous if op == "rename" else lane if op == "remove" else ""
+        lanes = [name for name in lanes if name.casefold() != removed.casefold()]
+        if op != "remove" and not any(name.casefold() == lane.casefold() for name in lanes):
+            lanes.append(lane)
+        data[project] = lanes
+
+    data = edit_json(store.data_root / hookshared.BOARD_LANES_FILE, change)
+    store.rebuild()
+    return data[project]
+
+
+def _promote_rows(rows: list[dict[str, str]], project: str, lane: str) -> int:
+    changed = 0
+    for row in rows:
+        name = (row.get("lane") or row.get("assignee") or "").strip()
+        if row.get("project") == project and name.casefold() == lane.casefold() and row.get("lane_kind") == "agent":
+            row["lane_kind"] = ""
+            changed += 1
+    return changed
+
+
+def promote_lane(store: ViewStore, project: str, lane: str) -> dict:
+    csv_path = store.data_root / ENTITIES["task"].csv
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail=f"lane {lane!r} is not on the board")
+    count = 0
+
+    def mutate(rows: list[dict[str, str]]) -> bool:
+        nonlocal count
+        count = _promote_rows(rows, project, lane)
+        if not count and not any(name.casefold() == lane.casefold() for name in hookshared.board_lanes(rows, project)):
+            raise HTTPException(status_code=404, detail=f"lane {lane!r} is not on the board")
+        return bool(count)
+
+    if rewrite_rows(csv_path, ENTITIES["task"].columns, mutate):
+        store.rebuild()
+    return {"project": project, "lane": lane, "promoted": count}
+
+
+def choose_lane(store: ViewStore, task_id: str, lane: str) -> dict:
+    csv_path = store.data_root / ENTITIES["task"].csv
+    if not csv_path.exists():
+        raise not_found("task", task_id)
+    changes: list[tuple[str, str, str]] = []
+
+    def mutate(rows: list[dict[str, str]]) -> bool:
+        card = next((row for row in rows if row.get("id") == task_id), None)
+        if card is None:
+            raise not_found("task", task_id)
+        pending = card.get("lane_choice")
+        if not pending:
+            if card.get("lane") == lane:
+                return False
+            raise HTTPException(status_code=409, detail="this card's lane choice is already settled")
+        choice = hookshared.parse_lane_choice(pending)
+        if choice is None:
+            raise HTTPException(status_code=409, detail="this card's lane choice is unreadable")
+        if lane != choice["name"] and lane not in choice["options"]:
+            raise HTTPException(status_code=422, detail="choose the new lane or one of the suggested lanes")
+        project = card["project"]
+        saved = hookshared.saved_board_lanes(store.data_root, project)
+        current = next((name for name in hookshared.board_lanes(rows, project, saved)
+                        if name.casefold() == lane.casefold()), "")
+        if not current and lane != choice["name"]:
+            raise HTTPException(status_code=409, detail="the suggested lane has been removed")
+        selected = current or lane
+        _promote_rows(rows, project, selected)
+        changes.append(("lane", card.get("lane") or "", selected))
+        card.update(lane=selected, assignee=selected, lane_kind="", lane_choice="")
+        return True
+
+    if rewrite_rows(csv_path, ENTITIES["task"].columns, mutate):
+        _append_events(store, task_id, _DEFAULT_ACTOR, changes)
+        store.rebuild()
+    return {"task_id": task_id, "lane": lane}
 
 
 def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
@@ -459,10 +538,9 @@ def _check_level(store: ViewStore, agent: str, body: dict, named: str = "") -> N
         raise HTTPException(status_code=403, detail=LEVEL_ONE.format(agent=agent, home=view.home))
 
 
-def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
-    """Apply the /task contract to an agent's create; return the fields
-    dropped, and the line to ask the operator when the braces left the lane
-    unclear (hookshared.resolve_braces ``ask``: the card is made all the same).
+def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], dict[str, Any]]:
+    """Apply the /task contract to an agent's create and return dropped fields
+    and the operator's resolved braces.
 
     A house actor (the board) passes untouched. The operator's message
     decides the column and the lane: ``#task`` → the `agent` column,
@@ -472,7 +550,7 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
     """
     agent = identity_of(body)
     if agent in _HOUSE_ACTORS:
-        return [], ""
+        return [], dict(NO_BRACES)
     _refuse_in_helper(store, agent)
     command, named, column, message, said_turn = _operator_said(store, agent)
     now_written = command == "now" and _now_card_written(store, agent, said_turn)
@@ -548,27 +626,36 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
                    else "" if command else " (#now in the operator's message starts a task in `doing`)"),
                 ), code="status", field="status")
     body["status"] = status
-    # The lane comes from the operator's message, never from the agent.
-    lane = _lane_for(store, str(body.get("project") or ""), command, named)
-    # A lane the agent names itself: a new one is the operator's to make
-    # (vision vs_5dd903f1, tk_79e9f2cd). One the board has, or the one the
-    # operator's braces named (made at once), and any when the braces named
-    # one, is dropped as before: the lane comes from the operator's message,
-    # never from the agent.
-    on_board = _board_lanes(store, str(body.get("project") or ""))
-    board = {x.lower() for x in on_board}
+    project = str(body.get("project") or "")
+    lane = _lane_for(store, project, command, named)
+    kind = ""
+    dropped: set[str] = set()
+    given: dict[str, str] = {}
     for key in ("lane", "assignee"):
-        own = str(body.get(key) or "").strip()
-        if own and not named and own.lower() not in board and own.lower() != lane.lower():
-            reason = f"the lane {own!r} is not on the board"
-            if not any(r.reason == reason for r in why.items):     # lane and assignee alike: once
-                why.add(
-                    reason,
-                    ("the board's lanes: " + ", ".join(on_board) if on_board else "the board has no lanes yet")
-                    + " — ask the operator which, in one line; a new lane is the operator's to make",
-                    code="lane", field=key,
-                )
-    dropped = {k for k in ("lane", "assignee") if str(body.pop(k, None) or "").strip()}
+        value = body.pop(key, None)
+        if value is None or value == "":
+            continue
+        if not isinstance(value, str):
+            why.add(f"{key} is text", code="shape", field=key)
+        elif value.strip():
+            given[key] = value.strip()
+    if command == "now" or named or braces.get("ask"):
+        dropped.update(given)
+    elif given:
+        if len({value.casefold() for value in given.values()}) > 1:
+            why.add("lane and assignee name different lanes", "send one lane name", code="lane", field="lane")
+        else:
+            key, own = next(iter(given.items()))
+            on_board = _board_lanes(store, project)
+            exact = next((name for name in on_board if name.casefold() == own.casefold()), "")
+            if len(own) > 80 or not own.isprintable():
+                why.add("a lane name is at most 80 characters on one line", code="length", field=key)
+            elif matches := [] if exact else hookshared.lane_matches(own, list(on_board)):
+                why.add(f"the lane {own!r} is not on the board", "did you mean " + ", ".join(matches) + "?",
+                        code="lane", field=key)
+            else:
+                lane = exact or own
+                kind = on_board.get(exact, "agent")
     if lane:
         body["lane"] = body["assignee"] = lane
     if command == "now" and column == "doing":
@@ -592,7 +679,11 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
     ignored = sorted(k for k in list(body) if k not in _AGENT_CREATE_FIELDS)
     for k in ignored:
         body.pop(k, None)
-    return sorted(set(ignored) | dropped), braces.get("ask", "")
+    if kind == "agent":
+        body["lane_kind"] = kind
+    if choice := braces.get("lane_choice"):
+        body["lane_choice"] = json.dumps(choice, ensure_ascii=False)
+    return sorted(set(ignored) | dropped), braces
 
 
 def _title_from_message(store: ViewStore, body: dict) -> str:
@@ -618,7 +709,7 @@ def _title_from_message(store: ViewStore, body: dict) -> str:
 
 
 def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPTION_MAX,
-                chosen: bool = False) -> dict:
+                chosen: bool = False, operator_braces: dict[str, Any] | None = None) -> dict:
     """One task, as POST /api/tasks makes it — the operator's board, an
     agent through the /task gate, the server's own #now card (nowlib). The
     answer is create_answer's: ``existing`` true when the same task was
@@ -644,6 +735,8 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
         title_wait = _title_from_message(store, body)
         body.pop(titlelib.TITLE_FROM_FIELD, None)
         body.pop(titlelib.TITLE_SOURCE_FIELD, None)
+    if "lane_kind" in body or "lane_choice" in body:
+        raise HTTPException(status_code=422, detail="the server sets lane_kind and lane_choice")
     agent_create = identity_of(body) not in _HOUSE_ACTORS and not chosen
     if agent_create:
         _catch_up(store)
@@ -654,19 +747,37 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     # #now one already has its card: that one is the agent's finding.
     think = bool(said[0]) and thinklib.wants_mark(hookshared.command_text(said[3])) and not (
         started_now and _now_card_written(store, identity_of(body), said[4]))
-    ignored, ask = ([], "") if chosen else _gate_agent_create(body, store)
-    if think:
-        body.update(thinklib.mark_fields())
-    if len(str(body.get("title") or "")) > TITLE_MAX:
-        raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
-    description = str(body.pop("description", "") or "").strip()
-    # A #now card's text is the operator's message, put in by the gate: it is
-    # kept whole, as the server's own card keeps it (nowlib._write_card).
-    if text_max is not None and not started_now and len(description) > text_max:
-        raise HTTPException(status_code=422, detail=f"description is at most {text_max} characters")
-    out = create_entity(store, ENTITIES["task"], body, seed_extra=description)
+    # Keep another agent from choosing a near-duplicate between the lane
+    # check and the ledger append.
+    with _LANE_CREATE:
+        ignored, braces = ([], dict(NO_BRACES)) if chosen else _gate_agent_create(body, store)
+        if operator_braces is not None:
+            braces = operator_braces
+            if choice := braces.get("lane_choice"):
+                body["lane_choice"] = json.dumps(choice, ensure_ascii=False)
+        elif not agent_create:
+            lane = body.get("lane") or body.get("assignee")
+            if isinstance(lane, str) and lane:
+                kinds = _board_lanes(store, str(body.get("project") or ""))
+                if any(name.casefold() == lane.casefold() and kind == "agent" for name, kind in kinds.items()):
+                    body["lane_kind"] = "agent"
+        ask = braces.get("ask", "")
+        if think:
+            body.update(thinklib.mark_fields())
+        if len(str(body.get("title") or "")) > TITLE_MAX:
+            raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
+        description = str(body.pop("description", "") or "").strip()
+        # A #now card's text is the operator's message, put in by the gate: it is
+        # kept whole, as the server's own card keeps it (nowlib._write_card).
+        if text_max is not None and not started_now and len(description) > text_max:
+            raise HTTPException(status_code=422, detail=f"description is at most {text_max} characters")
+        out = create_entity(store, ENTITIES["task"], body, seed_extra=description)
     meta = dict(out.get("metadata") or {})
     task_id = str(meta.get("id") or "")
+    promotion = str(braces.get("promote_lane") or "")
+    lane_promoted = bool(task_id and promotion and meta.get("lane") == promotion)
+    if lane_promoted:
+        promote_lane(store, str(meta["project"]), promotion)
     md_ref = str(meta.get("md_ref") or "")
     fm, turns = _task_doc(store, md_ref, meta, task_id, for_write=bool(out.get("existing")))
     if description and not turns and md_ref:
@@ -704,9 +815,12 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     }
     if ignored:
         result["ignored"] = ignored
-    if ask:
-        # The card is made; the agent asks the operator now, in one line.
+    if choice := hookshared.parse_lane_choice(meta.get("lane_choice")):
+        result["lane_notice"] = hookshared.lane_choice_notice(choice)
+    elif ask and not braces.get("lane_choice"):
         result["ask"] = f"ask the operator in one line: {ask}"
+    if lane_promoted:
+        result["lane_notice"] = f"Lane „{promotion}“ moved from agents to the board."
     return create_answer(result, existing=bool(out.get("existing")),
                          warnings=out.get("warnings"))
 

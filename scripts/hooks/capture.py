@@ -429,15 +429,9 @@ def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 
 
-def _board_lanes(data_root: Path, project: str) -> list[str]:
-    lanes: dict[str, str] = {}
-    for r in _read_csv(data_root / "tasks.csv"):
-        if r.get("project") != project or (r.get("archived_at") or "").strip():
-            continue
-        name = (r.get("lane") or r.get("assignee") or "").strip()
-        if name:
-            lanes.setdefault(name.lower(), name)
-    return sorted(lanes.values(), key=str.lower)
+def _board_lanes(data_root: Path, project: str) -> dict[str, str]:
+    return shared.board_lanes(_read_csv(data_root / "tasks.csv"), project,
+                              shared.saved_board_lanes(data_root, project))
 
 
 def task_where(data_root: Path, project: str, agent: str, user_text: str,
@@ -650,7 +644,12 @@ def where_notice(where: dict) -> str:
     told = (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
             + " (the braces set the project and the lane; "
             + _backend_module("mcp_args").send_project(str(where.get("project") or "")) + ").")
-    if where.get("ask"):
+    if lane := where.get("promote_lane"):
+        told += f" Writing the card moves lane „{lane}“ from agents to the board."
+    if choice := where.get("lane_choice"):
+        told += (" Write it now, with no lane. Once it is filed, tell the operator: "
+                 + shared.lane_choice_notice(choice))
+    elif where.get("ask"):
         # A lane the braces leave unclear: the card is written now, in the
         # default lane, and the operator is asked after (tk_970d6b2d).
         told += (" The lane is unclear, so the card goes to the default lane: write it now, with no lane, "
@@ -2231,44 +2230,6 @@ def _read_done_outcome(root: str, agent: str, turn: int) -> dict:
     if isinstance(outcome, dict) and outcome.get("turn") == turn and not outcome.get("pending"):
         return outcome
     return {}
-
-
-def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
-    """Does Slightly Parallel's server type this chat's waiting messages into
-    the terminal it runs in? Asked by Claude Code's Stop hook before it blocks
-    a Stop for a message (tk_40450bfa): a block shows as "Stop hook reported a
-    problem", the typed prompt does not. True only when the hook itself runs
-    in an SP terminal (SP_TERMINAL), the chat's meta names that terminal (the
-    one the server types into), and the server of this data root says it
-    types there (GET /api/messages/terminal, msgdeliver.stop_leaves: the same
-    check that picks "terminal"). Anything else, an unreachable server
-    included, is False: the Stop blocks as before."""
-    from urllib.parse import urlencode
-    from urllib.request import ProxyHandler, build_opener
-
-    here = os.environ.get("SP_TERMINAL", "").strip()
-    if not here:
-        return False
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(meta, dict) or str(meta.get("terminal") or "") != here:
-        return False
-    try:
-        with build_opener(ProxyHandler({})).open(
-            f"{server_url()}/api/messages/terminal?{urlencode({'agent_id': agent})}", timeout=DONE_LOOKUP_TIMEOUT_S,
-        ) as response:
-            got = json.load(response)
-    except (OSError, ValueError):
-        return False
-    if not isinstance(got, dict) or got.get("types") is not True or got.get("terminal") != here:
-        return False
-    try:
-        # Another data root's server (a sandbox beside the live one) knows nothing of this chat.
-        return Path(str(got.get("data_root") or "")).resolve() == Path(root).resolve()
-    except (OSError, ValueError):
-        return False
 
 
 def _done_outcome_notice(outcome: dict) -> str:

@@ -32,3 +32,17 @@ describe('useLanes', () => {
     expect(result.current.lanes).toEqual([])
   })
 })
+
+it('groups agent lanes behind one collapsed row and opens them together', () => {
+  const tasks = [
+    { id: 'a', assignee: 'Backend', project: 'alpha' },
+    { id: 'b', assignee: 'bugs', project: 'alpha', lane_kind: 'agent' },
+    { id: 'c', assignee: 'ideas', project: 'alpha', lane_kind: 'agent' },
+  ]
+  const { result } = renderHook(() => useLanes({ ...props('alpha'), tasks }))
+  expect(result.current.lanes).toEqual(['Backend'])
+  expect([...result.current.agentLanes]).toEqual([['bugs', ['alpha']], ['ideas', ['alpha']]])
+  expect(result.current.agentsOpen).toBe(false)
+  act(() => result.current.toggleAgents())
+  expect(result.current.lanes).toEqual(['Backend', 'bugs', 'ideas'])
+})

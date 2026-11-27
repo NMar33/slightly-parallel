@@ -74,7 +74,7 @@ export function TasksKanban({
   // notes, evidence and links. `setTasks` edits the cache optimistically.
   const {
     tasks, setTasks, loading, loadError,
-    mentions, statusSince, noteCounts, evidenceCounts, links,
+    mentions, statusSince, noteCounts, evidenceCounts, links, savedLanes,
     refresh: refreshBoard, reloadLinks,
   } = useBoardData(boardKey, boardProjects, needsBodies)
   // A reload asked for by a write (`refreshTick`) refetches the board's
@@ -232,10 +232,11 @@ export function TasksKanban({
 
   // Swim lanes: their state and operations live in board/useLanes.
   const {
-    lanes, collapsedLanes, toggleLane, allCollapsed, collapseAll,
+    lanes, agentLanes, agentsOpen, toggleAgents, promoteLane, collapsedLanes, toggleLane, allCollapsed, collapseAll,
     addingLane, setAddingLane, laneDraft, setLaneDraft,
     renameLane, deleteLane, commitAddLane, moveLaneBefore,
-  } = useLanes({ boardKey, view, tasks, setTasks, setRefreshTick })
+  } = useLanes({ boardKey, view, tasks, setTasks, setRefreshTick, savedLanes,
+    project: boardProjects.includes(projectCode) ? projectCode : boardProjects[0] })
 
   // Drops — a card, a batch, the selection, the archive (board/drops).
   const { handleDrop } = boardDrops({
@@ -302,7 +303,8 @@ export function TasksKanban({
       {view === 'lanes' ? (
         <div className="overflow-x-auto">
           <LanesGrid {...gridProps}
-            lanes={lanes} collapsedLanes={collapsedLanes} toggleLane={toggleLane}
+            lanes={lanes} agentLanes={agentLanes} agentsOpen={agentsOpen}
+            toggleAgents={toggleAgents} promoteLane={promoteLane} collapsedLanes={collapsedLanes} toggleLane={toggleLane}
             renameLane={renameLane} deleteLane={deleteLane} moveLaneBefore={moveLaneBefore}
             allCollapsed={allCollapsed} collapseAll={collapseAll}
             addingLane={addingLane} setAddingLane={setAddingLane}

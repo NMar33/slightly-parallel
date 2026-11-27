@@ -23,7 +23,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 PROCESS_LOOKUP_TIMEOUT_S = 2
 WINDOWS_REPLACE_MAX_ATTEMPTS = 40
@@ -340,6 +340,99 @@ def _lane_variant(a: str, b: str) -> bool:
     return ma is not None and mb is not None and ma.group(1) == mb.group(1)
 
 
+_EN_KEYS = "`qwertyuiop[]asdfghjkl;'zxcvbnm,./"
+_RU_KEYS = "ёйцукенгшщзхъфывапролджэячсмитьбю."
+_EN_TO_RU = str.maketrans(_EN_KEYS, _RU_KEYS)
+_RU_TO_EN = str.maketrans(_RU_KEYS, _EN_KEYS)
+
+
+def lane_matches(name: str, lanes: list[str]) -> list[str]:
+    """Rank nearby lane names, including keyboard-layout errors."""
+    from difflib import SequenceMatcher
+
+    name = name.casefold()
+    layouts = (name.translate(_RU_TO_EN), name.translate(_EN_TO_RU))
+    matches: list[tuple[float, str]] = []
+    for lane in lanes:
+        key = lane.casefold()
+        if key == name or _lane_variant(name, key):
+            continue
+        if key in layouts:
+            matches.append((1.0, lane))
+            continue
+        shortest = min(len(name), len(key))
+        if shortest >= 2 and abs(len(name) - len(key)) <= 2:
+            distance = _lane_distance(name, key)
+            if distance <= max(1, (max(len(name), len(key)) + 1) // 3):
+                matches.append((1 - distance / max(len(name), len(key)), lane))
+                continue
+        ratio = SequenceMatcher(None, name, key, autojunk=False).ratio()
+        if ratio >= NEAR_MISS:
+            matches.append((ratio, lane))
+    return [lane for _, lane in sorted(matches, key=lambda entry: (-entry[0], entry[1].casefold()))]
+
+
+def parse_lane_choice(value: Any) -> dict[str, Any] | None:
+    try:
+        choice = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(choice, dict) or not isinstance(choice.get("name"), str):
+        return None
+    options = choice.get("options")
+    if not isinstance(options, list) or not all(isinstance(item, str) for item in options):
+        return None
+    return choice
+
+
+def lane_choice_notice(choice: dict[str, Any]) -> str:
+    return (f"Card created, lane not chosen: use its lane chip to create new „{choice['name']}“ "
+            f"or pick one of: {', '.join(choice['options'])}.")
+
+
+def _lane_distance(a: str, b: str) -> int:
+    """Edit distance with adjacent transpositions costing one edit."""
+    previous = list(range(len(b) + 1))
+    before_previous = previous
+    for i, x in enumerate(a, 1):
+        current = [i]
+        for j, y in enumerate(b, 1):
+            cost = min(previous[j] + 1, current[-1] + 1, previous[j - 1] + (x != y))
+            if i > 1 and j > 1 and x == b[j - 2] and a[i - 2] == y:
+                cost = min(cost, before_previous[j - 2] + 1)
+            current.append(cost)
+        before_previous, previous = previous, current
+    return previous[-1]
+
+
+BOARD_LANES_FILE = "board-lanes.json"
+
+
+def saved_board_lanes(data_root: Path, project: str) -> list[str]:
+    try:
+        data = json.loads((data_root / BOARD_LANES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    lanes = data.get(project) if isinstance(data, dict) else None
+    return [lane for lane in lanes if isinstance(lane, str) and lane] if isinstance(lanes, list) else []
+
+
+def board_lanes(rows: Iterable[dict[str, Any]], project: str, saved: Iterable[str] = ()) -> dict[str, str]:
+    """Live board lanes and their kinds, using the same rows in hook and server."""
+    seen = {name.casefold(): (name, "board") for name in saved}
+    for row in rows:
+        if row.get("project") != project or row.get("archived_at"):
+            continue
+        name = str(row.get("lane") or row.get("assignee") or "").strip()
+        if not name:
+            continue
+        kind = "agent" if row.get("lane_kind") == "agent" else "board"
+        old = seen.get(name.casefold())
+        if old is None or old[1] == "agent" and kind == "board":
+            seen[name.casefold()] = (name, kind)
+    return dict(sorted(seen.values(), key=lambda pair: pair[0].casefold()))
+
+
 def brace_refusal_member(agent: str, code: str, members: list[str]) -> str:
     return (f"agent {agent} is not a member of {code}; its projects: {', '.join(members) or 'none'}. "
             "The operator adds it on the agent card")
@@ -403,11 +496,27 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
     named += [g for g in groups if not g.lower().startswith((PROJECT_PREFIX, LANE_PREFIX))
               and as_project(g) and not both(g)]
     target = as_project(named[0]) if named and as_project(named[0]) else home
-    live = {str(x).lower(): str(x) for x in (lanes_of(target) or [])}
+    target_lanes = lanes_of(target) or {}
+    live = {str(x).lower(): str(x) for x in target_lanes}
     # Or a lane on the board it lands on.
     either = {**home_live, **live}
     projects: list[str] = []
     lanes: list[str] = []
+    choice: dict[str, Any] = {}
+
+    def as_lane(name: str) -> None:
+        exact = live.get(name.lower())
+        if exact:
+            lanes.append(exact)
+            return
+        matches = lane_matches(name, list(live.values()))
+        if matches:
+            choice.update(name=name, options=matches)
+            asks.append(f"{{{name}}} is not a lane of {target}'s board — did you mean {', '.join(matches)}, "
+                        f"or a new lane {name}? (choose on the card)")
+            return
+        lanes.append(name)
+
     for g in groups:
         low = g.lower()
         if low.startswith(PROJECT_PREFIX):
@@ -422,7 +531,7 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
             if not name:
                 refused.append(f"{{{g}}} names no lane")
                 continue
-            lanes.append(live.get(name.lower(), name))
+            as_lane(name)
         elif as_project(g):
             spelt = both(g) or either.get(low, "")
             if spelt:
@@ -438,14 +547,7 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
                 hint = {**{c.lower(): c for c in codes}, **{a.lower(): a for a in aliases}}.get(best, best)
                 refused.append(f"{{{g}}} is not a project of this agent — did you mean {hint}?")
                 continue
-            # A near miss of a live lane is a typo, not a new lane ({bug} for Bugs).
-            close = [n for n in live if not _lane_variant(low, n)]
-            lane = max(close, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
-            if lane and difflib.SequenceMatcher(None, low, lane).ratio() >= NEAR_MISS:
-                asks.append(f"{{{g}}} is not a lane of {target}'s board — did you mean {live[lane]}, "
-                            f"or a new lane {g}? (to name a new one: {{lane:{g}}})")
-                continue
-            lanes.append(g)
+            as_lane(g)
     if len(set(projects)) > 1:
         refused.append(f"two projects in braces ({', '.join(dict.fromkeys(projects))}): name one")
     elif projects and projects[0] not in members:
@@ -460,6 +562,10 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
     # another group named is not kept beside it (the operator answers).
     out["lane"] = lanes[0] if lanes and not asks else ""
     out["ask"] = " Also: ".join(asks)
+    if choice:
+        out["lane_choice"] = choice
+    if out["lane"] and isinstance(target_lanes, dict) and target_lanes.get(out["lane"]) == "agent":
+        out["promote_lane"] = out["lane"]
     return out
 
 

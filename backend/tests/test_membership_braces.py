@@ -169,15 +169,15 @@ ASKS: dict[str, str] = {
     "#task {release} x": "{release} is both a project and a lane — did you mean project writing-tracker "
                          "or lane release? (to name one: {project:release} or {lane:release})",
     "#task {ui2} x": "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
-                     "(to name a new one: {lane:ui2})",
+                     "(choose on the card)",
     "#now {ui} {ui2} x": "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
-                         "(to name a new one: {lane:ui2})",
+                         "(choose on the card)",
     "#now {release} {ui2} x": "{release} is both a project and a lane — did you mean project writing-tracker "
                               "or lane release? (to name one: {project:release} or {lane:release}) Also: "
                               "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
-                              "(to name a new one: {lane:ui2})",
+                              "(choose on the card)",
     "#task {writing-tracker} {doc} x": "{doc} is not a lane of writing-tracker's board — did you mean docs, "
-                                       "or a new lane doc? (to name a new one: {lane:doc})",
+                                       "or a new lane doc? (choose on the card)",
 }
 
 
@@ -188,7 +188,10 @@ def test_the_hook_says_write_now_and_ask_after_for_an_unclear_lane(world) -> Non
     for text, ask in ASKS.items():
         notice = capture.where_notice(capture.task_where(root, HOME, A, text))
         assert "Refused" not in notice and "No card" not in notice, notice
-        assert "write it now" in notice and notice.endswith("ask the operator in one line: " + ask), notice
+        if "lane_choice" in capture.task_where(root, HOME, A, text):
+            assert "Write it now" in notice and "use its lane chip" in notice, notice
+        else:
+            assert "write it now" in notice and notice.endswith("ask the operator in one line: " + ask), notice
     # A new lane the operator names: written there, nothing to ask.
     notice = capture.where_notice(capture.task_where(root, HOME, A, "#now-todo {Growth} plan the launch"))
     assert notice.startswith(f"→ {HOME} · lane Growth") and "ask the operator" not in notice, notice
@@ -230,7 +233,7 @@ def test_an_agents_now_todo_with_an_unclear_lane_is_made_and_says_ask(world) -> 
     assert r.status_code == 201, r.text
     out = r.json()
     assert out["metadata"]["lane"] == "Now" and out["metadata"]["status"] == "todo"
-    assert out["ask"] == "ask the operator in one line: " + ASKS["#task {ui2} x"]
+    assert out["lane_notice"] == "Card created, lane not chosen: use its lane chip to create new „ui2“ or pick one of: ui."
     assert "make the timeline readable" in json.dumps(c.get(f"/api/tasks/{out['metadata']['id']}").json())
 
 
@@ -484,12 +487,12 @@ def test_the_agents_create_names_status_lane_title_and_tags_together(world) -> N
     before = tree(root)
     r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
                                    "created_time": "10:06", "title": "", "tags": "nonsense",
-                                   "status": "doing", "lane": "nowhere"}, headers=VIA)
+                                   "status": "doing", "lane": "ui2"}, headers=VIA)
     assert r.status_code == 422, r.text
     got = r.json()["detail"].split("\n")
     assert len(got) == 4, got
     assert got[0].startswith("an agent creates tasks only in the `agent` column")
-    assert got[1].startswith("the lane 'nowhere' is not on the board")
+    assert got[1].startswith("the lane 'ui2' is not on the board")
     assert got[2] == "an agent task needs a title"
     assert got[3].startswith("unknown tag(s) nonsense")
     assert tree(root) == before
@@ -515,3 +518,69 @@ def test_one_bad_field_of_the_agents_create_reads_as_before(world) -> None:
     r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
                                    "created_time": "10:06", "title": "", "tags": "ag_bug"}, headers=VIA)
     assert (r.status_code, r.json()["detail"]) == (422, "an agent task needs a title")
+
+
+def test_typo_suggestions_cover_keyboard_layout_and_transpositions(world) -> None:
+    c, root = world
+    for typed, expected in (("гш", "ui"), ("relase", "release"), ("phsae-1", "phase-1")):
+        text = f"#now {{lane:{typed}}} task"
+        server = tasklib.task_braces(c.app.state.store, A, text)
+        hook = capture.task_where(root, HOME, A, text)
+        assert hook is not None
+        assert server["lane_choice"] == hook["lane_choice"]
+        assert server["lane"] == "" and expected in server["lane_choice"]["options"]
+
+
+def test_agent_lane_can_be_used_refused_as_typo_and_promoted(world) -> None:
+    c, root = world
+    _ask(root, "#task check the login")
+    c.app.state.store.rebuild()
+
+    def create(title: str, lane: str):
+        return c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+                      "title": title, "tags": "ag_idea", "lane": lane}, headers=VIA)
+
+    first = create("First issue", "bug")
+    assert first.status_code == 201, first.text
+    assert first.json()["metadata"]["lane_kind"] == "agent"
+    other = create("Second issue", "bugs")
+    assert other.status_code == 422 and "did you mean bug" in other.text
+    exact = create("Use the board spelling", "UI")
+    assert exact.status_code == 201 and exact.json()["metadata"]["lane"] == "ui"
+
+    where = capture.task_where(root, HOME, A, "#now {bug} classify the issues")
+    assert where and "moves lane „bug“ from agents to the board" in capture.where_notice(where)
+    _ask(root, "#now-todo {bug} classify the issues")
+    c.app.state.store.rebuild()
+    r = create("Classify the issues", "")
+    assert r.status_code == 201, r.text
+    assert r.json()["metadata"]["lane"] == "bug"
+    assert not c.get(f"/api/tasks/{first.json()['metadata']['id']}").json()["metadata"]["lane_kind"]
+
+
+def test_choose_lane_in_place_after_the_operator_writes_again(world) -> None:
+    c, root = world
+    _say(root, "#now-todo {ui2} make the timeline readable", minutes_ago=5)
+    c.app.state.store.rebuild()
+    cards = c.get("/api/tasks", params={"project": HOME}).json()["tasks"]
+    card = next(t for t in cards if "timeline" in t["title"])
+    assert json.loads(card["lane_choice"]) == {"name": "ui2", "options": ["ui"]}
+    _ask(root, "Use the existing lane")
+    path = f"/api/tasks/{card['id']}/lane-choice"
+    assert c.post(path, json={"lane": "elsewhere"}).status_code == 422
+    assert c.post(path, json={"lane": "ui"}).status_code == 200
+    kept = c.get(f"/api/tasks/{card['id']}").json()
+    assert kept["metadata"]["lane"] == "ui" and not kept["metadata"]["lane_choice"]
+    assert "#now-todo {ui2} make the timeline readable" in json.dumps(kept)
+
+
+def test_empty_operator_lane_is_known_to_both_writers(world) -> None:
+    c, root = world
+    path = "/api/tasks/lanes"
+    assert c.post(path, json={"project": HOME, "lane": "Design system", "op": "add"}).status_code == 200
+    assert "Design system" in c.get(path, params={"project": HOME}).json()["lanes"]
+    text = "#task {design systm} create tokens"
+    server = tasklib.task_braces(c.app.state.store, A, text)
+    hook = capture.task_where(root, HOME, A, text)
+    assert hook and hook["lane_choice"] == server["lane_choice"]
+    assert server["lane_choice"]["options"] == ["Design system"]

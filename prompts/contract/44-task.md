@@ -8,7 +8,7 @@ command: #now <text> | Title the task this chat starts on; the server keeps the 
 command: #now-todo <text> | Title the operator's message; the server files it, as written, in To do (also `-next`, `-backlog`, `-review`, `-parked`, `-done`, `-doing`); not started in this chat (section 4)
 command: #think <tk_… or with #now / #task> | Nothing to write — the server marks the task as the operator's to think through: never start, move or finish it; comment, note and ask instead (section 4)
 command: #think-off <tk_…> | Nothing to write — the server removes the think mark; with no task named, ask which
-brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `task_update` changes the title, text and day only of a task you created; on the operator's or another agent's, add a comment. `{lane}` after the tag names the board lane; the server sets it. `#think` marks a task as the operator's to think through: never start, move or finish it; comment and ask instead. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
+brief: **Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `task_update` changes the title, text and day only of a task you created; on the operator's or another agent's, add a comment. `{lane}` after the tag names the board lane. Write the card immediately. A similar spelling leaves a choice on the card. An exact agent lane named by the operator moves onto the board. `#think` marks a task as the operator's to think through: never start, move or finish it; comment and ask instead. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
 ---
 
 **Agent task — `#task <hint>` / `#now <text>` → `write_entry {lens: "task"}`.**
@@ -78,11 +78,13 @@ turn): never amend or rewrite a commit for it.
 
 `{lane}` right after either tag names the board lane: `#now {ui} fix the
 login timeout`, `#task {Kanban Board} the cards do not sort`. The server
-reads it from the message and sets the lane; you never send `lane` or
-`assignee` (the server drops them). A lane the board does not have is
-refused with the board's lanes: ask the operator which, in one line, and
-write when they answer. The notice from the capture hook says this before
-you start.
+reads it from the message and sets the lane. If the spelling is close to
+an existing lane, write the card at once. Its chip lets the operator
+create the named lane or pick a suggestion. An exact agent lane named
+by the operator moves onto the board with its cards. A new name opens a
+board lane. An agent filing its own card can send `lane` to use an
+existing lane or create one in the collapsed Agents group. A close
+spelling in an agent's write is refused with the matching names.
 
 1. Find it. `#now` (any column): the operator's message is the task; you
    only title it — skip to step 3, title and tags. Once that card is on

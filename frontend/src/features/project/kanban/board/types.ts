@@ -74,10 +74,14 @@ export type GridProps = {
 
 export type LanesGridProps = GridProps & {
   lanes: string[]
+  agentLanes: Map<string, string[]>
+  agentsOpen: boolean
+  toggleAgents: () => void
+  promoteLane: (lane: string) => Promise<void>
   collapsedLanes: Set<string>
   toggleLane: (lane: string) => void
   renameLane: (oldName: string, newName: string) => Promise<void>
-  deleteLane: (name: string) => void
+  deleteLane: (name: string) => Promise<void>
   moveLaneBefore: (lane: string, target: string) => void
   allCollapsed: boolean
   collapseAll: () => void
@@ -85,7 +89,7 @@ export type LanesGridProps = GridProps & {
   setAddingLane: (v: boolean) => void
   laneDraft: string
   setLaneDraft: (v: string) => void
-  commitAddLane: () => void
+  commitAddLane: () => Promise<void>
   setAddingAssignee: (v: string | null) => void
 }
 

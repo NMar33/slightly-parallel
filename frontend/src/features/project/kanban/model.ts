@@ -54,6 +54,8 @@ export type TaskRow = {
   assignee?: string
   due_date?: string
   lane?: string
+  lane_kind?: string
+  lane_choice?: string
   tags?: string
   position?: string | number
   created_date?: string

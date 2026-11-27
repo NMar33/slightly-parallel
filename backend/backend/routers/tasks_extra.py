@@ -33,7 +33,8 @@ from ..vocab import enum_problems
 from ..tasklib import (  # noqa: F401
     AGENT_TAGS, AGENT_TAGS_MAX, AGENT_TITLE_MAX, agent_tags, DESCRIPTION_MAX, TASK_STATUSES, TITLE_MAX, _board_lanes,
     _gate_agent_create, _lane_for, _operator_command, _set_archived, _task_doc, _write_task_doc,
-    after_status_change, create_task, maybe_resurface, resurface_sweep, OWN_CARD_FIELDS, own_card_refusal,
+    after_status_change, choose_lane, create_task, promote_lane, save_board_lane,
+    maybe_resurface, resurface_sweep, OWN_CARD_FIELDS, own_card_refusal,
 )
 
 
@@ -90,6 +91,45 @@ def _own_drop(body: dict, row: dict, actor: str) -> bool:
     return (str(body.get("status") or "") == "done-archived"
             and str(row.get("status") or "") == "agent"
             and str(row.get("agent_id") or "") == actor)
+
+
+def _lane_action(body: dict, *, promote: bool = False) -> tuple[str, str]:
+    if identity_of(body) not in _HOUSE_ACTORS:
+        refuse_agent("choosing a board lane is the operator's action")
+    lane = body.get("lane")
+    project = body.get("project", "")
+    if not isinstance(lane, str) or not lane.strip() or len(lane) > 80 or not lane.isprintable():
+        raise HTTPException(status_code=422, detail="send a lane name of at most 80 characters")
+    if promote and (not isinstance(project, str) or not project.strip()):
+        raise HTTPException(status_code=422, detail="send the lane's project")
+    return lane.strip(), project
+
+
+@router.get("/api/tasks/lanes")
+def tasks_saved_lanes(project: str = Query(...), store: ViewStore = Depends(get_store)) -> dict:
+    return {"lanes": hookshared.saved_board_lanes(store.data_root, project)}
+
+
+@router.post("/api/tasks/lanes")
+def tasks_save_lane(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    lane, project = _lane_action(body, promote=True)
+    op = body.get("op")
+    previous = body.get("previous", "")
+    if op not in ("add", "remove", "rename") or not isinstance(previous, str) or (op == "rename" and not previous):
+        raise HTTPException(status_code=422, detail="send add, remove, or rename with its previous lane name")
+    return {"lanes": save_board_lane(store, project, lane, op, previous)}
+
+
+@router.post("/api/tasks/lanes/promote")
+def tasks_promote_lane(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    lane, project = _lane_action(body, promote=True)
+    return promote_lane(store, project, lane)
+
+
+@router.post("/api/tasks/{task_id}/lane-choice")
+def tasks_choose_lane(task_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    lane, _ = _lane_action(body)
+    return choose_lane(store, task_id, lane)
 
 
 @router.post("/api/tasks/{task_id}/update", status_code=200)
@@ -268,6 +308,15 @@ def tasks_update(
             if new_v != old_v:
                 changes.append((k, old_v, new_v))
             target[k] = new_v
+
+        if any(field in ("lane", "assignee") for field, _old, _new in changes):
+            name = str(target.get("lane") or target.get("assignee") or "").strip()
+            project = str(target.get("project") or "")
+            peers = (row for row in rows if row is not target)
+            kinds = hookshared.board_lanes(peers, project, hookshared.saved_board_lanes(store.data_root, project))
+            target["lane_kind"] = next((kind for lane, kind in kinds.items()
+                                        if lane.casefold() == name.casefold() and kind == "agent"), "")
+            target["lane_choice"] = ""
 
         old_status = next((old for f, old, _new in changes if f == "status"), None)
         after_status_change(store, rows, target, old_status, changes, deferred=side_events)

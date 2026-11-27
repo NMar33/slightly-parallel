@@ -43,7 +43,7 @@ function LaneName({ name }: { name: string }) {
 }
 
 function LaneLabel({
-  name, count, collapsed, onToggle, onRename, onDelete, onDropLane,
+  name, count, collapsed, onToggle, onRename, onDelete, onDropLane, onPromote,
 }: {
   name: string
   count: number
@@ -52,6 +52,7 @@ function LaneLabel({
   onRename: (next: string) => void
   onDelete: () => void
   onDropLane: (draggedLane: string) => void
+  onPromote?: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -67,7 +68,7 @@ function LaneLabel({
   const meta = (
     <>
       <span className="text-tertiary opacity-70">{count}</span>
-      {name !== 'unassigned' && (
+      {!onPromote && name !== 'unassigned' && (
         <button
           type="button"
           onClick={onDelete}
@@ -138,9 +139,9 @@ function LaneLabel({
         <>
           <button
             type="button"
-            onClick={() => setEditing(true)}
+            onClick={() => { if (!onPromote) setEditing(true) }}
             className={`text-left flex-1 min-w-0 hover:text-primary ${collapsed ? 'truncate' : ''}`}
-            title={t('{name} · click to rename', { name })}
+            title={onPromote ? name : t('{name} · click to rename', { name })}
           >
             {/* Folded, the lane is one 24px line: the name stays on it and
                 takes an ellipsis. Open, it may use as many lines as it needs. */}
@@ -150,6 +151,9 @@ function LaneLabel({
         </>
       )}
     </div>
+    {onPromote && (
+      <Button variant="text" size="bare" onClick={onPromote}>{t('To board')}</Button>
+    )}
     {/* Open, the name owns the whole gutter and the numbers move down here
         beside the fold control; folded, everything sits on the one line. */}
     {collapsed ? fold : (
@@ -159,6 +163,21 @@ function LaneLabel({
       </div>
     )}
     </div>
+  )
+}
+
+function AgentLanesRow({ agentsOpen, toggleAgents, count }: {
+  agentsOpen: boolean
+  toggleAgents: () => void
+  count: number
+}) {
+  return (
+    <button type="button" aria-expanded={agentsOpen} onClick={toggleAgents}
+      className="col-span-full flex items-center gap-4 rounded-input bg-elevated px-4 py-3 text-left font-mono text-11 text-secondary hover:text-primary">
+      {agentsOpen ? <ChevronDown size={11} aria-hidden /> : <ChevronRight size={11} aria-hidden />}
+      {t('Agents')}
+      <span className="text-tertiary">{count}</span>
+    </button>
   )
 }
 
@@ -172,7 +191,7 @@ export function LanesGrid(props: LanesGridProps) {
     handleDrop, copyMode, sorts, setSort, setAddingStatus, archivedN, toggleArchived, todayTasks,
     byLaneCol, handleDropToday, linkProps, multi, axes, onCardToday, onCardEdit,
     onCardRelease, showDesc, today, selection, toggleSelect, tasks,
-    archivedTasks, linksLayer, lanes,
+    archivedTasks, linksLayer, lanes, agentLanes, agentsOpen, toggleAgents, promoteLane,
     collapsedLanes, toggleLane, renameLane, deleteLane, moveLaneBefore, allCollapsed, collapseAll,
     addingLane, setAddingLane, laneDraft, setLaneDraft, commitAddLane, setAddingAssignee,
   } = props
@@ -268,19 +287,22 @@ export function LanesGrid(props: LanesGridProps) {
           {showArchiveCol && <div className="border-b border-brand/25" aria-hidden />}
         </Fragment>
       )}
-      {/* Lane rows */}
-      {lanes.map((lane) => {
+      {lanes.map((lane, index) => {
         const collapsed = collapsedLanes.has(lane)
         return (
         <Fragment key={lane}>
+          {agentLanes.has(lane) && !agentLanes.has(lanes[index - 1] ?? '') && (
+            <AgentLanesRow {...{ agentsOpen, toggleAgents }} count={agentLanes.size} />
+          )}
           <LaneLabel
             name={lane}
             count={byLaneCol.laneN.get(lane) ?? 0}
             collapsed={collapsed}
             onToggle={() => toggleLane(lane)}
             onRename={(next) => renameLane(lane, next)}
-            onDelete={() => deleteLane(lane)}
+            onDelete={() => { void deleteLane(lane) }}
             onDropLane={(dragged) => moveLaneBefore(dragged, lane)}
+            onPromote={agentLanes.has(lane) ? () => { void promoteLane(lane) } : undefined}
           />
           {columns.map((col) => {
             const items = byLaneCol.cells.get(`${lane}\n${col.key}`) ?? EMPTY_ROWS
@@ -379,16 +401,20 @@ export function LanesGrid(props: LanesGridProps) {
         </Fragment>
         )
       })}
+      {!agentsOpen && agentLanes.size > 0 && (
+        <AgentLanesRow {...{ agentsOpen, toggleAgents }} count={agentLanes.size} />
+      )}
       {/* Add-lane control (inline form, no prompt dialogs) */}
       <div className="col-span-full pt-6">
         {addingLane ? (
           <form
-            onSubmit={(e) => { e.preventDefault(); commitAddLane() }}
+            onSubmit={(e) => { e.preventDefault(); void commitAddLane() }}
             className="flex items-center gap-6 px-4"
           >
             <input
               autoFocus
               value={laneDraft}
+              maxLength={80}
               onChange={(e) => setLaneDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') { setAddingLane(false); setLaneDraft('') }
