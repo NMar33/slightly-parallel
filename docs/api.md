@@ -672,6 +672,8 @@ The inbox delivers each message body once. An automatic terminal wake is
 best effort. If the server crashes mid-send and the paste may already have
 reached the terminal, the message stays available on the next prompt or in
 the inbox. A late terminal notice after that delivery is ignored.
+If the operator submits their own text alongside an exact late notice,
+capture keeps the operator's text and processes its commands normally.
 
 The capture hook reads a prompt that opens with the marker as the sender's
 message only when the ledger holds that id, for this chat, from that

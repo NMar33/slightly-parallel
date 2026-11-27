@@ -866,6 +866,16 @@ class TurnCapture:
                 self._lost("message marker not read", exc)
             if message_stray is not None:
                 user_text = msgs.wrap_stray(message_stray, user_text)
+        late_notices = []
+        if message_in and message_in.get("already_notified"):
+            late_notices = [message_in["id"]]
+        elif not quiet and message_in is None and message_stray is None:
+            try:
+                user_text, late_notices = msgs.strip_late_notices(
+                    self.data_root, self.agent_name, user_text, int(meta.get("message_count", 0)) + 1,
+                )
+            except Exception as exc:  # noqa: BLE001 — keep the operator's prompt
+                self._lost("late message marker not read", exc)
         settings = _load_settings(self.data_root)
         # A helper chat (a codex exec, a claude -p another chat started): its
         # messages are recorded, and nothing in them acts — no command, no
@@ -1054,7 +1064,7 @@ class TurnCapture:
             "message_in": {"id": message_in["id"], "from": message_in["from_agent"],
                            "reply_to": message_in.get("reply_to") or ""}
             if message_in and not message_in.get("already_notified") else None,
-            "message_late": message_in["id"] if message_in and message_in.get("already_notified") else None,
+            "message_late": late_notices,
             # This prompt is a message for another chat, typed here by mistake.
             "message_stray": {"id": message_stray["id"], "from": message_stray["from_agent"],
                               "to": message_stray["to_agent"]} if message_stray else None,
@@ -2431,7 +2441,7 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"{w.get('turn')}; give it a title now (≤ 80 characters, what it is about, in the operator's "
             f"language) with task_update {{id: \"{w.get('task_id')}\", title}}. Its title for now: "
             f"\"{w.get('provisional') or ''}\". The skill write-a-task holds the rule.")
-    if late := signals.get("message_late"):
+    for late in signals.get("message_late") or []:
         notes.append(f"[slightly-parallel] message {late} was already delivered. Ignore this late terminal notice.")
     got = signals.get("message_in")
     if got:
