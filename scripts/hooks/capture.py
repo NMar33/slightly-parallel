@@ -408,6 +408,18 @@ def ledger_stats(data_root: Path) -> list | str | None:
 _LEGACY_WHERE_TOLD_LIMIT = 100
 
 
+def _task_append_offset(previous: object, current: os.stat_result) -> int | None:
+    """The old byte boundary when the same ledger grew by appending."""
+    if not isinstance(previous, list) or len(previous) != 3:
+        return None
+    size, modified, inode = previous
+    if (type(size) is int and type(modified) is int and current.st_ino != 0
+            and inode == current.st_ino and 0 < size < current.st_size
+            and modified <= current.st_mtime_ns):
+        return size
+    return None
+
+
 def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
     """Announce each task this chat makes once, with its project and lane."""
     path = data_root / "tasks.csv"
@@ -422,7 +434,8 @@ def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]
     first = "where_told" not in meta
     told = meta.get("where_told") or []
     # The old hook discarded ids and could rotate them out in any order.
-    # Take the current ledger as the baseline once for a potentially capped chat.
+    # For a capped chat, baseline old rows while preserving any complete
+    # records appended after the last observation of the same ledger.
     legacy = not meta.get("where_told_complete") and len(told) == _LEGACY_WHERE_TOLD_LIMIT
     if not legacy and meta.get("tasks_seen") == sig:
         return []
@@ -431,18 +444,30 @@ def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]
     new = []
     try:
         with path.open(encoding="utf-8-sig", newline="") as fh:
-            for row in csv.DictReader(fh):
+            append_at = _task_append_offset(meta.get("tasks_seen"), os.fstat(fh.fileno())) if legacy else None
+            if append_at is None:
+                rows = csv.DictReader(fh)
+                pending = not legacy
+            else:
+                # readline keeps tell available. Check the recorded offset
+                # at CSV record boundaries, including quoted multiline rows.
+                rows = csv.DictReader(iter(fh.readline, ""))
+                pending = rows.fieldnames is not None and fh.tell() == append_at
+            for row in rows:
                 task_id = row.get("id")
                 if row.get("agent_id") == agent and task_id and task_id not in seen:
                     seen[task_id] = None
-                    new.append(row)
+                    if pending:
+                        new.append(row)
+                if append_at is not None and not pending:
+                    pending = fh.tell() == append_at
     except (OSError, csv.Error, UnicodeError):
         return []
 
     meta["tasks_seen"] = sig
     meta["where_told"] = list(seen)
     meta["where_told_complete"] = True
-    if first or legacy:
+    if first:
         return []
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 

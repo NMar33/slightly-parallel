@@ -11,6 +11,7 @@ history.
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import sys
@@ -219,3 +220,32 @@ def test_a_long_chat_only_announces_the_new_task(root: Path, legacy_truncated: b
     with tasks.open("a", encoding="utf-8") as fh:
         fh.write("tk_other002,beta,cc-other,theirs,agent,,\n")
     assert "where the tasks" not in _turn(cap, "the ledger changed again")
+
+
+@pytest.mark.parametrize("old_count", [100, 150])
+def test_upgrade_announces_task_appended_after_legacy_observation(root: Path, old_count: int) -> None:
+    tasks = root / "tasks.csv"
+    old_ids = [f"tk_{i:08x}" for i in range(old_count)]
+    with tasks.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["id", "project", "agent_id", "title", "status", "lane"])
+        writer.writerows((task_id, "alpha", A, "Прежняя\nзадача", "agent", "") for task_id in old_ids)
+    cap = _cap(root)
+    meta = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+    # Use a real observation from the hook, with the old list format. A
+    # rotated list can omit even the most recently created known task.
+    start = 20 if old_count > 100 else 0
+    meta["where_told"] = old_ids[start:start + 100]
+    meta.pop("where_told_complete", None)
+    cap.meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    with tasks.open("a", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerow(["tk_made0003", "beta", A, "Новая\nзадача", "agent", "docs"])
+    out = _turn(cap, "first turn after upgrading")
+    assert [line for line in out.splitlines() if "where the tasks" in line] == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_made0003 → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    with tasks.open("a", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerow(["tk_other003", "alpha", "cc-other", "theirs", "agent", ""])
+    assert "where the tasks" not in _turn(cap, "an unrelated task changed the ledger")
