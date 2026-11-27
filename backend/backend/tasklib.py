@@ -844,11 +844,16 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
             if choice := braces.get("lane_choice"):
                 body["lane_choice"] = json.dumps(choice, ensure_ascii=False)
         elif not agent_create:
-            lane = body.get("lane") or body.get("assignee")
-            if isinstance(lane, str) and lane:
-                kinds = _board_lanes(store, str(body.get("project") or ""))
-                if any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) and kind == "agent" for name, kind in kinds.items()):
-                    body["lane_kind"] = "agent"
+            raw_lane = body.get("lane") or body.get("assignee")
+            if isinstance(raw_lane, str) and raw_lane:
+                lane = hookshared.task_lane_name(body)
+                if not lane:
+                    body["lane"] = body["assignee"] = ""
+                else:
+                    kinds = _board_lanes(store, str(body.get("project") or ""))
+                    if any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) and kind == "agent"
+                           for name, kind in kinds.items()):
+                        body["lane_kind"] = "agent"
         ask = braces.get("ask", "")
         if think:
             body.update(thinklib.mark_fields())

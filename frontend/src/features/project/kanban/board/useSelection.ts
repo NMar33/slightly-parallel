@@ -13,6 +13,11 @@ import { ARCHIVE } from './model'
 import type { Patch } from './writes'
 import { t, tn } from '../../../../i18n/scope/project'
 
+function laneBeforeEdit(task: TaskRow) {
+  if (!taskLaneName(task)) return { assignee: '', lane: '' }
+  return { assignee: String(task.assignee || ''), lane: String(task.lane || '') }
+}
+
 export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived }: {
   tasks: TaskRow[]
   today: string
@@ -45,7 +50,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     const base = Number(first.position) || 0
     const before = selectedTasks.map((t) => ({ id: t.id, patch: {
       stack_id: t.stack_id || '', status: String(t.status || ''),
-      assignee: String(t.assignee || ''), lane: String(t.lane || ''),
+      ...laneBeforeEdit(t),
       position: String(Number(t.position) || 0),
     } }))
     const writes: Patch[] = [
@@ -97,7 +102,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     const laneUpdate = laneWrite(targetLane)
     const before = moving.map((t) => ({ id: t.id, patch: {
       status: String(t.status || ''), position: t.position == null ? '' : String(t.position),
-      assignee: String(t.assignee || ''), lane: String(t.lane || ''),
+      ...laneBeforeEdit(t),
     } }))
     const writes: Patch[] = order.flatMap((t, i) => {
       const position = String((i + 1) * 10)

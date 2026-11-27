@@ -772,3 +772,21 @@ def test_agent_lane_and_assignee_can_use_canonically_equivalent_spellings(world)
                "title": "Check the studio", "tags": "ag_bug", "lane": "Café", "assignee": "Cafe\u0301"}, headers=VIA)
     assert r.status_code == 201, r.text
     assert r.json()["metadata"]["lane"] == "Café"
+
+
+def test_legacy_operator_create_cannot_hide_a_new_blank_card_in_named_unassigned(world) -> None:
+    c, _root = world
+    named = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "title": "Named agent lane",
+                   "lane": "Unassigned", "tags": "ag_bug"}, headers=VIA)
+    assert named.status_code == 201 and named.json()["metadata"]["lane_kind"] == "agent", named.text
+
+    blank = c.post("/api/tasks", json={"project": HOME, "title": "Blank operator card",
+                   "lane": "unassigned", "assignee": ""})
+    assert blank.status_code == 201, blank.text
+    row = blank.json()["metadata"]
+    assert not row["lane"] and not row["assignee"] and not row["lane_kind"]
+
+    explicit = c.post("/api/tasks", json={"project": HOME, "title": "Explicit named lane",
+                      "lane": "unassigned", "assignee": "Unassigned"})
+    assert explicit.status_code == 201, explicit.text
+    assert explicit.json()["metadata"]["lane_kind"] == "agent"
