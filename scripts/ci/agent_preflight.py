@@ -27,7 +27,7 @@ def classify(status: int, error: dict) -> str:
     message = str(error.get("message") or "").lower()
     if status == 401:
         return "L0-auth"
-    if is_provider_billing_failure(f"{kind}\n{code}\n{message}"):
+    if status == 402 or is_provider_billing_failure(f"{kind}\n{code}\n{message}"):
         return "L0-billing"
     if status == 404 and (code == "model_not_found" or "model" in message):
         return "L0-model"

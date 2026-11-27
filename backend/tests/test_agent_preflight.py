@@ -14,6 +14,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "agent_preflig
     (401, {"type": "authentication_error", "message": "invalid x-api-key"}, "L0-auth"),
     (404, {"type": "not_found_error", "message": "model: some-missing-model"}, "L0-model"),
     (400, {"type": "invalid_request_error", "message": "Credit balance too low"}, "L0-billing"),
+    (402, {"type": "invalid_request_error", "message": "Payment Required"}, "L0-billing"),
+    (400, {"type": "invalid_request_error", "message": "Missing messages"}, "L0-provider"),
     (429, {"type": "insufficient_quota", "message": "Current quota exceeded"}, "L0-billing"),
     (429, {"message": "Quota exceeded. Check your plan and billing details."}, "L0-billing"),
     (429, {"message": "You exceeded your current quota, please check your plan and billing details."}, "L0-billing"),
@@ -132,7 +134,7 @@ def test_api_and_pty_reports_hide_masked_keys_without_the_environment_key(monkey
 @pytest.mark.parametrize("frame", ["Your credit balance is\ntoo low to access the Anthropic API.",
                                   "Quota exceeded. Check your plan and billing details.",
                                   "You exceeded your current quota, please check your plan and billing details.",
-                                  "billing_hard_limit_reached"])
+                                  "billing_hard_limit_reached", "HTTP 402: Payment Required"])
 def test_pty_wait_reports_the_api_credit_error_without_waiting_for_timeout(monkeypatch, frame) -> None:
     monkeypatch.syspath_prepend(str(SCRIPT.parents[1] / "fresh_user"))
     import interactive
@@ -143,6 +145,7 @@ def test_pty_wait_reports_the_api_credit_error_without_waiting_for_timeout(monke
     verdict = "L4 provider error (L0-billing)"
     assert interactive._wait_for_turn(screen, lambda: False, 30) == verdict
     assert captured == [verdict]
+    assert interactive._turn_failure_class(verdict) == "outside (billing)"
 
 
 def test_redaction_preserves_json_delimiters(monkeypatch):

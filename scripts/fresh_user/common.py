@@ -72,10 +72,11 @@ _WRAPPED_KEY_PREFIX = re.compile(
         for kind in ("ant", "proj", "svcacct", "admin", "live", "test")
     ) + r")"
 )
+BILLING_FAILURE_CLASS = "outside (billing)"
 _BILLING_ERROR = re.compile(
     r"\b(?:credit\s+balance\s+(?:is\s+)?too\s+low|insufficient_quota|billing_hard_limit_reached"
     r"|quota\s+exceeded\.\s*check\s+your\s+plan\s+and\s+billing\s+details"
-    r"|exceeded\s+your\s+current\s+quota)\b", re.IGNORECASE,
+    r"|exceeded\s+your\s+current\s+quota|402\s*:?\s+payment\s+required)\b", re.IGNORECASE,
 )
 
 
@@ -137,6 +138,7 @@ class Check:
     #: A soft check is reported and does not fail the run: an agent may word
     #: or order things differently and still be right.
     soft: bool = False
+    failure_class: str = ""
 
 
 @dataclass
@@ -150,10 +152,11 @@ class Report:
             return ""
         return "See the audited report artifact." if os.environ.get("GITHUB_ACTIONS") == "true" else detail
 
-    def add(self, stage: str, name: str, ok: bool, detail: str = "", soft: bool = False) -> bool:
+    def add(self, stage: str, name: str, ok: bool, detail: str = "", soft: bool = False,
+            *, failure_class: str = "unclassified") -> bool:
         stage, name = redact_diagnostics(stage), redact_diagnostics(name)
         detail = redact_diagnostics(detail)
-        self.checks.append(Check(stage, name, bool(ok), detail, soft))
+        self.checks.append(Check(stage, name, bool(ok), detail, soft, "" if ok else failure_class))
         mark = "ok  " if ok else ("soft" if soft else "FAIL")
         print(f"  [{mark}] {name}" + (f" — {self.console_detail(detail)}" if detail and not ok else ""), flush=True)
         return bool(ok)

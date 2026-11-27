@@ -86,7 +86,8 @@ def run(name: str, argv: list[str], cwd: Path = REPO, timeout: int = DEFAULT_STA
         except OSError as exc:
             fh.write(f"\n[run.py] {type(exc).__name__}: {exc}\n")
     steps = json.loads((OUT / "steps.json").read_text(encoding="utf-8")) if (OUT / "steps.json").is_file() else []
-    steps.append({"step": name, "ok": ok, "seconds": round(time.time() - t0), "log": log.name})
+    steps.append({"step": name, "ok": ok, "seconds": round(time.time() - t0), "log": log.name,
+                  "failure_class": "" if ok else "unclassified"})
     (OUT / "steps.json").write_text(json.dumps(steps, indent=1), encoding="utf-8")
     print(f"   {'ok' if ok else 'FAILED'} in {round(time.time() - t0)} s - {log}", flush=True)
     return ok
@@ -230,7 +231,7 @@ def main() -> int:
 
     archive = bundle(fresh_root)
     steps = json.loads((OUT / "steps.json").read_text(encoding="utf-8"))
-    bad = [s["step"] for s in steps if not s["ok"]]
+    bad = [f"[{s.get('failure_class') or 'unclassified'}] {s['step']}" for s in steps if not s["ok"]]
     print(f"\n{len(steps) - len(bad)} of {len(steps)} steps passed" + (f"; failed: {', '.join(bad)}" if bad else ""))
     print(f"send this file: {archive}")
     # Only the folder this run's test made and named in its report.

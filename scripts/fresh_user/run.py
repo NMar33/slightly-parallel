@@ -316,7 +316,7 @@ def finish(space: Space, report: Report, args: argparse.Namespace, started: floa
     print(f"\n{len(report.checks) - len(bad) - len(soft)} passed, {len(bad)} failed, {len(soft)} soft · {report.notes['seconds']} s"
           f"\nreport: {OUT / 'report.json'} · pictures: {OUT / 'screens'}", flush=True)
     for c in bad:
-        print(f"  FAIL {c.stage}: {c.name}\n      {report.console_detail(c.detail)}", flush=True)
+        print(f"  FAIL [{c.failure_class}] {c.stage}: {c.name}\n      {report.console_detail(c.detail)}", flush=True)
     for c in soft:
         print(f"  soft {c.stage}: {c.name}", flush=True)
     return 1 if bad else 0

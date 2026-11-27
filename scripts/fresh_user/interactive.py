@@ -20,6 +20,7 @@ import scenario
 import core_mcp
 from agents import OpenCode, OpenCodeSDKError, Tool, give_login, model_for
 from common import (
+    BILLING_FAILURE_CLASS,
     Report,
     Space,
     WINDOWS,
@@ -32,6 +33,7 @@ from common import (
 )
 from screen import COLS, DOWN, ENTER, Screen, codex_pty_args
 
+PROVIDER_BILLING_ERROR = "L4 provider error (L0-billing)"
 POLL_S = 0.2
 UP = "\x1b[A"
 STARTUP_TIMEOUT_S = 60
@@ -209,6 +211,8 @@ def _ready(screen: Screen, tool: Tool, seconds: int, answered: list[str], codex_
         if getattr(screen, "exited", False):
             return False
         frame = getattr(screen, "rendered", "") or screen.text
+        if is_provider_billing_failure(frame):
+            return False
         shown = re.sub(r"\s+", "", frame.lower())
         trusted = codex_config is None or (codex_config.is_file() and
                                             "trusted_hash" in codex_config.read_text(encoding="utf-8"))
@@ -327,6 +331,24 @@ def _core_toolchain_hint() -> str:
             " Do not install packages or request permission to run the tests outside your sandbox.")
 
 
+def _codex_work_prompt(message: str, command: str, tests: str, contract: Path) -> str:
+    followup = ("If the sandbox refuses the Git command, ask once to run that exact command. "
+                "Once the commit command succeeds, reply in chat without running any further commands.")
+    if not WINDOWS:
+        return f"{message} Run this exact command to stage and commit: `{command}`. {followup}"
+    # Keep the Windows PTY prompt short, and put the exact commands in the
+    # allowed, Git-excluded contract which the prompt tells the agent to read.
+    with contract.open("a", encoding="utf-8") as instructions:
+        instructions.write(f"\n\n## {WINDOWS_CORE_WORK_SECTION}\n\n"
+                           f"{_core_toolchain_hint()}\n\n"
+                           "Run these commands exactly, in order:\n"
+                           f"```powershell\n{tests}\n{command}\n```\n\n"
+                           f"{followup}\nThe test runner checks the files and commit separately.\n")
+    return (f"{message} Use Get-Content -LiteralPath to read {contract.name} and run the two exact"
+            f" commands in its {WINDOWS_CORE_WORK_SECTION} section, in order."
+            " If the sandbox refuses either, ask once for that exact command.")
+
+
 def _operator_core_prompt(space: Space, state: scenario.State, step: scenario.Step) -> str:
     message = scenario.step_prompt(space, state, step)
     if WINDOWS and state.tool.name == "codex" and step in (scenario.EDIT, scenario.WORK):
@@ -379,7 +401,7 @@ def _wait_for_turn(screen: Screen, check: Callable[[], bool], seconds: int,
         # Drain the PTY while the CLI is working so a full buffer cannot hold up the hook.
         screen.read()
         if is_provider_billing_failure(screen.rendered + "\n" + screen.text):
-            verdict = "L4 provider error (L0-billing)"
+            verdict = PROVIDER_BILLING_ERROR
             break
         if approval is not None and (verdict := approval()):
             break
@@ -398,6 +420,32 @@ def _opencode_permission_failure(screen: Screen) -> str:
             and re.search(r"(?m)^ *┃ *Allow once +Allow always +Reject\b", frame)):
         return "unexpected OpenCode permission prompt"
     return ""
+
+
+def _turn_failure_class(error: str) -> str:
+    if error == PROVIDER_BILLING_ERROR:
+        return BILLING_FAILURE_CLASS
+    return "stand" if error == "tool missing in the stand" else "unclassified"
+
+
+def _recover_core_composer(screen: Screen, tool: str, error: str) -> bool:
+    if screen.exited or error == PROVIDER_BILLING_ERROR:
+        return False
+    # Interrupt or dismiss the failed turn. An unapproved prompt is never accepted.
+    screen.send("\x1b")
+    deadline = time.monotonic() + PROMPT_PAINT_TIMEOUT_S
+    ready = False
+    while not screen.exited and time.monotonic() < deadline:
+        screen.read()
+        frame = screen.rendered
+        empty = (_composer(tool, frame, re.sub(r"\s+", "", frame.lower()))
+                 and not (_COMMAND_APPROVAL.search(frame) or _MCP_APPROVAL.search(frame))
+                 and not _opencode_permission_failure(screen))
+        if empty and ready:
+            return True
+        ready = empty
+        time.sleep(POLL_S)
+    return False
 
 
 def _approve_task_write(screen: Screen, title: str) -> bool:
@@ -478,7 +526,7 @@ def _approval_command(value: str) -> str | tuple:
 
 def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None = None,
                    *, command: str = "", offline_command: str = "",
-                   read_commands: tuple[str, ...] = ()) -> Callable[[], str]:
+                   read_commands: tuple[str, ...] = (), confirmed: set[str | tuple] | None = None) -> Callable[[], str]:
     expected = {
         "#decision": ("write_entry", {
             "lens": "decision",
@@ -513,6 +561,8 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
                     return "unexpected Codex command approval"
                 approved = edit_batch
             pending.difference_update(approved)
+            if confirmed is not None:
+                confirmed.update(approved)
             handled_shell = shell.group()
             screen.send(ENTER)
             return ""
@@ -660,6 +710,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
     def cards() -> list[dict]:
         return rows(get(space, f"/api/tasks?project={code}"), "tasks")
 
+    attempted: set[str] = set()
+    blocked_by = "interactive setup did not establish a captured session and task"
     try:
         answered: list[str] = []
         codex_config = space.home / ".codex" / "config.toml" if tool.name == "codex" else None
@@ -667,7 +719,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
         report.notes[f"{stage} onboarding"] = answered
         if not ready:
             screen.save_frame("startup failed")
-        if not report.add(stage, "L1 CLI composer", ready, "" if ready else _startup_failure(screen)):
+        detail = "" if ready else _startup_failure(screen)
+        failure_class = BILLING_FAILURE_CLASS if is_provider_billing_failure(detail) else "unclassified"
+        if not report.add(stage, "L1 CLI composer", ready, detail, failure_class=failure_class):
             return None
         verdicts.update(L1="pass", L2="fail")
         existing = {row.get("id") for row in cards()} if one_turn else set()
@@ -695,7 +749,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                  else _wait_for_turn(screen, find_chat, seconds))
         if not report.add(stage, "the chat contains the exact prompt and final reply in one turn",
                           not error and len(captured) == 1,
-                          f"{error}\n{captured or [chatstore.chats_root(space.data, code)]}\n{_screen_tail(screen)}"):
+                          f"{error}\n{captured or [chatstore.chats_root(space.data, code)]}\n{_screen_tail(screen)}",
+                          failure_class=_turn_failure_class(error)):
             return None
         agent, chat = captured[0]
         meta = json.loads(chat.with_name("meta.json").read_text(encoding="utf-8"))
@@ -726,6 +781,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     task_prompt += " Do not call any other tool. Reply with only the returned task ID."
                 else:
                     task_prompt += " Report the task ID."
+            attempted.add("#task")
             if not type_prompt(task_prompt, "#task"):
                 return None
 
@@ -740,7 +796,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
             if error == "turn timed out" and tool.name == "opencode":
                 report.notes["OpenCode task timeout"] = _opencode_turn_evidence(space.home, str(session))
             if not report.add(stage, "the operator task turn is captured to completion", not error,
-                              f"{error}\n{agent}\n{_screen_tail(screen)}"):
+                              f"{error}\n{agent}\n{_screen_tail(screen)}", failure_class=_turn_failure_class(error)):
                 return None
         initial = new_task_rows(space, code, existing)
         match = [t for t in initial if t.get("agent_id") == agent and t.get("project") == code
@@ -764,10 +820,12 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                 name, _, check = step
                 if name == "#task":
                     continue
+                attempted.add(name)
                 message = _operator_core_prompt(space, state, step)
                 approval = None
+                confirmed: set[str | tuple] = set()
+                command = ""
                 if policy:
-                    command = ""
                     offline_command = ""
                     contract_read = ""
                     read_commands = workspace_reads
@@ -801,21 +859,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                                if workspace_shell else "git")
                         command = (f"{git} add calc.py test_calc.py && {git} commit -m 'Add calculator tests' "
                                    f"-m 'Task: {state.task}' -m 'Agent: {state.agent}'")
-                        if workspace_shell:
-                            # Put the literal commands in the already approved, Git-excluded project contract.
-                            # The PTY must still see the entire prompt before it presses Enter.
-                            with project_contract.open("a", encoding="utf-8") as instructions:
-                                instructions.write(f"\n\n## {WINDOWS_CORE_WORK_SECTION}\n\n"
-                                                   f"{_core_toolchain_hint()}\n\n"
-                                                   "Run these commands exactly, in order:\n\n"
-                                                   f"```powershell\n{offline_command}\n{command}\n```\n\n"
-                                                   "Once the commit command succeeds, reply in chat without running any further commands.\n"
-                                                   "The test runner checks the files and commit separately.\n")
-                            message += (f" Use Get-Content -LiteralPath to read {project_contract.name} and run the two exact"
-                                        f" commands in its {WINDOWS_CORE_WORK_SECTION} section, in order."
-                                        " If the sandbox refuses either, ask once for that exact command.")
-                        else:
-                            message += f" Run this exact command to stage and commit: {command}"
+                        message = _codex_work_prompt(message, command, offline_command, project_contract)
                     elif name == "#decision":
                         fields = {"decision": scenario.DECISION_TEXT, "weight": "normal"}
                         arguments = {"lens": "decision", "project": code, "fields": fields}
@@ -840,7 +884,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     policy.start(name, calls, rule=rule, shell=tuple(filter(None, (offline_command, contract_read, command))))
 
                     command_approval = _core_approval(screen, name, command=command, offline_command=offline_command,
-                                                      read_commands=read_commands)
+                                                      read_commands=read_commands, confirmed=confirmed)
 
                     def approval(command_approval=command_approval):
                         return policy_error() or command_approval()
@@ -849,6 +893,9 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                         return _opencode_permission_failure(screen)
 
                 if not type_prompt(message, name):
+                    if _recover_core_composer(screen, tool.name, "prompt paint timed out"):
+                        continue
+                    blocked_by = f"{name}: terminal did not recover an empty composer"
                     return None
                 error = _wait_for_turn(screen, lambda message=message: policy_complete() and bool(_last_reply(chat, message)), seconds,
                                        approval=approval)
@@ -856,18 +903,29 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                     report.notes["OpenCode failed core turn"] = {
                         "step": name, **_opencode_turn_evidence(space.home, str(session), workspace=folder),
                     }
+                reason = f"Approval refused: {error}" if error.startswith("unexpected Codex command approval") else error
                 if not report.add(stage, f"{name}: the operator turn and answer are captured", not error,
-                                  f"{error}\n{_screen_tail(screen)}"):
+                                  f"{reason}\n{_screen_tail(screen)}",
+                                  failure_class=_turn_failure_class(error)):
+                    if _recover_core_composer(screen, tool.name, error):
+                        continue
+                    blocked_by = f"{name}: {error}" if error == PROVIDER_BILLING_ERROR else f"{name}: terminal did not recover an empty composer"
                     break
                 state.said.append(_last_reply(chat, message))
                 if name == "#scan":
                     scenario.after_scan(space, report, stage, state, soft=True)
                 elif name == "#sp":
                     scenario.after_sp(space, report, stage, state, soft=True)
+                elif check is scenario.after_work and policy:
+                    check(space, report, stage, state, codex_git_approval=_approval_command(command) in confirmed)
                 else:
                     check(space, report, stage, state)
     finally:
         screen.close()
+        if core:
+            for name, _, _ in scenario.CORE:
+                if name not in attempted:
+                    report.add(stage, f"{name}: blocked", False, blocked_by)
     added = new_task_rows(space, code, existing)
     ok = len(added) == 1 and added[0].get("id") == task
     if report.add(stage, "exactly one task reaches the board under the same agent", ok, str(added)[:1000]):
