@@ -1,4 +1,5 @@
 {
+  "No lane": "Без дорожки",
   "Choose lane": "Выбрать дорожку",
   "Could not save lane \"{name}\"": "Не удалось сохранить дорожку «{name}»",
   "Could not choose the lane": "Не удалось выбрать дорожку",

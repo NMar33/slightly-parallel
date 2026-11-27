@@ -66,3 +66,14 @@ it('uses one key for canonically equivalent and fully case-folded lane names', (
   expect(laneKey('alpha', 'Café')).toBe(laneKey('alpha', 'Cafe\u0301'))
   expect(laneKey('alpha', 'τελος')).toBe(laneKey('alpha', 'ΤΕΛΟΣ'))
 })
+
+it('keeps a blank lane separate from a named Unassigned lane in the same project', () => {
+  const tasks: TaskRow[] = [
+    { id: 'blank', project: 'alpha' },
+    { id: 'legacy', project: 'alpha', assignee: '', lane: 'unassigned' },
+    { id: 'named', project: 'alpha', assignee: 'Unassigned', lane: 'Unassigned', lane_kind: 'agent' },
+  ]
+  const { result } = renderHook(() => useLanes({ ...props('alpha'), tasks }))
+  expect(result.current.lanes).toEqual([{ project: 'alpha', key: laneKey('alpha', ''), name: '', agent: false }])
+  expect(result.current.agentLanes.map((lane) => lane.name)).toEqual(['Unassigned'])
+})

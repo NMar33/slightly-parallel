@@ -310,7 +310,7 @@ def tasks_update(
             target[k] = new_v
 
         if any(field in ("lane", "assignee") for field, _old, _new in changes):
-            name = str(target.get("lane") or target.get("assignee") or "").strip()
+            name = hookshared.task_lane_name(target)
             project = str(target.get("project") or "")
             peers = (row for row in rows if row is not target)
             kinds = hookshared.board_lanes(peers, project, hookshared.saved_board_lanes(store.data_root, project))

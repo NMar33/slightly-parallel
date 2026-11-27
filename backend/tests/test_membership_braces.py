@@ -716,3 +716,59 @@ def test_cross_project_move_retires_a_lane_choice_from_the_old_board(world) -> N
     assert stored["project"] == MEMBER
     assert not stored["lane_choice"]
     assert c.post(f"{path}/lane-choice", json={"lane": "ui2"}).status_code == 409
+
+
+def test_legacy_blank_card_does_not_turn_a_named_unassigned_lane_into_a_board_lane(world) -> None:
+    c, _root = world
+    blank = c.post("/api/tasks", json={"project": HOME, "title": "Legacy blank", "lane": "unassigned", "assignee": ""})
+    assert blank.status_code == 201, blank.text
+    named = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "title": "Named lane",
+                   "lane": "Unassigned", "tags": "ag_bug"}, headers=VIA)
+    assert named.status_code == 201, named.text
+    assert named.json()["metadata"]["lane_kind"] == "agent"
+    assert tasklib._board_lanes(c.app.state.store, HOME)["Unassigned"] == "agent"
+
+
+def test_saved_standalone_board_lanes_can_be_edited_before_any_tasks(world) -> None:
+    c, root = world
+    created = c.post("/api/boards", json={"name": "Empty studio"})
+    assert created.status_code == 201, created.text
+    board = created.json()
+    code = board["projects"][0]
+    assert not (root / "projects" / code).exists()
+    key = f"sp-lanes:{board['id']}"
+    assert c.post("/api/prefs", json={"values": {key: '["Café"]'}}).status_code == 200
+    url = "/api/tasks/lanes"
+    assert c.get(url, params={"project": code}).json()["lanes"] == ["Café"]
+    for op, lane, previous, expected in [
+        ("remove", "Café", "", []), ("add", "Audio", "", ["Audio"]),
+        ("rename", "Recording", "Audio", ["Recording"]),
+    ]:
+        r = c.post(url, json={"project": code, "op": op, "lane": lane, "previous": previous})
+        assert r.status_code == 200, r.text
+        assert r.json()["lanes"] == expected
+
+
+@pytest.mark.parametrize("lane", ["ui", "New studio", "ui2"])
+def test_a_lane_only_brace_for_a_main_lane_stays_in_its_project(world, lane: str) -> None:
+    c, root = world
+    assert c.post(f"/api/agents/{A}/membership", json={"op": "level", "value": 3}).status_code == 200
+    _ask(root, f"#task {{lane:{lane}}} check the studio")
+    card = {"agent_id": A, "title": "Check the studio", "tags": "ag_bug"}
+    wrong = c.post("/api/tasks", json={**card, "project": MEMBER}, headers=VIA)
+    assert wrong.status_code == 403 and HOME in wrong.text
+    right = c.post("/api/tasks", json={**card, "project": HOME}, headers=VIA)
+    assert right.status_code == 201, right.text
+    metadata = right.json()["metadata"]
+    if lane == "ui2":
+        assert json.loads(metadata["lane_choice"]) == {"name": "ui2", "options": ["ui"]}
+    else:
+        assert metadata["lane"] == lane
+
+
+def test_agent_lane_and_assignee_can_use_canonically_equivalent_spellings(world) -> None:
+    c, _ = world
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+               "title": "Check the studio", "tags": "ag_bug", "lane": "Café", "assignee": "Cafe\u0301"}, headers=VIA)
+    assert r.status_code == 201, r.text
+    assert r.json()["metadata"]["lane"] == "Café"

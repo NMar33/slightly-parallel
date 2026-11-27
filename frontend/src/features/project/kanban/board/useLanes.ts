@@ -10,7 +10,7 @@ import { persistPref, useKeyedPref } from '../../../../lib/uiPrefs'
 import { toast } from '../../../../components/primitives'
 import { postJson } from '../../../../lib/getJson'
 import { OPERATOR_ACTOR } from '../../types'
-import { laneKey, laneOf, taskLaneKey } from '../model'
+import { laneKey, taskLaneName, taskLaneKey } from '../model'
 import type { BoardLane, KanbanView, TaskRow } from '../model'
 import { putBack } from '../boardData'
 import { t, tn } from '../../../../i18n/scope/project'
@@ -38,7 +38,7 @@ export function useLanes({
   )
   const toggleAgents = () => setAgentsOpen(!agentsOpen)
   const primary = project ?? ''
-  const storedKey = (key: string) => key.includes('\n') ? key : laneKey(primary, key)
+  const storedKey = (key: string) => key.includes('\n') ? key : laneKey(primary, key === 'unassigned' ? '' : key)
   const orderedKeys = laneOrder.map(storedKey)
   const laneRows = useMemo(() => {
     const rows = new Map<string, BoardLane>()
@@ -46,8 +46,8 @@ export function useLanes({
     for (const task of tasks) {
       const key = taskLaneKey(task)
       if (task.archived_at && active.has(key)) continue
-      const name = laneOf(task)
-      const agent = task.lane_kind === 'agent' && name !== 'unassigned'
+      const name = taskLaneName(task)
+      const agent = task.lane_kind === 'agent' && !!name
       const previous = rows.get(key)
       if (!previous || (agent && !previous.agent)) rows.set(key, { key, name, project: task.project ?? '', agent })
     }
@@ -70,7 +70,7 @@ export function useLanes({
     if (aIndex !== -1 || bIndex !== -1) {
       return (aIndex === -1 ? orderedKeys.length : aIndex) - (bIndex === -1 ? orderedKeys.length : bIndex)
     }
-    const unassigned = Number(a.name === 'unassigned') - Number(b.name === 'unassigned')
+    const unassigned = Number(!a.name) - Number(!b.name)
     return unassigned || a.name.localeCompare(b.name) || a.project.localeCompare(b.project)
   }
   const boardLanes = laneRows.filter((lane) => !lane.agent).sort(compare)
@@ -140,7 +140,7 @@ export function useLanes({
     // Optimistic update
     setTasks((prev) => prev.map((t) =>
       taskLaneKey(t) === key
-        ? { ...t, assignee: clean === 'unassigned' ? '' : clean, lane: clean }
+        ? { ...t, assignee: clean, lane: clean }
         : t
     ))
     // Update the user-added lanes list too
@@ -151,7 +151,7 @@ export function useLanes({
     const results = await Promise.allSettled(
       affected.map((t) =>
         postJson(`/api/tasks/${encodeURIComponent(t.id)}/update`, {
-          assignee: clean === 'unassigned' ? '' : clean,
+          assignee: clean,
           lane: clean,
           actor: OPERATOR_ACTOR,
         }),
@@ -175,7 +175,7 @@ export function useLanes({
 
   // Delete a lane (must be empty; the unassigned bucket is not deletable).
   const deleteLane = async ({ name, project: code, key }: BoardLane) => {
-    if (name === 'unassigned') return
+    if (!name) return
     const inLane = tasks.filter((t) => taskLaneKey(t) === key)
     if (inLane.length > 0) {
       toast.error(t('Cannot delete "{name}"', { name }), {

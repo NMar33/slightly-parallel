@@ -424,6 +424,15 @@ def saved_board_lanes(data_root: Path, project: str) -> list[str]:
     return [lane for lane in lanes if isinstance(lane, str) and lane] if isinstance(lanes, list) else []
 
 
+def task_lane_name(row: dict[str, Any]) -> str:
+    lane = str(row.get("lane") or "").strip()
+    assignee = str(row.get("assignee") or "").strip()
+    # Older editors saved blank assignees with this literal in the lane cell.
+    if lane == "unassigned" and not assignee and row.get("lane_kind") != "agent":
+        return ""
+    return lane or assignee
+
+
 def board_lanes(rows: Iterable[dict[str, Any]], project: str, saved: Iterable[str] = ()) -> dict[str, str]:
     """Live board lanes and their kinds, using the same rows in hook and server."""
     operator_lanes = {fold_lane(name): (name, "board") for name in saved}
@@ -431,7 +440,7 @@ def board_lanes(rows: Iterable[dict[str, Any]], project: str, saved: Iterable[st
     for row in rows:
         if row.get("project") != project or row.get("archived_at"):
             continue
-        name = str(row.get("lane") or row.get("assignee") or "").strip()
+        name = task_lane_name(row)
         if not name:
             continue
         kind = "agent" if row.get("lane_kind") == "agent" else "board"
@@ -581,11 +590,12 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
     out["ask"] = " Also: ".join(all_asks)
     if project_asks:
         out["project_ask"] = " Also: ".join(project_asks)
+    if out["lane"] or choices:
+        out["lane_project"] = target
     if choices:
         out["lane_choice"] = next(iter(choices.values()))
     if out["lane"] and isinstance(target_lanes, dict) and target_lanes.get(out["lane"]) == "agent":
         out["promote_lane"] = out["lane"]
-        out["promote_project"] = target
     return out
 
 

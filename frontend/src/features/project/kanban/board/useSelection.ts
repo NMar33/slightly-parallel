@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '../../../../components/primitives'
-import { taskInLane, taskInLaneProject, laneUpdate as laneWrite, type LaneTarget } from '../model'
+import { taskInLane, taskInLaneProject, taskLaneName, laneUpdate as laneWrite, type LaneTarget } from '../model'
 import type { TaskRow } from '../model'
 import { posOf } from './drops'
 import { ARCHIVE } from './model'
@@ -53,8 +53,8 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
       ...rest.map((t, i) => ({ id: t.id, patch: {
         stack_id: stackId,
         status: String(first.status || ''),
-        assignee: String(first.assignee || ''),
-        lane: String(first.lane || first.assignee || 'unassigned'),
+        assignee: taskLaneName(first),
+        lane: taskLaneName(first),
         position: String(base + i + 1),
       } })),
     ]

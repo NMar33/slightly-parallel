@@ -381,7 +381,7 @@ export function TasksKanban({
           boardProjects={boardProjects}
           initialSprint={sprintFilter && sprintFilter !== 'none' ? sprintFilter : undefined}
           initialStatus={addingStatus || editingTask?.status || 'unclassified'}
-          initialAssignee={addingLaneTarget?.name === 'unassigned' ? '' : addingLaneTarget?.name}
+          initialAssignee={addingLaneTarget?.name}
           existingTask={editingTask}
           onClose={() => {
             setAddingStatus(null)

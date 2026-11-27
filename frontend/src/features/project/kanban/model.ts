@@ -363,7 +363,15 @@ export function normalizeStatus(s: unknown): string {
   return key === '' ? 'unclassified' : key
 }
 
-export const laneOf = (t: TaskRow): string => t.assignee || t.lane || 'unassigned'
+export function taskLaneName(task: TaskRow): string {
+  const lane = task.lane?.trim() ?? ''
+  const assignee = task.assignee?.trim() ?? ''
+  // Older editors used a literal lane name for blank assignees.
+  if (lane === 'unassigned' && !assignee && task.lane_kind !== 'agent') return ''
+  return lane || assignee
+}
+
+export const laneOf = (task: TaskRow): string => taskLaneName(task) || 'unassigned'
 
 export type LaneRef = { project: string; name: string }
 export type LaneTarget = LaneRef | string
@@ -375,7 +383,7 @@ export const foldLane = (name: string) =>
   Array.from(name.normalize('NFC'), (character) => caseFolds[character] ?? character.toLowerCase())
     .join('').normalize('NFC')
 export const laneKey = (project: string, name: string) => `${project}\n${foldLane(name)}`
-export const taskLaneKey = (task: TaskRow) => laneKey(task.project ?? '', laneOf(task))
+export const taskLaneKey = (task: TaskRow) => laneKey(task.project ?? '', taskLaneName(task))
 export const laneName = (lane?: LaneTarget) => typeof lane === 'string' ? lane : lane?.name
 export const taskInLaneProject = (task: TaskRow, lane?: LaneTarget) =>
   !lane || typeof lane === 'string' || (task.project ?? '') === lane.project
@@ -386,15 +394,14 @@ export const taskInLane = (task: TaskRow, lane?: LaneTarget) =>
 
 
 /**
- * What a card dropped into a lane writes. The unassigned lane clears the
- * assignee — the lane is read from it — as renaming a lane already did; a
- * drop there used to write nothing, and the card went back to its old lane.
- * No lane (the board without swim lanes) writes nothing.
+ * A scoped row with an empty name clears both fields. Unscoped strings
+ * from older board actions still use 'unassigned' for that destination.
  */
 export function laneUpdate(target: LaneTarget | undefined): { assignee: string; lane: string } | Record<string, never> {
   const targetLane = laneName(target)
-  if (!targetLane) return {}
-  return targetLane === 'unassigned' ? { assignee: '', lane: '' } : { assignee: targetLane, lane: targetLane }
+  if (targetLane === undefined || target === '') return {}
+  const name = target === 'unassigned' ? '' : targetLane
+  return { assignee: name, lane: name }
 }
 
 /**

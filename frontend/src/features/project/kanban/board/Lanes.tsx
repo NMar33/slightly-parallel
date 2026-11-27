@@ -43,12 +43,13 @@ function LaneName({ name }: { name: string }) {
 }
 
 function LaneLabel({
-  name, rowKey, project, count, collapsed, onToggle, onRename, onDelete, onDropLane, onPromote,
+  name, rowKey, project, count, empty, collapsed, onToggle, onRename, onDelete, onDropLane, onPromote,
 }: {
   name: string
   rowKey: string
   project?: string
   count: number
+  empty: boolean
   collapsed: boolean
   onToggle: () => void
   onRename: (next: string) => void
@@ -70,7 +71,7 @@ function LaneLabel({
   const meta = (
     <>
       <span className="text-tertiary opacity-70">{count}</span>
-      {!onPromote && name !== 'unassigned' && (
+      {!onPromote && !empty && (
         <button
           type="button"
           onClick={onDelete}
@@ -291,7 +292,8 @@ export function LanesGrid(props: LanesGridProps) {
         </Fragment>
       )}
       {lanes.map((row, index) => {
-        const { key, name: lane } = row
+        const { key } = row
+        const lane = row.name || t('No lane')
         const collapsed = collapsedLanes.has(key)
         return (
         <Fragment key={key}>
@@ -301,6 +303,7 @@ export function LanesGrid(props: LanesGridProps) {
           <LaneLabel
             name={lane}
             rowKey={key}
+            empty={!row.name}
             project={multi ? row.project : undefined}
             count={byLaneCol.laneN.get(key) ?? 0}
             collapsed={collapsed}
