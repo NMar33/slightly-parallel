@@ -330,6 +330,8 @@ def test_live_openai_credentials_are_routed_to_separate_tools():
     for workflow in (agents, machine):
         job = workflow["jobs"]["preflight"]
         probe = next(step for step in job["steps"] if step.get("name") == "Check provider access, authentication and model errors")
+        assert "uses" not in probe
+        assert "scripts/ci/agent_preflight.py" in probe["run"]
         for name, profile in ((codex, "openai-codex"), (opencode, "openai-opencode")):
             assert f"matrix.provider == '{profile}' && secrets.{name}" in probe["env"][name]
     for name, bootstrap in (("bootstrap.sh", f"printenv {codex}"), ("bootstrap.ps1", "$env:CODEX_OPENAI_API_KEY | codex.cmd")):
