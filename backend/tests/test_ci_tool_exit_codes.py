@@ -22,7 +22,7 @@ def _executable(folder: Path, name: str, script: str) -> None:
     command.chmod(0o755)
 
 
-@pytest.mark.parametrize("login_exit", [0, 23])
+@pytest.mark.parametrize("login_exit", [0, 23, None])
 def test_noninteractive_bootstrap_preserves_the_codex_login_exit(tmp_path, login_exit):
     home = tmp_path / "home"
     bin_dir = tmp_path / "bin"
@@ -39,8 +39,9 @@ def test_noninteractive_bootstrap_preserves_the_codex_login_exit(tmp_path, login
   *) exit 99 ;;
 esac""")
     _executable(bin_dir, "codex", """[[ $* == 'login --with-api-key' ]] || exit 99
+[[ -z ${OPENAI_API_KEY+x} && -z ${CODEX_OPENAI_API_KEY+x} ]] || exit 98
 IFS= read -r key
-[[ $key == 'bootstrap-fixture-value' ]] || exit 99
+[[ $key == 'codex-bootstrap-fixture-value' ]] || exit 99
 : > "$SP_FIXTURE_LOGIN"
 exit "$SP_FIXTURE_LOGIN_EXIT"
 """)
@@ -51,17 +52,19 @@ exit "$SP_FIXTURE_LOGIN_EXIT"
         "HOME": str(home),
         "SP_LOCAL": "1",
         "SP_NONINTERACTIVE": "1",
-        "OPENAI_API_KEY": "bootstrap-fixture-value",
+        "OPENAI_API_KEY": "opencode-bootstrap-fixture-value",
         "SP_FIXTURE_PYTHON": sys.executable,
         "SP_FIXTURE_MACHINE_RUN": str(machine_run),
         "SP_FIXTURE_LOGIN": str(login),
         "SP_FIXTURE_LOGIN_EXIT": str(login_exit),
     }
+    if login_exit is not None:
+        env["CODEX_OPENAI_API_KEY"] = "codex-bootstrap-fixture-value"
     result = subprocess.run(["bash", str(ROOT / "scripts/machine/bootstrap.sh")],
                             env=env, capture_output=True, encoding="utf-8", timeout=15)
-    assert login.exists(), result.stderr
-    assert result.returncode == login_exit, (result.stdout, result.stderr)
-    assert machine_run.exists() is (login_exit == 0)
+    assert login.exists() is (login_exit is not None), result.stderr
+    assert result.returncode == (login_exit or 0), (result.stdout, result.stderr)
+    assert machine_run.exists() is (not login_exit)
 
 
 @pytest.fixture()
