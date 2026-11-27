@@ -315,7 +315,7 @@ def tasks_update(
             peers = (row for row in rows if row is not target)
             kinds = hookshared.board_lanes(peers, project, hookshared.saved_board_lanes(store.data_root, project))
             target["lane_kind"] = next((kind for lane, kind in kinds.items()
-                                        if lane.casefold() == name.casefold() and kind == "agent"), "")
+                                        if hookshared.fold_lane(lane) == hookshared.fold_lane(name) and kind == "agent"), "")
             target["lane_choice"] = ""
 
         old_status = next((old for f, old, _new in changes if f == "status"), None)

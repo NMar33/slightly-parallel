@@ -10,6 +10,7 @@ import { isoDay } from '../../../utils/dateUtils'
 import { type Turn, turnRef } from '../../tasks/turns'
 import type { MentionAgent } from '../mentions'
 import { t } from '../../../i18n/scope/project'
+import caseFoldExceptions from './laneCaseFold.json'
 
 export type KanbanView = 'classic' | 'workflow' | 'lanes'
 
@@ -280,12 +281,19 @@ const BULK = '__sp_bulk__'
 /** Dragging any selected card moves the whole selection: the payload only
  *  has to say so, since the board holds the ids and their picked order. */
 export const SELECTION = '__sp_selection__'
-export const bulkPayload = (statusKey: string, lane?: string, onlyToday?: boolean) =>
-  `${BULK}:${statusKey}:${lane ?? ''}:${onlyToday ? 'today' : ''}`
-export const parseBulk = (raw: string): { status: string; lane: string; onlyToday: boolean } | null => {
+export const bulkPayload = (status: string, lane?: LaneTarget, onlyToday = false) =>
+  `${BULK}:${JSON.stringify({ status, lane, onlyToday })}`
+export const parseBulk = (raw: string): { status: string; lane?: LaneTarget; onlyToday: boolean } | null => {
   if (!raw.startsWith(`${BULK}:`)) return null
-  const [, status = '', lane = '', scope = ''] = raw.split(':')
-  return { status, lane, onlyToday: scope === 'today' }
+  try {
+    const { status, lane, onlyToday } = JSON.parse(raw.slice(BULK.length + 1))
+    if (typeof status !== 'string' || typeof onlyToday !== 'boolean') return null
+    if (lane !== undefined && typeof lane !== 'string' &&
+        (typeof lane?.project !== 'string' || typeof lane?.name !== 'string')) return null
+    return { status, lane, onlyToday }
+  } catch {
+    return null
+  }
 }
 
 // Each folded strip has a color identity — the board reads by tint:
@@ -355,7 +363,27 @@ export function normalizeStatus(s: unknown): string {
   return key === '' ? 'unclassified' : key
 }
 
-export const laneOf = (t: TaskRow): string => t.assignee || 'unassigned'
+export const laneOf = (t: TaskRow): string => t.assignee || t.lane || 'unassigned'
+
+export type LaneRef = { project: string; name: string }
+export type LaneTarget = LaneRef | string
+export type BoardLane = LaneRef & { key: string; agent: boolean }
+
+// Unicode 15.0 full case folds that differ from a code point's lowercase form.
+const caseFolds: Readonly<Record<string, string>> = caseFoldExceptions
+export const foldLane = (name: string) =>
+  Array.from(name.normalize('NFC'), (character) => caseFolds[character] ?? character.toLowerCase())
+    .join('').normalize('NFC')
+export const laneKey = (project: string, name: string) => `${project}\n${foldLane(name)}`
+export const taskLaneKey = (task: TaskRow) => laneKey(task.project ?? '', laneOf(task))
+export const laneName = (lane?: LaneTarget) => typeof lane === 'string' ? lane : lane?.name
+export const taskInLaneProject = (task: TaskRow, lane?: LaneTarget) =>
+  !lane || typeof lane === 'string' || (task.project ?? '') === lane.project
+export const taskInLane = (task: TaskRow, lane?: LaneTarget) =>
+  !lane || (typeof lane === 'string'
+    ? laneOf(task) === lane
+    : taskLaneKey(task) === laneKey(lane.project, lane.name))
+
 
 /**
  * What a card dropped into a lane writes. The unassigned lane clears the
@@ -363,7 +391,8 @@ export const laneOf = (t: TaskRow): string => t.assignee || 'unassigned'
  * drop there used to write nothing, and the card went back to its old lane.
  * No lane (the board without swim lanes) writes nothing.
  */
-export function laneUpdate(targetLane: string | undefined): { assignee: string; lane: string } | Record<string, never> {
+export function laneUpdate(target: LaneTarget | undefined): { assignee: string; lane: string } | Record<string, never> {
+  const targetLane = laneName(target)
   if (!targetLane) return {}
   return targetLane === 'unassigned' ? { assignee: '', lane: '' } : { assignee: targetLane, lane: targetLane }
 }

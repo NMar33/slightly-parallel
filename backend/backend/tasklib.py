@@ -26,7 +26,7 @@ from .db import ViewStore
 from .docs_md import build_detail, resolve_under
 from .entities import ENTITIES, is_done
 from .entitylib import create_entity
-from .file_safety import atomic_write, edit_json
+from .file_safety import atomic_write, edit_json, safe_read_json
 from .refusals import Reasons
 from .frontmatter import block as fm_block
 from .taskevents import DEFAULT_ACTOR as _DEFAULT_ACTOR
@@ -345,6 +345,81 @@ def _board_lanes(store: ViewStore, project: str) -> dict[str, str]:
                                   hookshared.saved_board_lanes(store.data_root, project))
 
 
+LEGACY_BOARD_LANE_KEYS = ("sp-lanes:", "merkhet-lanes:", "merkhet.lanes:")
+
+
+def migrate_legacy_board_lanes(store: ViewStore, prefs: dict[str, Any] | None = None) -> None:
+    """Import the old empty-lane lists once, including preferences uploaded late."""
+    def document(file: str) -> dict[str, Any]:
+        try:
+            value = safe_read_json(store.data_root / file, retries=0)
+        except (OSError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    pref_values = document("ui_prefs.json") if prefs is None else prefs
+    legacy: dict[str, str] = {}
+    for prefix in LEGACY_BOARD_LANE_KEYS:
+        for key, value in pref_values.items():
+            if key.startswith(prefix) and isinstance(value, str):
+                legacy.setdefault(key[len(prefix):], value)
+    if not legacy:
+        return
+
+    file = hookshared.BOARD_LANES_FILE
+    marker = "$migrated-board-prefs"
+    old = document(file).get(marker)
+    migrated = {item for item in old if isinstance(item, str)} if isinstance(old, list) else set()
+    pending = {board: value for board, value in legacy.items() if board not in migrated}
+    if not pending:
+        return
+
+    projects = {project.code for project in store.projects}
+    targets = {code: code for code in projects}
+    saved_boards = document("boards.json").get("boards")
+    if isinstance(saved_boards, list):
+        for board in saved_boards:
+            if not isinstance(board, dict):
+                continue
+            board_id, members = board.get("id"), board.get("projects")
+            if isinstance(board_id, str) and isinstance(members, list) and members and isinstance(members[0], str):
+                targets.setdefault(board_id, members[0])
+
+    candidates: dict[str, tuple[str, list[str]]] = {}
+    for board, raw in pending.items():
+        code = targets.get(board)
+        if not code:
+            continue
+        try:
+            names = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(names, list):
+            candidates[board] = (code, [name.strip() for name in names
+                                       if isinstance(name, str) and name.strip()
+                                       and len(name) <= 80 and name.isprintable()])
+    if not candidates:
+        return
+
+    def import_lanes(data: dict[str, Any]) -> None:
+        old = data.get(marker)
+        imported = {item for item in old if isinstance(item, str)} if isinstance(old, list) else set()
+        for board, (code, names) in candidates.items():
+            if board in imported:
+                continue
+            current = data.get(code)
+            existing = current if isinstance(current, list) else []
+            lanes = {hookshared.fold_lane(name): name for name in existing if isinstance(name, str)}
+            for name in names:
+                lanes.setdefault(hookshared.fold_lane(name), name)
+            data[code] = list(lanes.values())
+            imported.add(board)
+        data[marker] = sorted(imported)
+
+    edit_json(store.data_root / file, import_lanes)
+    store.rebuild()
+
+
 def save_board_lane(store: ViewStore, project: str, lane: str, op: str, previous: str = "") -> list[str]:
     """The names the operator added to the board, including its empty lanes."""
     if project not in {folder.code for folder in store.projects}:
@@ -354,8 +429,8 @@ def save_board_lane(store: ViewStore, project: str, lane: str, op: str, previous
         current = data.get(project)
         lanes = [name for name in current if isinstance(name, str)] if isinstance(current, list) else []
         removed = previous if op == "rename" else lane if op == "remove" else ""
-        lanes = [name for name in lanes if name.casefold() != removed.casefold()]
-        if op != "remove" and not any(name.casefold() == lane.casefold() for name in lanes):
+        lanes = [name for name in lanes if hookshared.fold_lane(name) != hookshared.fold_lane(removed)]
+        if op != "remove" and not any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) for name in lanes):
             lanes.append(lane)
         data[project] = lanes
 
@@ -368,7 +443,7 @@ def _promote_rows(rows: list[dict[str, str]], project: str, lane: str) -> int:
     changed = 0
     for row in rows:
         name = (row.get("lane") or row.get("assignee") or "").strip()
-        if row.get("project") == project and name.casefold() == lane.casefold() and row.get("lane_kind") == "agent":
+        if row.get("project") == project and hookshared.fold_lane(name) == hookshared.fold_lane(lane) and row.get("lane_kind") == "agent":
             row["lane_kind"] = ""
             changed += 1
     return changed
@@ -383,7 +458,7 @@ def promote_lane(store: ViewStore, project: str, lane: str) -> dict:
     def mutate(rows: list[dict[str, str]]) -> bool:
         nonlocal count
         count = _promote_rows(rows, project, lane)
-        if not count and not any(name.casefold() == lane.casefold() for name in hookshared.board_lanes(rows, project)):
+        if not count and not any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) for name in hookshared.board_lanes(rows, project)):
             raise HTTPException(status_code=404, detail=f"lane {lane!r} is not on the board")
         return bool(count)
 
@@ -403,22 +478,24 @@ def choose_lane(store: ViewStore, task_id: str, lane: str) -> dict:
         if card is None:
             raise not_found("task", task_id)
         pending = card.get("lane_choice")
+        wanted = hookshared.fold_lane(lane)
         if not pending:
-            if card.get("lane") == lane:
+            if hookshared.fold_lane(card.get("lane") or "") == wanted:
                 return False
             raise HTTPException(status_code=409, detail="this card's lane choice is already settled")
         choice = hookshared.parse_lane_choice(pending)
         if choice is None:
             raise HTTPException(status_code=409, detail="this card's lane choice is unreadable")
-        if lane != choice["name"] and lane not in choice["options"]:
+        new_lane = hookshared.fold_lane(choice["name"]) == wanted
+        if not new_lane and not any(hookshared.fold_lane(option) == wanted for option in choice["options"]):
             raise HTTPException(status_code=422, detail="choose the new lane or one of the suggested lanes")
         project = card["project"]
         saved = hookshared.saved_board_lanes(store.data_root, project)
         current = next((name for name in hookshared.board_lanes(rows, project, saved)
-                        if name.casefold() == lane.casefold()), "")
-        if not current and lane != choice["name"]:
+                        if hookshared.fold_lane(name) == wanted), "")
+        if not current and not new_lane:
             raise HTTPException(status_code=409, detail="the suggested lane has been removed")
-        selected = current or lane
+        selected = current or choice["name"]
         _promote_rows(rows, project, selected)
         changes.append(("lane", card.get("lane") or "", selected))
         card.update(lane=selected, assignee=selected, lane_kind="", lane_choice="")
@@ -437,7 +514,7 @@ def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
     #now's own lane from Settings, and #task's none ("unassigned")."""
     if named:
         for lane in _board_lanes(store, project):
-            if lane.lower() == named.lower():
+            if hookshared.fold_lane(lane) == hookshared.fold_lane(named):
                 return lane
         return named
     if command == "now":
@@ -569,11 +646,12 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], dict[st
     for line in braces["reasons"]:
         why.add(line, status=403, code="braces")
     why.raise_if_any()
-    if braces["project"] and str(body.get("project") or "").strip() != braces["project"]:
+    destination = braces["project"] or braces.get("promote_project")
+    if destination and str(body.get("project") or "").strip() != destination:
         raise HTTPException(status_code=403, detail=(
-            f"the operator named {braces['project']} in braces: this task goes to {braces['project']}, "
+            f"the operator named {destination} in braces: this task goes to {destination}, "
             f"not {str(body.get('project') or '').strip() or '(none)'} — "
-            + mcp_args.send_project(braces["project"])))
+            + mcp_args.send_project(destination)))
     named = braces["lane"]
     _check_level(store, agent, body, braces["project"])
     # The rest are named together (tk_90c1ba5f): the status, the text, the
@@ -647,7 +725,7 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], dict[st
         else:
             key, own = next(iter(given.items()))
             on_board = _board_lanes(store, project)
-            exact = next((name for name in on_board if name.casefold() == own.casefold()), "")
+            exact = next((name for name in on_board if hookshared.fold_lane(name) == hookshared.fold_lane(own)), "")
             if len(own) > 80 or not own.isprintable():
                 why.add("a lane name is at most 80 characters on one line", code="length", field=key)
             elif matches := [] if exact else hookshared.lane_matches(own, list(on_board)):
@@ -759,7 +837,7 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
             lane = body.get("lane") or body.get("assignee")
             if isinstance(lane, str) and lane:
                 kinds = _board_lanes(store, str(body.get("project") or ""))
-                if any(name.casefold() == lane.casefold() and kind == "agent" for name, kind in kinds.items()):
+                if any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) and kind == "agent" for name, kind in kinds.items()):
                     body["lane_kind"] = "agent"
         ask = braces.get("ask", "")
         if think:
@@ -775,9 +853,11 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     meta = dict(out.get("metadata") or {})
     task_id = str(meta.get("id") or "")
     promotion = str(braces.get("promote_lane") or "")
-    lane_promoted = bool(task_id and promotion and meta.get("lane") == promotion)
+    promotion_project = str(braces.get("promote_project") or "")
+    lane_promoted = bool(task_id and promotion and promotion_project
+                         and meta.get("project") == promotion_project and meta.get("lane") == promotion)
     if lane_promoted:
-        promote_lane(store, str(meta["project"]), promotion)
+        promote_lane(store, promotion_project, promotion)
     md_ref = str(meta.get("md_ref") or "")
     fm, turns = _task_doc(store, md_ref, meta, task_id, for_write=bool(out.get("existing")))
     if description and not turns and md_ref:
@@ -815,10 +895,11 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     }
     if ignored:
         result["ignored"] = ignored
+    question = braces.get("project_ask") or (ask if not braces.get("lane_choice") else "")
+    if question:
+        result["ask"] = f"ask the operator in one line: {question}"
     if choice := hookshared.parse_lane_choice(meta.get("lane_choice")):
         result["lane_notice"] = hookshared.lane_choice_notice(choice)
-    elif ask and not braces.get("lane_choice"):
-        result["ask"] = f"ask the operator in one line: {ask}"
     if lane_promoted:
         result["lane_notice"] = f"Lane „{promotion}“ moved from agents to the board."
     return create_answer(result, existing=bool(out.get("existing")),
@@ -885,7 +966,7 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
                  status=AGENT_REFUSED, code="think")
     why.raise_if_any()
     lane = str(row.get("lane") or row.get("assignee") or "").strip()
-    kept_lane = next((x for x in _board_lanes(store, to) if lane and x.lower() == lane.lower()), "")
+    kept_lane = ""
     ep_id = topics_by_task(store).get(task_id) or ""
     topic = entry_of(store, ep_id) if ep_id else None
     drop_topic = topic is not None and str(topic.get("project") or "") != to
@@ -905,13 +986,19 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     ent = ENTITIES["task"]
 
     def mutate(rows: list[dict[str, str]]) -> bool:
+        nonlocal lane, kept_lane
         target = next((r for r in rows if r.get("id") == task_id), None)
         if target is None or str(target.get("project") or "") != old:
             raise HTTPException(status_code=409, detail=f"{task_id} changed while moving; nothing was written")
+        lane = str(target.get("lane") or target.get("assignee") or "").strip()
+        saved = hookshared.saved_board_lanes(store.data_root, to)
+        destination = hookshared.board_lanes(rows, to, saved)
+        kept_lane = next((name for name in destination if hookshared.fold_lane(name) == hookshared.fold_lane(lane)), "")
         target["project"] = to
         target["projects"] = projects
-        if lane and not kept_lane:
-            target["lane"] = target["assignee"] = ""
+        target["lane"] = target["assignee"] = kept_lane
+        target["lane_kind"] = "agent" if destination.get(kept_lane) == "agent" else ""
+        target["lane_choice"] = ""
         if stack:
             # The stack stays in A: the card leaves it as a card leaving its
             # column does, so the next one there becomes its head.

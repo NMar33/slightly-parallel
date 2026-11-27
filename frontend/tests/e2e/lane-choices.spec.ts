@@ -54,3 +54,42 @@ test('resolves an operator lane on its card and promotes an agent lane from the 
   const { tasks } = await (await request.get(`/api/tasks?project=${project}`)).json()
   expect(tasks.find((task: { title: string }) => task.title === operatorCard)).toMatchObject({ lane: boardLane })
 })
+
+test('a combined board keeps the same lane name scoped to each project', async ({ page, request }) => {
+  const root = process.env.SP_E2E_DATA_ROOT
+  test.skip(!root, 'A local fixture is needed to capture an operator message')
+  const other = 'beta-corp'
+  const agent = 'cc-e2elanes02'
+  const dir = path.join(root!, 'projects', other, 'chats', agent)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
+    agent_id: agent, project: other, tool: 'claude-code', capture: 'hooks', message_count: 1,
+  }))
+  const at = new Date().toISOString().slice(0, 19)
+  fs.writeFileSync(path.join(dir, 'chat.md'),
+    `# Chat log — ${agent}\n\n## Turn 1 · ${at}\n**User**: File the audio notes.\n**Agent**: Checking.\n`)
+  await request.get('/api/health', { headers: { 'Sec-Fetch-Site': 'same-origin' } })
+  const left = await request.post('/api/tasks', {
+    data: { project, lane: 'Audio', assignee: 'Audio', title: 'Alpha audio review', status: 'todo' },
+  })
+  expect(left.status()).toBe(201)
+  const right = await request.post('/api/tasks', {
+    headers: { 'X-SP-Via': 'mcp' },
+    data: { project: other, agent_id: agent, lane: 'audio', title: 'Beta audio review', tags: 'ag_idea' },
+  })
+  expect(await right.json()).toMatchObject({ metadata: { lane_kind: 'agent' } })
+  const board = await request.post('/api/boards', { data: { name: 'Combined audio', projects: [project, other] } })
+  expect(board.status()).toBe(201)
+  const { id } = await board.json()
+  await page.goto(`/kanban?board=${id}`)
+  await page.getByText('swim lanes', { exact: true }).click()
+  const mainCard = page.getByRole('button', { name: 'Edit task: Alpha audio review', exact: true })
+  const agentCard = page.getByRole('button', { name: 'Edit task: Beta audio review', exact: true })
+  const group = page.getByRole('button', { name: /^Agents/ })
+  await expect(mainCard).toBeVisible()
+  await expect(group).toHaveAttribute('aria-expanded', 'false')
+  await group.click()
+  await page.getByRole('button', { name: 'Unfold the From agents column', exact: true }).click()
+  await expect(mainCard).toBeVisible()
+  await expect(agentCard).toBeVisible()
+})

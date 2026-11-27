@@ -9,7 +9,7 @@ import { ReleasePromptModal } from './kanban/ReleasePrompt'
 import { CarryOverModal } from './kanban/CarryOver'
 import { OPERATOR_ACTOR } from './types'
 import { fail, postJson } from '../../lib/getJson'
-import { SELECTION, glowOf, isToday, normalizeStatus, readModalPrefs } from './kanban/model'
+import { SELECTION, glowOf, isToday, normalizeStatus, readModalPrefs, type LaneRef } from './kanban/model'
 import { useBoardData } from './kanban/boardData'
 import { LinksHelp, LinksOverlay } from './kanban/LinksOverlay'
 import { TaskAddModal } from './kanban/TaskWindow'
@@ -89,7 +89,7 @@ export function TasksKanban({
 
   const [addingStatus, setAddingStatus] = useState<string | null>(null)
   // Lane a cell "+" was pressed in (swim lanes); '' = unassigned, null = none.
-  const [addingAssignee, setAddingAssignee] = useState<string | null>(null)
+  const [addingLaneTarget, setAddingLaneTarget] = useState<LaneRef | null>(null)
   const [editingTask, setEditingTask] = useState<TaskRow | null>(null)
   const [releaseTask, setReleaseTask] = useState<TaskRow | null>(null)
   // Sprint blocks: filter (sprint id | 'none' | null) — active filter also
@@ -309,7 +309,7 @@ export function TasksKanban({
             allCollapsed={allCollapsed} collapseAll={collapseAll}
             addingLane={addingLane} setAddingLane={setAddingLane}
             laneDraft={laneDraft} setLaneDraft={setLaneDraft} commitAddLane={commitAddLane}
-            setAddingAssignee={setAddingAssignee}
+            setAddingLaneTarget={setAddingLaneTarget}
           />
         </div>
       ) : (
@@ -377,15 +377,15 @@ export function TasksKanban({
       {/* Add / edit task popup modal */}
       {(addingStatus || editingTask) && (
         <TaskAddModal
-          projectCode={projectCode}
+          projectCode={addingLaneTarget?.project || projectCode}
           boardProjects={boardProjects}
           initialSprint={sprintFilter && sprintFilter !== 'none' ? sprintFilter : undefined}
           initialStatus={addingStatus || editingTask?.status || 'unclassified'}
-          initialAssignee={addingAssignee ?? undefined}
+          initialAssignee={addingLaneTarget?.name === 'unassigned' ? '' : addingLaneTarget?.name}
           existingTask={editingTask}
           onClose={() => {
             setAddingStatus(null)
-            setAddingAssignee(null)
+            setAddingLaneTarget(null)
             setEditingTask(null)
             setAxes(readModalPrefs().axes)
           }}
@@ -393,7 +393,7 @@ export function TasksKanban({
             // ▶ keeps the window open for the next task — only refresh.
             if (!o?.keepOpen) {
               setAddingStatus(null)
-              setAddingAssignee(null)
+              setAddingLaneTarget(null)
               setEditingTask(null)
             }
             setAxes(readModalPrefs().axes)
@@ -409,7 +409,7 @@ export function TasksKanban({
           onRelease={(t) => {
             // One window at a time: the release window takes the editor's place.
             setAddingStatus(null)
-            setAddingAssignee(null)
+            setAddingLaneTarget(null)
             setEditingTask(null)
             setReleaseTask(t)
           }}

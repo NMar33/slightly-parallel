@@ -985,6 +985,12 @@ def create_app(
         except (OSError, RuntimeError, ValueError, DamagedFile) as exc:
             log.warning("time entry migration skipped: %s", exc)
     store = ViewStore(data_root=root)
+    from .tasklib import migrate_legacy_board_lanes
+    if root.resolve() != FIXTURES.resolve():
+        try:
+            migrate_legacy_board_lanes(store)
+        except OSError as exc:
+            log.warning("board lane migration skipped: %s", exc)
     # The moments #now, #done and #think became commands here, made now if
     # missing (nowlib.stamp_starts); never on the shipped fixtures.
     if root.resolve() != FIXTURES.resolve():
@@ -1246,6 +1252,11 @@ def create_app(
             if old is not None:
                 old.close()
         new_store = ViewStore(data_root=new_root)
+        if new_root.resolve() != FIXTURES.resolve():
+            try:
+                migrate_legacy_board_lanes(new_store)
+            except OSError as exc:
+                log.warning("board lane migration skipped on swap: %s", exc)
         app.state.store = new_store
         app.state.settings = dataclasses.replace(
             app.state.settings, data_root=new_root

@@ -584,3 +584,135 @@ def test_empty_operator_lane_is_known_to_both_writers(world) -> None:
     hook = capture.task_where(root, HOME, A, text)
     assert hook and hook["lane_choice"] == server["lane_choice"]
     assert server["lane_choice"]["options"] == ["Design system"]
+
+
+@pytest.mark.parametrize("actor", ["operator", A])
+def test_moving_a_card_inherits_only_the_destination_lane_kind(world, actor: str) -> None:
+    c, root = world
+    _ask(root, "file the sound tasks")
+    c.app.state.store.rebuild()
+    assert c.post(f"/api/agents/{A}/membership", json={"op": "level", "value": 3}).status_code == 200
+    incoming = c.post("/api/tasks", json={"project": HOME, "title": "Move sound", "lane": "Audio"})
+    existing = c.post("/api/tasks", json={"agent_id": A, "project": MEMBER,
+                      "title": "Agent sound", "lane": "audio", "tags": "ag_bug"}, headers=VIA)
+    assert incoming.status_code == existing.status_code == 201, (incoming.text, existing.text)
+    task_id = incoming.json()["metadata"]["id"]
+    moved = c.post(f"/api/tasks/{task_id}/move", json={"actor": actor, "to": MEMBER},
+                   headers=VIA if actor == A else {})
+    assert moved.status_code == 200, moved.text
+    metadata = c.get(f"/api/tasks/{task_id}").json()["metadata"]
+    assert (metadata["lane"], metadata["lane_kind"]) == ("audio", "agent")
+    assert tasklib._board_lanes(c.app.state.store, MEMBER)["audio"] == "agent"
+
+
+def test_a_lane_only_brace_cannot_promote_in_another_member_project(world) -> None:
+    c, root = world
+    _ask(root, "file the sound tasks")
+    c.app.state.store.rebuild()
+    assert c.post(f"/api/agents/{A}/membership", json={"op": "level", "value": 3}).status_code == 200
+    for project in (HOME, MEMBER):
+        card = c.post("/api/tasks", json={"agent_id": A, "project": project,
+                      "title": "Agent sound", "lane": "audio", "tags": "ag_bug"}, headers=VIA)
+        assert card.status_code == 201, card.text
+    _ask(root, "#task {audio} retake sound")
+    card = {"agent_id": A, "title": "Retake sound", "tags": "ag_bug"}
+    wrong = c.post("/api/tasks", json={**card, "project": MEMBER}, headers=VIA)
+    assert wrong.status_code == 403 and HOME in wrong.text
+    right = c.post("/api/tasks", json={**card, "project": HOME}, headers=VIA)
+    assert right.status_code == 201, right.text
+    assert "moved from agents" in right.json()["lane_notice"]
+    assert tasklib._board_lanes(c.app.state.store, MEMBER)["audio"] == "agent"
+
+
+def test_project_question_survives_a_lane_typo_in_the_same_message(world) -> None:
+    c, root = world
+    text = "#now-todo {release} {ui2} check the player"
+    where = capture.task_where(root, HOME, A, text)
+    assert where is not None
+    notice = capture.where_notice(where)
+    question = "did you mean project writing-tracker or lane release?"
+    assert question in notice and notice.index(question) < notice.index("use its lane chip")
+
+    _ask(root, text)
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+              "title": "Check the player", "tags": "ag_bug"}, headers=VIA)
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert question in out["ask"]
+    assert "use its lane chip" in out["lane_notice"]
+    assert out["metadata"]["lane"] == "Now"
+
+
+def test_two_distinct_fuzzy_lane_groups_are_refused_without_filing(world) -> None:
+    c, root = world
+    text = "#now-todo {ui2} {lane:relase} check two lanes"
+    where = capture.task_where(root, HOME, A, text)
+    assert where and "two lanes in braces" in where["refusal"]
+    _ask(root, text)
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+              "title": "Check two lanes", "tags": "ag_bug"}, headers=VIA)
+    assert r.status_code == 403 and "two lanes in braces" in r.text
+
+
+@pytest.mark.parametrize(("canonical", "alternative"), [("Straße", "STRASSE"), ("Café", "Cafe\u0301")])
+def test_lane_matching_folds_case_and_unicode_for_braces_and_fields(world, canonical, alternative) -> None:
+    c, root = world
+    r = c.post("/api/tasks/lanes", json={"project": HOME, "lane": canonical, "op": "add"})
+    assert r.status_code == 200, r.text
+    where = capture.task_where(root, HOME, A, f"#task {{lane:{alternative}}} check the lane")
+    assert where and where["lane"] == canonical
+    _ask(root, "file where it belongs")
+    created = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+                     "title": "Check the lane", "tags": "ag_bug", "lane": alternative}, headers=VIA)
+    assert created.status_code == 201, created.text
+    assert created.json()["metadata"]["lane"] == canonical
+    assert not created.json()["metadata"]["lane_kind"]
+
+
+def test_legacy_empty_lane_preferences_migrate_to_project_lanes(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    for code in (HOME, MEMBER):
+        (root / "projects" / code).mkdir(parents=True)
+    (root / "boards.json").write_text(json.dumps({"boards": [
+        {"id": "bd_demo", "projects": [MEMBER, HOME]},
+    ]}), encoding="utf-8")
+    (root / "ui_prefs.json").write_text(json.dumps({
+        f"sp-lanes:{HOME}": '["Empty studio"]',
+        "sp-lanes:bd_demo": '["Sound review"]',
+    }), encoding="utf-8")
+    with TestClient(create_app(data_root=root, watch=False)) as c:
+        for code, lane in ((HOME, "Empty studio"), (MEMBER, "Sound review")):
+            assert c.get("/api/tasks/lanes", params={"project": code}).json()["lanes"] == [lane]
+        imported = c.post("/api/prefs", json={"values": {f"sp-lanes:{MEMBER}": '["Local notes"]'}})
+        assert imported.status_code == 200
+        assert set(c.get("/api/tasks/lanes", params={"project": MEMBER}).json()["lanes"]) == {"Sound review", "Local notes"}
+        assert c.post("/api/tasks/lanes", json={"project": HOME, "lane": "Empty studio", "op": "remove"}).status_code == 200
+    with TestClient(create_app(data_root=root, watch=False)) as c:
+        assert c.get("/api/tasks/lanes", params={"project": HOME}).json()["lanes"] == []
+
+
+def test_an_agent_cannot_import_operator_lane_preferences(world) -> None:
+    c, _root = world
+    assert c.post("/api/settings", json={"values": {"agents.mcp_only": False}}).status_code == 200
+    key = f"sp-lanes:{HOME}"
+    r = c.post("/api/prefs", json={"agent_id": A, "values": {key: '["An agent lane"]'}}, headers=VIA)
+    assert r.status_code in (403, 422), r.text
+    assert key not in c.get("/api/prefs").json()["prefs"]
+
+
+
+def test_cross_project_move_retires_a_lane_choice_from_the_old_board(world) -> None:
+    c, root = world
+    _ask(root, "#now-todo {ui2} make the player readable")
+    posted = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+                    "title": "Readable player", "tags": "ag_bug"}, headers=VIA)
+    assert posted.status_code == 201, posted.text
+    metadata = posted.json()["metadata"]
+    assert metadata["lane_choice"]
+    path = f"/api/tasks/{metadata['id']}"
+    moved = c.post(f"{path}/move", json={"to": MEMBER})
+    assert moved.status_code == 200, moved.text
+    stored = c.get(path).json()["metadata"]
+    assert stored["project"] == MEMBER
+    assert not stored["lane_choice"]
+    assert c.post(f"{path}/lane-choice", json={"lane": "ui2"}).status_code == 409

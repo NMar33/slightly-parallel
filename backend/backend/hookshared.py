@@ -346,15 +346,22 @@ _EN_TO_RU = str.maketrans(_EN_KEYS, _RU_KEYS)
 _RU_TO_EN = str.maketrans(_RU_KEYS, _EN_KEYS)
 
 
+def fold_lane(name: str) -> str:
+    """Compare lane names with Unicode canonical normalization and full case folding."""
+    from unicodedata import normalize
+
+    return normalize("NFC", normalize("NFC", name).casefold())
+
+
 def lane_matches(name: str, lanes: list[str]) -> list[str]:
     """Rank nearby lane names, including keyboard-layout errors."""
     from difflib import SequenceMatcher
 
-    name = name.casefold()
+    name = fold_lane(name)
     layouts = (name.translate(_RU_TO_EN), name.translate(_EN_TO_RU))
     matches: list[tuple[float, str]] = []
     for lane in lanes:
-        key = lane.casefold()
+        key = fold_lane(lane)
         if key == name or _lane_variant(name, key):
             continue
         if key in layouts:
@@ -369,7 +376,7 @@ def lane_matches(name: str, lanes: list[str]) -> list[str]:
         ratio = SequenceMatcher(None, name, key, autojunk=False).ratio()
         if ratio >= NEAR_MISS:
             matches.append((ratio, lane))
-    return [lane for _, lane in sorted(matches, key=lambda entry: (-entry[0], entry[1].casefold()))]
+    return [lane for _, lane in sorted(matches, key=lambda entry: (-entry[0], fold_lane(entry[1])))]
 
 
 def parse_lane_choice(value: Any) -> dict[str, Any] | None:
@@ -419,7 +426,8 @@ def saved_board_lanes(data_root: Path, project: str) -> list[str]:
 
 def board_lanes(rows: Iterable[dict[str, Any]], project: str, saved: Iterable[str] = ()) -> dict[str, str]:
     """Live board lanes and their kinds, using the same rows in hook and server."""
-    seen = {name.casefold(): (name, "board") for name in saved}
+    operator_lanes = {fold_lane(name): (name, "board") for name in saved}
+    seen = dict(operator_lanes)
     for row in rows:
         if row.get("project") != project or row.get("archived_at"):
             continue
@@ -427,10 +435,13 @@ def board_lanes(rows: Iterable[dict[str, Any]], project: str, saved: Iterable[st
         if not name:
             continue
         kind = "agent" if row.get("lane_kind") == "agent" else "board"
-        old = seen.get(name.casefold())
-        if old is None or old[1] == "agent" and kind == "board":
-            seen[name.casefold()] = (name, kind)
-    return dict(sorted(seen.values(), key=lambda pair: pair[0].casefold()))
+        key = fold_lane(name)
+        previous = seen.get(key)
+        # Explicit board lanes win. For older lanes derived from cards, an
+        # agent marker remains in force until promotion clears those markers.
+        if key not in operator_lanes and (previous is None or previous[1] == "board" and kind == "agent"):
+            seen[key] = (name, kind)
+    return dict(sorted(seen.values(), key=lambda pair: fold_lane(pair[0])))
 
 
 def brace_refusal_member(agent: str, code: str, members: list[str]) -> str:
@@ -470,6 +481,7 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
         by_name.setdefault(alias.lower(), code)
     out: dict[str, Any] = {"project": "", "lane": "", "refusal": "", "ask": "", "reasons": []}
     asks: list[str] = []
+    project_asks: list[str] = []
     refused: list[str] = []
 
     def refuse(lines: list[str]) -> dict[str, Any]:
@@ -481,15 +493,16 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
     # A bare name both a project and a lane — a lane of the home's board or
     # of that project's own — names no target: the other groups are read
     # against the board the card lands on without it.
-    home_live = {str(x).lower(): str(x) for x in (lanes_of(home) or [])}
+    home_live = {fold_lane(str(x)): str(x) for x in (lanes_of(home) or [])}
 
     def both(g: str) -> str:
         """The lane's spelling when the bare group ``g`` is a project and a lane, else ""."""
         low = g.lower()
         if low.startswith((PROJECT_PREFIX, LANE_PREFIX)) or not as_project(g):
             return ""
-        own = {str(x).lower(): str(x) for x in (lanes_of(as_project(g)) or [])}
-        return home_live.get(low) or own.get(low, "")
+        own = {fold_lane(str(x)): str(x) for x in (lanes_of(as_project(g)) or [])}
+        lane_key = fold_lane(g)
+        return home_live.get(lane_key) or own.get(lane_key, "")
 
     # The target first: a lane is looked up on the board of the project named.
     named = [g[len(PROJECT_PREFIX):].strip() for g in groups if g.lower().startswith(PROJECT_PREFIX)]
@@ -497,21 +510,21 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
               and as_project(g) and not both(g)]
     target = as_project(named[0]) if named and as_project(named[0]) else home
     target_lanes = lanes_of(target) or {}
-    live = {str(x).lower(): str(x) for x in target_lanes}
+    live = {fold_lane(str(x)): str(x) for x in target_lanes}
     # Or a lane on the board it lands on.
     either = {**home_live, **live}
     projects: list[str] = []
     lanes: list[str] = []
-    choice: dict[str, Any] = {}
+    choices: dict[str, dict[str, Any]] = {}
 
     def as_lane(name: str) -> None:
-        exact = live.get(name.lower())
+        exact = live.get(fold_lane(name))
         if exact:
             lanes.append(exact)
             return
         matches = lane_matches(name, list(live.values()))
         if matches:
-            choice.update(name=name, options=matches)
+            choices.setdefault(fold_lane(name), {"name": name, "options": matches})
             asks.append(f"{{{name}}} is not a lane of {target}'s board — did you mean {', '.join(matches)}, "
                         f"or a new lane {name}? (choose on the card)")
             return
@@ -533,14 +546,14 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
                 continue
             as_lane(name)
         elif as_project(g):
-            spelt = both(g) or either.get(low, "")
+            spelt = both(g) or either.get(fold_lane(g), "")
             if spelt:
-                asks.append(f"{{{g}}} is both a project and a lane — did you mean project {as_project(g)} "
+                project_asks.append(f"{{{g}}} is both a project and a lane — did you mean project {as_project(g)} "
                             f"or lane {spelt}? (to name one: {{project:{g}}} or {{lane:{g}}})")
                 continue
             projects.append(as_project(g))
-        elif low in live:
-            lanes.append(live[low])
+        elif (lane_key := fold_lane(g)) in live:
+            lanes.append(live[lane_key])
         else:
             best = max(by_name, key=lambda n: difflib.SequenceMatcher(None, low, n).ratio(), default="")
             if best and difflib.SequenceMatcher(None, low, best).ratio() >= NEAR_MISS:
@@ -553,19 +566,26 @@ def resolve_braces(groups: list[str], *, agent: str, home: str, members: list[st
     elif projects and projects[0] not in members:
         # No access is said alone, whatever else the braces hold.
         return refuse([brace_refusal_member(agent, projects[0], members)])
-    if len({x.lower() for x in lanes}) > 1:
+    if len({fold_lane(x) for x in lanes}) > 1:
         refused.append(f"two lanes in braces ({', '.join(dict.fromkeys(lanes))}): name one")
+    elif len(choices) > 1:
+        names = ", ".join(choice["name"] for choice in choices.values())
+        refused.append(f"two lanes in braces ({names}): name one")
     if refused:
         return refuse(refused)
     out["project"] = projects[0] if projects else ""
     # An ask sends the card to the default lane, as the ask says: a lane
     # another group named is not kept beside it (the operator answers).
-    out["lane"] = lanes[0] if lanes and not asks else ""
-    out["ask"] = " Also: ".join(asks)
-    if choice:
-        out["lane_choice"] = choice
+    all_asks = [*project_asks, *asks]
+    out["lane"] = lanes[0] if lanes and not all_asks else ""
+    out["ask"] = " Also: ".join(all_asks)
+    if project_asks:
+        out["project_ask"] = " Also: ".join(project_asks)
+    if choices:
+        out["lane_choice"] = next(iter(choices.values()))
     if out["lane"] and isinstance(target_lanes, dict) and target_lanes.get(out["lane"]) == "agent":
         out["promote_lane"] = out["lane"]
+        out["promote_project"] = target
     return out
 
 

@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '../../../../components/primitives'
-import { laneOf, laneUpdate as laneWrite } from '../model'
+import { taskInLane, taskInLaneProject, laneUpdate as laneWrite, type LaneTarget } from '../model'
 import type { TaskRow } from '../model'
 import { posOf } from './drops'
 import { ARCHIVE } from './model'
@@ -71,20 +71,21 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
    * lane), keeping the order it was picked. Landing on a card puts the set
    * just before it; landing on the column appends.
    */
-  const moveSelection = async (targetStatus: string, targetLane?: string, beforeTaskId?: string | null) => {
+  const moveSelection = async (targetStatus: string, targetLane?: LaneTarget, beforeTaskId?: string | null) => {
     if (selectedTasks.length === 0) return
     if (targetStatus === ARCHIVE) {
-      const ids = selectedTasks.filter((t) => !t.archived_at).map((t) => t.id)
+      const ids = selectedTasks.filter((t) => !t.archived_at && taskInLaneProject(t, targetLane)).map((t) => t.id)
       setSelection([])
       if (ids.length) void setArchived(ids, true)
       return
     }
-    const moving = selectedTasks
+    const moving = selectedTasks.filter((t) => taskInLaneProject(t, targetLane))
+    if (!moving.length) return
     const ids = new Set(moving.map((t) => t.id))
     // Column-mates by position, a card without one last (as the server sorts).
     const inTarget = tasks
       .filter((t) => !ids.has(t.id) && columnKeyOf(t) === targetStatus)
-      .filter((t) => !targetLane || laneOf(t) === targetLane)
+      .filter((t) => taskInLane(t, targetLane))
       .sort((a, b) => posOf(a) - posOf(b))
     // Where the set lands: before the card dropped on, else after the last.
     // The column is numbered again in tens, in the order it shows: the

@@ -647,8 +647,12 @@ def where_notice(where: dict) -> str:
     if lane := where.get("promote_lane"):
         told += f" Writing the card moves lane „{lane}“ from agents to the board."
     if choice := where.get("lane_choice"):
-        told += (" Write it now, with no lane. Once it is filed, tell the operator: "
-                 + shared.lane_choice_notice(choice))
+        told += " Write it now, with no lane."
+        if question := where.get("project_ask"):
+            told += f" Once it is filed, first ask the operator in one line: {question} Then tell the operator: "
+        else:
+            told += " Once it is filed, tell the operator: "
+        told += shared.lane_choice_notice(choice)
     elif where.get("ask"):
         # A lane the braces leave unclear: the card is written now, in the
         # default lane, and the operator is asked after (tk_970d6b2d).
