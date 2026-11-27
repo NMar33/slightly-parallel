@@ -22,7 +22,7 @@ def trace_tmux_input(monkeypatch, request):
         "test_lines_are_cut_out_by_their_absolute_ids",
     ):
         return
-    trace_path = os.environ.get("SP_TMUX_TRACE_FILE")
+    trace_path = os.environ.get("TMUX_TEST_TRACE_FILE")
     started = time.monotonic_ns()
     seen = set()
     active_write = threading.local()

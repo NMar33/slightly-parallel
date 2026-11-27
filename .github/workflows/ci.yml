@@ -57,7 +57,7 @@ jobs:
               try:
                   result = subprocess.run(command, text=True, encoding="utf-8", errors="replace",
                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180,
-                                          env={**os.environ, "SP_TMUX_TRACE_FILE": str(stem.resolve().with_suffix(".jsonl"))})
+                                          env={**os.environ, "TMUX_TEST_TRACE_FILE": str(stem.resolve().with_suffix(".jsonl"))})
                   output, code = result.stdout, result.returncode
               except subprocess.TimeoutExpired as error:
                   output = (error.stdout or b"").decode("utf-8", errors="replace") + "\nDiagnostic run timed out.\n"
