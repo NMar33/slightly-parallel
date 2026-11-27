@@ -2,6 +2,7 @@ name: Pipeline self-test
 
 on:
   push:
+    branches-ignore: [ci-diagnostic-macos-tmux]
     paths:
       - .github/workflows/**
       - .github/actions/**
