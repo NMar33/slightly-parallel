@@ -257,7 +257,7 @@ def _adopt_locked(store: ViewStore) -> list[dict[str, str]]:
 
 
 def _write_card(store: ViewStore, tag: dict) -> str:
-    """The card the agent would have written; "" when the lane is not on the board."""
+    """The operator card the agent would have written; "" when the braces are refused."""
     from .csvio import rewrite_rows
     from .entities import ENTITIES
     from .tasklib import DESCRIPTION_MAX, _lane_for, create_task
@@ -294,7 +294,7 @@ def _write_card(store: ViewStore, tag: dict) -> str:
         body.update(thinklib.mark_fields())
     # The operator's message is kept whole: the limit is for text written onto
     # the board, and this text is already in the chat. The card says it is long.
-    out = create_task(store, body, text_max=None)
+    out = create_task(store, body, text_max=None, operator_braces=braces)
     task_id = str((out.get("metadata") or {}).get("id") or "")
     if not task_id:
         return ""

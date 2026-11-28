@@ -140,7 +140,7 @@
   "This task could not be read.": "Не удалось загрузить задачу.",
   "Round {n}": "Раунд {n}",
   "Lane": "Лэйн",
-  "Unassigned": "Без лэйна",
+  "No lane": "Без лэйна",
   "Add to draft": "Добавить в черновик",
   "Could not add to draft.": "Не удалось добавить в черновик.",
   "Open a project to use its draft.": "Откройте проект, чтобы работать с его черновиком.",
