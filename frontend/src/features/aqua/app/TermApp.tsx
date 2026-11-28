@@ -40,8 +40,8 @@ import { PYWINPTY, useTerminalActions, useTerminalStatus } from '../../../lib/te
 import type { MsgMark } from '../../../lib/pins'
 import { useMsgMarkActions } from '../../../lib/pins'
 import { sendTyping, useAquaActions, useGroups, useRestoreNeeded, useSessions, type RestoreResult } from './api'
-import { isNative, observeFullscreen, openWindow, post } from './bridge'
-import { DASHBOARD_FRAME, DashboardRecord, useDashboard } from './dashboard'
+import { hasNativeDashboard, isNative, observeFullscreen, openWindow, post, setDashboardView } from './bridge'
+import { DashboardRecord, useDashboard } from './dashboard'
 import {
   LW, RW, chordOf, deriveWorkspaces, lastTabIn, rememberTab, detachUrl, fitSidebarWidths, foldTabs, groupWs, isAsleep, nextWaiting, parseView, placeSide, projectWs,
   cycleLevel, moveTab, orderedTabs, resolveWs, roleOf, seatBoth, shownOf, stepIn, stepOut, tabSections, tilesOf, widths, wsIdOf,
@@ -219,7 +219,7 @@ function AquaWindow({ status }: { status: Status }) {
   const fixedChat = view.detached
   const fixedWs = view.ws ? resolveWs(view.ws, workspaces) : ''
   const kind: 'main' | 'ws' | 'chat' = fixedChat ? 'chat' : fixedWs ? 'ws' : 'main'
-  const hasDashboard = native && !view.detached && !view.ws
+  const hasDashboard = native && hasNativeDashboard() && !view.detached && !view.ws
   const dashboard = useDashboard(hasDashboard)
 
   /* ------------------------------------------------ which terminal is in front */
@@ -315,11 +315,8 @@ function AquaWindow({ status }: { status: Status }) {
       document.querySelector<HTMLTextAreaElement>('.aqua-screen .xterm-helper-textarea')?.focus()
     }, 0)
   }, [])
-  const { frame: dashboardFrame, shown: dashboardShown } = dashboard
+  const dashboardShown = dashboard.shown
   const terminalInput = useRef<HTMLTextAreaElement | null>(null)
-  useLayoutEffect(() => {
-    if (dashboardShown) dashboardFrame.current?.focus()
-  }, [dashboardFrame, dashboardShown])
   const returnToTerminal = () => {
     dashboard.show(false)
     const input = terminalInput.current
@@ -406,6 +403,9 @@ function AquaWindow({ status }: { status: Status }) {
   const termX = native ? lw : Math.round((vp.w - termW) / 2) + slide
   const frameH = native ? vp.h : vp.h - 2 * MARGIN
   const bar = folded ? BAR_FOLDED : Math.round(BAR / layout.prefs.titleScale)
+  useLayoutEffect(() => {
+    if (hasDashboard) setDashboardView(dashboardShown, bar)
+  }, [hasDashboard, dashboardShown, bar])
   const strip = kind === 'chat' ? 0 : Math.round(STRIP / layout.prefs.tabsScale)
   const bodyH = Math.max(120, frameH - bar - strip - (native ? 0 : 2))
 
@@ -984,7 +984,7 @@ function AquaWindow({ status }: { status: Status }) {
         boxShadow: 'var(--shadow-lg)', border: `1px solid ${health && healthEdge ? healthEdge : 'var(--border-strong)'}`, borderTop: kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined,
       }}>
         {/* the title row: folds to a 12px strip */}
-        <div data-window-title data-compact={layout.prefs.titleScale > 1 || undefined} className={`relative shrink-0 select-none ${native ? 'aq-app-drag' : ''}`} style={{ height: bar, background: 'var(--r2-bar)', color: 'var(--r2-bar-ink)', transition: instant ? undefined : 'height 120ms var(--aq-ease)', borderTop: native && kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined }}
+        <div data-window-title data-compact={layout.prefs.titleScale > 1 || undefined} className={`relative shrink-0 select-none ${native ? 'aq-app-drag' : ''}`} style={{ height: bar, background: 'var(--r2-bar)', color: 'var(--r2-bar-ink)', transition: instant || dashboardShown ? undefined : 'height 120ms var(--aq-ease)', borderTop: native && kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined }}
           onPointerDown={onBarDown} onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest('button') && Date.now() - unfoldedAt.current > 600) { setFolded(!folded); refocus() } }}>
           {health && <HealthTint />}
           {kind !== 'chat' && !folded && toggleBtn('left')}
@@ -1059,13 +1059,6 @@ function AquaWindow({ status }: { status: Status }) {
           {kind === 'chat' && settingsOpen && <aside aria-label={t('Window settings')} className="absolute inset-y-0 left-0 z-20 w-[236px] max-w-full bg-base">{settings}</aside>}
           {fixedSidebarControls && foldedToggles}
         </div>
-        {hasDashboard && (
-          <iframe ref={dashboardFrame} name={DASHBOARD_FRAME} src="/" title={t('SP dashboard')}
-            className="absolute left-0 w-full border-0"
-            aria-hidden={!dashboardShown || undefined} tabIndex={dashboardShown ? 0 : -1}
-            style={{ top: bar, height: `calc(100% - ${bar}px)`, visibility: dashboardShown ? 'visible' : 'hidden',
-              background: 'var(--bg-base)' }} />
-        )}
       </div>
 
       {menu && menu.kind !== 'keys' && <button type="button" aria-label={t('Close the menu')} tabIndex={-1} className="fixed inset-0 z-[35] cursor-default" onClick={() => { setMenu(null); refocus() }} />}
