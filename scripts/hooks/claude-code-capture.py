@@ -712,7 +712,7 @@ def close_overtaken(cap: TurnCapture, prompt: str, transcript_path: str) -> None
     and close nothing. The read position does not move: the Stop reads the
     stretch again for its tokens."""
     meta = cap._load_meta() if cap.meta_path.exists() else {}
-    if meta.get("pending_turn") is None or meta.get("pending_user_text") == prompt.strip():
+    if meta.get("pending_turn") is None or meta.get("pending_user_text") == prompt.rstrip():
         return
     seg = Segment(transcript_path, cap.transcript_pos(transcript_path), _turntimes()) if transcript_path else None
     if seg is not None:

@@ -229,7 +229,7 @@ def _cc(row: str, under: str = RULE, top: str = RULE) -> str:
     ("Do you want to proceed?\n❯ 1. Yes\n  2. No\n", "claude-code", False),
     ("Do you want to proceed?\n" + RULE + "\n❯ 1. Yes\n" + RULE + "\n", "claude-code", False),
     ("$ ls\n$ \n", "claude-code", False),
-    ("\x1b[1;2m› \x1b[0mearlier message\n\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n  model · ~/x\n",
+    ("\x1b[1;2m› \x1b[0mearlier message\n\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n  \x1b[2mmodel · ~/x\x1b[0m\n",
      "codex", True),
     ("\x1b[1m›\x1b[0m #now half typed\n\n  model · ~/x\n", "codex", False),
     ("\x1b[1m›\x1b[0m \n  a second line\n", "codex", False),

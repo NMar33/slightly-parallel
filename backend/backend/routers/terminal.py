@@ -67,7 +67,7 @@ TMUX_PANE_RESIZE_POLL_S = 0.015
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
 
-_MAX_SESSIONS = 32
+_MAX_SESSIONS = 36
 # What a terminal asks the screen (who are you, where is the cursor): kept
 # out of a replay, or the new screen answers into the shell as if typed.
 _QUERIES = re.compile(rb"\x1b\[[>=?]?[0-9;]*c|\x1b\[[56]n")
@@ -178,6 +178,7 @@ class PtySession:
                 # of the server and must end here, whatever happened.
                 os._exit(127)
         self.pid = pid
+        self.release_client: Callable[[], None] | None = None
         self.fd = fd
         self.resize(cols, rows)
         self.buffer = bytearray()  # recent output, replayed on reconnect
@@ -233,6 +234,8 @@ class PtySession:
         if self.closed:
             return
         self.closed = True
+        if self.release_client is not None:
+            self.release_client()
         try:
             os.kill(self.pid, signal.SIGKILL)
         except OSError:
@@ -494,6 +497,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 if len(clients) >= _MAX_SESSIONS * 4:
                     raise _TooMany("too many views")
                 session = open_pty(sid, termlib.attach_argv(root, sid), str(row.get("cwd") or root), cols, rows, env)
+                session.release_client = termlib.register_client(root, sid, session.pid)
                 clients[key] = session
             return row, key, session, True, ""
 
@@ -1107,6 +1111,13 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         # page says which is which (`typed` on an input message); a message
         # that does not say is read by its bytes.
         async def write(b: bytes, marked: Any = None) -> None:
+            if in_tmux:
+                with termlib.operator_intent(root, session_id):
+                    await write_input(b, marked)
+            else:
+                await write_input(b, marked)
+
+        async def write_input(b: bytes, marked: Any) -> None:
             nonlocal selection_possible, tmux_input_started, pane_resize_deadline
             if tmux_ready is not None and not tmux_input_started:
                 # Accepting the socket forks the tmux client, whose tty setup
@@ -1154,7 +1165,14 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                     await run_in_threadpool(_stamp_enter, root, session_id)
             # Timed for the terminal log (termlog.py): a slow write is a stall.
             with termlog.timed("write", session_id, len(b)):
-                await run_in_threadpool(session.write, b)
+                if in_tmux:
+                    try:
+                        await run_in_threadpool(termlib.write_operator, root, session_id, session.write, b)
+                    except termlib.TmuxError:
+                        await websocket.close(code=4500, reason="terminal input is busy")
+                        raise WebSocketDisconnect(code=4500) from None
+                else:
+                    await run_in_threadpool(session.write, b)
             if typed:
                 timer.beat(str(row.get("project") or ""), str(row.get("task_id") or ""), "terminal")
 
