@@ -1726,3 +1726,13 @@ def test_windows_core_waits_for_the_command_approval_redraw(scripted_onboarding)
     screen.rendered = question + f"  $ {command}\n› 1. Yes, proceed (y)"
     assert check() == check() == ""
     assert keys == [scripted_onboarding.ENTER]
+
+
+
+def test_windows_core_edit_names_both_exact_reads_in_order(scripted_onboarding):
+    contract = "Get-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/SLIGHTLY-PARALLEL.md'"
+    calc = "Get-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py'"
+    edit = "Add-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py' -Value '    return a - b'"
+    prompt = scripted_onboarding._windows_edit_prompt("Add subtraction.", calc, contract, edit)
+    assert prompt.index(f"`{contract}`") < prompt.index(f"`{calc}`") < prompt.index(f"`{edit}`")
+    assert "instead of trying other commands" in prompt

@@ -332,6 +332,12 @@ def _core_toolchain_hint() -> str:
             " Do not install packages or request permission to run the tests outside your sandbox.")
 
 
+def _windows_edit_prompt(message: str, read: str, contract_read: str, edit: str) -> str:
+    return (f"{message} Run these exact PowerShell commands in order: `{contract_read}`, `{read}`, `{edit}`."
+            " If the sandbox refuses a command, ask once for that exact command instead of trying other commands."
+            " This is an edit-only turn. The tests and commit follow later.")
+
+
 def _codex_work_prompt(message: str, command: str, tests: str, contract: Path) -> str:
     followup = ("If the sandbox refuses the Git command, ask once to run that exact command. "
                 "Once the commit command succeeds, reply in chat without running any further commands.")
@@ -844,9 +850,7 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                             offline_command = f"Get-Content -LiteralPath {calc}"
                             contract_read = f"Get-Content -LiteralPath {_powershell_path(project_contract)}"
                             command = core_mcp.EDIT_POWERSHELL.format(path=calc)
-                            message += (f" Read the file with `{offline_command}`, then run `{command}`."
-                                        " If the sandbox refuses the operation, ask once to run that exact command."
-                                        " This is an edit-only turn. The tests and commit follow later.")
+                            message = _windows_edit_prompt(message, offline_command, contract_read, command)
                         elif offline_provider:
                             offline_command = core_mcp.OFFLINE_EDIT
                     elif name == "#rule":
