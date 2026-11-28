@@ -51,13 +51,14 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Iterator, Literal, Mapping
 
 from .csvio import read_rows
 from .docs_md import resolve_under
-from .file_safety import edit_json, safe_read_json
+from .file_safety import FileSafetyError, acquire_flock, edit_json, lock_path, safe_read_json
 from . import chatstore, termlog
 
 log = logging.getLogger("sp.terminal")
@@ -258,11 +259,18 @@ class TmuxError(RuntimeError):
 def tmux(data_root: Path, *args: str, timeout: float | None = None, input: str | None = None) -> subprocess.CompletedProcess:
     """A tmux command. A failing command comes back with its returncode; a
     tmux that does not answer in `timeout` seconds (WRITE_TIMEOUT) raises TmuxError."""
-    timeout = WRITE_TIMEOUT if timeout is None else timeout
+    return _tmux(data_root, args, timeout=WRITE_TIMEOUT if timeout is None else timeout, input=input)
+
+
+def _tmux(data_root: Path, args: tuple[str, ...], *, timeout: float, input: str | None = None,
+          read_only: bool = False) -> subprocess.CompletedProcess:
     cmd = args[0] if args else "tmux"
     t0 = time.perf_counter()
     try:
-        out = subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
+        # Reads talk to an existing server without creating or loading its config.
+        argv = ([tmux_path() or "tmux", "-L", socket_of(data_root), *args]
+                if read_only else tmux_argv(data_root, *args))
+        out = subprocess.run(argv, input=input, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=timeout)
         termlog.REC.tmux_call(cmd, (time.perf_counter() - t0) * 1000)
         return out
@@ -279,7 +287,7 @@ def tmux_read(data_root: Path, *args: str, timeout: float | None = None) -> subp
     stdout — so the terminal list, the restore offer and a capture answer
     from the registry instead of failing."""
     try:
-        return tmux(data_root, *args, timeout=READ_TIMEOUT if timeout is None else timeout)
+        return _tmux(data_root, args, timeout=READ_TIMEOUT if timeout is None else timeout, read_only=True)
     except TmuxError as exc:
         log.info("%s: read as no answer", exc)
         return subprocess.CompletedProcess(list(args), 1, "", str(exc))
@@ -529,19 +537,29 @@ def registry_path(data_root: Path) -> Path:
     return Path(data_root) / FOLDER / REGISTRY
 
 
-def rows(data_root: Path) -> list[dict[str, Any]]:
+def rows(data_root: Path, *, require_readable: bool = False) -> list[dict[str, Any]]:
+    """Read the registry. An unconfirmed close must distinguish errors from absence."""
     p = registry_path(data_root)
-    if not p.exists():
-        return []
     try:
+        if not require_readable and not p.exists():
+            return []
         data = safe_read_json(p)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return []
-    return [r for r in (data.get("sessions") if isinstance(data, dict) else []) or [] if isinstance(r, dict)]
+    except (OSError, ValueError):
+        if require_readable:
+            raise
+        return []
+    sessions = data.get("sessions", []) if isinstance(data, dict) else None
+    if not isinstance(sessions, list):
+        if require_readable:
+            raise ValueError("invalid terminal registry")
+        return []
+    return [row for row in sessions if isinstance(row, dict)]
 
 
-def get(data_root: Path, sid: str) -> dict[str, Any] | None:
-    return next((r for r in rows(data_root) if r.get("id") == sid), None)
+def get(data_root: Path, sid: str, *, require_readable: bool = False) -> dict[str, Any] | None:
+    return next((r for r in rows(data_root, require_readable=require_readable) if r.get("id") == sid), None)
 
 
 def _edit(data_root: Path, change) -> Any:
@@ -784,7 +802,7 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
                       "-e", f"SP_TERMINAL={sid}", "-e", "TERM=xterm-256color", shell, "-l")
         if command:
             wait_for_prompt(data_root, sid)
-            type_into(data_root, row, typed_form(command, shell), enter=row["launch"] == "run")
+            type_into(data_root, row, typed_form(command, shell), enter=row["launch"] == "run", operator=False)
         # Which tmux server holds it: a terminal whose server is gone was not
         # closed by anyone (a reboot, a crash), and Restore offers it back.
         row["server"] = tmux_server_pid(data_root)
@@ -875,16 +893,116 @@ def wait_for_prompt(data_root: Path, sid: str, timeout: float = SHELL_PROMPT_TIM
         time.sleep(SHELL_PROMPT_POLL_INTERVAL_S)
 
 
-def type_into(data_root: Path, row: dict[str, Any], text: str, *, enter: bool, delay: float = 0.0) -> bool:
+
+# All SP writers of a tmux session share its input lock. Intent is recorded
+# before the lock wait, so the automatic sender gives the operator priority.
+_input_state_lock = threading.Lock()
+_operator_waiters: dict[tuple[Path, str], int] = {}
+_operator_input_at: dict[tuple[Path, str], float] = {}
+# Input written to a PTY can still be waiting for the composer to render.
+OPERATOR_EDIT_SECONDS = 3.0
+_sp_clients: dict[tuple[Path, str], set[int]] = {}
+
+
+def input_lock(data_root: Path, sid: str) -> Path:
+    return lock_path(folder(data_root) / ("input-" + sid))
+
+
+def delivery_lock(data_root: Path, sid: str) -> Path:
+    return lock_path(folder(data_root) / ("deliver-" + sid))
+
+
+@contextmanager
+def operator_intent(data_root: Path, sid: str, *, typed: bool = True) -> Iterator[None]:
+    key = (data_root, sid)
+    with _input_state_lock:
+        _operator_waiters[key] = _operator_waiters.get(key, 0) + 1
+        if typed:
+            _operator_input_at[key] = time.monotonic()
+    try:
+        yield
+    finally:
+        with _input_state_lock:
+            if typed:
+                _operator_input_at[key] = time.monotonic()
+            if _operator_waiters[key] == 1:
+                del _operator_waiters[key]
+            else:
+                _operator_waiters[key] -= 1
+
+
+def operator_editing(data_root: Path, sid: str) -> bool:
+    key = (data_root, sid)
+    with _input_state_lock:
+        if _operator_waiters.get(key):
+            return True
+        at = _operator_input_at.get(key)
+        if at is None:
+            return False
+        if time.monotonic() - at < OPERATOR_EDIT_SECONDS:
+            return True
+        del _operator_input_at[key]
+        return False
+
+
+def register_client(data_root: Path, sid: str, pid: int) -> Callable[[], None]:
+    """Identify only the tmux child actually created for a server-owned view."""
+    key = (data_root, sid)
+    with _input_state_lock:
+        _sp_clients.setdefault(key, set()).add(pid)
+
+    def release() -> None:
+        with _input_state_lock:
+            clients = _sp_clients[key]
+            clients.remove(pid)
+            if not clients:
+                del _sp_clients[key]
+
+    return release
+
+
+def owns_clients(data_root: Path, sid: str, pids: set[int]) -> bool:
+    with _input_state_lock:
+        return pids <= _sp_clients.get((data_root, sid), set())
+
+
+InputWrite = Literal["written", "failed", "uncertain"]
+
+
+def write_operator(data_root: Path, sid: str, write: Callable[[bytes], InputWrite], data: bytes) -> InputWrite:
+    # A received key stays queued until it can reach the PTY. Only the
+    # bounded final tmux submission holds this lock for an automatic notice.
+    outcome: InputWrite = "failed"
+    try:
+        with acquire_flock(input_lock(data_root, sid), timeout_s=float("inf")):
+            outcome = "uncertain"
+            outcome = write(data)
+    except OSError:
+        pass
+    return outcome
+
+
+def type_into(data_root: Path, row: dict[str, Any], text: str, *, enter: bool,
+              delay: float = 0.0, operator: bool = True) -> bool:
     """Type into a tmux terminal as if at the keyboard (a plain one: routers/terminal.py)."""
     if row.get("backend") != "tmux":
         return False
     if delay:
         time.sleep(delay)
-    target = PREFIX + row["id"]
+    sid = row["id"]
+    with operator_intent(data_root, sid, typed=operator and bool(text or enter)):
+        try:
+            with acquire_flock(input_lock(data_root, sid), timeout_s=float("inf")):
+                return _type_into_locked(data_root, sid, text, enter)
+        except FileSafetyError as exc:
+            raise TmuxError("terminal input is busy") from exc
+
+
+def _type_into_locked(data_root: Path, sid: str, text: str, enter: bool) -> bool:
+    target = PREFIX + sid
     # Through a paste buffer, not send-keys: tmux reads a trailing ";" in an
     # argument as a command separator and a leading "-" as an option.
-    buf = f"mk-type-{row['id']}"
+    buf = f"mk-type-{sid}"
     load = tmux(data_root, "load-buffer", "-b", buf, "-", input=text)
     if load.returncode != 0:
         return False
@@ -900,6 +1018,8 @@ def close(data_root: Path, sid: str) -> None:
     if row and row.get("backend") == "tmux":
         tmux(data_root, "kill-session", "-t", PREFIX + sid)
     forget(data_root, sid)
+    with _input_state_lock:
+        _operator_input_at.pop((data_root, sid), None)
 
 
 def attach_argv(data_root: Path, sid: str) -> list[str]:

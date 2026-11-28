@@ -608,12 +608,13 @@ def test_terminal_input_is_written_off_the_event_loop(tmp_path: Path, monkeypatc
     (root / "integrations.csv").write_text(f"project,path\nalpha,{work}\n", encoding="utf-8")
     seen: list[bool] = []
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes) -> termlib.InputWrite:
         try:
             asyncio.get_running_loop()
             seen.append(False)
         except RuntimeError:
             seen.append(True)
+        return "written"
 
     monkeypatch.setattr(terminal.PtySession, "write", write)
     try:

@@ -4,9 +4,13 @@
  * and the Today lane's second view of a card.
  */
 
-import { memo, useRef, type ReactNode } from 'react'
-import { Layers, Link2, Paperclip } from 'lucide-react'
-import { Button } from '../../../../components/primitives'
+import { memo, useRef, useState, type ReactNode } from 'react'
+import { ChevronDown, Layers, Link2, Paperclip } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { postJson } from '../../../../lib/getJson'
+import { OPERATOR_ACTOR } from '../../types'
+import { BOARD_KEY } from '../boardData'
+import { Button, toast } from '../../../../components/primitives'
 import { StarButton } from '../../../../components/StarButton'
 import { STAR_COLOR } from '../../../../lib/marks'
 import { formatStamp } from '../../../../utils/dateUtils'
@@ -21,6 +25,53 @@ import { useEvidenceAsk } from './evidenceAsk'
 import { useCoreTaskIndex } from '../../../architecture/cores/data'
 import { TypeDot } from '../../../architecture/cores/parts'
 import { t, tn } from '../../../../i18n/scope/project'
+
+function LaneChoice({ task }: { task: TaskRow }) {
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  let choice: { name: string; options: string[] }
+  try {
+    choice = JSON.parse(task.lane_choice ?? '')
+    if (!choice?.name || !Array.isArray(choice.options)) return null
+  } catch {
+    return null
+  }
+  const choose = async (lane: string) => {
+    setSaving(true)
+    try {
+      await postJson(`/api/tasks/${encodeURIComponent(task.id)}/lane-choice`, { lane, actor: OPERATOR_ACTOR })
+      await queryClient.invalidateQueries({ queryKey: BOARD_KEY })
+      setOpen(false)
+    } catch {
+      toast.error(t('Could not choose the lane'))
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <div className="self-start flex flex-col items-start gap-2">
+      <Button variant="text" size="bare" aria-expanded={open}
+        onClick={(event) => { event.stopPropagation(); setOpen(!open) }}>
+        {t('Choose lane')} <ChevronDown size={11} aria-hidden />
+      </Button>
+      {open && (
+        <div className="flex flex-wrap gap-4">
+          <Button variant="secondary" size="sm" disabled={saving}
+            onClick={(event) => { event.stopPropagation(); void choose(choice.name) }}>
+            {t('Create {name}', { name: choice.name })}
+          </Button>
+          {choice.options.map((lane) => (
+            <Button key={lane} variant="secondary" size="sm" disabled={saving}
+              onClick={(event) => { event.stopPropagation(); void choose(lane) }}>
+              {lane}
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /**
  * Memoized: the board re-renders as one piece (hover, selection, an
@@ -188,6 +239,7 @@ export const TaskCard = memo(function TaskCard({
           </button>
         )}
       </div>
+      {task.lane_choice && <LaneChoice task={task} />}
       {link && link.parent && (
         <button
           type="button"

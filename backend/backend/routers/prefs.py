@@ -18,8 +18,10 @@ import json
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
+from ..actors import operator_only
 from ..db import ViewStore
 from ..file_safety import edit_json, safe_read_json
+from ..tasklib import LEGACY_BOARD_LANE_KEYS, migrate_legacy_board_lanes
 from .deps import etag_for, get_store, json_response, maybe_304
 
 router = APIRouter()
@@ -58,6 +60,10 @@ def prefs_set(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> 
     values = body.get("values")
     if not isinstance(values, dict) or not values:
         raise HTTPException(status_code=422, detail="send values as an object with at least one key")
+    imports_lanes = any(str(key).startswith(LEGACY_BOARD_LANE_KEYS) for key in values)
+    if imports_lanes:
+        operator_only(body, "importing board lane preferences")
+
     def change(raw: dict) -> dict:
         prefs = _clean(raw)
         for k, v in values.items():
@@ -75,4 +81,6 @@ def prefs_set(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> 
     # One read-modify-write cycle under one lock (file_safety.edit_json):
     # two tabs saving at once used to keep only the later one's keys.
     prefs = edit_json(store.data_root / PREFS_FILE, change)
+    if imports_lanes:
+        migrate_legacy_board_lanes(store, prefs)
     return {"saved": len(values), "total": len(prefs)}

@@ -45,6 +45,45 @@ def _on(c) -> None:
     assert c.post("/api/settings", json={"values": {"terminal.enabled": True}}).status_code == 200
 
 
+@unix_pty
+@pytest.mark.parametrize("mode, expected, attempted", [
+    ("closed", "failed", []),
+    ("error", "failed", [b"abc\r"]),
+    ("short-then-error", "uncertain", [b"abc\r", b"c\r"]),
+    ("short-then-zero", "uncertain", [b"abc\r", b"c\r"]),
+    ("short-then-complete", "written", [b"abc\r", b"c\r"]),
+])
+def test_pty_write_reports_closed_or_partial_input_without_replaying_enter(
+    tmp_path, monkeypatch, mode, expected, attempted,
+) -> None:
+    from threading import Lock
+    from types import SimpleNamespace
+
+    from backend.routers import terminal
+
+    pty = object.__new__(terminal.PtySession)
+    pty.fd = os.open(tmp_path / "pty-input", os.O_CREAT | os.O_WRONLY)
+    pty.closed = mode == "closed"
+    pty._fd_lock = Lock()
+    calls = []
+
+    def write(_fd, data):
+        calls.append(data)
+        assert len(calls) <= 2, "a stopped write must not try again"
+        if mode == "error" or (mode == "short-then-error" and len(calls) == 2):
+            raise OSError("test PTY hung up")
+        if len(calls) == 1:
+            return 2
+        return 0 if mode == "short-then-zero" else len(data)
+
+    monkeypatch.setattr(terminal, "os", SimpleNamespace(write=write, dup=os.dup, close=os.close))
+    try:
+        assert termlib.write_operator(tmp_path, "test", pty.write, b"abc\r") == expected
+        assert calls == attempted
+    finally:
+        os.close(pty.fd)
+
+
 def test_off_until_switched_on(env) -> None:
     c, _, _ = env
     st = c.get("/api/terminal/state").json()
@@ -501,10 +540,11 @@ def test_idle_terminals_do_not_take_the_threads_the_server_works_on() -> None:
     default executor, about eight idle terminals left asyncio.to_thread no
     thread to run on."""
     import asyncio
-    from backend.routers.terminal import _MAX_SESSIONS, _PTY_READS, _read_pty
+    from backend.app_settings import MAX_TERMINAL_SESSIONS
+    from backend.routers.terminal import MAX_TERMINAL_VIEWS, _PTY_READS, _read_pty
 
     # Every plain terminal and every tmux view can hold a read at once.
-    assert _PTY_READS._max_workers >= _MAX_SESSIONS * 5
+    assert _PTY_READS._max_workers >= MAX_TERMINAL_SESSIONS + MAX_TERMINAL_VIEWS
 
     async def main() -> None:
         pipes = [os.pipe() for _ in range(40)]
@@ -1194,7 +1234,9 @@ def test_only_keys_and_pastes_on_the_socket_beat_the_timer(env, monkeypatch) -> 
     _on(c)
     beats: list[tuple[str, str]] = []
     monkeypatch.setattr(timeauto.of(c.app), "beat", lambda project, task_id="", source="page": beats.append((project, source)))
-    monkeypatch.setattr(terminal.PtySession, "write", lambda self, data: None)   # nothing reaches a shell
+    # Ignore the bytes while reporting a healthy terminal write.
+    monkeypatch.setattr(terminal.PtySession, "write", lambda self, data: "written")
+    monkeypatch.setattr(terminal.WinPtySession, "write", lambda self, data: "written")
     sid = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"}).json()["session"]["id"]
     tok = c.get("/api/terminal/state").json()["token"]
 
@@ -1290,3 +1332,342 @@ def test_a_new_scheme_with_no_tmux_running_changes_nothing(env) -> None:
     assert c.post("/api/settings", json={"values": {"terminal.scheme": "nord"}}).status_code == 200
     if TMUX:
         assert termlib.tmux(root, "list-sessions").returncode != 0
+
+
+def test_terminal_limit_reports_live_sessions_and_can_be_raised(env, monkeypatch) -> None:
+    import subprocess
+
+    from backend.routers import terminal
+
+    c, _root, _work = env
+    monkeypatch.setattr(terminal, "SUPPORTED", True)
+    _on(c)
+    assert c.get("/api/terminal/state").json().get("max_sessions") == 36
+    for invalid in (-1, 257, 2.5, "2", True):
+        refused = c.post("/api/settings", json={"values": {"terminal.max_sessions": invalid}})
+        assert refused.status_code == 422
+        assert "terminal.max_sessions" in refused.json()["detail"]
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 2}}).status_code == 200
+    live = [
+        {"id": "recent", "state": "working", "project": "alpha", "agent_id": "cc-recent",
+         "label": "Recent", "backend": "tmux", "created": "2026-11-26T12:00:00", "last_output": 200.0},
+        {"id": "idle", "state": "shell", "project": "alpha",
+         "label": "Idle", "created": "2026-11-25T12:00:00", "last_output": 100.0},
+        {"id": "asleep", "state": "asleep", "last_output": 0.0},
+    ]
+    opened = []
+    monkeypatch.setattr(termlib, "listing", lambda *_: live)
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: subprocess.CompletedProcess(
+        [], 0, stdout=f"{termlib.PREFIX}recent\t1\t150\n", stderr=""))
+
+    def open_session(*_args, **kwargs):
+        opened.append(kwargs)
+        return {"id": "new", "backend": "tmux"}
+
+    monkeypatch.setattr(termlib, "open_session", open_session)
+    req = {"kind": "shell", "project": "alpha"}
+    refused = c.post("/api/terminal/sessions", json=req)
+    assert refused.status_code == 429
+    body = refused.json()
+    assert isinstance(body["detail"], str)
+    assert (body["count"], body["limit"]) == (2, 2)
+    assert [row["id"] for row in body["sessions"]] == ["idle", "recent"]
+    recent = body["sessions"][1]
+    assert recent["agent_id"] == "cc-recent"
+    assert recent["created"] == "2026-11-26T12:00:00"
+    assert recent["last_activity"] == 200.0
+    assert recent["running"] is True
+    assert recent["attached"] is True
+    assert not opened
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 3}}).status_code == 200
+    assert c.post("/api/terminal/sessions", json=req).status_code == 201
+    assert len(opened) == 1
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 0}}).status_code == 200
+    assert c.get("/api/terminal/state").json()["max_sessions"] == 0
+    assert c.post("/api/terminal/sessions", json=req).status_code == 201
+    assert len(opened) == 2
+
+
+@pytest.mark.parametrize(("state", "attached"), [("working", False), ("shell", True)])
+def test_closing_from_the_terminal_limit_requires_confirmation(env, monkeypatch, state, attached) -> None:
+    import subprocess
+
+    c, _root, _work = env
+    monkeypatch.setattr(termlib, "listing", lambda *_: [
+        {"id": "sid", "state": state, "backend": "tmux"},
+    ])
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: subprocess.CompletedProcess(
+        [], 0, stdout=f"{termlib.PREFIX}sid\t{int(attached)}\t100\n", stderr=""))
+    closed = []
+    monkeypatch.setattr(termlib, "close", lambda _root, sid: closed.append(sid))
+    path = "/api/terminal/sessions/sid/close"
+    assert c.post(path, json={"from_limit": True}).status_code == 409
+    assert closed == []
+    assert c.post(path, json={"from_limit": True, "confirmed": True}).status_code == 200
+    assert closed == ["sid"]
+
+
+@pytest.mark.parametrize("host_readable", [True, False])
+def test_terminal_limit_memory_counts_live_process_trees_without_writing(env, monkeypatch, host_readable) -> None:
+    from types import SimpleNamespace
+
+    import psutil
+
+    c, root, _work = env
+    now = time.time()
+    termlib.put(root, {"id": "claude", "label": "Review", "project": "alpha",
+                       "backend": "tmux", "kind": "start", "agent_id": "cc-aaaa1111",
+                       "last_opened": now - 20})
+    termlib.put(root, {"id": "shell", "label": "Shell", "project": "alpha",
+                       "backend": "tmux", "kind": "shell"})
+    termlib.put(root, {"id": "sleep", "backend": "tmux", "asleep": True})
+    monkeypatch.setattr(termlib, "tmux_panes", lambda _root: {
+        "claude": {"pid": "11", "fg": "claude", "activity": now - 1, "dead": False},
+        "shell": {"pid": "21", "fg": "sh", "activity": now - 1200, "dead": False},
+    })
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def memory_info(self):
+            return SimpleNamespace(rss={11: 120, 12: 80, 21: 5}[self.pid])
+
+    snapshots = []
+
+    def parent_snapshot():
+        snapshots.append(True)
+        return {11: 1, 12: 11, 21: 1}
+
+    def host_memory():
+        if not host_readable:
+            raise OSError("host memory unavailable")
+        return SimpleNamespace(total=1000, available=500)
+
+    monkeypatch.setattr(psutil, "Process", Process)
+    monkeypatch.setattr(psutil, "_ppid_map", parent_snapshot, raising=False)
+    monkeypatch.setattr(psutil, "virtual_memory", host_memory)
+    registry = termlib.registry_path(root)
+    before = registry.read_bytes(), registry.stat().st_mtime_ns
+    response = c.get("/api/terminal/limit")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert (data["count"], data["limit"]) == (2, 36)
+    assert snapshots == [True]
+    assert data["memory"]["total"] == (1000 if host_readable else None)
+    assert data["memory"]["available"] == (500 if host_readable else None)
+    assert data["memory"]["used"] == 205
+    assert data["memory"]["kinds"]["claude"] == {"count": 1, "bytes": 200, "measured": 1}
+    assert data["memory"]["kinds"]["shell"] == {"count": 1, "bytes": 5, "measured": 1}
+    sessions = {row["id"]: row for row in data["sessions"]}
+    assert sessions["claude"]["last_opened"] == now - 20
+    assert sessions["claude"]["recent_output"] is True
+    assert sessions["shell"]["recent_output"] is False
+    assert (registry.read_bytes(), registry.stat().st_mtime_ns) == before
+
+
+def test_terminal_limit_excerpts_are_read_only(env, monkeypatch) -> None:
+    from tests.conftest import make_chat
+
+    c, root, _work = env
+    agent = "cc-aaaa1111"
+    make_chat(root, "alpha", agent, [
+        (f"2026-11-20T10:0{i}:00", f"User prompt {i}", f"Agent output {i}") for i in range(1, 9)
+    ])
+    c.app.state.store.rebuild()
+    termlib.put(root, {"id": "chat", "backend": "tmux", "project": "alpha",
+                       "kind": "resume", "agent_id": agent})
+    termlib.put(root, {"id": "shell", "backend": "tmux", "project": "alpha", "kind": "shell"})
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    monkeypatch.setattr(termlib, "pane_pos", lambda *_: {"history": 50, "cursor": 22})
+    monkeypatch.setattr(termlib, "capture", lambda _root, sid, a, b: {
+        "text": "\n".join(f"Line {i}" for i in range(a, b + 1)),
+    })
+
+    def tree():
+        return {p.relative_to(root): (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in root.rglob("*") if p.is_file()}
+
+    before = tree()
+    chat = c.get("/api/terminal/sessions/chat/excerpts")
+    shell = c.get("/api/terminal/sessions/shell/excerpts")
+    assert chat.status_code == shell.status_code == 200
+    assert [item["text"] for item in chat.json()["first"]] == [f"User prompt {i}" for i in range(1, 4)]
+    assert [item["text"] for item in chat.json()["last"]] == [f"User prompt {i}" for i in range(6, 9)]
+    assert [item["text"] for item in shell.json()["first"]] == ["Line 0", "Line 1", "Line 2"]
+    assert [item["text"] for item in shell.json()["last"]] == ["Line 70", "Line 71", "Line 72"]
+    assert tree() == before
+
+
+@pytest.mark.parametrize("path", ["/api/terminal/limit", "/api/terminal/sessions/private/excerpts"])
+def test_terminal_recovery_reads_require_the_operator_cookie(env, path) -> None:
+    c, root, _work = env
+    termlib.put(root, {"id": "private", "label": "Private terminal", "backend": "plain"})
+    allowed = c.get(path)
+    assert allowed.status_code == 200
+    assert allowed.headers["cache-control"] == "no-store"
+
+    c.cookies.clear()
+    refused = c.get(path)
+    assert refused.status_code in (401, 403)
+    assert "Private terminal" not in refused.text
+
+
+@pytest.mark.parametrize("path", ["/api/terminal/limit", "/api/terminal/sessions/idle/excerpts"])
+def test_terminal_recovery_reads_leave_due_tasks_untouched(env, monkeypatch, path) -> None:
+    from backend import csvio, tasklib
+    from backend.entities import ENTITIES
+
+    c, root, _work = env
+    termlib.put(root, {"id": "idle", "backend": "plain"})
+    tasks = root / "tasks.csv"
+    csvio.append_row(tasks, ENTITIES["task"].columns, {
+        "id": "tk_scheduled", "project": "alpha", "title": "Scheduled",
+        "status": "done", "resurface_on": "2000-01-01", "resurface_to": "todo",
+    })
+    before = tasks.read_bytes(), tasks.stat().st_mtime_ns
+    monkeypatch.setattr(tasklib, "_last_sweep", 0.0)
+
+    reply = c.get(path)
+    assert reply.status_code == 200
+    assert (tasks.read_bytes(), tasks.stat().st_mtime_ns) == before
+
+
+def test_terminal_recovery_activity_counts_indexed_turns(env, monkeypatch) -> None:
+    from datetime import datetime, timedelta
+
+    from tests.conftest import make_chat
+
+    c, root, _work = env
+    agent = "cc-aaaa1111"
+    recent = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=1)
+    old = recent - timedelta(days=8)
+    make_chat(root, "alpha", agent, [
+        (old.isoformat(), "An older prompt", "Older answer"),
+        (recent.isoformat(), "A current prompt", "Current answer"),
+    ])
+    c.app.state.store.rebuild()
+    termlib.put(root, {"id": "chat", "project": "alpha", "agent_id": agent,
+                       "backend": "tmux", "kind": "resume"})
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    monkeypatch.setattr(termlib, "tmux_panes", lambda _root: {
+        "chat": {"fg": "claude", "activity": recent.timestamp() - 60, "dead": False},
+    })
+
+    reply = c.get("/api/terminal/limit")
+    assert reply.status_code == 200, reply.text
+    (session,) = reply.json()["sessions"]
+    assert 1 <= session["activity"] < 2
+    assert session["last_activity"] == recent.timestamp()
+
+
+@pytest.mark.parametrize("observation", ["tmux_timeout", "missing_pane", "attachment_timeout"])
+def test_limit_close_requires_confirmation_when_tmux_state_is_unknown(env, monkeypatch, observation) -> None:
+    from subprocess import CompletedProcess
+
+    c, root, _work = env
+    sid = "protected"
+    termlib.put(root, {"id": sid, "backend": "tmux"})
+    panes = {} if observation != "attachment_timeout" else {
+        sid: {"fg": "sh", "activity": 0, "dead": False},
+    }
+    monkeypatch.setattr(termlib, "tmux_panes", lambda _root: panes)
+    lookup = (CompletedProcess([], 0, stdout=f"{termlib.PREFIX}{sid}\t0\t0\n", stderr="")
+              if observation == "missing_pane" else CompletedProcess([], 1, stdout="", stderr="tmux timed out"))
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: lookup)
+    closed = []
+    monkeypatch.setattr(termlib, "close", lambda _root, name: closed.append(name))
+
+    path = f"/api/terminal/sessions/{sid}/close"
+    assert c.post(path, json={"from_limit": True}).status_code == 409
+    assert not closed
+    assert c.post(path, json={"from_limit": True, "confirmed": True}).status_code == 200
+    assert closed == [sid]
+
+
+@unix_pty
+@pytest.mark.parametrize("observation", ["foreground", "registry"])
+def test_limit_close_preserves_a_quiet_pty_when_observation_fails(env, monkeypatch, observation) -> None:
+    from backend.routers import terminal
+
+    c, root, _work = env
+    _on(c)
+    monkeypatch.setattr(termlib, "uses_tmux", lambda _settings: False)
+    open_pty = terminal.open_pty
+    held = {}
+
+    def quiet_pty(sid, _argv, cwd, cols, rows, child_env):
+        session = open_pty(sid, [sys.executable, "-c", "import time; time.sleep(30)"], cwd, cols, rows, child_env)
+        session.last_output = 0
+        held[sid] = session
+        return session
+
+    monkeypatch.setattr(terminal, "open_pty", quiet_pty)
+    opened = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"})
+    assert opened.status_code == 201, opened.text
+    sid = opened.json()["session"]["id"]
+    session = held[sid]
+    assert session.alive() and not session.subscribers
+
+    with monkeypatch.context() as failed:
+        if observation == "foreground":
+            failed.setattr(termlib, "foreground_of_fd", lambda _fd: "")
+            (candidate,) = c.get("/api/terminal/limit").json()["sessions"]
+            assert candidate["foreground_known"] is False
+        else:
+            read_json = termlib.safe_read_json
+
+            def unreadable(path, **kwargs):
+                if path == termlib.registry_path(root):
+                    raise PermissionError("terminal registry unreadable")
+                return read_json(path, **kwargs)
+
+            failed.setattr(termlib, "safe_read_json", unreadable)
+            # A missing handle alone cannot rule out an off-process tmux session.
+            unknown = c.post("/api/terminal/sessions/unknown/close", json={"from_limit": True})
+            assert unknown.status_code == 409, unknown.text
+
+        path = f"/api/terminal/sessions/{sid}/close"
+        reply = c.post(path, json={"from_limit": True})
+        assert reply.status_code == 409, reply.text
+        assert not session.closed and session.alive()
+
+    assert termlib.get(root, sid) is not None
+    assert c.post(path, json={"from_limit": True, "confirmed": True}).status_code == 200
+    assert session.closed
+
+
+@unix_pty
+def test_limit_close_sees_a_plain_view_attaching_before_replay(env, monkeypatch) -> None:
+    import threading
+
+    from backend.routers import terminal
+
+    c, root, work = env
+    _on(c)
+    sid = "attaching"
+    termlib.put(root, {"id": sid, "backend": "plain", "cwd": str(work)})
+    monkeypatch.setattr(termlib, "listing", lambda *_: [
+        {"id": sid, "backend": "plain", "state": "shell", "last_output": 0},
+    ])
+    attached = threading.Event()
+    proceed = threading.Event()
+    run_in_threadpool = terminal.run_in_threadpool
+
+    async def pause_before_replay(function, *args, **kwargs):
+        result = await run_in_threadpool(function, *args, **kwargs)
+        if function.__name__ == "_attach":
+            attached.set()
+            await run_in_threadpool(proceed.wait, 15)
+        return result
+
+    monkeypatch.setattr(terminal, "run_in_threadpool", pause_before_replay)
+    token = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={token}"):
+        try:
+            assert attached.wait(10)
+            refused = c.post(f"/api/terminal/sessions/{sid}/close", json={"from_limit": True})
+            assert refused.status_code == 409, refused.text
+            assert termlib.get(root, sid)
+        finally:
+            proceed.set()

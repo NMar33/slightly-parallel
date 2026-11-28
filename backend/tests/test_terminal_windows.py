@@ -151,17 +151,48 @@ def test_windows_never_uses_tmux_even_with_one_on_the_path(monkeypatch) -> None:
     assert termlib.lost([{"id": "a", "state": "ended", "backend": "plain", "server": "1"}], "") == []
 
 
-def test_the_program_in_a_plain_windows_terminal_comes_from_its_process_tree() -> None:
+def test_the_program_in_a_plain_windows_terminal_comes_from_its_process_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """No foreground process group on Windows: the newest process at the
     bottom of the shell's tree. Run here on real processes (psutil)."""
+    ready = tmp_path / "leaf-ready"
+    child_code = (
+        "import os, pathlib, sys, time; "
+        "time.sleep(1); pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)"
+    )
     code = ("import subprocess, sys, time; "
-            "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); time.sleep(30)")
-    shell = subprocess.Popen([sys.executable, "-c", code])
+            "subprocess.Popen([sys.executable, '-c', *sys.argv[1:]]); time.sleep(30)")
+    shell = subprocess.Popen([sys.executable, "-c", code, child_code, str(ready)])
+    process_name = psutil.Process.name
+
+    def name(process: psutil.Process) -> str:
+        # Both processes use the same interpreter. Give the outer process
+        # its own name so finding it instead of the ready leaf fails the test.
+        if process.pid == shell.pid:
+            return "stand-shell"
+        # Reproduce macOS returning the loader name on the first lookup.
+        if process.ppid() == shell.pid and not ready.exists():
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists(), "the leaf did not finish starting"
+            return "bootstrap-python"
+        return process_name(process)
+
+    monkeypatch.setattr(psutil.Process, "name", name)
     try:
-        deadline = time.time() + 10
-        while not psutil.Process(shell.pid).children() and time.time() < deadline:
-            time.sleep(0.05)
-        child = psutil.Process(shell.pid).children()[0]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                leaf_pid = int(ready.read_text())
+                break
+            except (FileNotFoundError, ValueError):
+                time.sleep(0.05)
+        else:
+            pytest.fail("the leaf did not report its PID after starting")
+        assert leaf_pid in {child.pid for child in psutil.Process(shell.pid).children(recursive=True)}
+        child = psutil.Process(leaf_pid)
         want = os.path.basename(child.name())
         want = want[:-4] if want.lower().endswith(".exe") else want
         assert termlib.foreground_of_pid(shell.pid) == want
@@ -172,8 +203,8 @@ def test_the_program_in_a_plain_windows_terminal_comes_from_its_process_tree() -
         assert not alive or alive[0].status() == psutil.STATUS_ZOMBIE
     finally:
         if shell.poll() is None:
-            shell.kill()
-            shell.wait()
+            conpty.kill_tree(shell.pid)
+            shell.wait(timeout=10)
     assert termlib.foreground_of_pid(shell.pid) == ""
 
 
@@ -214,6 +245,7 @@ class FakePTY:
         self.out: queue.Queue[str] = queue.Queue()
         self.cancelled = False
         self.written: list[str] = []
+        self.previous_write_bytes = 0
         FakePTY.made.append(self)
 
     def spawn(self, appname, cmdline=None, cwd=None, env=None):
@@ -244,7 +276,13 @@ class FakePTY:
         if "exit\r" in text:
             self.proc.kill()
             self.proc.wait()
-        return len(text)
+        count = len(text.encode("utf-8"))
+        if self.backend == 1:
+            return count
+        # pywinpty's asynchronous ConPTY may report the previous submission.
+        previous = self.previous_write_bytes
+        self.previous_write_bytes = count
+        return previous
 
     def set_size(self, cols, rows):
         self.size = (cols, rows)
@@ -278,8 +316,11 @@ def test_a_conpty_reads_writes_resizes_and_ends_with_its_whole_tree() -> None:
         assert fake.cmdline == '-NoLogo -EncodedCommand "a b"' and fake.cwd == "C:\\work"
         assert fake.env == "SP_TERMINAL=t1\0"
         assert "PS C:\\>" in _drain(con, "PS C:\\>")
-        con.write("echo ünï ✓\r".encode())
+        assert con.write("echo ünï ✓\r".encode()) == "written"
         assert "echo ünï ✓" in _drain(con, "✓")
+        assert con.write(b"x\r") == "written"
+        assert "x\r" in _drain(con, "x\r")
+
         con.resize(120, 40)
         assert "[size 120x40]" in _drain(con, "[size")
         assert con.alive() and con.foreground()
@@ -292,6 +333,28 @@ def test_a_conpty_reads_writes_resizes_and_ends_with_its_whole_tree() -> None:
             fake.proc.wait()
     con.release()
     assert con.read() == b""
+    assert con.write(b"not replayed\r") == "failed"
+
+
+def test_conpty_error_after_first_chunk_is_uncertain_and_never_resends(monkeypatch) -> None:
+    con = conpty.ConPty(["cmd.exe"], "", 80, 24, {}, module=FAKE)
+    fake = FakePTY.made[-1]
+    first_chunk = "x" * 8192
+    frame = first_chunk + "possible Enter\r"
+    attempts = []
+
+    def partial_then_error(text):
+        attempts.append(text)
+        fake.written.append(text[:8192])
+        raise FakeError("The input pipe stopped after one chunk")
+
+    try:
+        monkeypatch.setattr(fake, "write", partial_then_error)
+        assert con.write(frame.encode()) == "uncertain"
+        assert attempts == [frame] and fake.written == [first_chunk]
+    finally:
+        con.kill()
+        fake.proc.wait(timeout=10)
 
 
 def test_a_conpty_whose_shell_exits_reads_to_the_end() -> None:
@@ -320,7 +383,7 @@ def test_a_read_error_while_the_shell_lives_is_retried(monkeypatch) -> None:
         fake.proc.wait(timeout=10)
 
 
-def test_without_conpty_the_older_backend_is_taken() -> None:
+def test_legacy_winpty_uses_the_synchronous_count(monkeypatch) -> None:
     class NoConPTY(FakePTY):
         def __init__(self, cols, rows, backend=None):
             if backend == 0:
@@ -328,9 +391,17 @@ def test_without_conpty_the_older_backend_is_taken() -> None:
             super().__init__(cols, rows, backend)
     con = conpty.ConPty(["cmd.exe"], "", 80, 24, {}, module=SimpleNamespace(PTY=NoConPTY, WinptyError=FakeError,
                                                                              Backend=FAKE.Backend))
-    assert FakePTY.made[-1].backend is None
-    con.kill()
-    FakePTY.made[-1].proc.wait(timeout=10)
+    fake = FakePTY.made[-1]
+    try:
+        assert fake.backend == FAKE.Backend.WinPTY
+        assert con.write("x✓".encode()) == "written"
+        monkeypatch.setattr(fake, "write", lambda _: 0)
+        assert con.write(b"keys\r") == "failed"
+        monkeypatch.setattr(fake, "write", lambda _: 2)
+        assert con.write(b"keys\r") == "uncertain"
+    finally:
+        con.kill()
+        fake.proc.wait(timeout=10)
 
 
 def test_without_pywinpty_the_terminal_says_what_to_install(tmp_path: Path, monkeypatch) -> None:

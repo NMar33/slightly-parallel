@@ -229,7 +229,7 @@ def _cc(row: str, under: str = RULE, top: str = RULE) -> str:
     ("Do you want to proceed?\n❯ 1. Yes\n  2. No\n", "claude-code", False),
     ("Do you want to proceed?\n" + RULE + "\n❯ 1. Yes\n" + RULE + "\n", "claude-code", False),
     ("$ ls\n$ \n", "claude-code", False),
-    ("\x1b[1;2m› \x1b[0mearlier message\n\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n  model · ~/x\n",
+    ("\x1b[1;2m› \x1b[0mearlier message\n\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n  \x1b[2mmodel · ~/x\x1b[0m\n",
      "codex", True),
     ("\x1b[1m›\x1b[0m #now half typed\n\n  model · ~/x\n", "codex", False),
     ("\x1b[1m›\x1b[0m \n  a second line\n", "codex", False),
@@ -237,6 +237,18 @@ def _cc(row: str, under: str = RULE, top: str = RULE) -> str:
 ])
 def test_input_line(screen: str, tool: str, empty: bool) -> None:
     assert msgdeliver.input_empty(screen, tool) is empty
+
+
+@pytest.mark.parametrize("screen, tool", [
+    (_cc(" "), "claude-code"),
+    (_cc("\u00a0 "), "claude-code"),
+    (_cc("\x1b[2m   \x1b[0m"), "claude-code"),
+    ("›    \n\n  \x1b[2mmodel · ~/x\x1b[0m\n", "codex"),
+    ("› \n    \n  \x1b[2mmodel · ~/x\x1b[0m\n", "codex"),
+    ("› \n    \n", "codex"),
+], ids=["claude-space", "claude-nbsp", "claude-dim-space", "codex-first-line", "codex-continuation", "codex-last-line"])
+def test_composer_whitespace_drafts_are_not_ready_even_without_recent_typing(screen, tool) -> None:
+    assert not msgdeliver.input_empty(screen, tool)
 
 
 def test_without_a_live_terminal_the_message_waits(root: Path) -> None:

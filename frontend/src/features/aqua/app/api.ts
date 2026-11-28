@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 
 import { getJson, postJson } from '../../../lib/getJson'
 import { useTerminals } from '../../../lib/terminal'
+import { openWithTerminalLimit } from '../../../lib/terminalLimit'
 import type { AquaSession, Group, Role } from './model'
 import { t } from '../../../i18n/scope/aqua'
 
@@ -79,7 +80,9 @@ export function useAquaActions() {
   return {
     /** A new terminal, handed back (never shown in the app's drawer). */
     open: async (req: { kind: 'shell' | 'resume' | 'start'; project?: string; cwd?: string; label?: string; command?: string; agent?: string; task_id?: string; role?: Role; group?: string }) => {
-      const d = await postJson<{ session: AquaSession }>('/api/terminal/sessions', { ...req, actor: 'operator' }).catch(failed(t('The terminal did not open')))
+      const d = await openWithTerminalLimit(req, () =>
+        postJson<{ session: AquaSession }>('/api/terminal/sessions', { ...req, actor: 'operator' }),
+      ).catch(failed(t('The terminal did not open')))
       refresh()
       return d?.session ?? null
     },
