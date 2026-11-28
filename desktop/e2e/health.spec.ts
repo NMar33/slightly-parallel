@@ -21,7 +21,8 @@ type Brk = { on: boolean; paused?: string[]; today: Array<{ note: string }> }
 async function seedYellow(page: import('@playwright/test').Page, minutes = 95) {
   // Written as the reloaded page starts: the page being left saves its own day on beforeunload, over anything written before.
   await page.addInitScript((run) => {
-    if (sessionStorage.getItem('sp-e2e-seeded')) return
+    // The preloaded dashboard shares this origin's storage with Aqua.
+    if (window !== window.top || sessionStorage.getItem('sp-e2e-seeded')) return
     sessionStorage.setItem('sp-e2e-seeded', '1')
     const now = Date.now()
     const d = new Date(now)

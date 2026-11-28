@@ -10,15 +10,17 @@ import { persistPref, useKeyedPref } from '../../../../lib/uiPrefs'
 import { toast } from '../../../../components/primitives'
 import { postJson } from '../../../../lib/getJson'
 import { OPERATOR_ACTOR } from '../../types'
-import { laneOf, orderLanes } from '../model'
-import type { KanbanView, TaskRow } from '../model'
+import { laneKey, taskLaneName, taskLaneKey } from '../model'
+import type { BoardLane, KanbanView, TaskRow } from '../model'
 import { putBack } from '../boardData'
 import { t, tn } from '../../../../i18n/scope/project'
 
 export function useLanes({
-  boardKey, view, tasks, setTasks, setRefreshTick,
+  boardKey, view, tasks, setTasks, setRefreshTick, savedLanes, project,
 }: {
   boardKey: string
+  project?: string
+  savedLanes?: Record<string, string[]>
   view: KanbanView
   tasks: TaskRow[]
   setTasks: (u: TaskRow[] | ((cur: TaskRow[]) => TaskRow[])) => void
@@ -30,69 +32,126 @@ export function useLanes({
   // Lane order — manual, remembered per project; lanes not yet placed follow
   // alphabetically, "unassigned" last unless the user moved it.
   const [laneOrder, saveLaneOrder] = useKeyedPref(`sp-lanes-order:${boardKey}`, readStrings)
-  const lanes = useMemo(() => {
-    if (view !== 'lanes') return []
-    const s = new Set<string>()
-    for (const t of tasks) s.add(laneOf(t))
-    for (const extra of extraLanes) if (extra) s.add(extra)
-    return orderLanes(Array.from(s), laneOrder)
-  }, [tasks, view, extraLanes, laneOrder])
-  const moveLane = (lane: string, to: number) => {
-    const current = lanes.filter((l) => l !== lane)
-    const idx = Math.max(0, Math.min(current.length, to))
-    saveLaneOrder([...current.slice(0, idx), lane, ...current.slice(idx)])
+  const [agentsOpen, setAgentsOpen] = useKeyedPref(
+    `sp-lanes-agents:${boardKey}`, (key) => readStrings(key).includes('open'),
+    (key, open) => persistPref(key, open ? '["open"]' : '[]'),
+  )
+  const toggleAgents = () => setAgentsOpen(!agentsOpen)
+  const primary = project ?? ''
+  const storedKey = (key: string) => key.includes('\n') ? key : laneKey(primary, key === 'unassigned' ? '' : key)
+  const orderedKeys = laneOrder.map(storedKey)
+  const laneRows = useMemo(() => {
+    const rows = new Map<string, BoardLane>()
+    const active = new Set(tasks.filter((task) => !task.archived_at).map(taskLaneKey))
+    for (const task of tasks) {
+      const key = taskLaneKey(task)
+      if (task.archived_at && active.has(key)) continue
+      const name = taskLaneName(task)
+      const agent = task.lane_kind === 'agent' && !!name
+      const previous = rows.get(key)
+      if (!previous || (agent && !previous.agent)) rows.set(key, { key, name, project: task.project ?? '', agent })
+    }
+    const addBoardLane = (code: string, name: string) => {
+      if (!name) return
+      const key = laneKey(code, name)
+      rows.set(key, { key, name, project: code, agent: false })
+    }
+    if (savedLanes?.[primary] === undefined) {
+      for (const name of extraLanes) addBoardLane(primary, name)
+    }
+    for (const [code, names] of Object.entries(savedLanes ?? {})) {
+      for (const name of names) addBoardLane(code, name)
+    }
+    return [...rows.values()]
+  }, [tasks, extraLanes, primary, savedLanes])
+  const compare = (a: BoardLane, b: BoardLane) => {
+    const aIndex = orderedKeys.indexOf(a.key)
+    const bIndex = orderedKeys.indexOf(b.key)
+    if (aIndex !== -1 || bIndex !== -1) {
+      return (aIndex === -1 ? orderedKeys.length : aIndex) - (bIndex === -1 ? orderedKeys.length : bIndex)
+    }
+    const unassigned = Number(!a.name) - Number(!b.name)
+    return unassigned || a.name.localeCompare(b.name) || a.project.localeCompare(b.project)
   }
-  const moveLaneBefore = (lane: string, target: string) => {
-    if (lane === target) return
-    const current = lanes.filter((l) => l !== lane)
-    moveLane(lane, current.indexOf(target))
+  const boardLanes = laneRows.filter((lane) => !lane.agent).sort(compare)
+  const agentLanes = laneRows.filter((lane) => lane.agent).sort(compare)
+  const lanes = view !== 'lanes' ? [] : agentsOpen ? [...boardLanes, ...agentLanes] : boardLanes
+
+  const promoteLane = async (lane: BoardLane) => {
+    try {
+      await postJson('/api/tasks/lanes/promote', { project: lane.project, lane: lane.name, actor: OPERATOR_ACTOR })
+    } catch {
+      toast.error(t('Could not move lane "{name}" to the board', { name: lane.name }))
+    }
+    setRefreshTick((tick) => tick + 1)
   }
 
-  // Collapsed lanes — one line each, still a drop target; remembered per project.
-  const [collapsedLanes, saveCollapsed] = useKeyedPref(
-    `sp-lanes-collapsed:${boardKey}`,
-    (k) => new Set(readStrings(k)),
-    (k, v) => persistPref(k, JSON.stringify([...v])),
-  )
-  const toggleLane = (lane: string) => {
-    const next = new Set(collapsedLanes)
-    if (next.has(lane)) next.delete(lane)
-    else next.add(lane)
-    saveCollapsed(next)
+  const moveLaneBefore = (key: string, target: string) => {
+    if (key === target) return
+    const current = lanes.map((lane) => lane.key).filter((lane) => lane !== key)
+    const index = current.indexOf(target)
+    if (index !== -1) saveLaneOrder([...current.slice(0, index), key, ...current.slice(index)])
   }
-  const allCollapsed = lanes.length > 0 && lanes.every((l) => collapsedLanes.has(l))
-  const collapseAll = () => saveCollapsed(allCollapsed ? new Set() : new Set(lanes))
+
+  // Collapsed lanes are remembered by project and spelling-independent name.
+  const [storedCollapsed, saveCollapsed] = useKeyedPref(
+    `sp-lanes-collapsed:${boardKey}`,
+    readStrings,
+  )
+  const collapsedLanes = new Set(storedCollapsed.map(storedKey))
+  const toggleLane = (key: string) => {
+    const next = new Set(collapsedLanes)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    saveCollapsed([...next])
+  }
+  const allCollapsed = laneRows.length > 0
+    && !agentsOpen && boardLanes.every((lane) => collapsedLanes.has(lane.key))
+  const collapseAll = () => {
+    saveCollapsed(allCollapsed ? [] : lanes.map((lane) => lane.key))
+    if (agentLanes.length > 0) setAgentsOpen(allCollapsed)
+  }
 
   // Inline add-lane form state (replaces window.prompt).
   const [addingLane, setAddingLane] = useState(false)
   const [laneDraft, setLaneDraft] = useState('')
 
+  const saveLane = async (op: 'add' | 'remove' | 'rename', code: string, lane: string, previous?: string) => {
+    const registered = savedLanes?.[code]?.some((name) => laneKey(code, name) === laneKey(code, previous ?? lane))
+    const targets = code && (op === 'add' || registered) ? [code] : []
+    const results = await Promise.allSettled(targets.map((code) =>
+      postJson('/api/tasks/lanes', { op, lane, previous, project: code, actor: OPERATOR_ACTOR })))
+    if (results.some((result) => result.status === 'rejected')) {
+      toast.error(t('Could not save lane "{name}"', { name: lane }))
+    }
+    setRefreshTick((tick) => tick + 1)
+    return results.every((result) => result.status === 'fulfilled')
+  }
+
   // Rename a lane — cascades to all tasks with that assignee. Optimistic;
   // rolls back and toasts if any persistence call fails.
-  const renameLane = async (oldName: string, newName: string) => {
+  const renameLane = async (lane: BoardLane, newName: string) => {
+    const { name: oldName, key } = lane
     const clean = newName.trim()
     if (!clean || clean === oldName) return
-    const affected = tasks.filter((t) => laneOf(t) === oldName)
+    const affected = tasks.filter((t) => taskLaneKey(t) === key)
     const prevTasks = tasks
     const prevLanes = extraLanes
     // Optimistic update
     setTasks((prev) => prev.map((t) =>
-      laneOf(t) === oldName
-        ? { ...t, assignee: clean === 'unassigned' ? '' : clean, lane: clean }
+      taskLaneKey(t) === key
+        ? { ...t, assignee: clean, lane: clean }
         : t
     ))
     // Update the user-added lanes list too
-    saveExtraLanes(
-      prevLanes
-        .map((l) => (l === oldName ? clean : l))
-        .concat([clean])
-        .filter((l, i, a) => a.indexOf(l) === i && l !== 'unassigned'),
-    )
+    if (lane.project === primary) {
+      saveExtraLanes(prevLanes.map((name) => laneKey(primary, name) === key ? clean : name))
+    }
     // Persist each affected task; collect outcomes.
     const results = await Promise.allSettled(
       affected.map((t) =>
         postJson(`/api/tasks/${encodeURIComponent(t.id)}/update`, {
-          assignee: clean === 'unassigned' ? '' : clean,
+          assignee: clean,
           lane: clean,
           actor: OPERATOR_ACTOR,
         }),
@@ -111,32 +170,35 @@ export function useLanes({
       })
       return
     }
-    setRefreshTick((n) => n + 1)
+    await saveLane('rename', lane.project, clean, oldName)
   }
 
   // Delete a lane (must be empty; the unassigned bucket is not deletable).
-  const deleteLane = (name: string) => {
-    if (name === 'unassigned') return
-    const inLane = tasks.filter((t) => laneOf(t) === name)
+  const deleteLane = async ({ name, project: code, key }: BoardLane) => {
+    if (!name) return
+    const inLane = tasks.filter((t) => taskLaneKey(t) === key)
     if (inLane.length > 0) {
       toast.error(t('Cannot delete "{name}"', { name }), {
         description: t('It has {tasks}. Move them first.', { tasks: tn(inLane.length, '{n} task', '{n} tasks') }),
       })
       return
     }
-    saveExtraLanes(extraLanes.filter((l) => l !== name))
+    if (await saveLane('remove', code, name) && code === primary) {
+      saveExtraLanes(extraLanes.filter((candidate) => laneKey(primary, candidate) !== key))
+    }
   }
 
-  const commitAddLane = () => {
+  const commitAddLane = async () => {
     const name = laneDraft.trim()
     setAddingLane(false)
     setLaneDraft('')
-    if (!name || lanes.includes(name)) return
-    saveExtraLanes([...extraLanes.filter((l) => l !== name), name])
+    if (!name || name.length > 80 || boardLanes.some((lane) => lane.key === laneKey(primary, name))) return
+    if (project) await saveLane('add', project, name)
+    else saveExtraLanes([...extraLanes.filter((l) => l !== name), name])
   }
 
   return {
-    lanes, collapsedLanes, toggleLane, allCollapsed, collapseAll,
+    lanes, agentLanes, agentsOpen, toggleAgents, promoteLane, collapsedLanes, toggleLane, allCollapsed, collapseAll,
     addingLane, setAddingLane, laneDraft, setLaneDraft,
     renameLane, deleteLane, commitAddLane, moveLaneBefore,
   }

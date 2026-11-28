@@ -8,7 +8,7 @@ it, and keeps a dated ladder of the results.
 Three properties, in order of how much they matter:
 
 1. **The archive does not need Slightly Parallel.** It is a plain ``.tar.gz`` whose
-   single top-level directory is the data root's own folder name. Recovery
+   single top-level directory is ``sp-data``. Recovery
    is ``tar -xzf`` — no server, no Python, no schema, no version match. A
    backup only this program can read is a second thing that can fail at
    exactly the worst moment.
@@ -23,10 +23,10 @@ Three properties, in order of how much they matter:
    there, so it is the one about to cross into the next rung: every rung is
    fed by the one below it instead of starving behind the boundary.
 
-Three folders are left out (``EXCLUDE_DIRS``): ``tour_shots``, the tour's
+Machine-local folders are left out (``EXCLUDE_DIRS``): ``tour_shots``, the tour's
 page photographs — two thirds of the archive, and two minutes to regenerate —
-and ``monitor`` and ``terminal``, this machine's own record and its open
-terminals. Everything else goes in.
+and ``monitor``, ``terminal`` and ``diagnostics``, the machine's samples, terminal
+registry and local snapshots. Everything else goes in.
 
 Manual archives are the operator's own bookmarks: kept by count rather than
 by date. A pin overrules the ladder outright — on any archive, of either
@@ -62,6 +62,7 @@ from .file_safety import atomic_write_json
 log = logging.getLogger("sp.backup")
 
 ARCHIVE_SUFFIX = ".tar.gz"
+ARCHIVE_ROOT = "sp-data"
 SIDECAR_SUFFIX = ".json"
 PART_SUFFIX = ".part"
 
@@ -75,12 +76,13 @@ EXCLUDE_GLOBS: tuple[str, ...] = ("*.lock", "operator.token")
 # two thirds of the archive by size, PNGs that gzip barely touches, and
 # regenerable in about two minutes by re-running the capture. ``monitor`` is
 # the system monitor's samples of this machine and ``terminal`` the registry
-# of its open terminals: neither is project data, neither means anything on
-# another day. Nothing else
+# of its open terminals. `diagnostics` holds local terminal snapshots,
+# which can contain private terminal output. Nothing else
 # belongs here — a backup that quietly leaves things out is the class of bug
 # this feature exists against, so both lists are reported by the API and
 # shown on the page rather than living only in this file.
-EXCLUDE_DIRS: tuple[str, ...] = ("tour_shots", "monitor", "terminal")
+DIAGNOSTICS_DIR = "diagnostics"
+EXCLUDE_DIRS: tuple[str, ...] = ("tour_shots", "monitor", "terminal", DIAGNOSTICS_DIR)
 _RESTORE_WORK_PREFIX = ".sp-restore-"
 
 KINDS = ("auto", "manual")
@@ -269,15 +271,20 @@ def check_roots(data_root: Path, backup_root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _is_diagnostics(name: str) -> bool:
+    return name.casefold() == DIAGNOSTICS_DIR
+
+
 def _excluded(rel: Path) -> bool:
-    if rel.parts and (rel.parts[0] in EXCLUDE_DIRS or rel.parts[0].startswith(_RESTORE_WORK_PREFIX)):
-        return True
+    if rel.parts:
+        folder = rel.parts[0]
+        if _is_diagnostics(folder) or folder in EXCLUDE_DIRS or folder.startswith(_RESTORE_WORK_PREFIX):
+            return True
     return any(rel.match(g) for g in EXCLUDE_GLOBS)
 
 
 def walk_source(data_root: Path) -> Iterator[tuple[Path, str]]:
     """Every file to archive, as (absolute path, name inside the tar)."""
-    top = data_root.name or "data"
     for path in sorted(data_root.rglob("*")):
         # Symlinks are followed by nothing here: a link is copied as neither
         # its target nor itself, because restoring one would either duplicate
@@ -288,20 +295,19 @@ def walk_source(data_root: Path) -> Iterator[tuple[Path, str]]:
         rel = path.relative_to(data_root)
         if _excluded(rel):
             continue
-        yield path, f"{top}/{rel.as_posix()}"
+        yield path, f"{ARCHIVE_ROOT}/{rel.as_posix()}"
 
 
 def walk_dirs(data_root: Path) -> Iterator[tuple[Path, str]]:
     """Every directory, so an empty one survives the round trip."""
-    top = data_root.name or "data"
-    yield data_root, top
+    yield data_root, ARCHIVE_ROOT
     for path in sorted(data_root.rglob("*")):
         if not path.is_dir() or path.is_symlink():
             continue
         rel = path.relative_to(data_root)
         if _excluded(rel):
             continue
-        yield path, f"{top}/{rel.as_posix()}"
+        yield path, f"{ARCHIVE_ROOT}/{rel.as_posix()}"
 
 
 def skipped_links(data_root: Path) -> list[str]:
@@ -742,8 +748,8 @@ def _links_problem(links: list[str]) -> str:
 NO_FILTER = "this Python cannot unpack a backup safely: Python 3.11.4 or newer is needed"
 
 
-def _extract(archive_path: Path, dest: Path) -> None:
-    """Unpack an archive into ``dest``, trusting it no further than that.
+def _extract(archive_path: Path, dest: Path) -> Path:
+    """Unpack into ``dest`` and return the archive's data root.
 
     ``filter="data"`` refuses absolute paths, ``..`` escapes and device
     nodes; it still lets through a link that points inside ``dest`` — and
@@ -757,10 +763,40 @@ def _extract(archive_path: Path, dest: Path) -> None:
         links = [m.name for m in members if m.issym() or m.islnk()]
         if links:
             raise BackupError(_links_problem(links))
+        # Decide whether this is a wrapped archive before omitting anything.
+        # A flat archive can have only one directory left after filtering.
+        entries = []
+        for member in members:
+            safe = tarfile.data_filter(member, str(dest))
+            if safe is not None:
+                parts = Path(os.path.normpath(safe.name)).parts
+                entries.append((safe, parts))
+        names = {parts[0] for _, parts in entries if parts}
+        tops = {os.path.normcase(name) for name in names}
+        if names and all(_is_diagnostics(name) for name in names):
+            from .entities import ENTITIES
+
+            # Old releases used the data folder's name as the wrapper. A
+            # regular data-root file distinguishes it from a snapshot folder.
+            markers = {"settings.json", *(entity.csv for entity in ENTITIES.values())}
+            if len(names) != 1 or not any(
+                len(parts) == 2 and parts[1] in markers and member.isfile()
+                for member, parts in entries
+            ):
+                raise BackupError("the reserved diagnostics folder cannot be a backup root without a data-root file")
+        wrapped = len(tops) == 1 and any(len(parts) > 1 or member.isdir() for member, parts in entries if parts)
+        offset = int(wrapped)
+        # Old archives can contain terminal transcripts. Never stage them.
+        selected = [
+            member for member, parts in entries
+            if len(parts) <= offset or not _is_diagnostics(parts[offset])
+        ]
         try:
-            tar.extractall(dest, members=members, filter="data")
+            tar.extractall(dest, members=selected, filter="data")
         except TypeError as exc:          # an extractall without the filter
             raise BackupError(NO_FILTER) from exc
+        source = dest / next(parts[0] for _, parts in entries if parts) if wrapped else dest
+        return source if source.is_dir() else dest
 
 
 CHECKED = "checked.json"
@@ -797,16 +833,12 @@ def _trial(backup_root: Path, name: str) -> dict[str, Any]:
         # the system temp folder, which may be small (a tmpfs) or shared.
         with tempfile.TemporaryDirectory(prefix="sp-trial-", dir=str(backup_root)) as tmp:
             try:
-                _extract(archive.path, Path(tmp))
+                root = _extract(archive.path, Path(tmp))
             except BackupError as exc:
                 problems.append(str(exc))
             except (OSError, EOFError, tarfile.TarError) as exc:
                 problems.append(f"it does not unpack: {exc}")
-            tops = [p for p in Path(tmp).iterdir() if p.is_dir()]
-            if not problems and len(tops) != 1:
-                problems.append(f"it unpacks to {len(tops)} folders, not one data root")
-            if not problems:
-                root = tops[0]
+            else:
                 store = ViewStore(root)
                 for e in store.load_errors:
                     problems.append(f"{Path(e.get('file', '')).name} does not load: {e.get('error', '')}")
@@ -903,12 +935,10 @@ def _restore(backup_root: Path, name: str, data_root: Path) -> dict[str, Any]:
     prefix = _RESTORE_WORK_PREFIX if work == data_root else "sp-"
     staged = Path(tempfile.mkdtemp(prefix=f"{prefix}restore-", dir=work))
     try:
-        _extract(archive.path, staged)
+        source = _extract(archive.path, staged)
     except BaseException:
         shutil.rmtree(staged, ignore_errors=True)   # nothing of the data was touched
         raise
-    tops = [p for p in staged.iterdir()]
-    source = tops[0] if len(tops) == 1 and tops[0].is_dir() else staged
 
     aside = Path(tempfile.mkdtemp(prefix=f"{prefix}replaced-", dir=work))
     out: list[str] = []      # what left the data root, in order

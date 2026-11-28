@@ -11,6 +11,8 @@ type Handler = {
   restoreOffer?: () => Promise<number>
   saveDraft?: (name: string, text: string) => Promise<boolean>
   observeFullscreen?: (receive: (value: boolean) => void) => () => void
+  setDashboardView?: (visible: boolean, titleHeight: number) => void
+  openDashboardRecord?: (id: string) => void
 }
 
 export type BridgeOp =
@@ -34,6 +36,9 @@ function handler(): Handler | null {
 
 /** Inside the app's own window. */
 export const isNative = () => handler() !== null
+export const hasNativeDashboard = () => typeof handler()?.setDashboardView === 'function'
+export const setDashboardView = (visible: boolean, height: number) => handler()?.setDashboardView?.(visible, height)
+export const openDashboardRecord = (id: string) => handler()?.openDashboardRecord?.(id)
 
 export function observeFullscreen(receive: (value: boolean) => void) {
   return handler()?.observeFullscreen?.(receive)

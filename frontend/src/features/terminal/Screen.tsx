@@ -46,6 +46,7 @@ import { startTermLog, termLog, type Attached } from './telemetry'
 import { InputMarker } from './operatorInput'
 import { enableTextSelection, hasTextSelectionAnchor, transferTextSelection } from './textSelection'
 import { useProgramClipboard } from './programClipboard'
+import { terminalSnapshot } from './diagnostics'
 
 const SELECTION_FLASH_DURATION_MS = 350
 const MOUSE_MODE_POLL_INTERVAL_MS = 200
@@ -224,6 +225,18 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const layerRef = useRef<SmoothLayer | null>(null)
   /** tmux mode, scrolled up: the history in a reader over the live xterm (reader.ts). */
   const readerRef = useRef<Reader | null>(null)
+  const captureDiagnostics = useCallback(async () => {
+    const live = termRef.current
+    if (!live) return
+    try {
+      const body = terminalSnapshot(live, layerRef.current, readerRef.current, smoothRef.current)
+      const { path, owner_only: ownerOnly } = await postJson<{ path: string; owner_only: boolean }>(`/api/terminal/sessions/${encodeURIComponent(sid)}/diagnostics`, body)
+      if (ownerOnly === false) toast.warning(tr('Terminal diagnostics saved to {path}. On Windows the file inherits the folder’s permissions.', { path }))
+      else toast.success(tr('Terminal diagnostics saved to {path}', { path }))
+    } catch (e) {
+      toast.error(tr('Terminal diagnostics could not be saved: {error}', { error: (e as Error).message }))
+    }
+  }, [sid])
   const [reading, setReading] = useState(false)
   const openReaderRef = useRef<(px: number, first?: WheelEvent, rows?: number) => void>(() => {})
   const closeReaderRef = useRef<() => void>(() => {})
@@ -594,6 +607,12 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     /** The terminal log's view of this screen (telemetry.ts): kinds, sizes, times. */
     let logged: Attached | null = null
 
+    const onDiagnosticsKey = (e: KeyboardEvent) => {
+      if (IS_MAC || e.code !== 'KeyD' || !e.ctrlKey || !e.altKey || !e.shiftKey || e.metaKey) return false
+      e.preventDefault()
+      if (!e.repeat) void captureDiagnostics()
+      return true
+    }
     const init = async () => {
       const [{ Terminal: XTerminal }, { FitAddon }, { WebLinksAddon }, { SearchAddon: Search }] = await Promise.all([
         import('xterm'), import('xterm-addon-fit'), import('xterm-addon-web-links'), import('xterm-addon-search'),
@@ -925,6 +944,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
         })
         r.term.attachCustomKeyEventHandler((e) => {
           if (e.type !== 'keydown') return true
+          if (onDiagnosticsKey(e)) return false
           const what = readerKeeps(e, IS_MAC, r.term.hasSelection())
           if (what === 'keep') {
             const mod = IS_MAC ? e.metaKey : e.ctrlKey
@@ -1161,6 +1181,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
 
       t.attachCustomKeyEventHandler((e) => {
         if (e.type !== 'keydown') return true
+        if (onDiagnosticsKey(e)) return false
         // Esc leaves the gutter or the find box before it reaches the shell.
         if (e.key === 'Escape' && (rangeRef.current || findRef.current || menuRef.current)) {
           setRange(false); setDot(null); setFind(false); setMenu(null)
@@ -1275,7 +1296,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
     // when it is made (size changes go through api.size below), the callbacks
     // through refs. A new sid, token or project makes a new terminal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sid, token, project])
+  }, [sid, token, project, captureDiagnostics])
 
   useEffect(() => { api.current?.size(fontSize) }, [fontSize])
   useEffect(() => {
@@ -1306,7 +1327,7 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
   const flashLo = flash ? rowOf(flash.a, pos) : null
   const flashHi = flash ? rowOf(flash.b, pos) : null
 
-  const menuItem = 'w-full text-left px-10 h-[26px] text-12 text-[var(--term-soft)] hover:bg-white/10 hover:text-[var(--term-text)] inline-flex items-center gap-8 disabled:opacity-40'
+  const menuItem = 'w-full text-left px-10 min-h-[26px] py-2 text-12 text-[var(--term-soft)] hover:bg-white/10 hover:text-[var(--term-text)] inline-flex items-center gap-8 disabled:opacity-40'
   // Shift+right-click opens Screen's own menu. Keep both mouse reports away
   // from the pane, including on macOS where xterm does not reserve Shift.
   const takesMouse = (event: MouseEvent) => (event.button === 2 && event.shiftKey) || hooksRef.current?.mouse?.(event)
@@ -1414,11 +1435,11 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
       {visible && menu && (
         <>
           <button type="button" aria-label={tr('Close the menu')} className="fixed inset-0 z-10 cursor-default" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null) }} />
-          <div role="menu" className="absolute z-20 w-[220px] overflow-y-auto py-4 rounded-input border border-white/15 shadow-lg"
+          <div role="menu" className="absolute z-20 w-[300px] max-w-full overflow-y-auto py-4 rounded-input border border-white/15 shadow-lg"
             style={{
               background: 'var(--term-bar)',
-              left: Math.max(0, Math.min(menu.x, (box.current?.clientWidth ?? 300) - 230)),
-              top: Math.max(0, Math.min(menu.y, (box.current?.clientHeight ?? 200) - 224)),
+              left: Math.max(0, Math.min(menu.x, (box.current?.clientWidth ?? 300) - 310)),
+              top: Math.max(0, Math.min(menu.y, (box.current?.clientHeight ?? 200) - 255)),
               maxHeight: box.current?.clientHeight ?? 200,
             }}>
             <button type="button" role="menuitem" className={menuItem} disabled={!selection() && backend !== 'tmux'}
@@ -1437,6 +1458,10 @@ export function Screen({ sid, token, fontSize = 13, scrollback = 10000, editor =
             <div className="h-1 my-3 bg-white/10" />
             <button type="button" role="menuitem" className={menuItem} onClick={() => { toggleFind(); setMenu(null) }}>
               {tr('Find')} <span className="ml-auto text-10 text-[var(--term-muted)]">Ctrl+Shift+F</span>
+            </button>
+            <button type="button" role="menuitem" className={menuItem} onClick={() => { void captureDiagnostics(); setMenu(null) }}>
+              <span>{tr('Capture terminal state (diagnostics)')}</span>
+              {!IS_MAC && <span className="ml-auto whitespace-nowrap text-10 text-[var(--term-muted)]">Ctrl+Alt+Shift+D</span>}
             </button>
           </div>
         </>
