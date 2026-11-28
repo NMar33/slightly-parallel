@@ -8,8 +8,8 @@ import { type Dispatch, type SetStateAction } from 'react'
 import { toast } from '../../../../components/primitives'
 import { postJson } from '../../../../lib/getJson'
 import { OPERATOR_ACTOR } from '../../types'
-import { SELECTION, isToday, laneOf, laneUpdate as laneWrite, normalizeStatus, parseBulk } from '../model'
-import type { SortMode, TaskRow } from '../model'
+import { SELECTION, isToday, taskInLane, taskInLaneProject, laneUpdate as laneWrite, normalizeStatus, parseBulk } from '../model'
+import type { LaneTarget, SortMode, TaskRow } from '../model'
 import { ARCHIVE, writeOrder } from './model'
 import { putBack } from '../boardData'
 import { t, tn } from '../../../../i18n/scope/project'
@@ -17,7 +17,7 @@ import { t, tn } from '../../../../i18n/scope/project'
 const BOARD_REBUILD_REFETCH_DELAY_MS = 250
 
 export type PendingDrop = {
-  draggedId: string; targetStatus: string; targetLane?: string; beforeTaskId?: string | null
+  draggedId: string; targetStatus: string; targetLane?: LaneTarget; beforeTaskId?: string | null
 }
 
 /** A card's position as a number; none (an agent's card) sorts last, as the server sorts it. */
@@ -37,7 +37,7 @@ export function boardDrops({
   sorts: Record<string, SortMode>
   setPendingDrop: (d: PendingDrop | null) => void
   setArchived: (ids: string[], on: boolean) => Promise<void>
-  moveSelection: (targetStatus: string, targetLane?: string, beforeTaskId?: string | null) => Promise<void>
+  moveSelection: (targetStatus: string, targetLane?: LaneTarget, beforeTaskId?: string | null) => Promise<void>
   setRefreshTick: Dispatch<SetStateAction<number>>
 }) {
   const persistUpdate = async (id: string, updates: Partial<TaskRow>) => {
@@ -65,16 +65,17 @@ export function boardDrops({
   const handleBulkMove = async (
     sourceStatus: string,
     targetStatus: string,
-    sourceLane?: string,
-    targetLane?: string,
+    sourceLane?: LaneTarget,
+    targetLane?: LaneTarget,
     /** Only the cards planned for today — the Today lane's own batch. */
     onlyToday?: boolean,
   ) => {
-    if (sourceStatus === targetStatus && (sourceLane ?? '') === (targetLane ?? '')) return
+    if (sourceStatus === targetStatus && !sourceLane && !targetLane) return
     const moving = tasks.filter(
       (t) =>
         columnKeyOf(t) === sourceStatus &&
-        (!sourceLane || laneOf(t) === sourceLane) &&
+        taskInLane(t, sourceLane) && taskInLaneProject(t, targetLane) &&
+        (sourceStatus !== targetStatus || !taskInLane(t, targetLane)) &&
         (!onlyToday || isToday(t, today)),
     )
     if (moving.length === 0) return
@@ -114,7 +115,7 @@ export function boardDrops({
   const handleDrop = (
     draggedId: string,
     targetStatus: string,
-    targetLane?: string,
+    targetLane?: LaneTarget,
     beforeTaskId?: string | null,
     force = false,
   ) => {
@@ -129,7 +130,7 @@ export function boardDrops({
     if (bulk) {
       if (targetStatus === ARCHIVE) {
         const ids = tasks
-          .filter((t) => !t.archived_at && columnKeyOf(t) === bulk.status && (!bulk.lane || laneOf(t) === bulk.lane))
+          .filter((t) => !t.archived_at && columnKeyOf(t) === bulk.status && taskInLane(t, bulk.lane) && taskInLaneProject(t, targetLane))
           .filter((t) => !bulk.onlyToday || isToday(t, today))
           .map((t) => t.id)
         if (ids.length) void setArchived(ids, true)
@@ -145,7 +146,7 @@ export function boardDrops({
       return
     }
     const task = tasks.find((t) => t.id === draggedId)
-    if (!task) return
+    if (!task || !taskInLaneProject(task, targetLane)) return
     // Dropped on the archive strip: archive (a no-op if it already is).
     if (targetStatus === ARCHIVE) {
       if (!task.archived_at) void setArchived([task.id], true)
@@ -167,7 +168,7 @@ export function boardDrops({
     const inTarget = tasks
       .filter((t) => t.id !== draggedId) // exclude the dragged card itself
       .filter((t) => columnKeyOf(t) === targetStatus)
-      .filter((t) => !targetLane || laneOf(t) === targetLane)
+      .filter((t) => taskInLane(t, targetLane))
       .sort((a, b) => posOf(a) - posOf(b))
 
     // New position: the whole number in the middle of the gap around the
@@ -190,7 +191,7 @@ export function boardDrops({
 
     const updates: Partial<TaskRow> = { position: String(newPos) }
     if (normalizeStatus(task.status) !== targetStatus) updates.status = targetStatus
-    if (targetLane && laneOf(task) !== targetLane) Object.assign(updates, laneWrite(targetLane))
+    if (targetLane && !taskInLane(task, targetLane)) Object.assign(updates, laneWrite(targetLane))
 
     // Optimistic local update
     const moved = new Map(renumber.map((w) => [w.id, String(w.position)]))

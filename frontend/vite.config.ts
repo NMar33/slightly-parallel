@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import serverDefaults from '../backend/backend/server_defaults.json'
 import react from '@vitejs/plugin-react'
 import tailwind from '@tailwindcss/vite'
@@ -19,8 +19,36 @@ import path from 'node:path'
 const API = process.env.SP_API
   ?? `http://${serverDefaults.host}:${serverDefaults.portEnvironment.map((key) => process.env[key]).find((value) => value !== undefined) ?? serverDefaults.port}`
 
+// Electron's document policy allows same-origin scripts, including dev modules.
+// Keep the React plugin's bootstrap code and serve it as a module instead of inline.
+function externalReactRefresh(): Plugin {
+  const modulePath = (base: string) => `${base}@sp-react-refresh`
+  const preamble = (base: string) => react.preambleCode.replace('__BASE__', base)
+  return {
+    name: 'sp:external-react-refresh',
+    apply: 'serve',
+    configureServer(server) {
+      const { base } = server.config
+      server.middlewares.use((request, response, next) => {
+        if (request.url !== modulePath(base)) return next()
+        response.setHeader('Content-Type', 'text/javascript')
+        response.end(preamble(base))
+      })
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, { server }) {
+        if (!server) return html
+        const { base } = server.config
+        return html.replace(`<script type="module">${preamble(base)}</script>`,
+          `<script type="module" src="${modulePath(base)}"></script>`)
+      },
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwind()],
+  plugins: [react(), externalReactRefresh(), tailwind()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

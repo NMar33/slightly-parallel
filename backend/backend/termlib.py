@@ -258,11 +258,18 @@ class TmuxError(RuntimeError):
 def tmux(data_root: Path, *args: str, timeout: float | None = None, input: str | None = None) -> subprocess.CompletedProcess:
     """A tmux command. A failing command comes back with its returncode; a
     tmux that does not answer in `timeout` seconds (WRITE_TIMEOUT) raises TmuxError."""
-    timeout = WRITE_TIMEOUT if timeout is None else timeout
+    return _tmux(data_root, args, timeout=WRITE_TIMEOUT if timeout is None else timeout, input=input)
+
+
+def _tmux(data_root: Path, args: tuple[str, ...], *, timeout: float, input: str | None = None,
+          read_only: bool = False) -> subprocess.CompletedProcess:
     cmd = args[0] if args else "tmux"
     t0 = time.perf_counter()
     try:
-        out = subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
+        # Reads talk to an existing server without creating or loading its config.
+        argv = ([tmux_path() or "tmux", "-L", socket_of(data_root), *args]
+                if read_only else tmux_argv(data_root, *args))
+        out = subprocess.run(argv, input=input, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=timeout)
         termlog.REC.tmux_call(cmd, (time.perf_counter() - t0) * 1000)
         return out
@@ -279,7 +286,7 @@ def tmux_read(data_root: Path, *args: str, timeout: float | None = None) -> subp
     stdout — so the terminal list, the restore offer and a capture answer
     from the registry instead of failing."""
     try:
-        return tmux(data_root, *args, timeout=READ_TIMEOUT if timeout is None else timeout)
+        return _tmux(data_root, args, timeout=READ_TIMEOUT if timeout is None else timeout, read_only=True)
     except TmuxError as exc:
         log.info("%s: read as no answer", exc)
         return subprocess.CompletedProcess(list(args), 1, "", str(exc))
@@ -529,19 +536,29 @@ def registry_path(data_root: Path) -> Path:
     return Path(data_root) / FOLDER / REGISTRY
 
 
-def rows(data_root: Path) -> list[dict[str, Any]]:
+def rows(data_root: Path, *, require_readable: bool = False) -> list[dict[str, Any]]:
+    """Read the registry. An unconfirmed close must distinguish errors from absence."""
     p = registry_path(data_root)
-    if not p.exists():
-        return []
     try:
+        if not require_readable and not p.exists():
+            return []
         data = safe_read_json(p)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return []
-    return [r for r in (data.get("sessions") if isinstance(data, dict) else []) or [] if isinstance(r, dict)]
+    except (OSError, ValueError):
+        if require_readable:
+            raise
+        return []
+    sessions = data.get("sessions", []) if isinstance(data, dict) else None
+    if not isinstance(sessions, list):
+        if require_readable:
+            raise ValueError("invalid terminal registry")
+        return []
+    return [row for row in sessions if isinstance(row, dict)]
 
 
-def get(data_root: Path, sid: str) -> dict[str, Any] | None:
-    return next((r for r in rows(data_root) if r.get("id") == sid), None)
+def get(data_root: Path, sid: str, *, require_readable: bool = False) -> dict[str, Any] | None:
+    return next((r for r in rows(data_root, require_readable=require_readable) if r.get("id") == sid), None)
 
 
 def _edit(data_root: Path, change) -> Any:

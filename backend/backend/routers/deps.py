@@ -176,8 +176,13 @@ def rows_as(
     return out
 
 
+def get_read_store(request: Request) -> ViewStore:
+    """Return the view without running the task resurfacing sweep."""
+    return request.app.state.store
+
+
 def get_store(request: Request) -> ViewStore:
-    store = request.app.state.store
+    store = get_read_store(request)
     # Scheduled task resurfacing rides the request path (throttled inside) —
     # no cron, no browser dependency; the lazy import avoids a cycle.
     from ..tasklib import maybe_resurface

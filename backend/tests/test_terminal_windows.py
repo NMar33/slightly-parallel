@@ -151,17 +151,48 @@ def test_windows_never_uses_tmux_even_with_one_on_the_path(monkeypatch) -> None:
     assert termlib.lost([{"id": "a", "state": "ended", "backend": "plain", "server": "1"}], "") == []
 
 
-def test_the_program_in_a_plain_windows_terminal_comes_from_its_process_tree() -> None:
+def test_the_program_in_a_plain_windows_terminal_comes_from_its_process_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """No foreground process group on Windows: the newest process at the
     bottom of the shell's tree. Run here on real processes (psutil)."""
+    ready = tmp_path / "leaf-ready"
+    child_code = (
+        "import os, pathlib, sys, time; "
+        "time.sleep(1); pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)"
+    )
     code = ("import subprocess, sys, time; "
-            "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); time.sleep(30)")
-    shell = subprocess.Popen([sys.executable, "-c", code])
+            "subprocess.Popen([sys.executable, '-c', *sys.argv[1:]]); time.sleep(30)")
+    shell = subprocess.Popen([sys.executable, "-c", code, child_code, str(ready)])
+    process_name = psutil.Process.name
+
+    def name(process: psutil.Process) -> str:
+        # Both processes use the same interpreter. Give the outer process
+        # its own name so finding it instead of the ready leaf fails the test.
+        if process.pid == shell.pid:
+            return "stand-shell"
+        # Reproduce macOS returning the loader name on the first lookup.
+        if process.ppid() == shell.pid and not ready.exists():
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert ready.exists(), "the leaf did not finish starting"
+            return "bootstrap-python"
+        return process_name(process)
+
+    monkeypatch.setattr(psutil.Process, "name", name)
     try:
-        deadline = time.time() + 10
-        while not psutil.Process(shell.pid).children() and time.time() < deadline:
-            time.sleep(0.05)
-        child = psutil.Process(shell.pid).children()[0]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                leaf_pid = int(ready.read_text())
+                break
+            except (FileNotFoundError, ValueError):
+                time.sleep(0.05)
+        else:
+            pytest.fail("the leaf did not report its PID after starting")
+        assert leaf_pid in {child.pid for child in psutil.Process(shell.pid).children(recursive=True)}
+        child = psutil.Process(leaf_pid)
         want = os.path.basename(child.name())
         want = want[:-4] if want.lower().endswith(".exe") else want
         assert termlib.foreground_of_pid(shell.pid) == want
@@ -172,8 +203,8 @@ def test_the_program_in_a_plain_windows_terminal_comes_from_its_process_tree() -
         assert not alive or alive[0].status() == psutil.STATUS_ZOMBIE
     finally:
         if shell.poll() is None:
-            shell.kill()
-            shell.wait()
+            conpty.kill_tree(shell.pid)
+            shell.wait(timeout=10)
     assert termlib.foreground_of_pid(shell.pid) == ""
 
 
