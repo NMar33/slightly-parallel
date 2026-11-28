@@ -14,7 +14,7 @@ read ones.
 ``GET /api/messages`` (``?agent_id=&project=&limit=``) is the ledger,
 newest first, for a page to show: no write.
 
-``GET /api/messages/terminal`` (``?agent_id=``) is what the Stop hook asks
+``GET /api/messages/terminal`` is what the Stop hook asks
 before it blocks a Claude Code Stop for a waiting message: whether this
 server types that chat's messages into its terminal (msgdeliver.stop_leaves).
 No write, nothing typed.
@@ -22,11 +22,14 @@ No write, nothing typed.
 
 from __future__ import annotations
 
+import json
+import re
+from secrets import compare_digest
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
-from .. import msgdeliver, msgledger
+from .. import chatstore, msgdeliver, msgledger
 from ..actors import identity_of, is_agent, refuse_agent
 
 router = APIRouter()
@@ -125,15 +128,27 @@ def listing(request: Request, agent_id: str = Query(""), project: str = Query(""
     return {"total": len(rows), "messages": rows[:limit]}
 
 
+def _owns_stop_lookup(root, agent_id: str, proof: str) -> bool:
+    if not msgledger.AGENT_RE.fullmatch(agent_id) or not re.fullmatch(r"[0-9a-f]{64}", proof):
+        return False
+    for _, folder in chatstore.folders_of(root, agent_id, has="meta.json"):
+        try:
+            token = json.loads((folder / msgledger.STOP_TOKEN_FILE).read_text(encoding="utf-8")).get("token")
+            if isinstance(token, str) and compare_digest(msgledger.stop_proof(root, token), proof):
+                return True
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
+
+
 @router.get("/api/messages/terminal")
-def terminal(request: Request, agent_id: str = Query("")) -> dict[str, Any]:
-    """Does this server type the chat's waiting messages into its terminal?
-    ``types`` false names why (``why``); the hook then blocks Stop as before.
-    ``data_root`` lets the hook check it asked the server of its own data."""
+def terminal(request: Request, agent_id: str = Query(""), terminal: str = Query("")) -> dict[str, bool]:
+    """Does this server type the calling chat's waiting messages here?"""
     root = _root(request)
-    sid, why = msgdeliver.stop_leaves(root, agent_id.strip())
-    return {"agent_id": agent_id.strip(), "terminal": sid, "types": not why, "why": why,
-            "data_root": str(root)}
+    if not _owns_stop_lookup(root, agent_id, request.headers.get(msgledger.STOP_PROOF_HEADER, "")):
+        raise HTTPException(status_code=403, detail="a terminal verdict is for its own capture hook")
+    sid, why = msgdeliver.stop_leaves(root, agent_id)
+    return {"types": bool(sid and sid == terminal and not why)}
 
 
 @router.get("/api/messages/{message_id}")

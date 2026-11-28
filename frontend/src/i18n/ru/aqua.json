@@ -1,4 +1,10 @@
 {
+  "Wake agent terminal": "Разбудить терминал агента",
+  "Resume agent terminal": "Возобновить терминал агента",
+  "Wake terminal": "Разбудить терминал",
+  "Resume terminal": "Возобновить терминал",
+  "Terminal folder: {path}": "Папка терминала: {path}",
+  "This agent’s terminal is no longer available": "Этот терминал агента больше недоступен",
   "Open on the right": "Открыть справа",
   "Open a new terminal on the right": "Новый терминал справа",
   "Terminal on the right": "Терминал справа",
@@ -140,7 +146,7 @@
   "This task could not be read.": "Не удалось загрузить задачу.",
   "Round {n}": "Раунд {n}",
   "Lane": "Лэйн",
-  "Unassigned": "Без лэйна",
+  "No lane": "Без лэйна",
   "Add to draft": "Добавить в черновик",
   "Could not add to draft.": "Не удалось добавить в черновик.",
   "Open a project to use its draft.": "Откройте проект, чтобы работать с его черновиком.",
@@ -937,5 +943,6 @@
   "Block": "Запретить",
   "Ask first": "Спрашивать",
   "Allow": "Разрешить",
-  "Select terminal text over a program that captures the mouse": "Выделить текст над программой, которая перехватывает мышь"
+  "Select terminal text over a program that captures the mouse": "Выделить текст над программой, которая перехватывает мышь",
+  "Dashboard": "Дашборд"
 }

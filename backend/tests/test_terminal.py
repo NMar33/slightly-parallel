@@ -1290,3 +1290,225 @@ def test_a_new_scheme_with_no_tmux_running_changes_nothing(env) -> None:
     assert c.post("/api/settings", json={"values": {"terminal.scheme": "nord"}}).status_code == 200
     if TMUX:
         assert termlib.tmux(root, "list-sessions").returncode != 0
+
+
+@pytest.mark.parametrize("change", ["owner", "saved_command", "link"])
+def test_confirmed_agent_wake_defers_when_the_selected_terminal_changes(env, monkeypatch, change):
+    client, root, work = env
+    _on(client)
+    owner = "cc-11223344"
+    sid = "t1234abcd"
+    termlib.put(root, {"id": sid, "cwd": str(work), "project": "alpha", "kind": "shell",
+                       "backend": "plain", "asleep": True, "agent_id": owner,
+                       "created": "2026-09-18T12:00:00", "wake": ""})
+    links = {}
+    monkeypatch.setattr(termlib, "agent_links", lambda *_args, **_kwargs: links)
+    before = _row(client, sid)
+    if change == "owner":
+        termlib.put(root, {"id": sid, "agent_id": "cc-55667788"})
+    elif change == "saved_command":
+        termlib.put(root, {"id": sid, "wake": "echo changed"})
+    else:
+        links[sid] = {"agent_id": "cc-55667788"}
+
+    resp = client.post(f"/api/terminal/sessions/{sid}/wake", json={
+        "actor": "operator", "expected_agent": owner, "wake_revision": before["wake_revision"],
+        "expected_cwd": before["wake_cwd"],
+    })
+
+    assert resp.status_code == 409, resp.text
+    assert termlib.get(root, sid)["asleep"] is True
+
+
+def test_confirmed_wake_stops_if_the_displayed_worktree_disappears(env):
+    client, root, work = env
+    _on(client)
+    checkout = work / "checkout"
+    checkout.mkdir()
+    owner = "cc-11223344"
+    sid = "t1234abcd"
+    termlib.put(root, {"id": sid, "cwd": str(checkout.resolve()), "project": "alpha", "kind": "shell",
+                       "backend": "plain", "asleep": True, "agent_id": owner, "wake": ""})
+    selected = _row(client, sid)
+    checkout.rmdir()
+
+    resp = client.post(f"/api/terminal/sessions/{sid}/wake", json={
+        "actor": "operator", "expected_agent": owner, "wake_revision": selected["wake_revision"],
+        "expected_cwd": selected["wake_cwd"],
+    })
+
+    assert resp.status_code == 409, resp.text
+    assert termlib.get(root, sid)["asleep"] is True
+
+
+def test_resume_shows_the_fallback_folder_and_refuses_a_changed_destination(env, monkeypatch):
+    from backend.db import ViewStore
+
+    client, root, work = env
+    _on(client)
+    owner = "cc-11223344"
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+         "project": "alpha", "cwd": str(work / "gone-checkout")},
+    ])
+    monkeypatch.setattr(termlib, "resume_command", lambda _tool, _ref: "echo resumed-fixture")
+
+    preview = client.get(f"/api/terminal/resume/{owner}")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["cwd"] == str(work.resolve())
+    alternate = root / "alternate"
+    alternate.mkdir()
+    (root / "integrations.csv").write_text(f"project,path\nalpha,{alternate}\n", encoding="utf-8")
+
+    resp = client.post("/api/terminal/sessions", json={
+        "actor": "operator", "kind": "resume", "agent": owner,
+        "expected_cwd": preview.json()["cwd"], "resume_revision": preview.json()["resume_revision"],
+    })
+
+    assert resp.status_code == 409, resp.text
+    assert termlib.rows(root) == []
+
+    updated = client.get(f"/api/terminal/resume/{owner}").json()
+    assert updated["cwd"] == str(alternate.resolve())
+    opened = client.post("/api/terminal/sessions", json={
+        "actor": "operator", "kind": "resume", "agent": owner,
+        "expected_cwd": updated["cwd"], "resume_revision": updated["resume_revision"],
+    })
+    assert opened.status_code == 201, opened.text
+    assert opened.json()["session"]["cwd"] == updated["cwd"]
+
+
+def test_confirmed_wake_binds_a_recorded_alias_to_its_resolved_folder(env):
+    client, root, work = env
+    _on(client)
+    alias = root / "checkout"
+    try:
+        alias.symlink_to(work, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        pytest.skip("a symlink needs privileges on Windows")
+    owner = "cc-11223344"
+    sid = "t1234abcd"
+    termlib.put(root, {"id": sid, "cwd": str(alias), "project": "alpha", "kind": "shell",
+                       "backend": "plain", "asleep": True, "agent_id": owner, "wake": ""})
+
+    selected = _row(client, sid)
+    assert selected.get("wake_cwd") == str(work.resolve())
+    body = {"actor": "operator", "expected_agent": owner, "wake_revision": selected["wake_revision"],
+            "expected_cwd": selected["wake_cwd"]}
+    other = work / "other"
+    other.mkdir()
+    alias.unlink()
+    alias.symlink_to(other, target_is_directory=True)
+
+    response = client.post(f"/api/terminal/sessions/{sid}/wake", json=body)
+    assert response.status_code == 409, response.text
+    assert termlib.get(root, sid)["asleep"] is True
+
+    alias.unlink()
+    alias.symlink_to(work, target_is_directory=True)
+    response = client.post(f"/api/terminal/sessions/{sid}/wake", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["session"]["cwd"] == str(work.resolve())
+
+
+@unix_pty
+@pytest.mark.parametrize("keep", ["plain", pytest.param("tmux", marks=needs_tmux)])
+def test_confirmed_resume_runs_in_the_shown_folder_after_a_profile_changes_cwd(env, monkeypatch, keep):
+    from backend.db import ViewStore
+
+    client, root, work = env
+    _on(client)
+    assert client.post("/api/settings", json={"values": {"terminal.keep": keep}}).status_code == 200
+    checkout = work / "the chat's worktree"
+    checkout.mkdir()
+    profile_folder = root / "profile-default"
+    profile_folder.mkdir()
+    profile = root / "shell-profile"
+    profile.write_text(f"cd -- {shlex.quote(str(profile_folder))}\n", encoding="utf-8")
+    shell = root / "bash"
+    shell.write_text(
+        f"#!/bin/sh\nexec /bin/bash --noprofile --rcfile {shlex.quote(str(profile))} -i\n",
+        encoding="utf-8",
+    )
+    shell.chmod(0o755)
+    monkeypatch.setenv("SHELL", str(shell))
+    owner = "cc-11223344"
+    output = root / "resume-directory"
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+         "project": "alpha", "cwd": str(checkout)},
+    ])
+    monkeypatch.setattr(termlib, "resume_command", lambda _tool, _ref: f"pwd -P > {shlex.quote(str(output))}")
+    preview = client.get(f"/api/terminal/resume/{owner}").json()
+    assert preview["cwd"] == str(checkout.resolve())
+
+    response = client.post("/api/terminal/sessions", json={
+        "actor": "operator", "kind": "resume", "agent": owner, "expected_cwd": preview["cwd"],
+        "resume_revision": preview["resume_revision"],
+    })
+
+    assert response.status_code == 201, response.text
+    end = time.monotonic() + 8
+    while time.monotonic() < end and (not output.exists() or output.stat().st_size == 0):
+        time.sleep(0.05)
+    assert output.read_text(encoding="utf-8").strip() == str(checkout.resolve())
+
+
+def test_simultaneous_resume_confirmations_reuse_one_terminal(env, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, Lock
+
+    from backend.db import ViewStore
+
+    client, root, work = env
+    _on(client)
+    assert client.post("/api/settings", json={"values": {"terminal.keep": "plain"}}).status_code == 200
+    owner = "cc-11223344"
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+         "project": "alpha", "cwd": str(work)},
+    ])
+    monkeypatch.setattr(termlib, "resume_command", lambda _tool, _ref: "echo resumed-fixture")
+    preview = client.get(f"/api/terminal/resume/{owner}").json()
+    body = {"actor": "operator", "kind": "resume", "agent": owner, "expected_cwd": preview["cwd"],
+            "resume_revision": preview["resume_revision"]}
+    first_entered, second_entered, release_first = Event(), Event(), Event()
+    counter_lock = Lock()
+    opens = 0
+    open_session = termlib.open_session
+
+    def pause_first(*args, **kwargs):
+        nonlocal opens
+        with counter_lock:
+            opens += 1
+            first = opens == 1
+        if first:
+            first_entered.set()
+            assert release_first.wait(10)
+        else:
+            second_entered.set()
+        return open_session(*args, **kwargs)
+
+    monkeypatch.setattr(termlib, "open_session", pause_first)
+
+    def approve():
+        return client.post("/api/terminal/sessions", json=body)
+
+    with ThreadPoolExecutor(max_workers=2) as threads:
+        first = threads.submit(approve)
+        try:
+            assert first_entered.wait(10)
+            second = threads.submit(approve)
+            second_entered.wait(2)
+        finally:
+            release_first.set()
+        responses = [first.result(timeout=15), second.result(timeout=15)]
+
+    assert opens == 1
+    assert all(resp.status_code == 201 for resp in responses)
+    results = [resp.json() for resp in responses]
+    assert results[0]["session"]["id"] == results[1]["session"]["id"]
+    assert sorted(r["existing"] for r in results) == [False, True]
+    assert len(termlib.rows(root)) == 1
