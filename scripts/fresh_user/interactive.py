@@ -473,6 +473,7 @@ _COMMAND_APPROVAL = re.compile(
     r"(?m)^ *Would you like to run the following command\? *$"
     r".*?^ *\$ (?P<command>.*?)^ *› (?P<choice>[^\n]+)", re.DOTALL,
 )
+_COMMAND_APPROVAL_CHOICE = re.compile(r"[1-9]\. (?:No|[^\n]+ \([a-z]+\))")
 RULE_INTERPRETATION = core_mcp.RULE_TEXT
 
 
@@ -550,8 +551,13 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
         if shell := _COMMAND_APPROVAL.search(screen.rendered):
             if shell.group() == handled_shell:
                 return ""
+            choice = shell["choice"].strip()
+            # ConPTY can expose the preview and selection partway through a
+            # redraw. Wait for a whole menu choice before deciding on it.
+            if _COMMAND_APPROVAL_CHOICE.fullmatch(choice) is None:
+                return ""
             shown = _approval_command(shell["command"])
-            if shell["choice"].strip() != "1. Yes, proceed (y)":
+            if choice != "1. Yes, proceed (y)":
                 return "unexpected Codex command approval"
             approved = (shown,)
             if shown not in pending:

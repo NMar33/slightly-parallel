@@ -1704,3 +1704,25 @@ def test_codex_hook_trust_retries_one_dropped_directional_key(scripted_onboardin
     assert keys == [interactive.DOWN, interactive.DOWN, interactive.ENTER]
     assert any("key not taken" in entry for entry in answered)
     assert "Codex project hooks trusted" in answered
+
+
+def test_windows_core_waits_for_the_command_approval_redraw(scripted_onboarding):
+    command = "Add-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py' -Value '    return a - b'"
+    question = "Would you like to run the following command?\n"
+    keys = []
+    # Windows first painted only part of the preview and the menu's leading W
+    # (run 45983683860, attempt 1). Reading it twice still must not answer it.
+    screen = SimpleNamespace(rendered=question + "  $ Add-Content -LiteralPath 'C:/Temp/sp\n› W", send=keys.append)
+    check = scripted_onboarding._core_approval(screen, "a plain request", command=command)
+    assert check() == check() == ""
+    assert keys == []
+
+    screen.rendered = question + f"  $ {command}/outside\n› 1. Yes, proceed (y)"
+    assert check() == "unexpected Codex command approval"
+    screen.rendered = question + f"  $ {command}\n› 2. No, and tell Codex what to do differently (esc)"
+    assert check() == "unexpected Codex command approval"
+    assert keys == []
+
+    screen.rendered = question + f"  $ {command}\n› 1. Yes, proceed (y)"
+    assert check() == check() == ""
+    assert keys == [scripted_onboarding.ENTER]
