@@ -879,7 +879,9 @@ class TurnCapture:
         # The same message delivered twice while the previous turn is still
         # unanswered (interrupt + resend, or a retried hook event) is one
         # turn, not two — answered before any ledger is read for it.
-        text_key = user_text.strip()
+        # Leading whitespace distinguishes an indented quotation from a
+        # terminal notice. Ignore only trailing whitespace, as the chat log does.
+        text_key = user_text.rstrip()
         if (
             meta.get("pending_turn") is not None
             and meta.get("pending_user_text") == text_key
@@ -925,6 +927,16 @@ class TurnCapture:
                 self._lost("message marker not read", exc)
             if message_stray is not None:
                 user_text = msgs.wrap_stray(message_stray, user_text)
+        late_notice = None
+        if message_in and message_in.get("already_notified"):
+            late_notice = message_in["id"]
+        elif not quiet and message_in is None and message_stray is None:
+            try:
+                user_text, late_notice = msgs.strip_late_notice(
+                    self.data_root, self.agent_name, user_text, int(meta.get("message_count", 0)) + 1,
+                )
+            except Exception as exc:  # noqa: BLE001 — keep the operator's prompt
+                self._lost("late message marker not read", exc)
         settings = _load_settings(self.data_root)
         # A helper chat (a codex exec, a claude -p another chat started): its
         # messages are recorded, and nothing in them acts — no command, no
@@ -1111,7 +1123,9 @@ class TurnCapture:
             if tell_identity else None,
             # This prompt is a message from another agent (its marker).
             "message_in": {"id": message_in["id"], "from": message_in["from_agent"],
-                           "reply_to": message_in.get("reply_to") or ""} if message_in else None,
+                           "reply_to": message_in.get("reply_to") or ""}
+            if message_in and not message_in.get("already_notified") else None,
+            "message_late": late_notice,
             # This prompt is a message for another chat, typed here by mistake.
             "message_stray": {"id": message_stray["id"], "from": message_stray["from_agent"],
                               "to": message_stray["to_agent"]} if message_stray else None,
@@ -2292,6 +2306,50 @@ def _read_done_outcome(root: str, agent: str, turn: int) -> dict:
     return {}
 
 
+def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
+    """Does Slightly Parallel's server type this chat's waiting messages into
+    the terminal it runs in? Asked by Claude Code's Stop hook before it blocks
+    a Stop for a message (tk_40450bfa): a block shows as "Stop hook reported a
+    problem", the typed prompt does not. True only when the hook itself runs
+    in an SP terminal (SP_TERMINAL), the chat's meta names that terminal (the
+    one the server types into), and the server of this data root says it
+    types there (GET /api/messages/terminal, msgdeliver.stop_leaves: the same
+    check that picks "terminal"). Anything else, an unreachable server
+    included, is False: the Stop blocks as before."""
+    from http.client import HTTPException
+    from secrets import token_hex
+    from urllib.parse import urlencode
+    from urllib.request import ProxyHandler, Request, build_opener
+
+    here = os.environ.get("SP_TERMINAL", "").strip()
+    if not here:
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(meta, dict) or str(meta.get("terminal") or "") != here:
+        return False
+    try:
+        key = meta_path.parent / msgs.STOP_TOKEN_FILE
+        try:
+            token = json.loads(key.read_text(encoding="utf-8"))["token"]
+        except FileNotFoundError:
+            token = token_hex(32)
+            _atomic_write_json(key, {"token": token})
+        if not isinstance(token, str):
+            return False
+        params = urlencode({"agent_id": agent, "terminal": here})
+        request = Request(f"{server_url()}/api/messages/terminal?{params}",
+                          headers={msgs.STOP_PROOF_HEADER: msgs.stop_proof(root, token)})
+        with build_opener(ProxyHandler({})).open(request, timeout=DONE_LOOKUP_TIMEOUT_S) as response:
+            got = json.load(response)
+    except (OSError, ValueError, TypeError, KeyError, HTTPException):
+        return False
+    # Older servers return a broader verdict without checking the proof.
+    return isinstance(got, dict) and len(got) == 1 and got.get("types") is True
+
+
 def _done_outcome_notice(outcome: dict) -> str:
     tasks = outcome.get("tasks") or []
     moved = [row["id"] for row in tasks if row["result"] == "moved"]
@@ -2444,6 +2502,8 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"{w.get('turn')}; give it a title now (≤ 80 characters, what it is about, in the operator's "
             f"language) with task_update {{id: \"{w.get('task_id')}\", title}}. Its title for now: "
             f"\"{w.get('provisional') or ''}\". The skill write-a-task holds the rule.")
+    if late := signals.get("message_late"):
+        notes.append(f"[slightly-parallel] message {late} was already delivered. Ignore this late terminal notice.")
     got = signals.get("message_in")
     if got:
         notes.append(

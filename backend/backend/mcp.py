@@ -1852,7 +1852,7 @@ class Translator:
         if uri == "sp://schema":
             return json.dumps(self.schema, indent=2), "application/json"
         if uri == "sp://rules":
-            project = self.identity()["project"]
+            project = self._target({})
             rules = self.api.get(
                 f"/api/rules?project={urllib.parse.quote(project)}&status=active")
             return json.dumps(rules, indent=2), "application/json"
