@@ -41,6 +41,19 @@ async function setMode(page: Page, mode: string) {
   await expect.poll(() => log(page, (l) => l.mode)).toBe(mode)
 }
 
+function lightOverhead(samples: ReadonlyArray<{ self_ms: number; wall_ms: number }>): number {
+  // One preemption inside a timed callback can inflate its measured cost.
+  // Keep the 1% budget for the typical run and catch repeated slow runs.
+  const ratios = samples.map(({ self_ms, wall_ms }) => 100 * self_ms / wall_ms).sort((a, b) => a - b)
+  return ratios[Math.floor(ratios.length / 2)]!
+}
+
+test('Light overhead tolerates one noisy sample and still rejects sustained cost', () => {
+  const samples = (times: number[]) => times.map(self_ms => ({ self_ms, wall_ms: 1000 }))
+  expect(lightOverhead(samples([4.5, 45, 4.5]))).toBeLessThan(1)
+  expect(lightOverhead(samples([12, 4.5, 12]))).toBeGreaterThanOrEqual(1)
+})
+
 function numbered(): string {
   const file = path.join(ROOT, 'work', 'numbered.txt')
   if (!fs.existsSync(file)) {
@@ -145,44 +158,43 @@ test.describe('the terminal log', () => {
 
   test('Light: the log costs under 1% of the time of a scroll workload', async ({ win }) => {
     test.skip(WINDOWS, 'the workload needs sh')
+    test.setTimeout(90_000)
     const { page, app } = win
     await ready(page)
     await expect.poll(() => page.evaluate(() => !!(window as unknown as { __spTermLog?: unknown }).__spTermLog)).toBe(true)
     await fill(page)
     const plan = [...touchpad(90, -1), ...touchpad(90, 1)]
-    const results: Record<string, Array<Record<string, number | null>>> = { off: [], light: [], full: [] }
-    for (let round = 0; round < 2; round++) {
-      for (const mode of ['off', 'light', 'full'] as const) {
-        await setMode(page, mode)
-        // A fresh minute: the counters of the run alone.
-        await log(page, (l) => l.flush(false, true))
-        const heap0 = await page.evaluate(() => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0)
-        const cpu0 = await pageCpu(app)
-        // The tmux reader the last scroll opened steps aside: one live terminal to type in.
-        await page.keyboard.press('Escape')
-        await expect(page.getByRole('textbox', { name: 'Terminal input' })).toHaveCount(1)
-        const t0 = Date.now()
-        await typeLine(page, printFile(numbered()))
-        await page.waitForTimeout(800)
-        await runPlan(page, plan)
-        const wall = Date.now() - t0
-        const cpu1 = await pageCpu(app)
-        const heap1 = await page.evaluate(() => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0)
-        const row = await log(page, (l) => l.row())
-        const self = (row?.self as { ms?: number; events?: number } | undefined) ?? {}
-        results[mode]!.push({
-          wall_ms: wall, cpu_s: cpu0 != null && cpu1 != null ? Math.round((cpu1 - cpu0) * 100) / 100 : null,
-          self_ms: self.ms ?? 0, self_pct: Math.round(((self.ms ?? 0) / wall) * 10000) / 100,
-          events: self.events ?? 0, row_bytes: row ? JSON.stringify(row).length : 0, heap_mb: Math.round((heap1 - heap0) / 1e4) / 100,
-        })
-      }
+    type Sample = { self_ms: number; wall_ms: number; row_bytes: number; [key: string]: number | null }
+    const results: Record<'off' | 'light' | 'full', Sample[]> = { off: [], light: [], full: [] }
+    for (const mode of ['off', 'light', 'full', 'light', 'off', 'light', 'full'] as const) {
+      await setMode(page, mode)
+      // A fresh minute: the counters of the run alone.
+      await log(page, (l) => l.flush(false, true))
+      const heap0 = await page.evaluate(() => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0)
+      const cpu0 = await pageCpu(app)
+      // The tmux reader the last scroll opened steps aside: one live terminal to type in.
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('textbox', { name: 'Terminal input' })).toHaveCount(1)
+      const t0 = performance.now()
+      await typeLine(page, printFile(numbered()))
+      await page.waitForTimeout(800)
+      await runPlan(page, plan)
+      const wall = performance.now() - t0
+      const cpu1 = await pageCpu(app)
+      const heap1 = await page.evaluate(() => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0)
+      const row = await log(page, (l) => l.row())
+      const self = (row?.self as { ms?: number; events?: number } | undefined) ?? {}
+      if (mode === 'light') expect(self.ms ?? 0, 'Light measured an active sample').toBeGreaterThan(0)
+      results[mode].push({
+        wall_ms: wall, cpu_s: cpu0 != null && cpu1 != null ? Math.round((cpu1 - cpu0) * 100) / 100 : null,
+        self_ms: self.ms ?? 0, self_pct: Math.round(((self.ms ?? 0) / wall) * 10000) / 100,
+        events: self.events ?? 0, row_bytes: row ? JSON.stringify(row).length : 0, heap_mb: Math.round((heap1 - heap0) / 1e4) / 100,
+      })
     }
     console.log('termlog overhead', JSON.stringify(results))
     if (OUT) fs.writeFileSync(OUT, JSON.stringify(results, null, 1))
-    // Over both rounds: one round on a busy machine is noise.
-    const sum = (k: string) => results.light!.reduce((a, r) => a + Number(r[k] ?? 0), 0)
-    expect(100 * sum('self_ms') / sum('wall_ms'), 'the light log’s own time, % of the run').toBeLessThan(1)
-    for (const r of results.light!) expect(r.row_bytes!, 'a light minute').toBeLessThan(64_000)
-    for (const r of results.off!) expect(r.self_ms).toBe(0)
+    expect(lightOverhead(results.light), 'the light log’s median own time, % of the run').toBeLessThan(1)
+    for (const r of results.light) expect(r.row_bytes, 'a light minute').toBeLessThan(64_000)
+    for (const r of results.off) expect(r.self_ms).toBe(0)
   })
 })
