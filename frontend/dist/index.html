@@ -14,22 +14,11 @@
     <title>Slightly Parallel</title>
 
     <!-- Prevent theme flash: apply saved / system theme before React mounts. -->
-    <script>
-      (function () {
-        try {
-          var saved = localStorage.getItem('sp-theme') || localStorage.getItem('merkhet-theme'); // the second: a browser from before the rename
-          var sys = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-          var theme = saved === 'dark' || saved === 'light' ? saved : sys;
-          document.documentElement.setAttribute('data-theme', theme);
-        } catch (_) {
-          document.documentElement.setAttribute('data-theme', 'light');
-        }
-      })();
-    </script>
-    <script type="module" crossorigin src="/assets/index-DE-cYMBn.js"></script>
+    <script src="/initial-theme.js"></script>
+    <script type="module" crossorigin src="/assets/index-DW8EJ7lg.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/react-CiXlqBL9.js">
-    <link rel="modulepreload" crossorigin href="/assets/ui-DXTIOKuC.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-D-j1c5af.css">
+    <link rel="modulepreload" crossorigin href="/assets/ui-CEoqwyiY.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-Ct3wu8FY.css">
   </head>
   <body class="bg-base text-primary font-sans antialiased">
     <div id="root"></div>

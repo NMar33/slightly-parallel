@@ -165,6 +165,19 @@ def test_the_hook_names_the_tracked_cores_and_knows_the_commands(data_root: Path
     assert "cores tracked" not in mod.format_signals(cap.open_turn("second"))   # the first turn and refreshes only
 
 
+@pytest.mark.parametrize(("target", "detail"), [
+    ("missing-turn", "message is <agent_id>#<turn> or <agent_id>#<turn>/reply"),
+    (f"{AGENT}#other#4", "a message link must name a message of this chat"),
+    ("cc-other#4", "a message link must name a message of this chat"),
+])
+def test_message_links_validate_the_reference_on_the_server(client: TestClient, target: str, detail: str) -> None:
+    cid = _core(client)["core"]["id"]
+    r = client.post(f"/api/cores/{cid}/links", json={"agent_id": AGENT, "kind": "message", "target": target})
+    assert r.status_code == 422
+    assert r.json()["detail"] == detail
+    assert not any(link["kind"] == "message" for link in client.get(f"/api/cores/{cid}").json()["links"])
+
+
 def test_the_mcp_tools_reach_the_routes(data_root: Path, monkeypatch) -> None:
     from backend import mcp as mcp_mod
 
@@ -188,7 +201,7 @@ def test_the_mcp_tools_reach_the_routes(data_root: Path, monkeypatch) -> None:
     tr.call("cores", {})
     tr.call("core_new", {"name": "Capture", "type": "capability", "text": "#core-new capture", "anchors": ["a.py", ""]})
     tr.call("core_note", {"id": "cr_1", "comment": "stdin", "kind": "auto", "task_id": "tk_1"})
-    tr.call("core_attach", {"id": "cr_1", "turn": 4, "task_id": "tk_1"})
+    tr.call("core_attach", {"id": "cr_1", "message": f"{AGENT}#4", "task_id": "tk_1"})
     tr.call("core_off", {"id": "cr_1"})
     paths = [(m, p) for m, p, _ in tr.api.calls]
     assert paths == [("GET", "/api/cores?project=ALPHA"), ("POST", "/api/cores"), ("POST", "/api/cores/cr_1/notes"),

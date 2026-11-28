@@ -139,7 +139,7 @@ def chat_turns(folder: Path, meta: dict[str, Any]) -> list[tuple[int, float | No
         except (TypeError, ValueError, IndexError):
             continue
         hist[n] = (float(t) if isinstance(t, (int, float)) and t > 0 else None, quiet)
-    turns, _n = parse_chat(folder / "chat.md")
+    turns, _n = parse_chat(folder / "chat.md", include_pings=True)
     out = []
     for t in turns:
         epoch, quiet = hist.get(t.number, (None, False))

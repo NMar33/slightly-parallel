@@ -34,7 +34,7 @@ ALLOWED: list[tuple[str, set[str]]] = [
     (r"reads /proc|Linux /proc", {MAC, WIN}),
     (r"sp\.sh is the POSIX launcher", {WIN}),
     (r"Windows reads the process table from the kernel", {WIN}),
-    (r"POSIX lines", {WIN}),
+    (r"POSIX lines|requires POSIX directory descriptors", {WIN}),
     (r"fcntl\.flock is POSIX only", {WIN}),
     (r"Windows: a process('s)? (cannot set its( own)? time zone|time zone cannot be set)", {WIN}),
     (r"a file held open without sharing exists on Windows only", {LINUX, MAC}),

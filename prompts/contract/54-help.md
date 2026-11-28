@@ -66,6 +66,7 @@ rest; you see the result on the page named.
 | `#usage-off` | Hides the tokens after each reply in this chat. They are still recorded. | The terminal |
 | `#usage-warnings-on` | Shows the usage warnings under the replies of this chat again: a chat about to be compacted, a long chat, a reply that read the whole chat again after a break, a chat that used more than 25% of the 5-hour limit. Claude Code only. | The terminal |
 | `#usage-warnings-off` | Turns the usage warnings off in this chat. Tokens are still recorded. Claude Code only. | The terminal |
+| `#ping <agent id, optional off>` | Enables keep-alive for a named chat. Add `off` to disable it. | The terminal · Settings for interval and quiet hours |
 | `#usage-price` | Updates the API prices the Usage page counts dollars with: a helper agent reads the providers' pricing pages. The days before keep their prices. | Usage |
 
 **Mark**

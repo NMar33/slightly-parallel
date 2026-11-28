@@ -109,9 +109,8 @@ through MCP where said):
   stale `base`, an agent of another project. `merge` folds a card in (an
   agent: only a card of its own chat). The same attachment again is the
   existing one; an attachment the operator removed comes back.
-- `POST /api/publishing/cards/{id}/attach` — the older door (MCP
-  `publish_attach`, forwarding to `publish_write`; the page's drop and paste):
-  attachments only → `{attached, card}` (201).
+- `POST /api/publishing/cards/{id}/attach` — attachments from the operator page
+  (drop and paste). Agents use MCP `publish_write`. Attachments only → `{attached, card}` (201).
 - `POST /api/publishing/cards/{id}/text` `{text, note?}` → `{card}`: the
   operator's version of the text.
 - `POST /api/publishing/cards/{id}/merge` `{into}` → `{card}`: the operator

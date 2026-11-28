@@ -24,7 +24,7 @@
  * of the mouse is the terminal's (selecting, tmux, a program's mouse).
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Terminal } from 'xterm'
 import { AlignLeft, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Clock, Copy, ExternalLink, GitBranch, Globe, Layers, Link2, ListPlus, Pin, PinOff, Quote, SquareTerminal, X } from 'lucide-react'
@@ -34,6 +34,7 @@ import { writeClipboard } from '../../../lib/useCopy'
 import { msgTarget, type MsgRef } from '../../../lib/pins'
 import { useAquaActions } from '../../aqua/app/api'
 import { openWindow, post } from '../../aqua/app/bridge'
+import { DashboardRecord } from '../../aqua/app/dashboard'
 import { detachUrl } from '../../aqua/app/model'
 import { VIEW_COLUMNS } from '../../project/kanban/model'
 import { toNote, useNotesFeed, type WireNote } from '../../notes/page/data'
@@ -469,6 +470,7 @@ function Columns({ id, status, disabled, onMove }: { id: string; status: string;
 }
 
 function TaskCard({ id, x, y, w, h, say, close }: CardProps) {
+  const openRecord = useContext(DashboardRecord)
   const box = useRef<HTMLDivElement>(null)
   const q = useTask(id, true)
   const actions = useMessageActions('', '')
@@ -502,7 +504,7 @@ function TaskCard({ id, x, y, w, h, say, close }: CardProps) {
           {VIEW_COLUMNS.workflow.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
         </select>
       </label>
-      <button type="button" className="lab-list-row" onClick={() => { close(); openPage(pageOf.task(id)) }}><ExternalLink size={15} />{t('Open on the board')}</button>
+      <button type="button" className="lab-list-row" onClick={() => { close(); if (!openRecord?.(id)) openPage(pageOf.task(id)) }}><ExternalLink size={15} />{t('Open on the board')}</button>
       <button type="button" className="lab-list-row" onClick={() => { void copyId(id, say) }}><Copy size={15} />{t('Copy the id')}</button>
     </div>
   )
@@ -511,6 +513,7 @@ function TaskCard({ id, x, y, w, h, say, close }: CardProps) {
 /* ------------------------------------------------------------ a note, read in place */
 
 function NoteCard({ id, close }: { id: string; close: () => void }) {
+  const openRecord = useContext(DashboardRecord)
   const feed = useNotesFeed({})
   const inFeed = feed.data?.notes.find((n) => n.id === id)
   // An archived note is not in the feed: read on its own.
@@ -534,7 +537,7 @@ function NoteCard({ id, close }: { id: string; close: () => void }) {
         <div className="shrink-0 flex items-center gap-8 px-14 h-[34px] text-12" style={{ borderBottom: '1px solid var(--border-default)' }}>
           <span className="font-mono text-tertiary">{id}</span>
           <span className="text-11 text-tertiary">{t('Esc closes')}</span>
-          <button type="button" className="ml-auto inline-flex items-center gap-4 rounded-input px-4 hover:bg-hover" onClick={() => { close(); openPage(pageOf.note(id)) }}>
+          <button type="button" className="ml-auto inline-flex items-center gap-4 rounded-input px-4 hover:bg-hover" onClick={() => { close(); if (!openRecord?.(id)) openPage(pageOf.note(id)) }}>
             <ExternalLink size={13} />{t('Open on the Notes page')}
           </button>
           <button type="button" className="inline-flex items-center justify-center w-[24px] h-[24px] rounded-input hover:bg-hover" aria-label={t('Close')} onClick={close}><X size={13} /></button>

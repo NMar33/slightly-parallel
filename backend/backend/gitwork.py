@@ -407,7 +407,7 @@ def _turn_starts(chat: Path) -> dict[int, str]:
                     r = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(r, dict) and isinstance(r.get("turn"), int) and r.get("start"):
+                if isinstance(r, dict) and not r.get("ping") and isinstance(r.get("turn"), int) and r.get("start"):
                     # The first stamp of a turn is its start; a later one is
                     # the reply after the tool woke the agent (a continuation).
                     out.setdefault(r["turn"], str(r["start"]))

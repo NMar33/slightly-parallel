@@ -183,7 +183,8 @@ def test_exit_is_seen_as_the_end(con) -> None:
     assert not con.alive()
 
 
-def test_a_terminal_through_the_routes(tmp_path: Path) -> None:
+def test_real_windows_websocket_keeps_different_length_input_frames_in_order(tmp_path: Path) -> None:
+    from anyio import fail_after
     from fastapi.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
     from backend.server import create_app
@@ -203,11 +204,27 @@ def test_a_terminal_through_the_routes(tmp_path: Path) -> None:
         sid = sid["id"]
         seen = ""
         with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}&cols=100&rows=30") as ws:
-            ws.send_text(json.dumps({"type": "input", "data": _echo(family, "ws-", "6*7") + "\r"}))
-            end = time.time() + 30
-            while "ws-42" not in _CODES.sub("", seen) and time.time() < end:
-                seen += ws.receive_bytes().decode("utf-8", "replace")
-            assert "ws-42" in _CODES.sub("", seen), seen[-2000:]
+            async def until(want: str) -> str:
+                nonlocal seen
+                with fail_after(30):
+                    while want not in _CODES.sub("", seen):
+                        message = await ws._send_rx.receive()
+                        ws._raise_on_close(message)
+                        seen += message["bytes"].decode("utf-8", "replace")
+                return _CODES.sub("", seen)
+
+            command = _echo(family, "ws-first-", "6*7")
+            first, second = command[:7], command[7:] + "\r"
+            assert len(first) != len(second)
+            for frame in (first, second):
+                ws.send_text(json.dumps({"type": "input", "data": frame}))
+            assert "ws-first-42" in ws.portal.call(until, "ws-first-42")
+
+            # The first two frames formed one command. A further result
+            # proves the original connection stayed open and kept ordering.
+            ws.send_text(json.dumps({"type": "input", "data": _echo(family, "ws-next-", "8*9") + "\r"}))
+            output = ws.portal.call(until, "ws-next-72")
+            assert output.index("ws-first-42") < output.index("ws-next-72")
             row = next(x for x in c.get("/api/terminal/sessions").json()["sessions"] if x["id"] == sid)
             assert row["state"] != "ended" and row["program"]
             assert c.post(f"/api/terminal/sessions/{sid}/sleep", json={}).json()["session"]["state"] == "asleep"

@@ -44,7 +44,10 @@ import os
 import subprocess
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .termlib import InputWrite
 
 log = logging.getLogger("sp.terminal")
 HOST_LOOKUP_ATTEMPTS = 11
@@ -136,8 +139,11 @@ class ConPty:
             if getattr(winpty, "__version__", "") == "3.1.0":
                 appname = subprocess.list2cmdline([exe])
         except self._error:
-            # Windows before 10 1809 has no ConPTY: pywinpty's own choice (winpty).
-            pty = winpty.PTY(cols, rows)
+            # Windows before 10 1809 has no ConPTY.
+            pty = winpty.PTY(cols, rows, backend=winpty.Backend.WinPTY)
+            self._async_writes = False
+        else:
+            self._async_writes = True
         cmdline = subprocess.list2cmdline(argv[1:]) if len(argv) > 1 else None
         if not pty.spawn(appname, cmdline=cmdline, cwd=cwd or None, env=env_block(env)):
             raise OSError(f"the shell did not start: {exe}")
@@ -187,14 +193,22 @@ class ConPty:
             time.sleep(PTY_EMPTY_READ_RETRY_DELAY_S)
 
     # -------------------------------------------------------------- input
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes) -> InputWrite:
         pty = self._pty
         if pty is None or self.closed:
-            return
+            return "failed"
+        if not data:
+            return "written"
+        text = data.decode("utf-8", "replace")
         try:
-            pty.write(data.decode("utf-8", "replace"))
-        except self._error:
-            pass
+            count = pty.write(text)
+        except (OSError, self._error):
+            # The binding can raise after submitting part of this frame.
+            return "uncertain"
+        # Async ConPTY can report zero or bytes from a previous write.
+        if self._async_writes or count == len(text.encode("utf-8")):
+            return "written"
+        return "uncertain" if count else "failed"
 
     def resize(self, cols: int, rows: int) -> None:
         pty = self._pty

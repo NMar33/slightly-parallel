@@ -90,6 +90,7 @@ def _backend_module(name: str):
 shared = _backend_module("hookshared")
 # Messages between agents (tk_c1caab80): the ledger the server writes too.
 msgs = _backend_module("msgledger")
+pings = _backend_module("pingstate")
 # os.replace, patient on Windows, where a file open elsewhere refuses a moment.
 _replace = shared.replace_file
 # Where a chat's folder lives (backend/backend/chatstore.py). If it does not
@@ -217,7 +218,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
                  "the server saves this message as the first note"),
     "core-note": ("keep-a-core", "MCP tool cores, choose the matching core, then core_note with this message as text "
                   "and your one-line comment; if two match, ask the operator to choose by number first"),
-    "core": ("keep-a-core", "MCP tool core_attach: this message, and this chat's task when it has one, to the matching "
+    "core": ("keep-a-core", "MCP tool core_attach {id, message, task_id?}: attach <agent_id>#<turn> and this chat's task to the matching "
              "core; if two match, ask the operator to choose by number first"),
     "core-off": ("keep-a-core", "MCP tool cores, choose the matching core, ask the operator to confirm its number, "
                  "then core_off"),
@@ -227,6 +228,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     # Claude Code a message of only these never reaches the model.
     **{k: ("", "nothing to do: the hook answered") for k in (
         "usage", "usage-on", "usage-off", "usage-warnings-on", "usage-warnings-off")},
+    "ping": ("", "nothing to write: the hook updates keep-alive for the named agent"),
     # The API prices the Usage page counts dollars with: a helper reads the providers' pages.
     "usage-price": ("update-usage-prices", "say in one line which pages you are going to, then a helper agent (Claude "
                     "Code: on opus; with no helpers, you) calls MCP tool usage_prices_material, then usage_prices_write"),
@@ -405,39 +407,89 @@ def ledger_stats(data_root: Path) -> list | str | None:
     return [st.st_size, st.st_mtime_ns, st.st_ino]
 
 
+_LEGACY_WHERE_TOLD_LIMIT = 100
+
+
+def _task_append_offset(previous: object, current: os.stat_result) -> int | None:
+    """The saved boundary of a ledger that appears to have grown by appending.
+
+    Product edits replace the file atomically. An external in-place truncate
+    and regrow can look like an append in the legacy stat and re-announce old ids.
+    """
+    if not isinstance(previous, list) or len(previous) != 3:
+        return None
+    size, modified, inode = previous
+    if (type(size) is int and type(modified) is int and current.st_ino != 0
+            and inode == current.st_ino and 0 < size < current.st_size
+            and modified <= current.st_mtime_ns):
+        return size
+    return None
+
+
 def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
-    """The tasks this chat made that it was not told the place of yet:
-    «tk_… → project · lane» on the next turn (note nt_258a7ed7 §6). tasks.csv
-    is read only when its stat moved; the first look marks what is there
-    as told."""
+    """Announce each task this chat makes once, with its project and lane."""
+    path = data_root / "tasks.csv"
     try:
-        st = os.stat(data_root / "tasks.csv")
-        sig = [st.st_size, st.st_mtime_ns, st.st_ino]
-    except OSError:
+        st = path.stat()
+    except FileNotFoundError:
         meta.setdefault("where_told", [])    # no tasks yet: the first look is done
         return []
-    if meta.get("tasks_seen") == sig:
+    except OSError:
         return []
+    sig = [st.st_size, st.st_mtime_ns, st.st_ino]
     first = "where_told" not in meta
-    told = [t for t in meta.get("where_told") or [] if isinstance(t, str)]
-    mine = [r for r in _read_csv(data_root / "tasks.csv") if (r.get("agent_id") or "") == agent]
-    new = [r for r in mine if r.get("id") and r["id"] not in told]
+    told = meta.get("where_told") or []
+    # The old hook discarded ids and could rotate them out in any order.
+    # For a capped chat, baseline old rows while preserving any complete
+    # records appended after the last observation of the same ledger.
+    legacy = not meta.get("where_told_complete") and len(told) == _LEGACY_WHERE_TOLD_LIMIT
+    if not legacy and meta.get("tasks_seen") == sig:
+        return []
+
+    seen = dict.fromkeys(task_id for task_id in told if isinstance(task_id, str))
+    new = []
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            append_at = _task_append_offset(meta.get("tasks_seen"), os.fstat(fh.fileno())) if legacy else None
+            def complete_lines():
+                # readline keeps tell available at each CSV record boundary.
+                for line in iter(fh.readline, ""):
+                    if not line.endswith(("\n", "\r")):
+                        raise csv.Error("task ledger has an unterminated line")
+                    yield line
+
+            rows = csv.DictReader(complete_lines(), strict=True)
+            pending = not legacy
+            if append_at is not None:
+                pending = rows.fieldnames is not None and fh.tell() == append_at
+            malformed_tail = False
+            for row in rows:
+                # A later valid row turns a short write into a broken record
+                # in the middle. Only a broken last row can still be finished.
+                malformed_tail = None in row or None in row.values()
+                task_id = row.get("id")
+                if not malformed_tail and row.get("agent_id") == agent and task_id and task_id not in seen:
+                    seen[task_id] = None
+                    if pending:
+                        new.append(row)
+                if append_at is not None and not pending:
+                    pending = fh.tell() == append_at
+            if malformed_tail:
+                return []
+    except (OSError, csv.Error, UnicodeError):
+        return []
+
     meta["tasks_seen"] = sig
-    meta["where_told"] = (told + [r["id"] for r in new])[-100:]
+    meta["where_told"] = list(seen)
+    meta["where_told_complete"] = True
     if first:
         return []
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 
 
-def _board_lanes(data_root: Path, project: str) -> list[str]:
-    lanes: dict[str, str] = {}
-    for r in _read_csv(data_root / "tasks.csv"):
-        if r.get("project") != project or (r.get("archived_at") or "").strip():
-            continue
-        name = (r.get("lane") or r.get("assignee") or "").strip()
-        if name:
-            lanes.setdefault(name.lower(), name)
-    return sorted(lanes.values(), key=str.lower)
+def _board_lanes(data_root: Path, project: str) -> dict[str, str]:
+    return shared.board_lanes(_read_csv(data_root / "tasks.csv"), project,
+                              shared.saved_board_lanes(data_root, project))
 
 
 def task_where(data_root: Path, project: str, agent: str, user_text: str,
@@ -650,7 +702,16 @@ def where_notice(where: dict) -> str:
     told = (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
             + " (the braces set the project and the lane; "
             + _backend_module("mcp_args").send_project(str(where.get("project") or "")) + ").")
-    if where.get("ask"):
+    if lane := where.get("promote_lane"):
+        told += f" Writing the card moves lane „{lane}“ from agents to the board."
+    if choice := where.get("lane_choice"):
+        told += " Write it now, with no lane."
+        if question := where.get("project_ask"):
+            told += f" Once it is filed, first ask the operator in one line: {question} Then tell the operator: "
+        else:
+            told += " Once it is filed, tell the operator: "
+        told += shared.lane_choice_notice(choice)
+    elif where.get("ask"):
         # A lane the braces leave unclear: the card is written now, in the
         # default lane, and the operator is asked after (tk_970d6b2d).
         told += (" The lane is unclear, so the card goes to the default lane: write it now, with no lane, "
@@ -799,6 +860,35 @@ class TurnCapture:
                 )
             fh.write(text)
 
+    def _ping_commands(self, said: str) -> list[str]:
+        results = []
+        for hit in pings.COMMAND_RE.finditer(said):
+            agent, off = hit.groups()
+            if not agent:
+                results.append("name an agent id after #ping")
+                continue
+            if chatstore is None or not any(chatstore.folders_of(self.data_root, agent, has="meta.json")):
+                results.append(f"no captured chat with agent id {agent}")
+                continue
+            try:
+                pings.enroll(self.data_root, agent, enabled=not off)
+            except (OSError, ValueError) as exc:
+                self._lost("keep-alive enrollment not saved", exc)
+                results.append(f"keep-alive could not be saved for {agent}")
+            else:
+                results.append(f"keep-alive {'disabled' if off else 'enabled'} for {agent}")
+        return results
+
+    def _open_ping(self, meta: dict, text: str) -> dict:
+        turn = int(meta.get("message_count", 0)) + 1
+        started = now_iso()
+        self._append(f"\n## Turn {turn} · {started}{pings.HEADER_SUFFIX}\n**User**: {text}\n")
+        meta.update(message_count=turn, pending_turn=turn, pending_ping=True,
+                    pending_started=started, pending_user_text=text)
+        self._note_turn(meta, turn, shared.now_epoch())
+        _atomic_write_json(self.meta_path, meta)
+        return {"turn_number": turn, "ping": True}
+
     # -- public API ---------------------------------------------------------
 
     @_with_meta_lock
@@ -820,11 +910,17 @@ class TurnCapture:
         # The same message delivered twice while the previous turn is still
         # unanswered (interrupt + resend, or a retried hook event) is one
         # turn, not two — answered before any ledger is read for it.
-        text_key = user_text.strip()
+        # Leading whitespace distinguishes an indented quotation from a
+        # terminal notice. Ordinary prompts ignore trailing whitespace, as the
+        # chat log does. A keep-alive hook retry must match the whole prompt.
+        text_key = user_text.rstrip()
+        pending_key = user_text if meta.get("pending_ping") else text_key
         if (
             meta.get("pending_turn") is not None
-            and meta.get("pending_user_text") == text_key
+            and meta.get("pending_user_text") == pending_key
         ):
+            if meta.get("pending_ping"):
+                return {"turn_number": int(meta["pending_turn"]), "ping": True}
             return {
                 "turn_number": int(meta["pending_turn"]),
                 "standup_due": False,
@@ -838,6 +934,17 @@ class TurnCapture:
         # A #usage answered while the turn before was still open is written
         # now, after it (answer_usage).
         self._flush_deferred(meta)
+        terminal = os.environ.get("SP_TERMINAL", "")
+        if (terminal and terminal == meta.get("terminal") and not quiet
+                and not meta.get("helper") and meta.get("pending_turn") is None):
+            try:
+                ping = pings.take(self.data_root, self.agent_name, terminal, user_text)
+            except (OSError, ValueError) as exc:
+                self._lost("keep-alive marker not read", exc)
+            else:
+                if ping:
+                    return self._open_ping(meta, user_text)
+        meta.pop("pending_ping", None)
         # A message another agent sent, typed into this chat's terminal by
         # the server: a prompt that opens with a marker the ledger knows (for
         # this chat, from that sender, not taken before). Its turn is the
@@ -866,6 +973,16 @@ class TurnCapture:
                 self._lost("message marker not read", exc)
             if message_stray is not None:
                 user_text = msgs.wrap_stray(message_stray, user_text)
+        late_notice = None
+        if message_in and message_in.get("already_notified"):
+            late_notice = message_in["id"]
+        elif not quiet and message_in is None and message_stray is None:
+            try:
+                user_text, late_notice = msgs.strip_late_notice(
+                    self.data_root, self.agent_name, user_text, int(meta.get("message_count", 0)) + 1,
+                )
+            except Exception as exc:  # noqa: BLE001 — keep the operator's prompt
+                self._lost("late message marker not read", exc)
         settings = _load_settings(self.data_root)
         # A helper chat (a codex exec, a claude -p another chat started): its
         # messages are recorded, and nothing in them acts — no command, no
@@ -956,6 +1073,11 @@ class TurnCapture:
             # here on are recorded live and act like any other; the imported
             # ones before stay read only (db.py, by turn).
             meta["live_from"] = turn
+        if quiet:
+            meta.setdefault("last_answer_at", meta.get("last_active") or "")
+            meta["pending_quiet"] = True
+        else:
+            meta.pop("pending_quiet", None)
         meta["last_active"] = now_iso()
         meta["pending_turn"] = turn
         meta["pending_user_text"] = text_key
@@ -1012,6 +1134,7 @@ class TurnCapture:
             "evidence_for": evidence_for,
             "unsigned_commits": {"commits": unsigned, "sure": unsigned_sure} if unsigned else None,
             "commands": commands,
+            "ping_commands": self._ping_commands(said) if "ping" in commands and not quiet else [],
             "done_lookup": (str(self.data_root.resolve()), self.agent_name) if "done" in commands else None,
             # #think / #think-off: the tasks the server marks, by the server's rule.
             "think": shared.think_targets(said) if {"think", "think-off"} & set(commands) else None,
@@ -1052,7 +1175,9 @@ class TurnCapture:
             if tell_identity else None,
             # This prompt is a message from another agent (its marker).
             "message_in": {"id": message_in["id"], "from": message_in["from_agent"],
-                           "reply_to": message_in.get("reply_to") or ""} if message_in else None,
+                           "reply_to": message_in.get("reply_to") or ""}
+            if message_in and not message_in.get("already_notified") else None,
+            "message_late": late_notice,
             # This prompt is a message for another chat, typed here by mistake.
             "message_stray": {"id": message_stray["id"], "from": message_stray["from_agent"],
                               "to": message_stray["to_agent"]} if message_stray else None,
@@ -1064,8 +1189,8 @@ class TurnCapture:
                       transcript: str | None = None, times: dict | None = None,
                       points: list | None = None, touched: list[str] | None = None,
                       committed: bool | None = None, commit_calls: list | None = None,
-                      turn_started: str | None = None, continuation: bool = False) -> None:
-        """Attach the assistant's final answer to the pending turn.
+                      turn_started: str | None = None, continuation: bool = False) -> bool:
+        """Attach the final answer and return whether it belonged to a ping.
 
         Without a pending turn (the prompt event was skipped or lost) the
         answer is dropped — a phantom user-less turn is worse than a gap.
@@ -1094,11 +1219,14 @@ class TurnCapture:
         """
         closed = self._close_turn(agent_text, close_if_missing=close_if_missing, continuation=continuation)
         if closed is None:
-            return
+            return False
         # The stamps read a transcript and ask git — seconds, on a long chat
         # in a large repository. Outside the meta lock: the dashboard's
         # rename waits on it, and gives up after five seconds.
-        turn, started, ended, cwd = closed
+        turn, started, ended, cwd, ping = closed
+        if ping:
+            self._stamp_time(turn, started, ended, ping=True)
+            return True
         self._stamp_time(turn, started, ended, transcript, times, points)
         commits = self._stamp_work(turn, cwd, touched, started, commit_calls, turn_started)
         # A tool that tells (Claude Code) said whether this turn ran a git
@@ -1106,6 +1234,7 @@ class TurnCapture:
         # notice says "if you made it".
         if commits and committed is not False:
             self._note_unsigned(cwd, commits, sure=committed is True)
+        return False
 
     def _note_unsigned(self, cwd: str, commits: list[str], *, sure: bool) -> None:
         """The turn's commits that say no task (no ``Task:`` line) and no
@@ -1141,7 +1270,7 @@ class TurnCapture:
 
     @_with_meta_lock
     def _close_turn(self, agent_text: str, *, close_if_missing: bool,
-                    continuation: bool = False) -> tuple[int, str | None, str, str] | None:
+                    continuation: bool = False) -> tuple[int, str | None, str, str, bool] | None:
         """The answer into chat.md and the turn out of meta.json, under the
         lock. Answers what the stamps need, or None when nothing closed."""
         if not agent_text.strip():
@@ -1154,14 +1283,21 @@ class TurnCapture:
             return self._continue_turn(agent_text, meta) if continuation and agent_text != REPLY_MISSING else None
         meta.pop("pending_user_text", None)
         started = meta.pop("pending_started", None)
+        ping = bool(meta.pop("pending_ping", False))
+        quiet = bool(meta.pop("pending_quiet", False))
         self._append(f"**Agent**: {escape_content(agent_text.rstrip())}\n")
         self._flush_deferred(meta)
         ended = now_iso()
-        meta["last_active"] = ended
+        if not quiet:
+            meta["last_answer_at"] = ended
+        if ping:
+            meta["last_ping_turn"] = turn
+        else:
+            meta["last_active"] = ended
         _atomic_write_json(self.meta_path, meta)
-        return int(turn), started, ended, str(meta.get("cwd") or "")
+        return int(turn), started, ended, str(meta.get("cwd") or ""), ping
 
-    def _continue_turn(self, agent_text: str, meta: dict) -> tuple[int, str | None, str, str] | None:
+    def _continue_turn(self, agent_text: str, meta: dict) -> tuple[int, str | None, str, str, bool] | None:
         """The reply after the tool woke the agent (no prompt, no pending
         turn): appended to the last turn's answer in chat.md, once per text
         (a Stop that comes again for the same reply adds nothing)."""
@@ -1171,13 +1307,16 @@ class TurnCapture:
         fp = hashlib.sha256(agent_text.strip().encode("utf-8", "replace")).hexdigest()[:16]
         if meta.get("continued_fp") == fp:
             return None
-        started = str(meta.get("last_active") or "") or None
+        ping = turn == meta.get("last_ping_turn")
+        started = str(meta.get("last_answer_at") or meta.get("last_active") or "") or None
         self._append(f"\n{escape_content(agent_text.rstrip())}\n")
         ended = now_iso()
         meta["continued_fp"] = fp
-        meta["last_active"] = ended
+        meta["last_answer_at"] = ended
+        if not ping:
+            meta["last_active"] = ended
         _atomic_write_json(self.meta_path, meta)
-        return turn, started, ended, str(meta.get("cwd") or "")
+        return turn, started, ended, str(meta.get("cwd") or ""), ping
 
     @_with_meta_lock
     def record_skills(self, uses: list[dict]) -> None:
@@ -1186,6 +1325,8 @@ class TurnCapture:
             return
         meta = self._load_meta()
         turn = int(meta.get("pending_turn") or meta.get("message_count") or 0)
+        if meta.get("pending_ping") or turn == meta.get("last_ping_turn"):
+            return
         path = self.folder / "skills.jsonl"
         # A retried Stop event hands us the same transcript again; a use is
         # one (time, skill) pair however many times the tool reports it. A
@@ -1215,13 +1356,15 @@ class TurnCapture:
 
     def _stamp_time(self, turn: int, started: str | None, ended: str,
                     transcript: str | None = None, times: dict | None = None,
-                    points: list | None = None) -> None:
+                    points: list | None = None, *, ping: bool = False) -> None:
         """Append the turn's start and end to ``turns.jsonl`` — and, given the
         transcript, what the backend's turntimes.measure reads from it: the
         busy stretches of the agent and its helpers since the previous
         answer, the helpers' own seconds, the agent's working seconds in the
         turn. Never raises; a failed measure leaves the start and end."""
         line: dict = {"turn": turn, "start": started or "", "end": ended, "source": "hook"}
+        if ping:
+            line["ping"] = True
         if (transcript or times) and started:
             try:
                 tt = _turntimes()
@@ -1310,7 +1453,8 @@ class TurnCapture:
 
     @_with_meta_lock
     def note_origin(self, tool: str = "", session_id: str = "", cwd: str = "",
-                    helper_kind: str = "", helper_of: str = "", helper_of_by: str = "") -> None:
+                    helper_kind: str = "", helper_of: str = "", helper_of_by: str = "",
+                    *, prompt_hook: bool = False) -> None:
         """Record where this agent runs: the tool, its full session id and
         the working directory — enough to print a resume command later.
         Written once (or when a value changes); never breaks the session.
@@ -1325,6 +1469,8 @@ class TurnCapture:
         a parent found later fills an empty ``helper_of``."""
         updates = {}
         meta = self._load_meta()
+        if prompt_hook and not meta.get("prompt_hook"):
+            updates["prompt_hook"] = True
         if helper_kind:
             parent = shared.helper_of_clean(self.agent_name, helper_of)
             if not meta.get("helper"):
@@ -2066,14 +2212,15 @@ def _standup_owed(data_root: Path, project: str) -> dict | None:
             text = chat.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        found = len(stamp.findall(text))
+        found = 0
+        # The day's size, for the operator's choice of whole or clipped messages.
+        for part in re.split(r"(?m)^(?=## Turn )", text):
+            if stamp.match(part) and not part.partition("\n")[0].endswith(pings.HEADER_SUFFIX):
+                found += 1
+                chars += len(part)
         if found:
             messages += found
             chats += 1
-            # The day's size, for the operator's choice of whole or clipped messages.
-            for part in re.split(r"(?m)^(?=## Turn )", text):
-                if stamp.match(part):
-                    chars += len(part)
     if not messages:
         return None
     for row in _read_csv(data_root / "standups.csv"):
@@ -2243,8 +2390,10 @@ def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
     types there (GET /api/messages/terminal, msgdeliver.stop_leaves: the same
     check that picks "terminal"). Anything else, an unreachable server
     included, is False: the Stop blocks as before."""
+    from http.client import HTTPException
+    from secrets import token_hex
     from urllib.parse import urlencode
-    from urllib.request import ProxyHandler, build_opener
+    from urllib.request import ProxyHandler, Request, build_opener
 
     here = os.environ.get("SP_TERMINAL", "").strip()
     if not here:
@@ -2256,19 +2405,23 @@ def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
     if not isinstance(meta, dict) or str(meta.get("terminal") or "") != here:
         return False
     try:
-        with build_opener(ProxyHandler({})).open(
-            f"{server_url()}/api/messages/terminal?{urlencode({'agent_id': agent})}", timeout=DONE_LOOKUP_TIMEOUT_S,
-        ) as response:
+        key = meta_path.parent / msgs.STOP_TOKEN_FILE
+        try:
+            token = json.loads(key.read_text(encoding="utf-8"))["token"]
+        except FileNotFoundError:
+            token = token_hex(32)
+            _atomic_write_json(key, {"token": token})
+        if not isinstance(token, str):
+            return False
+        params = urlencode({"agent_id": agent, "terminal": here})
+        request = Request(f"{server_url()}/api/messages/terminal?{params}",
+                          headers={msgs.STOP_PROOF_HEADER: msgs.stop_proof(root, token)})
+        with build_opener(ProxyHandler({})).open(request, timeout=DONE_LOOKUP_TIMEOUT_S) as response:
             got = json.load(response)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError, KeyError, HTTPException):
         return False
-    if not isinstance(got, dict) or got.get("types") is not True or got.get("terminal") != here:
-        return False
-    try:
-        # Another data root's server (a sandbox beside the live one) knows nothing of this chat.
-        return Path(str(got.get("data_root") or "")).resolve() == Path(root).resolve()
-    except (OSError, ValueError):
-        return False
+    # Older servers return a broader verdict without checking the proof.
+    return isinstance(got, dict) and len(got) == 1 and got.get("types") is True
 
 
 def _done_outcome_notice(outcome: dict) -> str:
@@ -2362,6 +2515,9 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             continue
         if name == "carry-brief" and signals.get("briefs_owed"):
             continue  # the briefs owed, below, name this message
+        if name == "ping":
+            notes.extend(f"[slightly-parallel] #ping — {line}." for line in signals.get("ping_commands") or [])
+            continue
         if name in ("think", "think-off"):
             card = signals.get("think_card") or {}
             notes.append(_think_notice(name, (signals.get("think") or {}).get(name) or [],
@@ -2423,6 +2579,8 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"{w.get('turn')}; give it a title now (≤ 80 characters, what it is about, in the operator's "
             f"language) with task_update {{id: \"{w.get('task_id')}\", title}}. Its title for now: "
             f"\"{w.get('provisional') or ''}\". The skill write-a-task holds the rule.")
+    if late := signals.get("message_late"):
+        notes.append(f"[slightly-parallel] message {late} was already delivered. Ignore this late terminal notice.")
     got = signals.get("message_in")
     if got:
         notes.append(

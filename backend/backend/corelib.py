@@ -39,6 +39,7 @@ from .date_utils import now_iso
 from .db import ViewStore
 from .entities import CORE_COLUMNS, CORE_EVENT_COLUMNS, CORE_LINK_COLUMNS, CORE_NOTE_COLUMNS, CORE_STATUSES, CORE_TYPES
 from .file_entries import project_path
+from .hookshared import parse_target
 
 CORES_FILE = "cores.csv"
 NOTES_FILE = "core_notes.csv"
@@ -441,11 +442,18 @@ def link(store: ViewStore, core_id: str, body: dict) -> dict[str, str] | None:
         raise CoreRefused("an anchor is a path inside the project, as file or file:symbol")
     if kind == "task" and not store.query_one("SELECT id FROM tasks_mutual WHERE id = ?", (target,)):
         raise CoreRefused(f"task not found: {target}")
+    actor = identity_of(body)
+    if kind == "message":
+        parsed = parse_target(target)
+        if parsed is None:
+            raise CoreRefused("message is <agent_id>#<turn> or <agent_id>#<turn>/reply")
+        if is_agent(actor) and parsed[0] != actor:
+            raise CoreRefused("a message link must name a message of this chat")
     if any(l.get("core_id") == core_id and l.get("kind") == kind and l.get("target") == target
            for l in _rows(store, LINKS_FILE)):
         return None
     row = {"id": _mint("cl_", core_id, kind, target), "core_id": core_id, "kind": kind, "target": target,
-           "note": str(body.get("note") or "")[:200], "at": now_iso(), "actor": identity_of(body) or "operator"}
+           "note": str(body.get("note") or "")[:200], "at": now_iso(), "actor": actor or "operator"}
     append_row(store.data_root / LINKS_FILE, CORE_LINK_COLUMNS, row)
     _touch(store, core_id)
     return row

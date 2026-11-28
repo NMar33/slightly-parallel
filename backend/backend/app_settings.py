@@ -24,6 +24,9 @@ from .file_safety import edit_json, safe_read_json
 log = logging.getLogger("sp.settings")
 
 SETTINGS_FILENAME = "settings.json"
+TERMINAL_SESSION_LIMIT = "terminal.max_sessions"
+DEFAULT_TERMINAL_SESSIONS = 36
+MAX_TERMINAL_SESSIONS = 256
 RESOURCE_YELLOW = "terminal.resource_yellow"
 RESOURCE_RED = "terminal.resource_red"
 
@@ -46,6 +49,18 @@ class SettingSpec:
 
 
 SPECS: tuple[SettingSpec, ...] = (
+    SettingSpec(
+        key="ping.interval_minutes",
+        label="Keep-alive interval",
+        description="Minutes after an enrolled agent finishes its answer before a keep-alive is due.",
+        type="int", default=55, group="Keep-alive", unit="min", minimum=1,
+    ),
+    SettingSpec(
+        key="ping.quiet_hours",
+        label="Keep-alive quiet hours",
+        description="Local time, HH:MM-HH:MM. Leave blank to send keep-alives around the clock.",
+        type="text", default="", group="Keep-alive",
+    ),
     # ------------------------------------------------------------- agent ---
     SettingSpec(
         key="agent.contract_refresh_turns",
@@ -401,6 +416,12 @@ SPECS: tuple[SettingSpec, ...] = (
         type="bool", default=False, group="Terminal",
     ),
     SettingSpec(
+        key=TERMINAL_SESSION_LIMIT, label="Maximum open terminals",
+        description="How many running terminals can be open at once, including those without a view. Use 0 for unlimited.",
+        type="int", default=DEFAULT_TERMINAL_SESSIONS, group="Terminal",
+        unit="terminals", minimum=0, maximum=MAX_TERMINAL_SESSIONS,
+    ),
+    SettingSpec(
         key="terminal.launch", label="Resume and Start",
         description="run: the agent starts at once. type: the command is typed into the terminal and waits for Enter.",
         type="choice", default="run", group="Terminal", options=("run", "type"),
@@ -680,9 +701,15 @@ def coerce(key: str, value: Any) -> Any:
         raise ValueError(f"{key} must be one of: {', '.join(spec.options)}")
     if spec.type == "text":
         if isinstance(value, str) and len(value.strip()) <= 200 and "\n" not in value:
-            return value.strip()
+            text = value.strip()
+            clock = r"(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+            if key == "ping.quiet_hours" and text and not re.fullmatch(rf"{clock}-{clock}", text):
+                raise ValueError(f"{key} must use HH:MM-HH:MM")
+            return text
         raise ValueError(f"{key} must be one line of text, at most 200 characters")
     # int
+    if key == TERMINAL_SESSION_LIMIT and type(value) is not int:
+        raise ValueError(f"{key} must be an integer")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{key} must be a number")
     v = int(value)

@@ -57,4 +57,3 @@ or context is a version; `base` is the card's `rev` you read.
 card: write only what it asks for, on top of what is there. When the notice
 says this chat made a card in the last hour and the message is about the
 same thing, write into that card and fold the new one in with `merge`.
-`publish_attach` is the older name of the tool.

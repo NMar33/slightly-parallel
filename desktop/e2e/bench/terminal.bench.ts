@@ -6,7 +6,7 @@ import { _electron, type APIRequestContext, type ElectronApplication, type Page 
 import { descendants } from '../global-setup'
 import {
   test, expect, ELECTRON, HEADLESS, HIDDEN, ROOT, WINDOWS, catchLinksOut, closeAll, echoCalc, expectLine,
-  launchArgs, launchEnv, openShell, printFile, ready, typeLine,
+  launchArgs, launchEnv, mainTerminalPage, openShell, printFile, ready, typeLine,
 } from '../fixtures'
 import { makeData } from './data'
 
@@ -116,7 +116,7 @@ async function launch(test: string): Promise<App> {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-desktop-e2e-profile-'))
   const app = await _electron.launch({ executablePath: ELECTRON, args: [...launchArgs(userData), ...(SCALE ? [`--force-device-scale-factor=${SCALE}`] : [])], env: launchEnv(), timeout: 30_000 })
   await catchLinksOut(app)
-  const page = await app.firstWindow()
+  const page = await mainTerminalPage(app)
   await page.waitForLoadState('domcontentloaded')
   const close = async () => {
     // A quit that does not end (a window that will not close) is killed: the bench goes on.

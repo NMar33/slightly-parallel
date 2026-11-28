@@ -216,6 +216,21 @@ def test_whole_ones_first_then_briefs_newest_first_within_the_budget(tmp_path: P
     assert hookshared.compose_carried([], 1000) == ("", [], [])
 
 
+def test_raw_carry_excludes_marked_ping_turns_on_both_sides(env):
+    c, root = env
+    d = _chat(root, [("[SP ping] synthetic", "synthetic reply"), ("ordinary [SP ping] quotation", "work reply")])
+    chat = d / "chat.md"
+    raw = chat.read_text(encoding="utf-8").replace("## Turn 1 · 2026-11-16T10:01:00\n",
+                                                   "## Turn 1 · 2026-11-16T10:01:00 · ping\n")
+    chat.write_text(raw, encoding="utf-8")
+    store = c.app.state.store
+    marklib.mark(store, "carry", f"{AGENT}#1", {"agent_id": AGENT, "turn": 1})
+    marklib.mark(store, "carry-brief", f"{AGENT}#1/reply", {"agent_id": AGENT, "turn": 1})
+    marklib.mark(store, "carry", f"{AGENT}#2", {"agent_id": AGENT, "turn": 2})
+    items = hookshared.carried_items(root, AGENT, chat, reply_cap=100)
+    assert [(i["turn"], i["text"]) for i in items] == [(2, "ordinary [SP ping] quotation")]
+
+
 def test_a_removed_carry_is_not_given_back(env):
     c, root = env
     d = _chat(root, [("keep #carry", "r1"), ("this too #carry", "r2")])

@@ -222,7 +222,7 @@ def test_the_agents_tool_attaches_through_the_gate(client: TestClient, data_root
     with TestClient(create_app(data_root=data_root, watch=False, run_monitor=False)) as c:
         tr = mcp.Translator(_GatedApi(c), cwd=str(data_root))
         card = c.get("/api/publishing?project=ALPHA").json()["cards"][0]
-        out = tr.call("publish_attach", {"id": card["id"], "links": [{"title": "docs", "url": "https://example.org/docs"}]})
+        out = tr.call("publish_write", {"id": card["id"], "links": [{"title": "docs", "url": "https://example.org/docs"}]})
         assert out["attached"][0]["kind"] == "link" and out["card"]["links"][0]["by"] == AGENT
 
 
@@ -242,13 +242,13 @@ def test_the_tool_reads_an_image_from_a_path(tmp_path: Path) -> None:
             return {"attached": []}
     tr = mcp.Translator(Api(), cwd=str(tmp_path))  # type: ignore[arg-type]
     tr.identity = lambda: {"project": "ALPHA", "agent_id": AGENT}  # type: ignore[method-assign]
-    tr.call("publish_attach", {"id": "pu_x", "images": [{"path": str(img)}]})
+    tr.call("publish_write", {"id": "pu_x", "images": [{"path": str(img)}]})
     item = posted["body"]["images"][0]
-    assert posted["path"] == "/api/publishing/cards/pu_x/write"                 # the alias forwards
+    assert posted["path"] == "/api/publishing/cards/pu_x/write"
     assert item["title"] == "shot" and item["ext"] == "png" and item["data_base64"] == PNG and "path" not in item
     assert item["source"] == str(img)
     with pytest.raises(mcp.ApiError):
-        tr.call("publish_attach", {"id": "pu_x", "images": [{"path": str(tmp_path / "none.png")}]})
+        tr.call("publish_write", {"id": "pu_x", "images": [{"path": str(tmp_path / "none.png")}]})
 
 
 def test_a_card_written_by_hand_on_the_page(pub: TestClient) -> None:
@@ -410,8 +410,7 @@ def test_a_file_is_copied_onto_the_card(client: TestClient, data_root: Path, tmp
         assert c.get(f["url"]).status_code == 200
         with pytest.raises(mcp.ApiError):
             tr.call("publish_write", {"id": cid, "files": [{"path": str(tmp_path / "none.txt")}]})
-        # The older tool forwards to the new one.
-        out = tr.call("publish_attach", {"id": cid, "links": [{"title": "docs", "url": "https://example.org/docs"}]})
+        out = tr.call("publish_write", {"id": cid, "links": [{"title": "docs", "url": "https://example.org/docs"}]})
         assert out["attached"][0]["kind"] == "link"
 
 

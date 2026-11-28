@@ -303,6 +303,23 @@ async def _message_loop(app: FastAPI) -> None:
             log.exception("waiting messages not tried")
 
 
+PING_TICK_SECONDS = 60.0
+
+
+async def _ping_loop(app: FastAPI) -> None:
+    """Try keep-alives once a minute without blocking the server."""
+    from . import msgdeliver
+
+    while True:
+        await asyncio.sleep(PING_TICK_SECONDS)
+        try:
+            await asyncio.to_thread(msgdeliver.ping_due, app.state.store.data_root)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one failed round must not end the loop
+            log.exception("keep-alives not tried")
+
+
 async def _backup_loop(app: FastAPI) -> None:
     """Scheduled archives of the data root, taken off the request path.
 
@@ -355,7 +372,7 @@ _WRITE_TOOLS = ("write_entry", "update_entry", "task_update", "task_report", "ta
                 "task_story", "task_move", "interpret", "skill_draft", "artifact_write", "doc_version",
                 "architecture_page", "map_write", "standup_postpone", "undo_propose", "undo_apply", "undo_restore", "task_commits",
                 "task_done", "next_tasks",
-                "core_new", "core_note", "core_attach", "core_off", "publish_attach", "publish_write", "usage_prices_write",
+                "core_new", "core_note", "core_attach", "core_off", "publish_write", "usage_prices_write",
                 "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_ask", "entrypoint_answer",
                 "task_topic", "carry_brief", "note_write", "note_image", "message", "messages")
 assert set(_WRITE_TOOLS) <= set(_MCP_TOOLS), "a write tool named here is not served"
@@ -985,6 +1002,12 @@ def create_app(
         except (OSError, RuntimeError, ValueError, DamagedFile) as exc:
             log.warning("time entry migration skipped: %s", exc)
     store = ViewStore(data_root=root)
+    from .tasklib import migrate_legacy_board_lanes
+    if root.resolve() != FIXTURES.resolve():
+        try:
+            migrate_legacy_board_lanes(store)
+        except OSError as exc:
+            log.warning("board lane migration skipped: %s", exc)
     # The moments #now, #done and #think became commands here, made now if
     # missing (nowlib.stamp_starts); never on the shipped fixtures.
     if root.resolve() != FIXTURES.resolve():
@@ -1060,6 +1083,7 @@ def create_app(
             # Messages between agents that wait for their chat's terminal
             # (msgdeliver.py): tried again every few seconds.
             app.state.message_task = asyncio.create_task(_message_loop(app))
+            app.state.ping_task = asyncio.create_task(_ping_loop(app))
             # The first page that asks for a day's commits paid for reading
             # every repository's log — 4.8 s on the calendar after a start.
             # Read them now, off the request path, so the first ask is warm.
@@ -1125,7 +1149,7 @@ def create_app(
             if held is not None:
                 held.close()
                 app.state.root_lock = None
-            for name in ("backup_task", "memory_task", "message_task"):
+            for name in ("backup_task", "memory_task", "message_task", "ping_task"):
                 task = getattr(app.state, name, None)
                 if task is not None:
                     task.cancel()
@@ -1246,6 +1270,11 @@ def create_app(
             if old is not None:
                 old.close()
         new_store = ViewStore(data_root=new_root)
+        if new_root.resolve() != FIXTURES.resolve():
+            try:
+                migrate_legacy_board_lanes(new_store)
+            except OSError as exc:
+                log.warning("board lane migration skipped on swap: %s", exc)
         app.state.store = new_store
         app.state.settings = dataclasses.replace(
             app.state.settings, data_root=new_root

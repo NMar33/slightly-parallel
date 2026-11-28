@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron, type APIRequestContext, type ElectronApplication, type Page } from '@playwright/test'
-import { test, expect, ELECTRON, HEADLESS, HIDDEN, PROJECT, catchLinksOut, launchArgs, launchEnv, ready, sessionTab } from './fixtures'
+import { test, expect, ELECTRON, HEADLESS, HIDDEN, PROJECT, catchLinksOut, launchArgs, launchEnv, mainTerminalPage, ready, sessionTab } from './fixtures'
 
 /**
  * Windows after a restart (tk_f5b4a9d3): the windows besides the main one,
@@ -40,7 +40,7 @@ async function start(userData: string, origin?: string): Promise<{ app: Electron
   const args = launchArgs(userData).map((arg) => origin && arg.startsWith('--url=') ? `--url=${origin}` : arg)
   const app = await _electron.launch({ executablePath: ELECTRON, args, env: launchEnv(), timeout: 30_000 })
   await catchLinksOut(app)
-  const page = await app.firstWindow()
+  const page = await mainTerminalPage(app)
   await page.waitForLoadState('domcontentloaded')
   return { app, page }
 }
