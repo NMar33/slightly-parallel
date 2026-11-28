@@ -405,25 +405,81 @@ def ledger_stats(data_root: Path) -> list | str | None:
     return [st.st_size, st.st_mtime_ns, st.st_ino]
 
 
+_LEGACY_WHERE_TOLD_LIMIT = 100
+
+
+def _task_append_offset(previous: object, current: os.stat_result) -> int | None:
+    """The saved boundary of a ledger that appears to have grown by appending.
+
+    Product edits replace the file atomically. An external in-place truncate
+    and regrow can look like an append in the legacy stat and re-announce old ids.
+    """
+    if not isinstance(previous, list) or len(previous) != 3:
+        return None
+    size, modified, inode = previous
+    if (type(size) is int and type(modified) is int and current.st_ino != 0
+            and inode == current.st_ino and 0 < size < current.st_size
+            and modified <= current.st_mtime_ns):
+        return size
+    return None
+
+
 def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
-    """The tasks this chat made that it was not told the place of yet:
-    «tk_… → project · lane» on the next turn (note nt_258a7ed7 §6). tasks.csv
-    is read only when its stat moved; the first look marks what is there
-    as told."""
+    """Announce each task this chat makes once, with its project and lane."""
+    path = data_root / "tasks.csv"
     try:
-        st = os.stat(data_root / "tasks.csv")
-        sig = [st.st_size, st.st_mtime_ns, st.st_ino]
-    except OSError:
+        st = path.stat()
+    except FileNotFoundError:
         meta.setdefault("where_told", [])    # no tasks yet: the first look is done
         return []
-    if meta.get("tasks_seen") == sig:
+    except OSError:
         return []
+    sig = [st.st_size, st.st_mtime_ns, st.st_ino]
     first = "where_told" not in meta
-    told = [t for t in meta.get("where_told") or [] if isinstance(t, str)]
-    mine = [r for r in _read_csv(data_root / "tasks.csv") if (r.get("agent_id") or "") == agent]
-    new = [r for r in mine if r.get("id") and r["id"] not in told]
+    told = meta.get("where_told") or []
+    # The old hook discarded ids and could rotate them out in any order.
+    # For a capped chat, baseline old rows while preserving any complete
+    # records appended after the last observation of the same ledger.
+    legacy = not meta.get("where_told_complete") and len(told) == _LEGACY_WHERE_TOLD_LIMIT
+    if not legacy and meta.get("tasks_seen") == sig:
+        return []
+
+    seen = dict.fromkeys(task_id for task_id in told if isinstance(task_id, str))
+    new = []
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            append_at = _task_append_offset(meta.get("tasks_seen"), os.fstat(fh.fileno())) if legacy else None
+            def complete_lines():
+                # readline keeps tell available at each CSV record boundary.
+                for line in iter(fh.readline, ""):
+                    if not line.endswith(("\n", "\r")):
+                        raise csv.Error("task ledger has an unterminated line")
+                    yield line
+
+            rows = csv.DictReader(complete_lines(), strict=True)
+            pending = not legacy
+            if append_at is not None:
+                pending = rows.fieldnames is not None and fh.tell() == append_at
+            malformed_tail = False
+            for row in rows:
+                # A later valid row turns a short write into a broken record
+                # in the middle. Only a broken last row can still be finished.
+                malformed_tail = None in row or None in row.values()
+                task_id = row.get("id")
+                if not malformed_tail and row.get("agent_id") == agent and task_id and task_id not in seen:
+                    seen[task_id] = None
+                    if pending:
+                        new.append(row)
+                if append_at is not None and not pending:
+                    pending = fh.tell() == append_at
+            if malformed_tail:
+                return []
+    except (OSError, csv.Error, UnicodeError):
+        return []
+
     meta["tasks_seen"] = sig
-    meta["where_told"] = (told + [r["id"] for r in new])[-100:]
+    meta["where_told"] = list(seen)
+    meta["where_told_complete"] = True
     if first:
         return []
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
