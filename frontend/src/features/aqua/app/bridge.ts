@@ -6,11 +6,17 @@
  * bridge, the sidebars grow inside the page and a detach is a new tab.
  */
 
+export type AgentTerminalTarget = { agent: string; tab?: string }
+
 type Handler = {
   postMessage: (msg: unknown) => void
   restoreOffer?: () => Promise<number>
   saveDraft?: (name: string, text: string) => Promise<boolean>
   observeFullscreen?: (receive: (value: boolean) => void) => () => void
+  setDashboardView?: (visible: boolean, titleHeight: number) => void
+  openDashboardRecord?: (id: string) => void
+  openAgentTerminal?: (agent: string, tab?: string) => void
+  observeAgentTerminal?: (receive: (target: AgentTerminalTarget) => void) => () => void
 }
 
 export type BridgeOp =
@@ -34,6 +40,18 @@ function handler(): Handler | null {
 
 /** Inside the app's own window. */
 export const isNative = () => handler() !== null
+export const hasNativeDashboard = () => typeof handler()?.setDashboardView === 'function'
+export const setDashboardView = (visible: boolean, height: number) => handler()?.setDashboardView?.(visible, height)
+export const openDashboardRecord = (id: string) => handler()?.openDashboardRecord?.(id)
+export const hasNativeAgentTerminal = () => typeof handler()?.openAgentTerminal === 'function'
+export const observeAgentTerminal = (receive: (target: AgentTerminalTarget) => void) => handler()?.observeAgentTerminal?.(receive)
+
+export function openNativeAgentTerminal(agent: string, tab?: string): boolean {
+  const h = handler()
+  if (!h?.openAgentTerminal) return false
+  h.openAgentTerminal(agent, tab)
+  return true
+}
 
 export function observeFullscreen(receive: (value: boolean) => void) {
   return handler()?.observeFullscreen?.(receive)

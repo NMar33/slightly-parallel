@@ -1704,3 +1704,63 @@ def test_codex_hook_trust_retries_one_dropped_directional_key(scripted_onboardin
     assert keys == [interactive.DOWN, interactive.DOWN, interactive.ENTER]
     assert any("key not taken" in entry for entry in answered)
     assert "Codex project hooks trusted" in answered
+
+
+@pytest.mark.parametrize("partial_choice", ["W", "2. No", "3. No"])
+def test_windows_core_waits_for_the_command_approval_redraw(scripted_onboarding, partial_choice):
+    command = "Add-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py' -Value '    return a - b'"
+    question = "Would you like to run the following command?\n"
+    keys = []
+    # Windows first painted only part of the preview and the menu's leading W
+    # (run 45983683860, attempt 1). Reading it twice still must not answer it.
+    screen = SimpleNamespace(
+        rendered=question + f"  $ Add-Content -LiteralPath 'C:/Temp/sp\n› {partial_choice}",
+        send=keys.append,
+    )
+    check = scripted_onboarding._core_approval(screen, "a plain request", command=command)
+    assert check() == check() == ""
+    assert keys == []
+
+    screen.rendered = question + f"  $ {command}/outside\n› 1. Yes, proceed (y)"
+    assert check() == "unexpected Codex command approval"
+    for number in (2, 3):
+        screen.rendered = question + f"  $ {command}\n› {number}. No, and tell Codex what to do differently (esc)"
+        assert check() == "unexpected Codex command approval"
+    assert keys == []
+
+    screen.rendered = question + f"  $ {command}\n› 1. Yes, proceed (y)"
+    assert check() == check() == ""
+    assert keys == [scripted_onboarding.ENTER]
+
+
+
+def test_windows_core_edit_names_both_exact_reads_in_order(scripted_onboarding, tmp_path):
+    contract = "Get-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/SLIGHTLY-PARALLEL.md'"
+    calc = "Get-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py'"
+    edit = "Add-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py' -Value '    return a - b'"
+    project_contract = tmp_path / "SLIGHTLY-PARALLEL.md"
+    project_contract.write_text("# Existing contract\n", encoding="utf-8")
+    prompt = scripted_onboarding._windows_edit_prompt("Add subtraction.", calc, contract, edit, project_contract)
+    assert f"`{contract}`" in prompt
+    assert "instead of trying other commands" in prompt
+    assert calc not in prompt and edit not in prompt
+    section = scripted_onboarding.WINDOWS_CORE_EDIT_SECTION
+    assert section in prompt
+    instructions = project_contract.read_text(encoding="utf-8")
+    assert instructions.startswith("# Existing contract\n")
+    assert instructions.index(section) < instructions.index(calc) < instructions.index(edit)
+
+
+def test_windows_core_edit_prompt_fits_the_conpty_composer(scripted_onboarding, tmp_path):
+    from core_mcp import EDIT_POWERSHELL
+
+    workspace = "C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_codex_runs_full_core_agai0/sample"
+    contract = f"Get-Content -LiteralPath '{workspace}/SLIGHTLY-PARALLEL.md'"
+    calc_path = f"'{workspace}/calc.py'"
+    calc = f"Get-Content -LiteralPath {calc_path}"
+    edit = EDIT_POWERSHELL.format(path=calc_path)
+    message = (f"Add a function sub(a, b) to calc.py that returns a - b. Do not commit yet. "
+               f"Set the command working directory to `{workspace}` and use absolute paths "
+               "under that directory for the calculator files.")
+    prompt = scripted_onboarding._windows_edit_prompt(message, calc, contract, edit, tmp_path / "contract.md")
+    assert len(prompt) <= scripted_onboarding.WINDOWS_CORE_APPROVAL_COLUMNS - 16

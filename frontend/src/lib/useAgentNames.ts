@@ -13,13 +13,18 @@ import { api, qk } from './api'
  * for an agent the snapshot does not hold, the id stands — never a worse
  * label than before.
  */
-export function useAgentNames(): (agentId: string | null | undefined) => string {
+export function useAgentDirectory(enabled = true) {
   const snapshot = useQuery({
     queryKey: qk.snapshot(),
     queryFn: ({ signal }) => api.snapshot(signal),
     staleTime: 5 * 60_000,
+    enabled,
   })
-  const agents = snapshot.data?.agents
+  return enabled ? snapshot.data?.agents : undefined
+}
+
+export function useAgentNames(): (agentId: string | null | undefined) => string {
+  const agents = useAgentDirectory()
   const byId = useMemo(
     () => new Map((agents ?? []).map((a) => [a.agent_id, a])),
     [agents],

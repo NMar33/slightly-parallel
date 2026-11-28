@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react'
 import { useIntSetting, useStrSetting } from '../../../../lib/settings'
 import {
-  VIEW_COLUMNS, doneVisibleLimit, isToday, laneOf, normalizeStatus, readStoredView, sortTasks, storeView,
+  VIEW_COLUMNS, doneVisibleLimit, isToday, taskLaneKey, normalizeStatus, readStoredView, sortTasks, storeView,
 } from '../model'
 import type { KanbanView, SortMode, TaskRow } from '../model'
 import { readRecord } from './prefs'
@@ -101,7 +101,7 @@ export function useBoardColumns({
    * grew with the board squared.
    */
   const byLaneCol = useMemo((): ByLaneCol => {
-    // Cell key: lane + column. A lane name is typed text, never a newline.
+    // Cell key: lane + column. The lane key includes its project and folded name.
     const cells = new Map<string, TaskRow[]>()
     const laneN = new Map<string, number>()
     const todayCols = new Map<string, TaskRow[]>()
@@ -112,11 +112,11 @@ export function useBoardColumns({
     }
     // Walk the columns' own lists so each cell keeps its sorted order.
     for (const col of columns) {
-      for (const t of tasksByStatus[col.key] ?? []) add(cells, `${laneOf(t)}\n${col.key}`, t)
+      for (const t of tasksByStatus[col.key] ?? []) add(cells, `${taskLaneKey(t)}\n${col.key}`, t)
     }
     // The lane header counts every task with that lane, filtered or not —
     // the number says what the lane holds, not what the board shows.
-    for (const t of tasks) laneN.set(laneOf(t), (laneN.get(laneOf(t)) ?? 0) + 1)
+    for (const t of tasks) laneN.set(taskLaneKey(t), (laneN.get(taskLaneKey(t)) ?? 0) + 1)
     for (const t of todayTasks) add(todayCols, columnKeyOf(t), t)
     return { cells, laneN, todayCols }
   }, [columns, tasksByStatus, tasks, todayTasks, columnKeyOf])
