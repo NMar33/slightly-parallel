@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { _electron } from '@playwright/test'
-import { test, expect, ELECTRON, PROJECT, ROOT, echoCalc, expectLine, fullSize, launchArgs, launchEnv, openShell, ready, sessionTab, sessions, typeLine, WINDOWS } from './fixtures'
+import { test, expect, ELECTRON, PROJECT, ROOT, echoCalc, expectLine, fullSize, launchArgs, launchEnv, mainTerminalPage, openShell, ready, sessionTab, sessions, typeLine, WINDOWS } from './fixtures'
 
 /**
  * The tab strip of tk_a9306fb1 in the real window: the tab is titled by the
@@ -363,7 +363,7 @@ test.describe('tab strip', () => {
     await app.close()
     const reopened = await _electron.launch({ executablePath: ELECTRON, args: launchArgs(userData), env: launchEnv(), timeout: 30_000 })
     try {
-      const restarted = await reopened.firstWindow()
+      const restarted = await mainTerminalPage(reopened)
       await expect(sessionTab(strip(restarted), target.id)).toHaveAttribute('aria-selected', 'true')
     } finally {
       await reopened.close()
