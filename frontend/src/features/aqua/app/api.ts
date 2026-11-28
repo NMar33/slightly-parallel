@@ -86,7 +86,11 @@ export function useAquaActions() {
     close: async (id: string) => { await postJson(`${sid(id)}/close`, { actor: 'operator' }).catch(failed(t('The terminal did not close'))); refresh() },
     rename: async (id: string, label: string) => { await postJson(`${sid(id)}/rename`, { label, actor: 'operator' }).catch(failed(t('The terminal was not renamed'))); refresh() },
     sleep: async (id: string) => { await postJson(`${sid(id)}/sleep`, { actor: 'operator' }).catch(failed(t('The chat did not go to sleep'))); refresh() },
-    wake: async (id: string) => { await postJson(`${sid(id)}/wake`, { actor: 'operator' }).catch(failed(t('The chat did not wake'))); refresh() },
+    wake: async (id: string) => {
+      const result = await postJson(`${sid(id)}/wake`, { actor: 'operator' }).catch(failed(t('The chat did not wake')))
+      refresh()
+      return !!result
+    },
     setGroup: async (id: string, group: string) => {
       const result = await postJson(`${sid(id)}/group`, { group, actor: 'operator' }).catch(failed(t('The chat did not move')))
       refresh()

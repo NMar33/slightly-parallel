@@ -4,6 +4,7 @@
  * window shows them in edit mode when the section is switched on.
  */
 
+import { DashboardAgentMention } from '../../../terminal/messageMenu/AgentTerminalMenu'
 import { LoadingSkeleton } from '../../../../components/states'
 import { useQuery } from '@tanstack/react-query'
 import { MentionsPanel } from '../../mentions'
@@ -65,7 +66,8 @@ export function TaskEventsTimeline({ taskId }: { taskId: string }) {
             className="flex items-baseline gap-6 text-11 font-mono py-2 border-b border-border-subtle last:border-b-0"
           >
             <span className="text-tertiary min-w-[130px]">{formatStamp(ev.timestamp)}</span>
-            <span className="text-secondary min-w-[50px]">{ev.actor}</span>
+            <DashboardAgentMention agent={ev.actor} label={ev.actor} className="text-secondary min-w-[50px]"
+              fallback={<span className="text-secondary min-w-[50px]">{ev.actor}</span>} />
             <span className="text-brand min-w-[72px]">{ev.field}</span>
             {ev.old_value ? (
               <>

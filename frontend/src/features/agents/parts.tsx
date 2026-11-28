@@ -4,6 +4,7 @@
  * the same thing wherever it is printed.
  */
 
+import { DashboardAgentMention } from '../terminal/messageMenu/AgentTerminalMenu'
 import { StatTile } from '../../components/StatTile'
 import { useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
@@ -130,7 +131,8 @@ export function AgentIdentity({ p, size = 'md', linkTo = true }: { p: AgentProfi
   return (
     <div className="min-w-0 flex flex-col gap-2">
       <div className="flex items-center gap-6 min-w-0 flex-wrap">
-        {name}
+        <DashboardAgentMention agent={p.agent.agent_id} label={label} className={`${cls} text-primary truncate`} fallback={name}
+          extra={<Link role="menuitem" to={`/agent/${encodeURIComponent(p.agent.agent_id)}`} className="block rounded-input px-8 py-4 hover:bg-hover">{t('Open the chat in Slightly Parallel')}</Link>} />
         <ToolBadge tool={toolOfProfile(p)} />
         <GroupChip name={p.agent.agent_group} />
       </div>

@@ -155,7 +155,7 @@ test.describe('record cards', () => {
 
       // 4. The chat: its terminal is this one.
       const a = await openCard(AGENT, `Chat ${AGENT}`)
-      await expect(a.getByRole('button', { name: 'Go to its tab' })).toBeVisible()
+      await expect(a.getByRole('menuitem', { name: "Go to agent's terminal" })).toBeVisible()
       await expect(a.getByRole('button', { name: 'Open the chat in Slightly Parallel' })).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(a).toHaveCount(0)
