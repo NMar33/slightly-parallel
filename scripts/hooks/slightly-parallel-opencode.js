@@ -61,7 +61,6 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
       .filter((p) => p && p.type === 'text' && typeof p.text === 'string' && !p.synthetic && !p.ignored)
       .map((p) => p.text)
       .join('\n')
-      .trim()
 
   // The agent's name: the session id's last 8 characters. Its first ones
   // are the time (ses_eb5cc9…, ses_eb5cc1…): sessions minutes apart shared
@@ -232,7 +231,7 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         const info = m.info || m
         if (info.role === 'user') break
         if (info.role !== 'assistant') continue
-        return { id: String(info.id || ''), text: textOf(m.parts || info.parts) }
+        return { id: String(info.id || ''), text: textOf(m.parts || info.parts).trim() }
       }
     } catch {
       /* fall through */
@@ -310,14 +309,15 @@ export const SlightlyParallelCapture = async ({ client, directory, $ }) => {
         const command = typed.get(String(sessionID || ''))
         typed.delete(String(sessionID || ''))
         const text = command || textOf(output && output.parts)
-        if (HELPER && sessionID && text) helperTurns.set(sessionID, null)
+        if (!text.trim()) return
+        if (HELPER && sessionID) helperTurns.set(sessionID, null)
         // OpenCode waits for this hook before it sends the prompt: a capture
         // that hangs (a stalled disk) must not hold the prompt. Past the wait
         // the notice is left out; the capture itself still finishes.
-        const notice = text ? await Promise.race([
+        const notice = await Promise.race([
           run('open', sessionID, text),
           new Promise((done) => setTimeout(() => done(''), OPEN_WAIT_MS)),
-        ]) : ''
+        ])
         const parts = output && output.parts
         const first = Array.isArray(parts) && parts.find((p) => p && p.type === 'text')
         if (notice && first) {

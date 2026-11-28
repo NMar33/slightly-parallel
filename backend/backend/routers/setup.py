@@ -1194,16 +1194,22 @@ def _drop_opencode_folder(text: str) -> tuple[str, str]:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n", "updated"
 
 
+def _toml_basic_string(value: str) -> str:
+    # Keep Unicode intact because TOML rejects JSON's UTF-16 surrogate pairs.
+    # TOML also requires escaping DEL, which the JSON encoder leaves literal.
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", r"\u007f")
+
+
 def codex_mcp_block(api_url: str) -> str:
     e = mcp_server_entry(api_url)
-    args = ", ".join(json.dumps(a) for a in e["args"])
+    args = ", ".join(_toml_basic_string(a) for a in e["args"])
     # Every variable the other tools get (PYTHONUTF8 among them: without it a
     # non-Latin title ends the server on Windows), with this server's address.
     env = {**e["env"], "SP_API": api_url}
-    pairs = ", ".join(f"{k} = {json.dumps(v)}" for k, v in env.items())
+    pairs = ", ".join(f"{k} = {_toml_basic_string(v)}" for k, v in env.items())
     return (
         f"[mcp_servers.{MCP_SERVER}]\n"
-        f"command = {json.dumps(e['command'])}\n"
+        f"command = {_toml_basic_string(e['command'])}\n"
         f"args = [{args}]\n"
         f"env = {{ {pairs} }}\n"
     )
@@ -1213,10 +1219,9 @@ _NOTIFY_RE = re.compile(r"^notify\s*=.*$", re.MULTILINE)
 
 
 def _codex_notify_line(data_root: Path) -> str:
-    # json.dumps quotes each part as TOML reads it: a Windows path's
-    # backslashes would otherwise be escapes.
     program = "python3" if not _windows() else str(_venv_python()) if _venv_python().exists() else "python"
-    return "notify = [" + ", ".join(json.dumps(x) for x in (program, str(_CODEX_SCRIPT), "--data-root", str(data_root))) + "]"
+    args = (program, str(_CODEX_SCRIPT), "--data-root", str(data_root))
+    return "notify = [" + ", ".join(_toml_basic_string(arg) for arg in args) + "]"
 
 
 def codex_status() -> dict:

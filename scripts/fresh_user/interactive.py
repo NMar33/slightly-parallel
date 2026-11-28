@@ -51,6 +51,7 @@ CLAUDE_MCP_CHOICES = (
 )
 WINDOWS_CORE_APPROVAL_COLUMNS = 640
 SCAN_PAYLOADS_NAME = "scan-payloads.json"
+WINDOWS_CORE_EDIT_SECTION = "Calculator core edit commands"
 WINDOWS_CORE_WORK_SECTION = "Calculator core work commands"
 CLAUDE_THEME_SELECTION = re.compile(
     r"(?im)^ *[❯>] *(?:[✔√] *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
@@ -332,6 +333,17 @@ def _core_toolchain_hint() -> str:
             " Do not install packages or request permission to run the tests outside your sandbox.")
 
 
+def _windows_edit_prompt(message: str, read: str, contract_read: str, edit: str, contract: Path) -> str:
+    # As for the work turn, the long lines belong in the scratch contract.
+    # ConPTY can wrap a literal path across rows that the composer must verify.
+    with contract.open("a", encoding="utf-8") as instructions:
+        instructions.write(f"\n\n## {WINDOWS_CORE_EDIT_SECTION}\n\n"
+                           "Run these commands exactly, in order:\n"
+                           f"```powershell\n{read}\n{edit}\n```\n")
+    return (f"{message} Run `{contract_read}`, then follow {WINDOWS_CORE_EDIT_SECTION}."
+            " If refused, ask once for that exact command instead of trying other commands. Edit only.")
+
+
 def _codex_work_prompt(message: str, command: str, tests: str, contract: Path) -> str:
     followup = ("If the sandbox refuses the Git command, ask once to run that exact command. "
                 "Once the commit command succeeds, reply in chat without running any further commands.")
@@ -473,6 +485,11 @@ _COMMAND_APPROVAL = re.compile(
     r"(?m)^ *Would you like to run the following command\? *$"
     r".*?^ *\$ (?P<command>.*?)^ *› (?P<choice>[^\n]+)", re.DOTALL,
 )
+_COMMAND_APPROVAL_CHOICE = re.compile(
+    r"(?:1\. Yes, proceed \(y\)"
+    r"|2\. Yes, and don't ask again(?: for commands that start with `[^\n]+`)? \(p\)"
+    r"|[23]\. No, and tell Codex what to do differently \(esc\))",
+)
 RULE_INTERPRETATION = core_mcp.RULE_TEXT
 
 
@@ -550,8 +567,13 @@ def _core_approval(screen: Screen, step: str, rule_id: Callable[[], str] | None 
         if shell := _COMMAND_APPROVAL.search(screen.rendered):
             if shell.group() == handled_shell:
                 return ""
+            choice = shell["choice"].strip()
+            # ConPTY can expose the preview and selection partway through a
+            # redraw. Wait for a whole menu choice before deciding on it.
+            if _COMMAND_APPROVAL_CHOICE.fullmatch(choice) is None:
+                return ""
             shown = _approval_command(shell["command"])
-            if shell["choice"].strip() != "1. Yes, proceed (y)":
+            if choice != "1. Yes, proceed (y)":
                 return "unexpected Codex command approval"
             approved = (shown,)
             if shown not in pending:
@@ -838,9 +860,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                             offline_command = f"Get-Content -LiteralPath {calc}"
                             contract_read = f"Get-Content -LiteralPath {_powershell_path(project_contract)}"
                             command = core_mcp.EDIT_POWERSHELL.format(path=calc)
-                            message += (f" Read the file with `{offline_command}`, then run `{command}`."
-                                        " If the sandbox refuses the operation, ask once to run that exact command."
-                                        " This is an edit-only turn. The tests and commit follow later.")
+                            message = _windows_edit_prompt(message, offline_command, contract_read, command,
+                                                           project_contract)
                         elif offline_provider:
                             offline_command = core_mcp.OFFLINE_EDIT
                     elif name == "#rule":

@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from . import chatstore, codexdelivery, msgledger, termlib
+from .file_safety import FileSafetyError, acquire_flock, lock_path
 from .hookshared import process_started
 
 log = logging.getLogger("sp.messages")
@@ -131,28 +132,33 @@ def _after_prompt(cells: list[tuple[str, bool]], glyph: str) -> list[tuple[str, 
     return cells[k + 1:]
 
 
-def input_empty(screen: str, tool: str) -> bool:
-    """Is the tool's input line on this screen (``capture-pane -p -e``) there
-    and empty? False whenever it cannot be told: the message then waits."""
+def _input_state(screen: str, tool: str) -> bool | None:
+    """True for an empty composer, False for a draft, None when unreadable."""
     rows = [_cells(r) for r in screen.split("\n")]
     while rows and not _text(rows[-1]).strip():
         rows.pop()
     glyph = _CLAUDE_PROMPT if tool == "claude-code" else _CODEX_PROMPT if tool == "codex" else ""
     if not glyph:
-        return False
+        return None
     at = next((i for i in range(len(rows) - 1, -1, -1) if _after_prompt(rows[i], glyph) is not None), None)
     if at is None:
-        return False
+        return None
     rest = _after_prompt(rows[at], glyph) or []
-    if _typed(rest):
-        return False
     if tool == "claude-code":
-        # The box: a rule above the input row and one straight under it. A
-        # second row of input, or a menu's "❯ 1. Yes" with no rule, is no.
-        return at > 0 and _is_rule(rows[at - 1]) and at + 1 < len(rows) and _is_rule(rows[at + 1])
+        if at == 0 or not _is_rule(rows[at - 1]):
+            return None
+        bottom = next((i for i in range(at + 1, len(rows)) if _is_rule(rows[i])), None)
+        if bottom is None:
+            return None
+        return bottom == at + 1 and not _typed(rest)
     # Codex: the composer is the last "›" row; a row of input under it would
     # be the operator's second line.
-    return at + 1 >= len(rows) or not _typed(rows[at + 1])
+    return not _typed(rest) and (at + 1 >= len(rows) or not _typed(rows[at + 1]))
+
+
+def input_empty(screen: str, tool: str) -> bool:
+    """An input line is safe to type into only when known empty."""
+    return _input_state(screen, tool) is True
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +257,8 @@ def occupant_why(data_root: Path, agent_id: str, pane_pid: int) -> str:
 
 
 #: Why nothing is typed now that passes: the server's next round types it.
-WHY_INPUT = "the input line is not empty (or cannot be read)"
+WHY_INPUT = "the input line is not empty"
+WHY_UNREADABLE_INPUT = "the input line cannot be read"
 WHY_COPY_MODE = "the terminal is in copy mode"
 _PASSING = (WHY_INPUT, WHY_COPY_MODE)
 
@@ -277,17 +284,20 @@ def check(data_root: Path, agent_id: str) -> tuple[str, str]:
     name = pane["fg"].split("/")[-1].lstrip("-")
     if not name or name in termlib.SHELLS:
         return sid, "a shell is in front: the agent is not running there"
-    if pane["in_mode"] == "1":
-        return sid, WHY_COPY_MODE
-    screen = termlib.tmux_read(data_root, "capture-pane", "-p", "-e", "-t", termlib.PREFIX + sid).stdout or ""
-    if not input_empty(screen, tool):
-        return sid, WHY_INPUT
     try:
         pane_pid = int(pane["pid"])
     except ValueError:
         return sid, "the pane's process cannot be read"
     why = occupant_why(data_root, agent_id, pane_pid)
-    return sid, why
+    if why:
+        return sid, why
+    if pane["in_mode"] == "1":
+        return sid, WHY_COPY_MODE
+    screen = termlib.tmux_read(data_root, "capture-pane", "-p", "-e", "-t", termlib.PREFIX + sid)
+    state = _input_state(screen.stdout or "", tool) if screen.returncode == 0 else None
+    if state is None:
+        return sid, WHY_UNREADABLE_INPUT
+    return sid, "" if state else WHY_INPUT
 
 
 def stop_leaves(data_root: Path, agent_id: str) -> tuple[str, str]:
@@ -300,6 +310,8 @@ def stop_leaves(data_root: Path, agent_id: str) -> tuple[str, str]:
     if not msgledger.AGENT_RE.match(agent_id or "") or agent_id.startswith("codex-"):
         # Codex is woken through its app-server (codexdelivery), not here.
         return "", "not a chat whose terminal this server types into"
+    if msgledger.stop_needs_wake(data_root, agent_id):
+        return "", "a waiting message cannot be retried in the terminal"
     try:
         sid, why = check(data_root, agent_id)
     except termlib.TmuxError as exc:
@@ -307,11 +319,14 @@ def stop_leaves(data_root: Path, agent_id: str) -> tuple[str, str]:
     return sid, "" if why in _PASSING else why
 
 
-def _type(data_root: Path, sid: str, text: str) -> bool:
+def _type(data_root: Path, sid: str, row: dict[str, str]) -> bool:
     """The text as one paste (bracketed, when the program asked for that), then Enter."""
     target = termlib.PREFIX + sid
-    buf = f"sp-msg-{sid}"
-    if termlib.tmux(data_root, "load-buffer", "-b", buf, "-", input=text).returncode != 0:
+    buf = "sp-" + row["id"]
+    if termlib.tmux(data_root, "load-buffer", "-b", buf, "-", input=msgledger.terminal_text(row)).returncode != 0:
+        return False
+    if check(data_root, row["to_agent"]) != (sid, "") or not msgledger.begin_terminal(data_root, row["id"]):
+        termlib.tmux(data_root, "delete-buffer", "-b", buf)
         return False
     if termlib.tmux(data_root, "paste-buffer", "-p", "-d", "-b", buf, "-t", target).returncode != 0:
         return False
@@ -329,23 +344,45 @@ def try_terminal(data_root: Path, msg_id: str) -> tuple[bool, str]:
         return False, f"already delivered ({row['delivered_via']})"
     if row["strayed"]:
         return False, "typed once into a terminal another chat held: its own chat's next prompt or inbox takes it"
+    agent = row["to_agent"]
+    sid = row["terminal_sid"] or terminal_of(data_root, agent)
+    if not re.fullmatch(r"t[0-9a-f]{8}", sid):
+        return False, "the chat has no live terminal in Slightly Parallel"
+    pane_lock = lock_path(termlib.folder(data_root) / ("deliver-" + sid))
     try:
-        sid, why = check(data_root, row["to_agent"])
-    except termlib.TmuxError as exc:
-        return False, str(exc)
+        with acquire_flock(pane_lock, timeout_s=0):
+            return _try_in_pane(data_root, sid, msg_id)
+    except FileSafetyError:
+        return False, "another message is being typed into this terminal"
+
+
+def _try_in_pane(data_root: Path, sid: str, msg_id: str) -> tuple[bool, str]:
+    row = msgledger.find(data_root, msg_id)
+    if row is None or row["delivered_via"]:
+        return False, "taken by another way meanwhile"
+    if row["terminal_sid"] == sid:
+        # We hold the pane lock, so its previous sender is gone. The claim
+        # itself tells us whether we can retry or may still see a prompt.
+        msgledger.finish_terminal(data_root, msg_id)
+        row = msgledger.find(data_root, msg_id)
+        if row is None or row["delivered_via"] or not msgledger.retryable(row):
+            return False, "the earlier terminal send may have landed; the inbox or next prompt takes it"
+    if row["terminal_state"]:
+        return False, "this message already has a terminal send"
+    current, why = check(data_root, row["to_agent"])
     if why:
         return False, why
-    claimed = msgledger.claim_terminal(data_root, msg_id)
+    if current != sid:
+        return False, "the chat's terminal changed"
+    claimed = msgledger.claim_terminal(data_root, msg_id, sid)
     if claimed is None:
         return False, "taken by another way meanwhile"
     try:
-        ok = _type(data_root, sid, msgledger.terminal_text(claimed))
+        ok = _type(data_root, sid, claimed)
     except termlib.TmuxError as exc:
         ok, why = False, str(exc)
-    if not ok:
-        msgledger.release_terminal(data_root, msg_id)
-        return False, why or "tmux refused the paste"
-    return True, ""
+    msgledger.finish_terminal(data_root, msg_id, sent=ok)
+    return ok, "" if ok else why or "tmux refused the paste"
 
 
 def try_delivery(data_root: Path, msg_id: str) -> tuple[bool, str]:

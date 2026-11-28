@@ -8,7 +8,7 @@ removing and the documents are the operator's.
   GET  /api/publishing?project=                 the cards with their life, the documents with their versions
   GET  /api/publishing/cards/{id}               one card, with its history
   POST /api/publishing/cards/{id}/write         {text?, context?, note?, base?, tasks?, notes?, commits?, links?, files?, images?, merge?}
-  POST /api/publishing/cards/{id}/attach        the older door: attachments only (MCP publish_attach)
+  POST /api/publishing/cards/{id}/attach        the operator page: attachments only
   POST /api/publishing/cards/{id}/text          {text, note?}: the operator's new version of the text
   POST /api/publishing/cards/{id}/merge         {into}: this card folded into another (the operator's)
   POST /api/publishing/sources/{id}/remove      a merge taken back, or an appended message dropped
@@ -108,8 +108,8 @@ def publishing_card_write(card_id: str, body: dict = Body(...), store: ViewStore
 @router.post("/api/publishing/cards/{card_id}/attach", status_code=201)
 def publishing_card_attach(card_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
     """Attachments onto a card: the operator on the page (a drop, a paste,
-    a link typed). The MCP tool publish_attach forwards to publish_write, so
-    no MCP call posts here and the MCP mark is refused (server._MCP_WRITE_PATHS).
+    a link typed). The MCP tool publish_write posts to /write.
+    The MCP mark is refused here (server._MCP_WRITE_PATHS).
     Adopts first: the hook names a card before any read has."""
     adopt_when_changed(store, "keep", keeplib.adopt)
     try:

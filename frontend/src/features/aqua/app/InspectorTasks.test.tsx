@@ -80,3 +80,34 @@ it('sorts project tasks by their last mention and can limit the list to the acti
   await screen.findByRole('button', { name: /^Newer card/ })
   expect(screen.queryByRole('button', { name: /^Older card/ })).toBeNull()
 })
+
+it('offers both a blank lane and an explicitly named unassigned lane', async () => {
+  const blank: TaskRow = { id: 'tk_blank', title: 'Blank card', assignee: '', lane: 'unassigned' }
+  const named: TaskRow = { id: 'tk_named', title: 'Named card', assignee: 'unassigned', lane: 'unassigned' }
+  const posts: unknown[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/tasks/tk_blank/update' && init?.method === 'POST') {
+      const patch = JSON.parse(String(init.body))
+      posts.push(patch)
+      Object.assign(blank, patch)
+      return Response.json({})
+    }
+    if (url === '/api/tasks/tk_blank') return Response.json({ metadata: blank, turns: [] })
+    return Response.json(url.startsWith('/api/tasks?') ? { tasks: [blank, named] } : {})
+  }))
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={queryClient}>
+    <InspectorTasks project="sample" agent="" onAppend={() => {}} />
+  </QueryClientProvider>)
+  fireEvent.click(await screen.findByRole('button', { name: /^Blank card/ }))
+  const select = await screen.findByRole('combobox', { name: 'Lane' })
+  expect(select).toHaveValue('')
+  fireEvent.change(select, { target: { value: 'unassigned' } })
+  await waitFor(() => expect(select).toHaveValue('unassigned'))
+  await waitFor(() => expect(select).toBeEnabled())
+  fireEvent.change(select, { target: { value: '' } })
+  await waitFor(() => expect(posts).toEqual([
+    { actor: 'operator', lane: 'unassigned', assignee: 'unassigned' },
+    { actor: 'operator', lane: '', assignee: '' },
+  ]))
+})
