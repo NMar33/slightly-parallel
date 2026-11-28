@@ -501,10 +501,11 @@ def test_idle_terminals_do_not_take_the_threads_the_server_works_on() -> None:
     default executor, about eight idle terminals left asyncio.to_thread no
     thread to run on."""
     import asyncio
-    from backend.routers.terminal import _MAX_SESSIONS, _PTY_READS, _read_pty
+    from backend.app_settings import MAX_TERMINAL_SESSIONS
+    from backend.routers.terminal import MAX_TERMINAL_VIEWS, _PTY_READS, _read_pty
 
     # Every plain terminal and every tmux view can hold a read at once.
-    assert _PTY_READS._max_workers >= _MAX_SESSIONS * 5
+    assert _PTY_READS._max_workers >= MAX_TERMINAL_SESSIONS + MAX_TERMINAL_VIEWS
 
     async def main() -> None:
         pipes = [os.pipe() for _ in range(40)]
@@ -639,18 +640,19 @@ def _row(c, sid: str) -> dict:
     return next(x for x in c.get("/api/terminal/sessions").json()["sessions"] if x["id"] == sid)
 
 
-def _screen(root: Path, sid: str) -> str:
-    return termlib.tmux(root, "capture-pane", "-p", "-t", termlib.PREFIX + sid).stdout
+def _screen(root: Path, sid: str, *, ansi: bool = False) -> str:
+    flags = ("-p", "-e") if ansi else ("-p",)
+    return termlib.tmux(root, "capture-pane", *flags, "-t", termlib.PREFIX + sid).stdout
 
 
-def _wait_screen(root: Path, sid: str, text: str, timeout: float = 5.0) -> str:
+def _wait_screen(root: Path, sid: str, text: str, timeout: float = 5.0, *, ansi: bool = False) -> str:
     end = time.time() + timeout
     while time.time() < end:
-        got = _screen(root, sid)
+        got = _screen(root, sid, ansi=ansi)
         if text in got:
             return got
         time.sleep(0.1)
-    return _screen(root, sid)
+    return _screen(root, sid, ansi=ansi)
 
 
 @needs_tmux
@@ -1290,3 +1292,890 @@ def test_a_new_scheme_with_no_tmux_running_changes_nothing(env) -> None:
     assert c.post("/api/settings", json={"values": {"terminal.scheme": "nord"}}).status_code == 200
     if TMUX:
         assert termlib.tmux(root, "list-sessions").returncode != 0
+
+
+@pytest.mark.parametrize("change", ["owner", "saved_command", "link"])
+def test_confirmed_agent_wake_defers_when_the_selected_terminal_changes(env, monkeypatch, change):
+    client, root, work = env
+    _on(client)
+    owner = "cc-11223344"
+    sid = "t1234abcd"
+    termlib.put(root, {"id": sid, "cwd": str(work), "project": "alpha", "kind": "shell",
+                       "backend": "plain", "asleep": True, "agent_id": owner,
+                       "created": "2026-09-18T12:00:00", "wake": ""})
+    links = {}
+    monkeypatch.setattr(termlib, "agent_links", lambda *_args, **_kwargs: links)
+    before = _row(client, sid)
+    if change == "owner":
+        termlib.put(root, {"id": sid, "agent_id": "cc-55667788"})
+    elif change == "saved_command":
+        termlib.put(root, {"id": sid, "wake": "echo changed"})
+    else:
+        links[sid] = {"agent_id": "cc-55667788"}
+
+    resp = client.post(f"/api/terminal/sessions/{sid}/wake", json={
+        "actor": "operator", "expected_agent": owner, "wake_revision": before["wake_revision"],
+        "expected_cwd": before["wake_cwd"],
+    })
+
+    assert resp.status_code == 409, resp.text
+    assert termlib.get(root, sid)["asleep"] is True
+
+
+def test_confirmed_wake_stops_if_the_displayed_worktree_disappears(env):
+    client, root, work = env
+    _on(client)
+    checkout = work / "checkout"
+    checkout.mkdir()
+    owner = "cc-11223344"
+    sid = "t1234abcd"
+    termlib.put(root, {"id": sid, "cwd": str(checkout.resolve()), "project": "alpha", "kind": "shell",
+                       "backend": "plain", "asleep": True, "agent_id": owner, "wake": ""})
+    selected = _row(client, sid)
+    checkout.rmdir()
+
+    resp = client.post(f"/api/terminal/sessions/{sid}/wake", json={
+        "actor": "operator", "expected_agent": owner, "wake_revision": selected["wake_revision"],
+        "expected_cwd": selected["wake_cwd"],
+    })
+
+    assert resp.status_code == 409, resp.text
+    assert termlib.get(root, sid)["asleep"] is True
+
+
+def test_resume_shows_the_fallback_folder_and_refuses_a_changed_destination(env, monkeypatch):
+    from backend.db import ViewStore
+
+    client, root, work = env
+    _on(client)
+    owner = "cc-11223344"
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+         "project": "alpha", "cwd": str(work / "gone-checkout")},
+    ])
+    monkeypatch.setattr(termlib, "resume_command", lambda _tool, _ref: "echo resumed-fixture")
+
+    preview = client.get(f"/api/terminal/resume/{owner}")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["cwd"] == str(work.resolve())
+    alternate = root / "alternate"
+    alternate.mkdir()
+    (root / "integrations.csv").write_text(f"project,path\nalpha,{alternate}\n", encoding="utf-8")
+
+    resp = client.post("/api/terminal/sessions", json={
+        "actor": "operator", "kind": "resume", "agent": owner,
+        "expected_cwd": preview.json()["cwd"], "resume_revision": preview.json()["resume_revision"],
+    })
+
+    assert resp.status_code == 409, resp.text
+    assert termlib.rows(root) == []
+
+    updated = client.get(f"/api/terminal/resume/{owner}").json()
+    assert updated["cwd"] == str(alternate.resolve())
+    opened = client.post("/api/terminal/sessions", json={
+        "actor": "operator", "kind": "resume", "agent": owner,
+        "expected_cwd": updated["cwd"], "resume_revision": updated["resume_revision"],
+    })
+    assert opened.status_code == 201, opened.text
+    assert opened.json()["session"]["cwd"] == updated["cwd"]
+
+
+def test_confirmed_wake_binds_a_recorded_alias_to_its_resolved_folder(env):
+    client, root, work = env
+    _on(client)
+    alias = root / "checkout"
+    try:
+        alias.symlink_to(work, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        pytest.skip("a symlink needs privileges on Windows")
+    owner = "cc-11223344"
+    sid = "t1234abcd"
+    termlib.put(root, {"id": sid, "cwd": str(alias), "project": "alpha", "kind": "shell",
+                       "backend": "plain", "asleep": True, "agent_id": owner, "wake": ""})
+
+    selected = _row(client, sid)
+    assert selected.get("wake_cwd") == str(work.resolve())
+    body = {"actor": "operator", "expected_agent": owner, "wake_revision": selected["wake_revision"],
+            "expected_cwd": selected["wake_cwd"]}
+    other = work / "other"
+    other.mkdir()
+    alias.unlink()
+    alias.symlink_to(other, target_is_directory=True)
+
+    response = client.post(f"/api/terminal/sessions/{sid}/wake", json=body)
+    assert response.status_code == 409, response.text
+    assert termlib.get(root, sid)["asleep"] is True
+
+    alias.unlink()
+    alias.symlink_to(work, target_is_directory=True)
+    response = client.post(f"/api/terminal/sessions/{sid}/wake", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["session"]["cwd"] == str(work.resolve())
+
+
+@unix_pty
+@pytest.mark.parametrize("keep", ["plain", pytest.param("tmux", marks=needs_tmux)])
+def test_confirmed_resume_runs_in_the_shown_folder_after_a_profile_changes_cwd(env, monkeypatch, keep):
+    from backend.db import ViewStore
+
+    client, root, work = env
+    _on(client)
+    assert client.post("/api/settings", json={"values": {"terminal.keep": keep}}).status_code == 200
+    checkout = work / "the chat's worktree"
+    checkout.mkdir()
+    profile_folder = root / "profile-default"
+    profile_folder.mkdir()
+    profile = root / "shell-profile"
+    profile.write_text(f"cd -- {shlex.quote(str(profile_folder))}\n", encoding="utf-8")
+    shell = root / "bash"
+    shell.write_text(
+        f"#!/bin/sh\nexec /bin/bash --noprofile --rcfile {shlex.quote(str(profile))} -i\n",
+        encoding="utf-8",
+    )
+    shell.chmod(0o755)
+    monkeypatch.setenv("SHELL", str(shell))
+    owner = "cc-11223344"
+    output = root / "resume-directory"
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+         "project": "alpha", "cwd": str(checkout)},
+    ])
+    monkeypatch.setattr(termlib, "resume_command", lambda _tool, _ref: f"pwd -P > {shlex.quote(str(output))}")
+    preview = client.get(f"/api/terminal/resume/{owner}").json()
+    assert preview["cwd"] == str(checkout.resolve())
+
+    response = client.post("/api/terminal/sessions", json={
+        "actor": "operator", "kind": "resume", "agent": owner, "expected_cwd": preview["cwd"],
+        "resume_revision": preview["resume_revision"],
+    })
+
+    assert response.status_code == 201, response.text
+    end = time.monotonic() + 8
+    while time.monotonic() < end and (not output.exists() or output.stat().st_size == 0):
+        time.sleep(0.05)
+    assert output.read_text(encoding="utf-8").strip() == str(checkout.resolve())
+
+
+def test_simultaneous_resume_confirmations_reuse_one_terminal(env, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, Lock
+
+    from backend.db import ViewStore
+
+    client, root, work = env
+    _on(client)
+    assert client.post("/api/settings", json={"values": {"terminal.keep": "plain"}}).status_code == 200
+    owner = "cc-11223344"
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+         "project": "alpha", "cwd": str(work)},
+    ])
+    monkeypatch.setattr(termlib, "resume_command", lambda _tool, _ref: "echo resumed-fixture")
+    preview = client.get(f"/api/terminal/resume/{owner}").json()
+    body = {"actor": "operator", "kind": "resume", "agent": owner, "expected_cwd": preview["cwd"],
+            "resume_revision": preview["resume_revision"]}
+    first_entered, second_entered, release_first = Event(), Event(), Event()
+    counter_lock = Lock()
+    opens = 0
+    open_session = termlib.open_session
+
+    def pause_first(*args, **kwargs):
+        nonlocal opens
+        with counter_lock:
+            opens += 1
+            first = opens == 1
+        if first:
+            first_entered.set()
+            assert release_first.wait(10)
+        else:
+            second_entered.set()
+        return open_session(*args, **kwargs)
+
+    monkeypatch.setattr(termlib, "open_session", pause_first)
+
+    def approve():
+        return client.post("/api/terminal/sessions", json=body)
+
+    with ThreadPoolExecutor(max_workers=2) as threads:
+        first = threads.submit(approve)
+        try:
+            assert first_entered.wait(10)
+            second = threads.submit(approve)
+            second_entered.wait(2)
+        finally:
+            release_first.set()
+        responses = [first.result(timeout=15), second.result(timeout=15)]
+
+    assert opens == 1
+    assert all(resp.status_code == 201 for resp in responses)
+    results = [resp.json() for resp in responses]
+    assert results[0]["session"]["id"] == results[1]["session"]["id"]
+    assert sorted(r["existing"] for r in results) == [False, True]
+    assert len(termlib.rows(root)) == 1
+
+
+@unix_pty
+def test_confirmed_command_aborts_if_a_component_is_replaced_after_confirmation(tmp_path):
+    import subprocess
+
+    parent = tmp_path / "chosen-parent"
+    checkout = parent / "the chat's worktree"
+    checkout.mkdir(parents=True)
+    alternative = tmp_path / "alternate-parent"
+    (alternative / checkout.name).mkdir(parents=True)
+    marker = tmp_path / "launched"
+    approved = str(checkout.resolve())
+    command = termlib.launch_in_cwd(f"printf ran > {shlex.quote(str(marker))}", approved, "bash")
+
+    parent.rename(tmp_path / "previous-parent")
+    parent.symlink_to(alternative, target_is_directory=True)
+    outcome = subprocess.run(["/bin/bash", "-c", command], cwd=tmp_path,
+                             capture_output=True, timeout=5, check=False)
+
+    assert outcome.returncode != 0 and not marker.exists()
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_terminal_diagnostic_is_operator_only_and_changes_only_its_own_file(env) -> None:
+    c, root, work = env
+    _on(c)
+    tok = c.get("/api/terminal/state").json()["token"]
+    got = c.post("/api/terminal/sessions", json={
+        "kind": "shell", "project": "alpha", "command": "printf '\\033[31mdiagnostic-marker\\033[0m\\n'; read -r diagnostic_hold",
+    })
+    assert got.status_code == 201
+    sid = got.json()["session"]["id"]
+    route = f"/api/terminal/sessions/{sid}/diagnostics"
+    browser = {
+        "capturedAt": "2026-11-28T00:00:00.000Z",
+        "xterm": {"live": {"rows": 24, "cols": 80, "viewportY": 0, "rowsByIndex": []}, "reader": None},
+        "dom": {"live": ["diagnostic-marker"], "reader": None},
+        "scrollLayer": {"live": {"pos": 0, "target": 0, "max": 0, "rowH": 19}, "reader": None},
+    }
+    target = termlib.PREFIX + sid
+
+    def files(folder: Path) -> dict:
+        return {p.relative_to(folder): p.read_bytes() for p in folder.rglob("*") if p.is_file()}
+
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}&cols=80&rows=24") as ws:
+        ws.receive_bytes()
+        coloured = "\x1b[31mdiagnostic-marker"
+        tmux_before = _wait_screen(root, sid, coloured, ansi=True)
+        assert coloured in tmux_before
+        before = files(root)
+        before_work = files(work)
+        pane_before = termlib.pane_pos(root, sid)
+        other = TestClient(c.app)
+        try:
+            other.cookies.clear()
+            refused = other.post(route, json=browser)
+        finally:
+            other.close()
+        assert refused.status_code == 403
+        assert files(root) == before
+
+        response = c.post(route, json={**browser, "path": str(work / "outside.json")})
+        assert response.status_code == 201, response.text
+        assert response.json()["owner_only"] is (os.name != "nt")
+        path = Path(response.json()["path"])
+        assert path.parent == root.resolve() / "diagnostics" and sid in path.name
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        assert saved["terminal"] == sid and saved["browser"] == browser
+        assert saved["server"]["pane"]["flags"]["alternate_on"] is False
+        assert "mouse_any_flag" in saved["server"]["pane"]["flags"]
+        assert saved["server"]["panePty"] == {"rows": 24, "cols": 80}
+        assert any(client["pty"] == {"rows": 24, "cols": 80} for client in saved["server"]["tmuxClients"])
+        assert saved["server"]["tmuxCapture"] == tmux_before
+        assert termlib.pane_pos(root, sid) == pane_before
+        assert termlib.tmux_read(root, "capture-pane", "-p", "-e", "-t", target).stdout == tmux_before
+        assert files(root) == {**before, path.relative_to(root.resolve()): path.read_bytes()}
+        assert files(work) == before_work
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a symlink needs privileges on Windows")
+def test_terminal_diagnostic_rejects_a_diagnostics_folder_outside_the_data_root(env) -> None:
+    c, root, work = env
+    _on(c)
+    got = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"})
+    assert got.status_code == 201
+    sid = got.json()["session"]["id"]
+    (root / "diagnostics").symlink_to(work, target_is_directory=True)
+    response = c.post(f"/api/terminal/sessions/{sid}/diagnostics", json={
+        "capturedAt": "2026-11-28T00:00:00.000Z", "xterm": {}, "dom": {}, "scrollLayer": {},
+    })
+    assert response.status_code == 409
+    assert list(work.iterdir()) == []
+
+
+@pytest.mark.skipif(os.open not in os.supports_dir_fd, reason="requires POSIX directory descriptors")
+def test_terminal_diagnostics_refuse_a_folder_changed_during_capture(tmp_path, monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    from backend import terminal_diagnostics
+
+    root = tmp_path / "data"
+    folder = root / "diagnostics"
+    previous = root / "previous-diagnostics"
+    other = tmp_path / "other"
+    folder.mkdir(parents=True)
+    other.mkdir()
+
+    def changed_directory(*_args):
+        folder.rename(previous)
+        folder.symlink_to(other, target_is_directory=True)
+        return {}
+
+    monkeypatch.setattr(terminal_diagnostics, "_tmux_snapshot", changed_directory)
+    with pytest.raises(HTTPException) as error:
+        terminal_diagnostics.save(root, "te2e", "tmux", {}, None)
+    assert error.value.status_code == 409
+    assert list(other.iterdir()) == list(previous.iterdir()) == []
+
+
+def test_terminal_limit_reports_live_sessions_and_can_be_raised(env, monkeypatch) -> None:
+    import subprocess
+
+    from backend.routers import terminal
+
+    c, _root, _work = env
+    monkeypatch.setattr(terminal, "SUPPORTED", True)
+    _on(c)
+    assert c.get("/api/terminal/state").json().get("max_sessions") == 36
+    for invalid in (-1, 257, 2.5, "2", True):
+        refused = c.post("/api/settings", json={"values": {"terminal.max_sessions": invalid}})
+        assert refused.status_code == 422
+        assert "terminal.max_sessions" in refused.json()["detail"]
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 2}}).status_code == 200
+    live = [
+        {"id": "recent", "state": "working", "project": "alpha", "agent_id": "cc-recent",
+         "label": "Recent", "backend": "tmux", "created": "2026-11-26T12:00:00", "last_output": 200.0},
+        {"id": "idle", "state": "shell", "project": "alpha",
+         "label": "Idle", "created": "2026-11-25T12:00:00", "last_output": 100.0},
+        {"id": "asleep", "state": "asleep", "last_output": 0.0},
+    ]
+    opened = []
+    monkeypatch.setattr(termlib, "listing", lambda *_: live)
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: subprocess.CompletedProcess(
+        [], 0, stdout=f"{termlib.PREFIX}recent\t1\t150\n", stderr=""))
+
+    def open_session(*_args, **kwargs):
+        opened.append(kwargs)
+        return {"id": "new", "backend": "tmux"}
+
+    monkeypatch.setattr(termlib, "open_session", open_session)
+    req = {"kind": "shell", "project": "alpha"}
+    refused = c.post("/api/terminal/sessions", json=req)
+    assert refused.status_code == 429
+    body = refused.json()
+    assert isinstance(body["detail"], str)
+    assert (body["count"], body["limit"]) == (2, 2)
+    assert [row["id"] for row in body["sessions"]] == ["idle", "recent"]
+    recent = body["sessions"][1]
+    assert recent["agent_id"] == "cc-recent"
+    assert recent["created"] == "2026-11-26T12:00:00"
+    assert recent["last_activity"] == 200.0
+    assert recent["running"] is True
+    assert recent["attached"] is True
+    assert not opened
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 3}}).status_code == 200
+    assert c.post("/api/terminal/sessions", json=req).status_code == 201
+    assert len(opened) == 1
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 0}}).status_code == 200
+    assert c.get("/api/terminal/state").json()["max_sessions"] == 0
+    assert c.post("/api/terminal/sessions", json=req).status_code == 201
+    assert len(opened) == 2
+
+
+@pytest.mark.parametrize(("state", "attached"), [("working", False), ("shell", True)])
+def test_closing_from_the_terminal_limit_requires_confirmation(env, monkeypatch, state, attached) -> None:
+    import subprocess
+
+    c, _root, _work = env
+    monkeypatch.setattr(termlib, "listing", lambda *_: [
+        {"id": "sid", "state": state, "backend": "tmux"},
+    ])
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: subprocess.CompletedProcess(
+        [], 0, stdout=f"{termlib.PREFIX}sid\t{int(attached)}\t100\n", stderr=""))
+    closed = []
+    monkeypatch.setattr(termlib, "close", lambda _root, sid: closed.append(sid))
+    path = "/api/terminal/sessions/sid/close"
+    assert c.post(path, json={"from_limit": True}).status_code == 409
+    assert closed == []
+    assert c.post(path, json={"from_limit": True, "confirmed": True}).status_code == 200
+    assert closed == ["sid"]
+
+
+@pytest.mark.parametrize("host_readable", [True, False])
+def test_terminal_limit_memory_counts_live_process_trees_without_writing(env, monkeypatch, host_readable) -> None:
+    from types import SimpleNamespace
+
+    import psutil
+
+    c, root, _work = env
+    now = time.time()
+    termlib.put(root, {"id": "claude", "label": "Review", "project": "alpha",
+                       "backend": "tmux", "kind": "start", "agent_id": "cc-aaaa1111",
+                       "last_opened": now - 20})
+    termlib.put(root, {"id": "shell", "label": "Shell", "project": "alpha",
+                       "backend": "tmux", "kind": "shell"})
+    termlib.put(root, {"id": "sleep", "backend": "tmux", "asleep": True})
+    monkeypatch.setattr(termlib, "tmux_panes", lambda _root: {
+        "claude": {"pid": "11", "fg": "claude", "activity": now - 1, "dead": False},
+        "shell": {"pid": "21", "fg": "sh", "activity": now - 1200, "dead": False},
+    })
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def memory_info(self):
+            return SimpleNamespace(rss={11: 120, 12: 80, 21: 5}[self.pid])
+
+    snapshots = []
+
+    def parent_snapshot():
+        snapshots.append(True)
+        return {11: 1, 12: 11, 21: 1}
+
+    def host_memory():
+        if not host_readable:
+            raise OSError("host memory unavailable")
+        return SimpleNamespace(total=1000, available=500)
+
+    monkeypatch.setattr(psutil, "Process", Process)
+    monkeypatch.setattr(psutil, "_ppid_map", parent_snapshot, raising=False)
+    monkeypatch.setattr(psutil, "virtual_memory", host_memory)
+    registry = termlib.registry_path(root)
+    before = registry.read_bytes(), registry.stat().st_mtime_ns
+    response = c.get("/api/terminal/limit")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert (data["count"], data["limit"]) == (2, 36)
+    assert snapshots == [True]
+    assert data["memory"]["total"] == (1000 if host_readable else None)
+    assert data["memory"]["available"] == (500 if host_readable else None)
+    assert data["memory"]["used"] == 205
+    assert data["memory"]["kinds"]["claude"] == {"count": 1, "bytes": 200, "measured": 1}
+    assert data["memory"]["kinds"]["shell"] == {"count": 1, "bytes": 5, "measured": 1}
+    sessions = {row["id"]: row for row in data["sessions"]}
+    assert sessions["claude"]["last_opened"] == now - 20
+    assert sessions["claude"]["recent_output"] is True
+    assert sessions["shell"]["recent_output"] is False
+    assert (registry.read_bytes(), registry.stat().st_mtime_ns) == before
+
+
+def test_terminal_limit_excerpts_are_read_only(env, monkeypatch) -> None:
+    from tests.conftest import make_chat
+
+    c, root, _work = env
+    agent = "cc-aaaa1111"
+    make_chat(root, "alpha", agent, [
+        (f"2026-11-20T10:0{i}:00", f"User prompt {i}", f"Agent output {i}") for i in range(1, 9)
+    ])
+    c.app.state.store.rebuild()
+    termlib.put(root, {"id": "chat", "backend": "tmux", "project": "alpha",
+                       "kind": "resume", "agent_id": agent})
+    termlib.put(root, {"id": "shell", "backend": "tmux", "project": "alpha", "kind": "shell"})
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    monkeypatch.setattr(termlib, "pane_pos", lambda *_: {"history": 50, "cursor": 22})
+    monkeypatch.setattr(termlib, "capture", lambda _root, sid, a, b: {
+        "text": "\n".join(f"Line {i}" for i in range(a, b + 1)),
+    })
+
+    def tree():
+        return {p.relative_to(root): (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in root.rglob("*") if p.is_file()}
+
+    before = tree()
+    chat = c.get("/api/terminal/sessions/chat/excerpts")
+    shell = c.get("/api/terminal/sessions/shell/excerpts")
+    assert chat.status_code == shell.status_code == 200
+    assert [item["text"] for item in chat.json()["first"]] == [f"User prompt {i}" for i in range(1, 4)]
+    assert [item["text"] for item in chat.json()["last"]] == [f"User prompt {i}" for i in range(6, 9)]
+    assert [item["text"] for item in shell.json()["first"]] == ["Line 0", "Line 1", "Line 2"]
+    assert [item["text"] for item in shell.json()["last"]] == ["Line 70", "Line 71", "Line 72"]
+    assert tree() == before
+
+
+@pytest.mark.parametrize("path", ["/api/terminal/limit", "/api/terminal/sessions/private/excerpts"])
+def test_terminal_recovery_reads_require_the_operator_cookie(env, path) -> None:
+    c, root, _work = env
+    termlib.put(root, {"id": "private", "label": "Private terminal", "backend": "plain"})
+    allowed = c.get(path)
+    assert allowed.status_code == 200
+    assert allowed.headers["cache-control"] == "no-store"
+
+    c.cookies.clear()
+    refused = c.get(path)
+    assert refused.status_code in (401, 403)
+    assert "Private terminal" not in refused.text
+
+
+@pytest.mark.parametrize("path", ["/api/terminal/limit", "/api/terminal/sessions/idle/excerpts"])
+def test_terminal_recovery_reads_leave_due_tasks_untouched(env, monkeypatch, path) -> None:
+    from backend import csvio, tasklib
+    from backend.entities import ENTITIES
+
+    c, root, _work = env
+    termlib.put(root, {"id": "idle", "backend": "plain"})
+    tasks = root / "tasks.csv"
+    csvio.append_row(tasks, ENTITIES["task"].columns, {
+        "id": "tk_scheduled", "project": "alpha", "title": "Scheduled",
+        "status": "done", "resurface_on": "2000-01-01", "resurface_to": "todo",
+    })
+    before = tasks.read_bytes(), tasks.stat().st_mtime_ns
+    monkeypatch.setattr(tasklib, "_last_sweep", 0.0)
+
+    reply = c.get(path)
+    assert reply.status_code == 200
+    assert (tasks.read_bytes(), tasks.stat().st_mtime_ns) == before
+
+
+def test_terminal_recovery_activity_counts_indexed_turns(env, monkeypatch) -> None:
+    from datetime import datetime, timedelta
+
+    from tests.conftest import make_chat
+
+    c, root, _work = env
+    agent = "cc-aaaa1111"
+    recent = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=1)
+    old = recent - timedelta(days=8)
+    make_chat(root, "alpha", agent, [
+        (old.isoformat(), "An older prompt", "Older answer"),
+        (recent.isoformat(), "A current prompt", "Current answer"),
+    ])
+    c.app.state.store.rebuild()
+    termlib.put(root, {"id": "chat", "project": "alpha", "agent_id": agent,
+                       "backend": "tmux", "kind": "resume"})
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    monkeypatch.setattr(termlib, "tmux_panes", lambda _root: {
+        "chat": {"fg": "claude", "activity": recent.timestamp() - 60, "dead": False},
+    })
+
+    reply = c.get("/api/terminal/limit")
+    assert reply.status_code == 200, reply.text
+    (session,) = reply.json()["sessions"]
+    assert 1 <= session["activity"] < 2
+    assert session["last_activity"] == recent.timestamp()
+
+
+@pytest.mark.parametrize("observation", ["tmux_timeout", "missing_pane", "attachment_timeout"])
+def test_limit_close_requires_confirmation_when_tmux_state_is_unknown(env, monkeypatch, observation) -> None:
+    from subprocess import CompletedProcess
+
+    c, root, _work = env
+    sid = "protected"
+    termlib.put(root, {"id": sid, "backend": "tmux"})
+    panes = {} if observation != "attachment_timeout" else {
+        sid: {"fg": "sh", "activity": 0, "dead": False},
+    }
+    monkeypatch.setattr(termlib, "tmux_panes", lambda _root: panes)
+    lookup = (CompletedProcess([], 0, stdout=f"{termlib.PREFIX}{sid}\t0\t0\n", stderr="")
+              if observation == "missing_pane" else CompletedProcess([], 1, stdout="", stderr="tmux timed out"))
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: lookup)
+    closed = []
+    monkeypatch.setattr(termlib, "close", lambda _root, name: closed.append(name))
+
+    path = f"/api/terminal/sessions/{sid}/close"
+    assert c.post(path, json={"from_limit": True}).status_code == 409
+    assert not closed
+    assert c.post(path, json={"from_limit": True, "confirmed": True}).status_code == 200
+    assert closed == [sid]
+
+
+@unix_pty
+@pytest.mark.parametrize("observation", ["foreground", "registry"])
+def test_limit_close_preserves_a_quiet_pty_when_observation_fails(env, monkeypatch, observation) -> None:
+    from backend.routers import terminal
+
+    c, root, _work = env
+    _on(c)
+    monkeypatch.setattr(termlib, "uses_tmux", lambda _settings: False)
+    open_pty = terminal.open_pty
+    held = {}
+
+    def quiet_pty(sid, _argv, cwd, cols, rows, child_env):
+        session = open_pty(sid, [sys.executable, "-c", "import time; time.sleep(30)"], cwd, cols, rows, child_env)
+        session.last_output = 0
+        held[sid] = session
+        return session
+
+    monkeypatch.setattr(terminal, "open_pty", quiet_pty)
+    opened = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"})
+    assert opened.status_code == 201, opened.text
+    sid = opened.json()["session"]["id"]
+    session = held[sid]
+    assert session.alive() and not session.subscribers
+
+    with monkeypatch.context() as failed:
+        if observation == "foreground":
+            failed.setattr(termlib, "foreground_of_fd", lambda _fd: "")
+            (candidate,) = c.get("/api/terminal/limit").json()["sessions"]
+            assert candidate["foreground_known"] is False
+        else:
+            read_json = termlib.safe_read_json
+
+            def unreadable(path, **kwargs):
+                if path == termlib.registry_path(root):
+                    raise PermissionError("terminal registry unreadable")
+                return read_json(path, **kwargs)
+
+            failed.setattr(termlib, "safe_read_json", unreadable)
+            # A missing handle alone cannot rule out an off-process tmux session.
+            unknown = c.post("/api/terminal/sessions/unknown/close", json={"from_limit": True})
+            assert unknown.status_code == 409, unknown.text
+
+        path = f"/api/terminal/sessions/{sid}/close"
+        reply = c.post(path, json={"from_limit": True})
+        assert reply.status_code == 409, reply.text
+        assert not session.closed and session.alive()
+
+    assert termlib.get(root, sid) is not None
+    assert c.post(path, json={"from_limit": True, "confirmed": True}).status_code == 200
+    assert session.closed
+
+
+@unix_pty
+def test_limit_close_sees_a_plain_view_attaching_before_replay(env, monkeypatch) -> None:
+    import threading
+
+    from backend.routers import terminal
+
+    c, root, work = env
+    _on(c)
+    sid = "attaching"
+    termlib.put(root, {"id": sid, "backend": "plain", "cwd": str(work)})
+    monkeypatch.setattr(termlib, "listing", lambda *_: [
+        {"id": sid, "backend": "plain", "state": "shell", "last_output": 0},
+    ])
+    attached = threading.Event()
+    proceed = threading.Event()
+    run_in_threadpool = terminal.run_in_threadpool
+
+    async def pause_before_replay(function, *args, **kwargs):
+        result = await run_in_threadpool(function, *args, **kwargs)
+        if function.__name__ == "_attach":
+            attached.set()
+            await run_in_threadpool(proceed.wait, 15)
+        return result
+
+    monkeypatch.setattr(terminal, "run_in_threadpool", pause_before_replay)
+    token = c.get("/api/terminal/state").json()["token"]
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={token}"):
+        try:
+            assert attached.wait(10)
+            refused = c.post(f"/api/terminal/sessions/{sid}/close", json={"from_limit": True})
+            assert refused.status_code == 409, refused.text
+            assert termlib.get(root, sid)
+        finally:
+            proceed.set()
+
+
+def _resume_and_limit_close(root: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from backend.db import ViewStore
+    from backend.server import operator_cookie
+
+    os.environ["SHELL"] = "/bin/sh"
+    work = root / "projects" / "alpha"
+    work.mkdir(parents=True)
+    owner = "cc-11223344"
+    app = create_app(data_root=root, watch=False)
+    with pytest.MonkeyPatch.context() as patch, TestClient(app, base_url="http://127.0.0.1:8123") as client:
+        client.cookies.set(*operator_cookie(app))
+        patch.setattr(ViewStore, "agents", lambda _self: [
+            {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+             "project": "alpha", "cwd": str(work)},
+        ])
+        patch.setattr(termlib, "resume_command", lambda _tool, _ref: "echo resumed-fixture")
+        _on(client)
+        configured = client.post("/api/settings", json={"values": {
+            "terminal.keep": "plain", "terminal.max_sessions": 2,
+        }})
+        assert configured.status_code == 200, configured.text
+        previous = _open(client, agent=owner, role="chat")
+        preview = client.get(f"/api/terminal/resume/{owner}").json()
+        start = Barrier(2)
+
+        def resume():
+            start.wait(timeout=10)
+            return client.post("/api/terminal/sessions", json={
+                "kind": "resume", "actor": "operator", "agent": owner,
+                "expected_cwd": preview["cwd"], "resume_revision": preview["resume_revision"],
+            })
+
+        def panel_close():
+            start.wait(timeout=10)
+            return client.post(f"/api/terminal/sessions/{previous['id']}/close", json={
+                "actor": "operator", "from_limit": True, "confirmed": True,
+            })
+
+        with ThreadPoolExecutor(max_workers=2) as threads:
+            resuming = threads.submit(resume)
+            closing = threads.submit(panel_close)
+            opened = resuming.result(timeout=10)
+            closed = closing.result(timeout=10)
+        assert opened.status_code == 201, opened.text
+        assert closed.status_code == 200, closed.text
+        current = opened.json()["session"]
+        assert current["id"] != previous["id"] and current["agent_id"] == owner
+        assert [row["id"] for row in termlib.rows(root)] == [current["id"]]
+
+
+def test_resume_and_limit_panel_close_finish_without_deadlocking(tmp_path):
+    import subprocess
+
+    # A deadlock in server threads must not stall pytest's TestClient teardown.
+    fixture = ("import runpy, sys; from pathlib import Path; "
+               "runpy.run_path(sys.argv[1])['_resume_and_limit_close'](Path(sys.argv[2]))")
+    result = subprocess.run(
+        [sys.executable, "-c", fixture, str(Path(__file__).resolve()), str(tmp_path / "data")],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=35, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("point", ["preflight", "launch"])
+def test_confirmed_windows_paths_compare_canonical_spelling_exactly(tmp_path, monkeypatch, point):
+    import pathlib
+
+    class WindowsFolder(pathlib.PureWindowsPath):
+        def resolve(self, *, strict=False):
+            return self
+
+        def is_dir(self):
+            return True
+
+    approved = r"C:\projects\Agent"
+    changed = r"C:\projects\agent"
+    assert WindowsFolder(approved) == WindowsFolder(changed)
+
+    if point == "preflight":
+        monkeypatch.setattr(termlib, "Path", WindowsFolder)
+        monkeypatch.setattr(termlib, "resolve_cwd", lambda *_args: WindowsFolder(changed))
+        monkeypatch.setattr(termlib, "uses_tmux", lambda _settings: False)
+        monkeypatch.setattr(termlib, "put", lambda _root, row: row)
+        with pytest.raises(termlib.CwdChangedError):
+            termlib.open_session(tmp_path, {}, kind="resume", project="alpha", cwd=changed, expected_cwd=approved)
+    else:
+        with monkeypatch.context() as isolated:
+            isolated.setenv(termlib.CONFIRMED_CWD_ENV, approved)
+            isolated.setattr(sys, "argv", ["-c", changed])
+            isolated.setattr(pathlib, "Path", WindowsFolder)
+            with pytest.raises(SystemExit) as result:
+                exec(termlib.WINDOWS_CWD_CHECK, {})
+        assert result.value.code == 1
+
+
+@needs_tmux
+@pytest.mark.parametrize("initial_mismatch", [False, True], ids=["empty-probe", "different-path"])
+def test_confirmed_empty_shell_treats_tmux_sample_as_early_refusal(env, monkeypatch, initial_mismatch):
+    from subprocess import CompletedProcess
+
+    _client, root, work = env
+    real_read = termlib.tmux_read
+    probes = 0
+
+    def delayed_cwd(data_root, *args, **kwargs):
+        nonlocal probes
+        if args[-1:] == ("#{pane_current_path}",):
+            probes += 1
+            if probes == 1:
+                return CompletedProcess(args, 0, stdout=f"{root}\n" if initial_mismatch else "", stderr="")
+        return real_read(data_root, *args, **kwargs)
+
+    monkeypatch.setattr(termlib, "tmux_read", delayed_cwd)
+    approved = str(work.resolve())
+
+    def open_shell():
+        return termlib.open_session(root, {"terminal.keep": "tmux"}, kind="shell", project="alpha",
+                                    cwd=approved, expected_cwd=approved)
+
+    if initial_mismatch:
+        with pytest.raises(termlib.CwdChangedError):
+            open_shell()
+        assert probes == 1
+    else:
+        assert open_shell()["cwd"] == approved
+        assert probes == 1
+
+
+@needs_tmux
+def test_confirmed_empty_shell_checks_cwd_after_a_late_login_profile_change(env, monkeypatch):
+    _client, root, work = env
+    alternate = root / "elsewhere"
+    alternate.mkdir()
+    ready = root / "profile-started"
+    proceed = root / "sample-taken"
+    moved = root / "profile-moved"
+    profile = root / "shell-profile"
+    profile.write_text(
+        f"touch {shlex.quote(str(ready))}\n"
+        f"while [ ! -f {shlex.quote(str(proceed))} ]; do sleep 0.05; done\n"
+        f"cd {shlex.quote(str(alternate))}\n"
+        f"touch {shlex.quote(str(moved))}\n"
+        "PS1='$ '\n", encoding="utf-8",
+    )
+    shell = root / "bash"
+    shell.write_text(f"#!/bin/sh\nexec /bin/bash --noprofile --rcfile {shlex.quote(str(profile))} -i\n",
+                     encoding="utf-8")
+    shell.chmod(0o755)
+    monkeypatch.setenv("SHELL", str(shell))
+    real_read = termlib.tmux_read
+    approved = str(work.resolve())
+
+    def sample(data_root, *args, **kwargs):
+        if args[-1:] != ("#{pane_current_path}",):
+            return real_read(data_root, *args, **kwargs)
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ready.exists()
+        observed = real_read(data_root, *args, **kwargs)
+        assert observed.stdout.removesuffix("\n") == approved
+        proceed.touch()
+        return observed
+
+    monkeypatch.setattr(termlib, "tmux_read", sample)
+    session = termlib.open_session(root, {"terminal.keep": "tmux"}, kind="shell", project="alpha",
+                                   cwd=approved, expected_cwd=approved)
+    deadline = time.monotonic() + 5
+    while termlib.alive_tmux(root, session["id"]) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert moved.exists()
+    assert not termlib.alive_tmux(root, session["id"])
+
+
+@unix_pty
+@pytest.mark.parametrize("suffix", ["\n", "\x7f"])
+def test_terminal_confirmation_refuses_a_folder_with_an_ambiguous_name(env, monkeypatch, suffix):
+    from backend.db import ViewStore
+
+    client, root, work = env
+    _on(client)
+    unsafe = work / f"checkout{suffix}"
+    unsafe.mkdir()
+    owner = "cc-11223344"
+    monkeypatch.setattr(ViewStore, "agents", lambda _self: [
+        {"agent_id": owner, "tool": "claude-code", "session_ref": "capture",
+         "project": "alpha", "cwd": str(unsafe)},
+    ])
+    response = client.get(f"/api/terminal/resume/{owner}")
+    assert response.status_code == 422, response.text
+    assert "control character or line break" in response.json()["detail"]
+
+    sid = "t1234abcd"
+    termlib.put(root, {"id": sid, "cwd": str(unsafe), "project": "alpha", "kind": "shell",
+                       "backend": "plain", "asleep": True, "agent_id": owner, "wake": ""})
+    selected = _row(client, sid)
+    assert selected["wake_cwd_has_controls"] is True and "wake_cwd" not in selected
+    refused = client.post(f"/api/terminal/sessions/{sid}/wake", json={
+        "actor": "operator", "expected_agent": owner, "wake_revision": selected["wake_revision"],
+        "expected_cwd": str(unsafe.resolve()),
+    })
+    assert refused.status_code == 422, refused.text
+    assert termlib.get(root, sid)["asleep"] is True

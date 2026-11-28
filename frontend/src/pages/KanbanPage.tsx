@@ -13,6 +13,7 @@ import { Button, Input } from '../components/primitives'
 import { LABEL } from '../features/promptlib/taskstyle'
 import { EmptyState, ErrorBanner, LoadingSkeleton } from '../components/states'
 import { TasksKanban, type KanbanBoard } from '../features/project/TasksKanban'
+import { fetchTaskRow } from '../features/calendar/tasks'
 import { PageHeader } from '../components/PageHeader'
 import { KANBAN_GUIDE } from '../features/visions/guides'
 import { PageGuide } from '../features/visions/parts'
@@ -39,11 +40,18 @@ export default function KanbanPage() {
   }, [])
   const queryClient = useQueryClient()
   const [params, setParams] = useSearchParams()
+  const linkedTaskId = params.get('task') || ''
 
   const snapshot = useQuery({ queryKey: qk.snapshot(), queryFn: ({ signal }) => api.snapshot(signal) })
   const saved = useQuery({
     queryKey: ['boards'],
     queryFn: ({ signal }) => getJson<{ boards: SavedBoard[] }>('/api/boards', signal),
+  })
+  const linkedTask = useQuery({
+    queryKey: ['kanban', 'linked-task', linkedTaskId],
+    queryFn: ({ signal }) => fetchTaskRow(linkedTaskId, signal),
+    enabled: !!linkedTaskId,
+    retry: false,
   })
 
   const projectBoards: KanbanBoard[] = useMemo(
@@ -61,11 +69,11 @@ export default function KanbanPage() {
     [projectBoards, savedBoards],
   )
 
-  // Current board: ?board= wins, then the last one used, then the first.
-  const requested = params.get('board') || readPref(LAST_BOARD_KEY) || ''
+  // A task link opens its project board. Otherwise use the requested or last board.
+  const requested = linkedTask.data?.project || params.get('board') || readPref(LAST_BOARD_KEY) || ''
   const current = all.find((b) => b.id === requested) ?? all[0]
   const pick = (id: string) => {
-    setParams((p) => { p.set('board', id); return p }, { replace: true })
+    setParams((p) => { p.delete('task'); p.set('board', id); return p }, { replace: true })
     persistPref(LAST_BOARD_KEY, id)
   }
 
@@ -143,6 +151,12 @@ export default function KanbanPage() {
             key={current.id}
             projectCode={current.projects[0]!}
             board={current}
+            linkedTask={linkedTask.data}
+            onCloseLinkedTask={() => setParams((p) => {
+              p.delete('task')
+              p.set('board', current.id)
+              return p
+            }, { replace: true })}
           />
         </section>
       ) : (

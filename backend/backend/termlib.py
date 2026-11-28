@@ -51,6 +51,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
@@ -249,6 +250,20 @@ CODEX_HELP_TIMEOUT_S = 2
 FOREGROUND_PS_TIMEOUT_S = 2
 
 
+CWD_CONTROL_ERROR = "The terminal folder contains a control character or line break."
+
+
+def cwd_has_controls(cwd: str) -> bool:
+    return any(unicodedata.category(char) in ("Cc", "Zl", "Zp") for char in cwd)
+
+
+class CwdChangedError(ValueError):
+    """The terminal could not open in the folder the operator confirmed."""
+
+    def __init__(self):
+        super().__init__("The terminal folder changed or is unavailable. Select it again.")
+
+
 class TmuxError(RuntimeError):
     """tmux did not answer in time, or could not be run. A write lets it
     reach the route, which answers 503 with this message; a read never sees
@@ -258,11 +273,18 @@ class TmuxError(RuntimeError):
 def tmux(data_root: Path, *args: str, timeout: float | None = None, input: str | None = None) -> subprocess.CompletedProcess:
     """A tmux command. A failing command comes back with its returncode; a
     tmux that does not answer in `timeout` seconds (WRITE_TIMEOUT) raises TmuxError."""
-    timeout = WRITE_TIMEOUT if timeout is None else timeout
+    return _tmux(data_root, args, timeout=WRITE_TIMEOUT if timeout is None else timeout, input=input)
+
+
+def _tmux(data_root: Path, args: tuple[str, ...], *, timeout: float, input: str | None = None,
+          read_only: bool = False) -> subprocess.CompletedProcess:
     cmd = args[0] if args else "tmux"
     t0 = time.perf_counter()
     try:
-        out = subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
+        # Reads talk to an existing server without creating or loading its config.
+        argv = ([tmux_path() or "tmux", "-L", socket_of(data_root), *args]
+                if read_only else tmux_argv(data_root, *args))
+        out = subprocess.run(argv, input=input, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=timeout)
         termlog.REC.tmux_call(cmd, (time.perf_counter() - t0) * 1000)
         return out
@@ -279,7 +301,7 @@ def tmux_read(data_root: Path, *args: str, timeout: float | None = None) -> subp
     stdout — so the terminal list, the restore offer and a capture answer
     from the registry instead of failing."""
     try:
-        return tmux(data_root, *args, timeout=READ_TIMEOUT if timeout is None else timeout)
+        return _tmux(data_root, args, timeout=READ_TIMEOUT if timeout is None else timeout, read_only=True)
     except TmuxError as exc:
         log.info("%s: read as no answer", exc)
         return subprocess.CompletedProcess(list(args), 1, "", str(exc))
@@ -473,6 +495,13 @@ def uses_tmux(settings: dict[str, Any]) -> bool:
 
 #: How commands are quoted: bash ($'…'), PowerShell, or cmd.
 FAMILIES = ("bash", "powershell", "cmd")
+CONFIRMED_CWD_ENV = "SP_TERMINAL_CONFIRMED_CWD"
+CONFIRMED_PYTHON_ENV = "SP_TERMINAL_SERVER_PYTHON"
+WINDOWS_CWD_CHECK = (
+    "import os, sys; from pathlib import Path; "
+    "here = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd(); "
+    f"sys.exit(str(here.resolve(strict=True)) != os.environ['{CONFIRMED_CWD_ENV}'])"
+)
 
 
 def windows_shell(which=shutil.which, env: Mapping[str, str] | None = None) -> list[str]:
@@ -529,19 +558,29 @@ def registry_path(data_root: Path) -> Path:
     return Path(data_root) / FOLDER / REGISTRY
 
 
-def rows(data_root: Path) -> list[dict[str, Any]]:
+def rows(data_root: Path, *, require_readable: bool = False) -> list[dict[str, Any]]:
+    """Read the registry. An unconfirmed close must distinguish errors from absence."""
     p = registry_path(data_root)
-    if not p.exists():
-        return []
     try:
+        if not require_readable and not p.exists():
+            return []
         data = safe_read_json(p)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return []
-    return [r for r in (data.get("sessions") if isinstance(data, dict) else []) or [] if isinstance(r, dict)]
+    except (OSError, ValueError):
+        if require_readable:
+            raise
+        return []
+    sessions = data.get("sessions", []) if isinstance(data, dict) else None
+    if not isinstance(sessions, list):
+        if require_readable:
+            raise ValueError("invalid terminal registry")
+        return []
+    return [row for row in sessions if isinstance(row, dict)]
 
 
-def get(data_root: Path, sid: str) -> dict[str, Any] | None:
-    return next((r for r in rows(data_root) if r.get("id") == sid), None)
+def get(data_root: Path, sid: str, *, require_readable: bool = False) -> dict[str, Any] | None:
+    return next((r for r in rows(data_root, require_readable=require_readable) if r.get("id") == sid), None)
 
 
 def _edit(data_root: Path, change) -> Any:
@@ -634,13 +673,40 @@ def quote_for(family: str, text: str) -> str:
     return ansi_quote(text)
 
 
-def ansi_quote(text: str) -> str:
-    """One line of bash that holds any text: $'…' with the escapes spelled.
-    Other control characters are dropped: typed, ESC or ^U act as keys."""
-    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
-    body = (text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-            .replace("\r", "").replace("\t", "\\t"))
+def ansi_quote(text: str, *, literal: bool = False) -> str:
+    """One line of bash that holds text with escapes. A literal path keeps
+    its control characters as escapes. Prompt text omits terminal keys."""
+    if not literal:
+        text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
+    body = text.replace("\\", "\\\\").replace("'", "\\'")
+    if literal:
+        body = re.sub(r"[\x00-\x1f\x7f]", lambda match: f"\\x{ord(match.group()):02x}", body)
+    else:
+        body = body.replace("\n", "\\n").replace("\r", "").replace("\t", "\\t")
     return f"$'{body}'"
+
+
+def launch_in_cwd(command: str, cwd: str, family: str) -> str:
+    """Check the confirmed directory inside the shell just before the command."""
+    if family == "powershell":
+        # Resolve the provider path with the same interpreter that approved it.
+        check = f"& $env:{CONFIRMED_PYTHON_ENV} -I -c {ps_quote(WINDOWS_CWD_CHECK, literal=True)} (Get-Location).ProviderPath"
+        return (
+            f"Set-Location -LiteralPath {ps_quote(cwd, literal=True)}; if ($?) {{ "
+            f"{check}; if ($? -and $LASTEXITCODE -eq 0) {{ {command} }} }}"
+        )
+    if family == "cmd":
+        # The PTY provides the literal path with delayed expansion off.
+        check = f'"%{CONFIRMED_PYTHON_ENV}%" -I -c "{WINDOWS_CWD_CHECK}"'
+        return f'pushd "%{CONFIRMED_CWD_ENV}%" && {check} && ({command})'
+    where = ansi_quote(cwd, literal=True)
+    return f"builtin cd -- {where} && {_physical_cwd_test(cwd)} && ({command})"
+
+
+def _physical_cwd_test(cwd: str) -> str:
+    expected = ansi_quote(cwd + "\n.", literal=True)
+    # The sentinel prevents command substitution from stripping trailing newlines.
+    return f'[ "$(builtin pwd -P && printf .)" = {expected} ]'
 
 
 @lru_cache(maxsize=8)
@@ -722,7 +788,7 @@ def start_command(tool: str, task: dict[str, Any], family: str | None = None) ->
     return f"claude {q}"
 
 
-def typed_form(command: str, shell: str) -> str:
+def typed_form(command: str, shell: str, *, login: bool = True) -> str:
     """`command` as it is typed into `shell`. The commands built above use
     bash's ``$'…'`` quoting, and a task's text is inside them: typed as they
     are into another shell, a quote in that text would end the string and
@@ -737,10 +803,11 @@ def typed_form(command: str, shell: str) -> str:
     name = Path(shell or "bash").name
     if name in ("bash", "zsh"):
         return command
+    flags = "-lc" if login else "-c"
     if name in ("sh", "dash", "ash", "ksh"):
-        return f"bash -lc {shlex.quote(command)}"
+        return f"bash {flags} {shlex.quote(command)}"
     packed = base64.b64encode(command.encode("utf-8")).decode("ascii")
-    return f"bash -lc 'eval \"$(echo {packed} | base64 -d)\"'"
+    return f"bash {flags} 'eval \"$(echo {packed} | base64 -d)\"'"
 
 
 # ---------------------------------------------------------------------------
@@ -750,12 +817,18 @@ def typed_form(command: str, shell: str) -> str:
 
 def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, project: str, cwd: str,
                  command: str = "", label: str = "", agent_id: str = "", task_id: str = "",
-                 sid: str = "", role: str = "", group: str = "") -> dict[str, Any]:
+                 sid: str = "", role: str = "", group: str = "",
+                 expected_cwd: str | None = None) -> dict[str, Any]:
     """A new terminal: its row, and — with tmux — the session, running `command`."""
     if command == "codex":
         command = codex_in_terminal()
     sid = sid if sid and SAFE_ID.match(sid) else new_id()
     where = str(resolve_cwd(data_root, project, cwd))
+    if expected_cwd is not None:
+        resolved = Path(where).resolve()
+        if str(resolved) != expected_cwd or not resolved.is_dir():
+            raise CwdChangedError()
+        where = expected_cwd
     backend = "tmux" if uses_tmux(settings) else "plain"
     # `created` orders the tabs (and alt+1…9). To the millisecond: two
     # terminals opened in the same second tied, the page broke the tie by
@@ -767,6 +840,7 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
         "created": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}",
         "backend": backend,
         "launch": settings.get("terminal.launch", "run"),
+        "strict_cwd": expected_cwd is not None,
     }
     if role in ROLES:
         row["role"] = role
@@ -784,7 +858,23 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
                       "-e", f"SP_TERMINAL={sid}", "-e", "TERM=xterm-256color", shell, "-l")
         if command:
             wait_for_prompt(data_root, sid)
-            type_into(data_root, row, typed_form(command, shell), enter=row["launch"] == "run")
+            submitted = launch_in_cwd(command, where, "bash") if expected_cwd is not None else command
+            type_into(data_root, row, typed_form(submitted, shell), enter=row["launch"] == "run")
+        elif expected_cwd is not None:
+            target = PREFIX + sid
+            pane = tmux_read(data_root, "display-message", "-p", "-t", target, "#{pane_current_path}")
+            observed = pane.stdout.removesuffix("\n")
+            if pane.returncode == 0 and observed and observed != expected_cwd:
+                tmux(data_root, "kill-session", "-t", target)
+                raise CwdChangedError()
+            # Even a matching sample can precede a login profile's cd.
+            # A non-login helper checks the directory inherited from this shell.
+            wait_for_prompt(data_root, sid)
+            stop = shlex.join(tmux_argv(data_root, "kill-session", "-t", target))
+            check = typed_form(f"{_physical_cwd_test(expected_cwd)} || {stop}", shell, login=False)
+            if not type_into(data_root, row, check, enter=True):
+                tmux(data_root, "kill-session", "-t", target)
+                raise CwdChangedError()
         # Which tmux server holds it: a terminal whose server is gone was not
         # closed by anyone (a reboot, a crash), and Restore offers it back.
         row["server"] = tmux_server_pid(data_root)
@@ -958,7 +1048,26 @@ def wake_command(row: dict[str, Any], resume: str = "") -> str:
     return ""
 
 
-def sleep(data_root: Path, sid: str, wake: str) -> dict[str, Any] | None:
+def wake_cwd(row: dict[str, Any]) -> str:
+    """The existing directory the terminal confirmation can show."""
+    cwd = row.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        return ""
+    try:
+        path = Path(cwd).resolve(strict=True)
+        return str(path) if path.is_dir() else ""
+    except (OSError, RuntimeError):
+        return ""
+
+
+def wake_revision(row: dict[str, Any]) -> str:
+    """Identify the saved wake the operator selected, without returning more data."""
+    fields = ("id", "agent_id", "wake_agent_id", "kind", "project", "cwd", "backend",
+              "created", "slept_at", "woken_at", "wake")
+    return hashlib.sha256(json.dumps([row.get(key) for key in fields]).encode()).hexdigest()
+
+
+def sleep(data_root: Path, sid: str, wake: str, *, agent_id: str = "") -> dict[str, Any] | None:
     """Stop what runs in the terminal and keep its row: `wake` is what it
     runs when woken. The tmux session is killed; the caller drops a plain pty."""
     row = get(data_root, sid)
@@ -966,11 +1075,12 @@ def sleep(data_root: Path, sid: str, wake: str) -> dict[str, Any] | None:
         return None
     if row.get("backend") == "tmux":
         tmux(data_root, "kill-session", "-t", PREFIX + sid)
-    return put(data_root, {"id": sid, "asleep": True, "wake": wake,
+    return put(data_root, {"id": sid, "asleep": True, "wake": wake, "wake_agent_id": agent_id,
                            "slept_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
 
-def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | None = None) -> dict[str, Any] | None:
+def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | None = None, *,
+         expected_cwd: str | None = None) -> dict[str, Any] | None:
     """The terminal again, under its own id, running `command` (default: what
     sleep() kept). Its label, role, group, agent and task stay."""
     row = get(data_root, sid)
@@ -985,7 +1095,8 @@ def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | Non
         cwd = ""  # the folder is gone: the project's folder, or home
     out = open_session(data_root, settings, kind=str(row.get("kind") or "shell"), project=str(row.get("project") or ""),
                        cwd=cwd, command=cmd, label=str(row.get("label") or ""),
-                       agent_id=str(row.get("agent_id") or ""), task_id=str(row.get("task_id") or ""), sid=sid)
+                       agent_id=str(row.get("agent_id") or ""), task_id=str(row.get("task_id") or ""), sid=sid,
+                       expected_cwd=expected_cwd)
     # The command a terminal was opened with stays its own; what woke it is `wake`.
     # A plain terminal types `wake` when its new shell starts (routers/terminal.py
     # _pending): not typed yet. Before, it kept `typed` from its first life and a
@@ -1208,14 +1319,14 @@ def _codex_in_pane(root: Path, agent: str, tid: str, panes: dict[str, dict[str, 
     return bool(pane_pid) and msgdeliver.occupant_why(root, agent, pane_pid) == ""
 
 
-def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
+def agent_links(data_root: Path, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
     """terminal id → the agent the capture hook saw started in it (newest
     wins); a Codex chat only when it is proven to run in it (_codex_in_pane)."""
     global _link_cache
     root = Path(data_root)
     now = time.monotonic()
     cached_root, cached_at, cached_links = _link_cache
-    if cached_root == root and now - cached_at < 3:
+    if not fresh and cached_root == root and now - cached_at < 3:
         return cached_links
     out: dict[str, dict[str, Any]] = {}
     panes: dict[str, dict[str, Any]] | None = None
@@ -1287,8 +1398,17 @@ def listing(data_root: Path, plain: dict[str, dict[str, Any]] | None = None) -> 
             fg, last = (p or {}).get("fg", ""), (p or {}).get("activity", 0.0)
         if st == "ended" and r.get("asleep"):
             st = "asleep"
-        out.append({**r, "role": role_of(r), "state": st, "program": fg, "last_output": last,
-                    "agent_id": (link or {}).get("agent_id") or r.get("agent_id") or ""})
+        item = {**r, "role": role_of(r), "state": st, "program": fg, "last_output": last,
+                "agent_id": (link or {}).get("agent_id") or r.get("agent_id")
+                or (r.get("wake_agent_id") if st == "asleep" else "") or ""}
+        if st == "asleep":
+            item["wake_revision"] = wake_revision(r)
+            cwd = wake_cwd(r)
+            if cwd_has_controls(cwd):
+                item["wake_cwd_has_controls"] = True
+            else:
+                item["wake_cwd"] = cwd
+        out.append(item)
     out.sort(key=lambda x: x.get("created") or "")
     return out
 

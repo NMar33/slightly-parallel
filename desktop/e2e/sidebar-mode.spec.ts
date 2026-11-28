@@ -180,7 +180,7 @@ test('window settings replace the left sidebar and resize the two rows independe
   await expect(page.locator('[data-window-tabs]')).toHaveCSS('height', '21px')
   await app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].setSize(420, 400) })
   await expect.poll(() => page.evaluate(() => innerWidth)).toBe(420)
-  for (const name of ['Left sidebar', 'Window settings', 'Fold the title row (alt+T)', 'Minimise', 'Enter fullscreen', 'Close the window', 'Right sidebar']) {
+  for (const name of ['Left sidebar', 'Window settings', 'Fold the title row (alt+T)', 'Dashboard', 'Minimise', 'Enter fullscreen', 'Close the window', 'Right sidebar']) {
     const button = page.getByRole('button', { name, exact: true })
     await expectClickTarget(button, await center(button))
   }

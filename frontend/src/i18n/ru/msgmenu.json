@@ -28,6 +28,8 @@
   "Entry point": "Точка входа",
   "Esc closes": "Esc — закрыть",
   "From the chat: {target}": "Из чата: {target}",
+  "Go to agent's terminal": "Перейти к терминалу агента",
+  "Open / resume agent's terminal": "Открыть или возобновить терминал агента",
   "Go to its tab": "Перейти на вкладку",
   "Hand over later": "Отдать позже",
   "Hide the changes": "Скрыть изменения",

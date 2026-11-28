@@ -1,0 +1,1 @@
+import{j as a}from"./react-CiXlqBL9.js";import{u as o,D as i}from"./useAgentNames-CUCKkDp9.js";function u({id:r,className:t}){const s=o(),n=String(r??"");if(!n)return null;const e=s(n);return a.jsx(i,{agent:n,label:e,className:t,fallback:a.jsx("span",{className:t,title:n,children:e})})}export{u as A};

@@ -134,7 +134,11 @@ def terminal_tabs(request: Request, store: ViewStore = Depends(get_store)) -> di
     rows = termlib.rows(root)
     links = termlib.agent_links(root) if rows else {}
     titles = pane_titles(root) if any(r.get("backend") == "tmux" for r in rows) else {}
-    aid_of = {str(r.get("id")): str((links.get(str(r.get("id"))) or {}).get("agent_id") or r.get("agent_id") or "") for r in rows}
+    aid_of = {
+        str(r.get("id")): str((links.get(str(r.get("id"))) or {}).get("agent_id") or r.get("agent_id")
+                             or (r.get("wake_agent_id") if r.get("asleep") else "") or "")
+        for r in rows
+    }
     facts = chat_facts(store, list(aid_of.values()))
     return {"tabs": {
         sid: {"title": titles.get(sid, ""), "agent_id": aid, "chat": facts.get(aid)}

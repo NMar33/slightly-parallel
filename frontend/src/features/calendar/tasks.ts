@@ -8,8 +8,8 @@ import { toast } from '../../components/primitives'
 import type { TaskRow } from '../project/kanban/model'
 
 import { t } from '../../i18n/scope/views'
-async function fetchTaskRow(id: string): Promise<TaskRow> {
-  const d = await getJson<{ metadata: TaskRow; description?: string }>(`/api/tasks/${encodeURIComponent(id)}`)
+export async function fetchTaskRow(id: string, signal?: AbortSignal): Promise<TaskRow> {
+  const d = await getJson<{ metadata: TaskRow; description?: string }>(`/api/tasks/${encodeURIComponent(id)}`, signal)
   return { ...d.metadata, description: d.description ?? '' }
 }
 

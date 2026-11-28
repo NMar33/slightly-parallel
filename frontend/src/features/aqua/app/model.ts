@@ -21,6 +21,9 @@ export interface AquaSession extends Omit<TermSession, 'state'> {
   /** A custom workspace or tab group id. */
   group?: string
   asleep?: boolean
+  wake_revision?: string
+  wake_cwd?: string
+  wake_cwd_has_controls?: boolean
 }
 
 export interface Group { id: string; name: string; color: number; project?: string }

@@ -7,7 +7,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from 'lucide-react'
 import { Button } from '../../../../components/primitives'
 import { LABEL } from '../../../promptlib/taskstyle'
-import { STRIP_TONES, bulkPayload, foldStacks, isToday, laneOf } from '../model'
+import { STRIP_TONES, bulkPayload, foldStacks, isToday, taskLaneKey } from '../model'
 import type { SortMode } from '../model'
 import { TaskCard, StackCard, TodayCard } from './Card'
 import { BatchTools, ColumnActions } from './controls'
@@ -43,15 +43,19 @@ function LaneName({ name }: { name: string }) {
 }
 
 function LaneLabel({
-  name, count, collapsed, onToggle, onRename, onDelete, onDropLane,
+  name, rowKey, project, count, empty, collapsed, onToggle, onRename, onDelete, onDropLane, onPromote,
 }: {
   name: string
+  rowKey: string
+  project?: string
   count: number
+  empty: boolean
   collapsed: boolean
   onToggle: () => void
   onRename: (next: string) => void
   onDelete: () => void
   onDropLane: (draggedLane: string) => void
+  onPromote?: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -67,7 +71,7 @@ function LaneLabel({
   const meta = (
     <>
       <span className="text-tertiary opacity-70">{count}</span>
-      {name !== 'unassigned' && (
+      {!onPromote && !empty && (
         <button
           type="button"
           onClick={onDelete}
@@ -98,7 +102,7 @@ function LaneLabel({
     <div
       draggable={!editing}
       onDragStart={(e) => {
-        e.dataTransfer.setData('text/plain', LANE_DRAG + name)
+        e.dataTransfer.setData('text/plain', LANE_DRAG + rowKey)
         e.dataTransfer.effectAllowed = 'move'
       }}
       onDragOver={(e) => {
@@ -138,9 +142,9 @@ function LaneLabel({
         <>
           <button
             type="button"
-            onClick={() => setEditing(true)}
+            onClick={() => { if (!onPromote) setEditing(true) }}
             className={`text-left flex-1 min-w-0 hover:text-primary ${collapsed ? 'truncate' : ''}`}
-            title={t('{name} · click to rename', { name })}
+            title={onPromote ? name : t('{name} · click to rename', { name })}
           >
             {/* Folded, the lane is one 24px line: the name stays on it and
                 takes an ellipsis. Open, it may use as many lines as it needs. */}
@@ -150,6 +154,10 @@ function LaneLabel({
         </>
       )}
     </div>
+    {onPromote && (
+      <Button variant="text" size="bare" onClick={onPromote}>{t('To board')}</Button>
+    )}
+    {project && <span className="truncate text-tertiary" title={project}>{project}</span>}
     {/* Open, the name owns the whole gutter and the numbers move down here
         beside the fold control; folded, everything sits on the one line. */}
     {collapsed ? fold : (
@@ -159,6 +167,21 @@ function LaneLabel({
       </div>
     )}
     </div>
+  )
+}
+
+function AgentLanesRow({ agentsOpen, toggleAgents, count }: {
+  agentsOpen: boolean
+  toggleAgents: () => void
+  count: number
+}) {
+  return (
+    <button type="button" aria-expanded={agentsOpen} onClick={toggleAgents}
+      className="col-span-full flex items-center gap-4 rounded-input bg-elevated px-4 py-3 text-left font-mono text-11 text-secondary hover:text-primary">
+      {agentsOpen ? <ChevronDown size={11} aria-hidden /> : <ChevronRight size={11} aria-hidden />}
+      {t('Agents')}
+      <span className="text-tertiary">{count}</span>
+    </button>
   )
 }
 
@@ -172,9 +195,9 @@ export function LanesGrid(props: LanesGridProps) {
     handleDrop, copyMode, sorts, setSort, setAddingStatus, archivedN, toggleArchived, todayTasks,
     byLaneCol, handleDropToday, linkProps, multi, axes, onCardToday, onCardEdit,
     onCardRelease, showDesc, today, selection, toggleSelect, tasks,
-    archivedTasks, linksLayer, lanes,
+    archivedTasks, linksLayer, lanes, agentLanes, agentsOpen, toggleAgents, promoteLane,
     collapsedLanes, toggleLane, renameLane, deleteLane, moveLaneBefore, allCollapsed, collapseAll,
-    addingLane, setAddingLane, laneDraft, setLaneDraft, commitAddLane, setAddingAssignee,
+    addingLane, setAddingLane, laneDraft, setLaneDraft, commitAddLane, setAddingLaneTarget,
   } = props
   return (
     <div ref={gridRef}
@@ -268,31 +291,39 @@ export function LanesGrid(props: LanesGridProps) {
           {showArchiveCol && <div className="border-b border-brand/25" aria-hidden />}
         </Fragment>
       )}
-      {/* Lane rows */}
-      {lanes.map((lane) => {
-        const collapsed = collapsedLanes.has(lane)
+      {lanes.map((row, index) => {
+        const { key } = row
+        const lane = row.name || t('No lane')
+        const collapsed = collapsedLanes.has(key)
         return (
-        <Fragment key={lane}>
+        <Fragment key={key}>
+          {row.agent && !lanes[index - 1]?.agent && (
+            <AgentLanesRow {...{ agentsOpen, toggleAgents }} count={agentLanes.length} />
+          )}
           <LaneLabel
             name={lane}
-            count={byLaneCol.laneN.get(lane) ?? 0}
+            rowKey={key}
+            empty={!row.name}
+            project={multi ? row.project : undefined}
+            count={byLaneCol.laneN.get(key) ?? 0}
             collapsed={collapsed}
-            onToggle={() => toggleLane(lane)}
-            onRename={(next) => renameLane(lane, next)}
-            onDelete={() => deleteLane(lane)}
-            onDropLane={(dragged) => moveLaneBefore(dragged, lane)}
+            onToggle={() => toggleLane(key)}
+            onRename={(next) => renameLane(row, next)}
+            onDelete={() => { void deleteLane(row) }}
+            onDropLane={(dragged) => moveLaneBefore(dragged, key)}
+            onPromote={row.agent ? () => { void promoteLane(row) } : undefined}
           />
           {columns.map((col) => {
-            const items = byLaneCol.cells.get(`${lane}\n${col.key}`) ?? EMPTY_ROWS
+            const items = byLaneCol.cells.get(`${key}\n${col.key}`) ?? EMPTY_ROWS
             if (col.strip) {
               return (
                 <FoldCell
                   key={col.key}
                   open={!!openStrips[col.key]}
                   items={items}
-                  onDropTask={(id) => handleDrop(id, col.key, lane)}
+                  onDropTask={(id) => handleDrop(id, col.key, row)}
                   render={(task) => (
-                    <TaskDropSlot key={task.id} onDropTask={(id) => handleDrop(id, col.key, lane, task.id)}>
+                    <TaskDropSlot key={task.id} onDropTask={(id) => handleDrop(id, col.key, row, task.id)}>
                       <TaskCard task={task} {...linkProps(task)} compact showDesc={showDesc} copyMode={copyMode} showProject={multi} axes={axes} today={isToday(task, today)} onToggleToday={onCardToday} selectedIndex={selection.indexOf(task.id) + 1 || null} onSelect={toggleSelect} onEdit={onCardEdit} onRelease={onCardRelease} />
                     </TaskDropSlot>
                   )}
@@ -305,7 +336,7 @@ export function LanesGrid(props: LanesGridProps) {
               return (
                 <KanbanColumnDropZone
                   key={col.key}
-                  onDropTask={(id) => handleDrop(id, col.key, lane)}
+                  onDropTask={(id) => handleDrop(id, col.key, row)}
                   className={`group/cell bg-elevated rounded-input px-6 h-24 flex items-center gap-6 ${col.className === 'state-doing' ? 'bg-brand/6' : ''}`}
                 >
                   <span className={`text-11 font-mono tabular ${items.length ? 'text-secondary' : 'text-tertiary opacity-60'}`}>
@@ -315,12 +346,12 @@ export function LanesGrid(props: LanesGridProps) {
                     <BatchTools
                       items={items}
                       label={`${col.label} · ${lane}`}
-                      dragPayload={bulkPayload(col.key, lane)}
+                      dragPayload={bulkPayload(col.key, row)}
                     />
                   )}
                   <button
                     type="button"
-                    onClick={() => { setAddingAssignee(lane === 'unassigned' ? '' : lane); setAddingStatus(col.key) }}
+                    onClick={() => { setAddingLaneTarget(row); setAddingStatus(col.key) }}
                     className="ml-auto text-11 text-brand hover:text-brand-hover font-mono opacity-0 group-hover/cell:opacity-100 focus:opacity-100"
                     aria-label={`Add task to ${col.label} in lane ${lane}`}
                   >
@@ -332,7 +363,7 @@ export function LanesGrid(props: LanesGridProps) {
             return (
               <KanbanColumnDropZone
                 key={col.key}
-                onDropTask={(id) => handleDrop(id, col.key, lane)}
+                onDropTask={(id) => handleDrop(id, col.key, row)}
                 className={`group/cell bg-elevated rounded-input p-4 flex flex-col gap-2 min-h-[60px] ${col.className === 'state-doing' ? 'bg-brand/6' : ''}`}
               >
                 <div className="flex items-center justify-end gap-4 -mb-1 min-h-[16px]">
@@ -340,12 +371,12 @@ export function LanesGrid(props: LanesGridProps) {
                     <BatchTools
                       items={items}
                       label={`${col.label} · ${lane}`}
-                      dragPayload={bulkPayload(col.key, lane)}
+                      dragPayload={bulkPayload(col.key, row)}
                     />
                   )}
                   <button
                     type="button"
-                    onClick={() => { setAddingAssignee(lane === 'unassigned' ? '' : lane); setAddingStatus(col.key) }}
+                    onClick={() => { setAddingLaneTarget(row); setAddingStatus(col.key) }}
                     className="text-11 leading-none text-brand hover:text-brand-hover font-mono opacity-0 group-hover/cell:opacity-100 focus:opacity-100 transition-opacity"
                     aria-label={`Add task to ${col.label} in lane ${lane}`}
                     title={t('Add task · {column} · {lane}', { column: col.label, lane })}
@@ -356,7 +387,7 @@ export function LanesGrid(props: LanesGridProps) {
                 {foldStacks(items, tasks).map((item) => (
                   <TaskDropSlot
                     key={item.task.id}
-                    onDropTask={(id) => handleDrop(id, col.key, lane, item.task.id)}
+                    onDropTask={(id) => handleDrop(id, col.key, row, item.task.id)}
                   >
                     <StackCard item={item} grid={props} compact />
                   </TaskDropSlot>
@@ -367,10 +398,10 @@ export function LanesGrid(props: LanesGridProps) {
           {showArchiveCol && (
           <FoldCell
             open={showArchived}
-            items={archivedTasks.filter((t) => laneOf(t) === lane)}
-            onDropTask={(id) => handleDrop(id, ARCHIVE, lane)}
+            items={archivedTasks.filter((t) => taskLaneKey(t) === key)}
+            onDropTask={(id) => handleDrop(id, ARCHIVE, row)}
             render={(task) => (
-              <TaskDropSlot key={task.id} onDropTask={(id) => handleDrop(id, ARCHIVE, lane)}>
+              <TaskDropSlot key={task.id} onDropTask={(id) => handleDrop(id, ARCHIVE, row)}>
                 <TaskCard task={task} {...linkProps(task)} compact showDesc={showDesc} copyMode={copyMode} showProject={multi} axes={axes} today={isToday(task, today)} onToggleToday={onCardToday} selectedIndex={selection.indexOf(task.id) + 1 || null} onSelect={toggleSelect} onEdit={onCardEdit} onRelease={onCardRelease} />
               </TaskDropSlot>
             )}
@@ -379,16 +410,20 @@ export function LanesGrid(props: LanesGridProps) {
         </Fragment>
         )
       })}
+      {!agentsOpen && agentLanes.length > 0 && (
+        <AgentLanesRow {...{ agentsOpen, toggleAgents }} count={agentLanes.length} />
+      )}
       {/* Add-lane control (inline form, no prompt dialogs) */}
       <div className="col-span-full pt-6">
         {addingLane ? (
           <form
-            onSubmit={(e) => { e.preventDefault(); commitAddLane() }}
+            onSubmit={(e) => { e.preventDefault(); void commitAddLane() }}
             className="flex items-center gap-6 px-4"
           >
             <input
               autoFocus
               value={laneDraft}
+              maxLength={80}
               onChange={(e) => setLaneDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') { setAddingLane(false); setLaneDraft('') }
