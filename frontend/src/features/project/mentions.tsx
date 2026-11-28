@@ -1,3 +1,5 @@
+import { DashboardAgentMention } from '../terminal/messageMenu/AgentTerminalMenu'
+import { writeClipboard } from '../../lib/useCopy'
 import { useState, type ReactNode } from 'react'
 import { LoadingSkeleton } from '../../components/states'
 import { TerminalSquare } from 'lucide-react'
@@ -152,9 +154,15 @@ export function MentionRow({ m, onOpen }: { m: Mention; onOpen: () => void }) {
       <span className={`shrink-0 ${user ? 'text-status-amber' : 'text-brand'}`}>
         {user ? t('◆ sent to') : t('◇ reply from')}
       </span>
-      <CopyWord text={label} title={`Copy ${label}`} className="text-secondary shrink-0 max-w-[160px]" />
+      <DashboardAgentMention agent={m.agent_id} label={label} className="text-secondary shrink-0 max-w-[160px] truncate"
+        fallback={<CopyWord text={label} title={`Copy ${label}`} className="text-secondary shrink-0 max-w-[160px]" />}
+        extra={<button type="button" role="menuitem" className="w-full rounded-input px-8 py-4 text-left hover:bg-hover"
+          onClick={() => void writeClipboard(label)}>{t('Copy the name')}</button>} />
       {label !== m.agent_id && (
-        <CopyWord text={m.agent_id} title={`Copy ${m.agent_id}`} className="text-tertiary shrink-0" />
+        <DashboardAgentMention agent={m.agent_id} label={m.agent_id} className="text-tertiary shrink-0"
+          fallback={<CopyWord text={m.agent_id} title={`Copy ${m.agent_id}`} className="text-tertiary shrink-0" />}
+          extra={<button type="button" role="menuitem" className="w-full rounded-input px-8 py-4 text-left hover:bg-hover"
+            onClick={() => void writeClipboard(m.agent_id)}>{t('Copy the id')}</button>} />
       )}
       <button
         type="button"

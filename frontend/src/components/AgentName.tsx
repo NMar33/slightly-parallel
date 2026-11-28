@@ -1,3 +1,4 @@
+import { DashboardAgentMention } from '../features/terminal/messageMenu/AgentTerminalMenu'
 import { useAgentNames } from '../lib/useAgentNames'
 
 /**
@@ -8,5 +9,7 @@ export function AgentName({ id, className }: { id: string | null | undefined; cl
   const nameOf = useAgentNames()
   const agentId = String(id ?? '')
   if (!agentId) return null
-  return <span className={className} title={agentId}>{nameOf(agentId)}</span>
+  const label = nameOf(agentId)
+  return <DashboardAgentMention agent={agentId} label={label} className={className}
+    fallback={<span className={className} title={agentId}>{label}</span>} />
 }

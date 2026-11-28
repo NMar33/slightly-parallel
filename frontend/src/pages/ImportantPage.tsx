@@ -1,3 +1,4 @@
+import { DashboardAgentMention } from '../features/terminal/messageMenu/AgentTerminalMenu'
 import { useEffect, type ReactNode } from 'react'
 import { IMPORTANT_GUIDE } from '../features/visions/guides'
 import { PageGuide } from '../features/visions/parts'
@@ -55,7 +56,8 @@ export default function ImportantPage() {
             {messages.map((m) => (
               <Row key={m.id} m={m} onUnstar={() => toggle(false, 'message', m.target)}
                 to={`/chats#project=${encodeURIComponent(m.project)}&agent=${encodeURIComponent(m.agent_id)}&sel=${encodeURIComponent(m.session_id)}&turn=${m.turn}`}
-                title={m.excerpt || t('turn {n}', { n: m.turn })} meta={`${agentName(m)} · ${t('turn {n}', { n: m.turn })}`} />
+                title={m.excerpt || t('turn {n}', { n: m.turn })}
+                meta={<><DashboardAgentMention agent={m.agent_id} label={agentName(m)} fallback={agentName(m)} /> · {t('turn {n}', { n: m.turn })}</>} />
             ))}
           </Section>
           <Section name={t('Agents')} n={agents.length} none={t('No agent is marked.')}>
@@ -91,7 +93,7 @@ function Section({ name, n, none, children }: { name: string; n: number; none: s
   )
 }
 
-function Row({ m, to, title, meta, onUnstar }: { m: Mark; to: string; title: string; meta: string; onUnstar: () => void }) {
+function Row({ m, to, title, meta, onUnstar }: { m: Mark; to: string; title: ReactNode; meta: ReactNode; onUnstar: () => void }) {
   const project = m.task?.project || m.project
   return (
     <li className="flex items-center gap-10 px-10 py-6 min-w-0">

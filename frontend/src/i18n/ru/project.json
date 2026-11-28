@@ -1,4 +1,13 @@
 {
+  "Copy the name": "Скопировать имя",
+  "Copy the id": "Скопировать ID",
+  "No lane": "Без дорожки",
+  "Choose lane": "Выбрать дорожку",
+  "Could not save lane \"{name}\"": "Не удалось сохранить дорожку «{name}»",
+  "Could not choose the lane": "Не удалось выбрать дорожку",
+  "Could not move lane \"{name}\" to the board": "Не удалось вынести дорожку «{name}» на доску",
+  "Create {name}": "Создать «{name}»",
+  "To board": "На доску",
   " (already done)": " (уже готово)",
   " (archived)": " (в архиве)",
   " · ended {date}": " · завершён {date}",

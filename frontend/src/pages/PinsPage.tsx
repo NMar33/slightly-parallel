@@ -1,3 +1,4 @@
+import { DashboardAgentMention } from '../features/terminal/messageMenu/AgentTerminalMenu'
 import { useEffect, useMemo, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Pin, X } from 'lucide-react'
@@ -99,7 +100,7 @@ function Row({ m, onRemove, children }: { m: MsgMark; onRemove: () => void; chil
         <Link to={to} className="min-w-0 flex-1 flex flex-col hover:text-brand">
           <span className="text-13 text-primary truncate">{line}</span>
           <span className="text-11 font-mono text-tertiary truncate">
-            {who} · {t('turn {n}', { n: m.turn })}{m.side === 'reply' ? ` · ${t('the reply')}` : ''} · {t('{n} characters', { n: m.chars })}
+            <DashboardAgentMention agent={m.agent_id} label={who} fallback={who} /> · {t('turn {n}', { n: m.turn })}{m.side === 'reply' ? ` · ${t('the reply')}` : ''} · {t('{n} characters', { n: m.chars })}
           </span>
         </Link>
         {m.project && (
