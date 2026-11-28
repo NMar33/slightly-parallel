@@ -899,8 +899,7 @@ def write(store: ViewStore, any_id: str, body: dict, actor: str) -> dict[str, An
 
 
 def attach(store: ViewStore, card_id: str, body: dict, actor: str) -> dict[str, Any]:
-    """The older door (MCP publish_attach, the page's drop and paste):
-    images and links, and now anything ``write`` takes besides text."""
+    """Attach images, links and other attachments from the operator page."""
     if not isinstance(body, dict):
         raise PublishRefused("send the body as a JSON object")
     keys = ("images", "links", "files", "tasks", "notes", "commits")

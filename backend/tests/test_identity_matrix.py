@@ -5,7 +5,7 @@ The paths are not listed by hand: the MCP rows are server._WRITE_TOOLS plus
 standup_material (it posts to claim the day), and each needs a WALK entry
 below (a new write tool without one fails here). The HTTP rows replay, as an
 agent's own body, the first request each of those tools posts: 39 tools,
-38 distinct routes (publish_attach and publish_write post to the same
+38 distinct routes (several tools post to the same
 /write). Every
 pattern of server._MCP_WRITE_PATHS must be among them. The lens-create rows
 replay write_entry's request for every lens an agent may create.
@@ -255,7 +255,7 @@ def _core_off(ctx: Ctx, n: int) -> dict:
 
 
 def _task_move(ctx: Ctx, n: int) -> dict:
-    return {"id": ctx.task(f"Move me {n}"), "to": "BETA"}
+    return {"id": ctx.task(f"Move me {n}"), "project": "BETA"}
 
 
 def _messages(ctx: Ctx, n: int) -> dict:
@@ -324,8 +324,6 @@ WALK: dict[str, Walk] = {
     "core_note": (lambda x, n: {"id": x.ids["core"], "text": f"note {n}", "comment": "c"}, ()),
     "core_attach": (lambda x, n: {"id": x.ids["core"], "task_id": x.task(f"Attach me {n}"), "note": f"n{n}"}, ()),
     "core_off": (_core_off, ()),
-    "publish_attach": (lambda x, n: {"id": x.ids["card"], "links": [{"title": f"l{n}", "url": f"https://example.org/{n}"}]},
-                       (("links", 0),)),
     "publish_write": (lambda x, n: {"id": x.ids["card"], "context": f"ctx {n}",
                                     "links": [{"title": f"l{n}", "url": f"https://example.org/w{n}"}],
                                     "images": [{"path": _picture(x, n), "title": f"p{n}"}],

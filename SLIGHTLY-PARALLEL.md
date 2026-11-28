@@ -375,7 +375,6 @@ or context is a version; `base` is the card's `rev` you read.
 card: write only what it asks for, on top of what is there. When the notice
 says this chat made a card in the last hour and the message is about the
 same thing, write into that card and fold the new one in with `merge`.
-`publish_attach` is the older name of the tool.
 
 **Marks on one message — `#pin`, `#carry`, `#carry-brief`, `#fork-later`.**
 Like `#important`, the tag is the whole act: the server marks the message
@@ -390,8 +389,8 @@ in that turn is `<agent_id>#<turn>/reply`.
   the capture hook gives it back to you whole, with your reply to it (the
   first 4,000 characters). Nothing to write.
 - `#carry-brief` — the message survives as a brief you write now:
-  `carry_brief {message, text}` (`message` as the notice names it; without
-  it, this chat's turn by `turn`). The brief is what the message says and
+  `carry_brief {message, text}` (`message` as the notice names it,
+  in the form `<agent_id>#<turn>` or `<agent_id>#<turn>/reply`). The brief is what the message says and
   the context needed to understand it after the chat is compacted: who
   asked, what for, what was decided — a few sentences, at most 4,000
   characters. When the operator marks a message this way by hand, the next

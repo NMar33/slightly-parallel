@@ -217,7 +217,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
                  "the server saves this message as the first note"),
     "core-note": ("keep-a-core", "MCP tool cores, choose the matching core, then core_note with this message as text "
                   "and your one-line comment; if two match, ask the operator to choose by number first"),
-    "core": ("keep-a-core", "MCP tool core_attach: this message, and this chat's task when it has one, to the matching "
+    "core": ("keep-a-core", "MCP tool core_attach {id, message, task_id?}: attach <agent_id>#<turn> and this chat's task to the matching "
              "core; if two match, ask the operator to choose by number first"),
     "core-off": ("keep-a-core", "MCP tool cores, choose the matching core, ask the operator to confirm its number, "
                  "then core_off"),

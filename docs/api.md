@@ -384,7 +384,7 @@ The board, its blocks, and everything hung off a task.
   task's `work` (GET `/api/tasks/{task_id}/work`) reads the same set, merged
   newest first.
 - `POST /api/tasks/{task_id}/move` — `{to}`: the task moves to project `to`
-  and keeps its id (MCP `task_move`). The operator, or an agent at task level
+  and keeps its id (MCP `task_move {id, project}`). The operator, or an agent at task level
   3 that is a member of both projects. `project` becomes `to`, `projects`
   loses the old project (the card leaves its board), the column and the
   document stay, the lane stays when a live card of `to` carries it (else it
@@ -598,9 +598,8 @@ current items copied) · `POST /api/publishing/docs/{doc_id}/items`
 (`n?`) · `POST /api/publishing/items/{item_id}/update` (`text?`, `before?`) ·
 `POST /api/publishing/items/{item_id}/remove` ·
 `POST /api/publishing/cards/{card_id}/attach` (attachments only, as `write`
-takes them — the operator on the page, or the agent with MCP
-`publish_attach`, which forwards to `write`; the same attachment again is
-the existing one) · `GET /api/publishing/attachments/{attachment_id}/file` ·
+takes them on the operator page. Agents use MCP `publish_write`. The same
+attachment again is the existing one) · `GET /api/publishing/attachments/{attachment_id}/file` ·
 `POST /api/publishing/attachments/{attachment_id}/remove` (the operator's).
 - `GET /api/example` — the example project: `enabled`, `present`, `building`
   and the last error.

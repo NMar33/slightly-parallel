@@ -133,16 +133,33 @@ def _bare(monkeypatch) -> mcp.Translator:
     return tr
 
 
-def test_carry_brief_names_its_message_once(monkeypatch) -> None:
-    """`message` and `turn` both name the message: given both and different,
-    `turn` was dropped and the brief went to the other message."""
+@pytest.mark.parametrize(("tool", "args", "shape"), [
+    ("task_move", {"id": "tk_a", "to": "BETA"}, 'task_move {id, project}'),
+    ("core_attach", {"id": "cr_a", "turn": 5}, 'core_attach {id, message?, task_id?, note?}'),
+    ("carry_brief", {"turn": 5, "text": "brief"}, 'carry_brief {message, text}'),
+    ("publish_attach", {"id": "pu_a", "links": []}, 'publish_write {id, images?, links?}'),
+])
+def test_legacy_names_are_refused_before_posting(monkeypatch, tool, args, shape) -> None:
     tr = _bare(monkeypatch)
-    with pytest.raises(mcp.ApiError, match="given twice and differs"):
-        tr.call("carry_brief", {"message": "cc-aaaa1111#3", "turn": 5, "text": "the brief"})
+    with pytest.raises(mcp.ApiError, match=re.escape(shape)):
+        tr.call(tool, args)
     assert tr.api.posts == []
-    tr.call("carry_brief", {"message": "cc-aaaa1111#5", "turn": 5, "text": "the brief"})
-    tr.call("carry_brief", {"turn": 5, "text": "the brief"})
-    assert [b["target"] for _p, b in tr.api.posts if b] == ["cc-aaaa1111#5", "cc-aaaa1111#5"]
+
+
+def test_mcp_names_translate_to_the_existing_http_shapes(monkeypatch) -> None:
+    tr = _bare(monkeypatch)
+    message = "cc-aaaa1111#5"
+    tr.call("task_move", {"id": "tk_a", "project": "BETA"})
+    tr.call("carry_brief", {"message": message + "/reply", "text": "the brief"})
+    tr.call("core_attach", {"id": "cr_a", "message": message, "task_id": "tk_a"})
+    tr.call("publish_write", {"id": "pu_a", "links": [{"url": "https://example.org"}]})
+    assert tr.api.posts == [
+        ("/api/tasks/tk_a/move", {"agent_id": "cc-aaaa1111", "to": "BETA"}),
+        ("/api/carries/brief", {"agent_id": "cc-aaaa1111", "target": message + "/reply", "text": "the brief"}),
+        ("/api/cores/cr_a/links", {"agent_id": "cc-aaaa1111", "kind": "message", "target": message, "note": ""}),
+        ("/api/cores/cr_a/links", {"agent_id": "cc-aaaa1111", "kind": "task", "target": "tk_a", "note": ""}),
+        ("/api/publishing/cards/pu_a/write", {"agent_id": "cc-aaaa1111", "links": [{"url": "https://example.org"}]}),
+    ]
 
 
 @pytest.mark.parametrize(("tool", "args", "where"), [

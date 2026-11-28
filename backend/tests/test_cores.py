@@ -188,7 +188,7 @@ def test_the_mcp_tools_reach_the_routes(data_root: Path, monkeypatch) -> None:
     tr.call("cores", {})
     tr.call("core_new", {"name": "Capture", "type": "capability", "text": "#core-new capture", "anchors": ["a.py", ""]})
     tr.call("core_note", {"id": "cr_1", "comment": "stdin", "kind": "auto", "task_id": "tk_1"})
-    tr.call("core_attach", {"id": "cr_1", "turn": 4, "task_id": "tk_1"})
+    tr.call("core_attach", {"id": "cr_1", "message": f"{AGENT}#4", "task_id": "tk_1"})
     tr.call("core_off", {"id": "cr_1"})
     paths = [(m, p) for m, p, _ in tr.api.calls]
     assert paths == [("GET", "/api/cores?project=ALPHA"), ("POST", "/api/cores"), ("POST", "/api/cores/cr_1/notes"),
