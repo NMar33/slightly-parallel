@@ -51,6 +51,7 @@ CLAUDE_MCP_CHOICES = (
 )
 WINDOWS_CORE_APPROVAL_COLUMNS = 640
 SCAN_PAYLOADS_NAME = "scan-payloads.json"
+WINDOWS_CORE_EDIT_SECTION = "Calculator core edit commands"
 WINDOWS_CORE_WORK_SECTION = "Calculator core work commands"
 CLAUDE_THEME_SELECTION = re.compile(
     r"(?im)^ *[❯>] *(?:[✔√] *)?(?:auto \(match terminal\)|(?:dark|light) mode(?: \(.*\))?) *$"
@@ -332,10 +333,15 @@ def _core_toolchain_hint() -> str:
             " Do not install packages or request permission to run the tests outside your sandbox.")
 
 
-def _windows_edit_prompt(message: str, read: str, contract_read: str, edit: str) -> str:
-    return (f"{message} Run these exact PowerShell commands in order: `{contract_read}`, `{read}`, `{edit}`."
-            " If the sandbox refuses a command, ask once for that exact command instead of trying other commands."
-            " This is an edit-only turn. The tests and commit follow later.")
+def _windows_edit_prompt(message: str, read: str, contract_read: str, edit: str, contract: Path) -> str:
+    # As for the work turn, the long lines belong in the scratch contract.
+    # ConPTY can wrap a literal path across rows that the composer must verify.
+    with contract.open("a", encoding="utf-8") as instructions:
+        instructions.write(f"\n\n## {WINDOWS_CORE_EDIT_SECTION}\n\n"
+                           "Run these commands exactly, in order:\n"
+                           f"```powershell\n{read}\n{edit}\n```\n")
+    return (f"{message} Run `{contract_read}`, then follow {WINDOWS_CORE_EDIT_SECTION}."
+            " If refused, ask once for that exact command instead of trying other commands. Edit only.")
 
 
 def _codex_work_prompt(message: str, command: str, tests: str, contract: Path) -> str:
@@ -854,7 +860,8 @@ def smoke(space: Space, report: Report, code: str, folder: Path, tool: Tool, mod
                             offline_command = f"Get-Content -LiteralPath {calc}"
                             contract_read = f"Get-Content -LiteralPath {_powershell_path(project_contract)}"
                             command = core_mcp.EDIT_POWERSHELL.format(path=calc)
-                            message = _windows_edit_prompt(message, offline_command, contract_read, command)
+                            message = _windows_edit_prompt(message, offline_command, contract_read, command,
+                                                           project_contract)
                         elif offline_provider:
                             offline_command = core_mcp.OFFLINE_EDIT
                     elif name == "#rule":

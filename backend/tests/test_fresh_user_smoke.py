@@ -1734,10 +1734,33 @@ def test_windows_core_waits_for_the_command_approval_redraw(scripted_onboarding,
 
 
 
-def test_windows_core_edit_names_both_exact_reads_in_order(scripted_onboarding):
+def test_windows_core_edit_names_both_exact_reads_in_order(scripted_onboarding, tmp_path):
     contract = "Get-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/SLIGHTLY-PARALLEL.md'"
     calc = "Get-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py'"
     edit = "Add-Content -LiteralPath 'C:/Temp/sp fresh ü/sample/calc.py' -Value '    return a - b'"
-    prompt = scripted_onboarding._windows_edit_prompt("Add subtraction.", calc, contract, edit)
-    assert prompt.index(f"`{contract}`") < prompt.index(f"`{calc}`") < prompt.index(f"`{edit}`")
+    project_contract = tmp_path / "SLIGHTLY-PARALLEL.md"
+    project_contract.write_text("# Existing contract\n", encoding="utf-8")
+    prompt = scripted_onboarding._windows_edit_prompt("Add subtraction.", calc, contract, edit, project_contract)
+    assert f"`{contract}`" in prompt
     assert "instead of trying other commands" in prompt
+    assert calc not in prompt and edit not in prompt
+    section = scripted_onboarding.WINDOWS_CORE_EDIT_SECTION
+    assert section in prompt
+    instructions = project_contract.read_text(encoding="utf-8")
+    assert instructions.startswith("# Existing contract\n")
+    assert instructions.index(section) < instructions.index(calc) < instructions.index(edit)
+
+
+def test_windows_core_edit_prompt_fits_the_conpty_composer(scripted_onboarding, tmp_path):
+    from core_mcp import EDIT_POWERSHELL
+
+    workspace = "C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_codex_runs_full_core_agai0/sample"
+    contract = f"Get-Content -LiteralPath '{workspace}/SLIGHTLY-PARALLEL.md'"
+    calc_path = f"'{workspace}/calc.py'"
+    calc = f"Get-Content -LiteralPath {calc_path}"
+    edit = EDIT_POWERSHELL.format(path=calc_path)
+    message = (f"Add a function sub(a, b) to calc.py that returns a - b. Do not commit yet. "
+               f"Set the command working directory to `{workspace}` and use absolute paths "
+               "under that directory for the calculator files.")
+    prompt = scripted_onboarding._windows_edit_prompt(message, calc, contract, edit, tmp_path / "contract.md")
+    assert len(prompt) <= scripted_onboarding.WINDOWS_CORE_APPROVAL_COLUMNS - 16
