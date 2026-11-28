@@ -24,16 +24,21 @@
  * of the mouse is the terminal's (selecting, tmux, a program's mouse).
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Terminal } from 'xterm'
 import { AlignLeft, ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Clock, Copy, ExternalLink, GitBranch, Globe, Layers, Link2, ListPlus, Pin, PinOff, Quote, SquareTerminal, X } from 'lucide-react'
 
 import '../../notes/render/notes.css'
 import { writeClipboard } from '../../../lib/useCopy'
+import { useAgentDirectory } from '../../../lib/useAgentNames'
+import { namedAgents } from './agentNames'
+import { findPaths } from '../printedPaths'
 import { msgTarget, type MsgRef } from '../../../lib/pins'
 import { useAquaActions } from '../../aqua/app/api'
-import { openWindow, post } from '../../aqua/app/bridge'
+import { hasNativeAgentTerminal, openWindow, post } from '../../aqua/app/bridge'
+import { AgentTerminalActions } from './AgentTerminalMenu'
+import { DashboardRecord } from '../../aqua/app/dashboard'
 import { detachUrl } from '../../aqua/app/model'
 import { VIEW_COLUMNS } from '../../project/kanban/model'
 import { toNote, useNotesFeed, type WireNote } from '../../notes/page/data'
@@ -48,7 +53,7 @@ import { AgentCard, CommitCard, CoreCard, DecisionCard, EntryCard, KeptCard, Mes
 import { lineCells } from './cells'
 import { copyId, openPage, place, useFirstFocus } from './pop'
 import { CommitCheck, pageAddress, pageOf } from './records'
-import { findRecordLinks, linkAt, type TermLink } from './links'
+import { findRecordLinks, findUrls, linkAt, type TermLink } from './links'
 import { blocksOf, messageAt, type Found } from './match'
 import { commandAt, commandSpans, forClaudeCode, type Command } from './commands'
 import { CommandCopy, CommandScanner, type HoverFeed } from './CommandCopy'
@@ -109,6 +114,18 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
   recordRef.current = record
   const agentRef = useRef(agentId)
   agentRef.current = agentId
+  const named = useAgentDirectory(hasNativeAgentTerminal())
+  const namedLinks = namedAgents(named)
+  const names = useRef(namedLinks)
+  names.current = namedLinks
+  const recordLinks = useCallback((text: string) => {
+    const urls = findUrls(text)
+    const records = findRecordLinks(text, urls)
+    const aliases = names.current(text)
+    if (!aliases.length) return records
+    const occupied = [...records, ...urls, ...findPaths(text)]
+    return [...records, ...aliases.filter((a) => !occupied.some((b) => a.start < b.start + b.length && b.start < a.start + a.length))]
+  }, [])
   const seq = useRef(0)
   // Which hashes printed here are commits of the project: asked once each, kept for the terminal's life.
   const check = useMemo(() => new CommitCheck(project), [project])
@@ -151,17 +168,20 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
     const got = rowAt(e)
     if (!got) return null
     const { text, cells, col } = got
-    return findRecordLinks(text).find((f) => col >= cells[f.start]! && col <= cells[f.start + f.length - 1]!
+    return recordLinks(text).find((f) => col >= cells[f.start]! && col <= cells[f.start + f.length - 1]!
       && (f.kind !== 'commit' || checkRef.current.known(f.id) === true)) ?? null
-  }, [rowAt])
+  }, [rowAt, recordLinks])
   /** The link under a right click: an id, a web address, a path the editor opens. */
   const termLinkAt = useCallback((e: MouseEvent): TermLink | null => {
     const got = rowAt(e)
     if (!got) return null
     const i = got.cells.findIndex((c) => c === got.col)
     if (i < 0) return null
-    return linkAt(got.text, i, { commitOk: (sha) => checkRef.current.known(sha) === true, paths: !!api.current?.editor?.() })
-  }, [rowAt])
+    const link = linkAt(got.text, i, { commitOk: (sha) => checkRef.current.known(sha) === true, paths: !!api.current?.editor?.() })
+    if (link) return link
+    const id = recordLinks(got.text).find((f) => f.kind === 'agent' && i >= f.start && i < f.start + f.length)
+    return id ? { ...id, kind: 'id', text: got.text.slice(id.start, id.start + id.length), id } : null
+  }, [rowAt, recordLinks])
 
   /** The command under a pointer: on the copy icon, the icon's; else by row and column. */
   const cmdAt = useCallback((e: MouseEvent): Command | null => {
@@ -185,10 +205,10 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
           const line = term.buffer.active.getLine(y - 1)
           if (!line) { callback(undefined); return }
           const { text, cells } = lineCells(line)
-          const found = findRecordLinks(text)
+          const found = recordLinks(text)
           const links = (fs: FoundId[]) => (fs.length ? fs.map((f) => ({
             range: { start: { x: cells[f.start]! + 1, y }, end: { x: cells[f.start + f.length - 1]! + 1, y } },
-            text: f.id,
+            text: text.slice(f.start, f.start + f.length),
             decorations: { underline: true, pointerCursor: true },
             activate: (ev: MouseEvent) => openId(f, ev),
           })) : undefined)
@@ -240,7 +260,7 @@ export function MessageLayer({ agentId, project, say, refocus, goTo, children }:
       }, () => setOpen((o) => (o?.kind === 'msg' && n === seq.current ? { ...o, state: 'done' } : o)))
       return true
     },
-  }), [openId, idAt, termLinkAt, cmdAt])
+  }), [openId, idAt, termLinkAt, cmdAt, recordLinks])
 
   const bind = useCallback((a: ScreenApi | null) => { api.current = a }, [])
   const slot = useMemo(() => ({ hooks, bind }), [hooks, bind])
@@ -339,7 +359,8 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
     else onId(link!.id)
   })
   const pageLink = link?.kind === 'id' && link.id.kind !== 'commit' && link.id.kind !== 'message'
-  const linkRows = link ? 2 + (pageLink ? 1 : 0) : 0
+  const terminalAgent = link?.kind === 'id' && link.id.kind === 'agent' && hasNativeAgentTerminal() ? link.id.id : ''
+  const linkRows = link ? 2 + (pageLink ? 1 : 0) + (terminalAgent ? 1 : 0) : 0
   const cmd = open.cmd
   const claude = cmd ? forClaudeCode(cmd) : null
   // A line break pasted where the shell did not ask for bracketed paste would run the lines: not offered then.
@@ -387,6 +408,7 @@ function MsgMenu({ open, w, h, agentId, project, record, api, say, close, onId }
           {row('link-copy', <Link2 size={15} />, t('Copy the link'), copyLink)}
           {pageLink && row('link-page', <Globe size={15} />, t('Copy the page address'), copyPage)}
           {row('link-open', <ExternalLink size={15} />, t('Open'), openLink)}
+          {terminalAgent && <AgentTerminalActions agent={terminalAgent} close={close} />}
           <div className="h-px my-3" style={{ background: 'var(--aq-term-frame, rgba(255,255,255,0.1))' }} />
         </>
       )}
@@ -469,6 +491,7 @@ function Columns({ id, status, disabled, onMove }: { id: string; status: string;
 }
 
 function TaskCard({ id, x, y, w, h, say, close }: CardProps) {
+  const openRecord = useContext(DashboardRecord)
   const box = useRef<HTMLDivElement>(null)
   const q = useTask(id, true)
   const actions = useMessageActions('', '')
@@ -502,7 +525,7 @@ function TaskCard({ id, x, y, w, h, say, close }: CardProps) {
           {VIEW_COLUMNS.workflow.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
         </select>
       </label>
-      <button type="button" className="lab-list-row" onClick={() => { close(); openPage(pageOf.task(id)) }}><ExternalLink size={15} />{t('Open on the board')}</button>
+      <button type="button" className="lab-list-row" onClick={() => { close(); if (!openRecord?.(id)) openPage(pageOf.task(id)) }}><ExternalLink size={15} />{t('Open on the board')}</button>
       <button type="button" className="lab-list-row" onClick={() => { void copyId(id, say) }}><Copy size={15} />{t('Copy the id')}</button>
     </div>
   )
@@ -511,6 +534,7 @@ function TaskCard({ id, x, y, w, h, say, close }: CardProps) {
 /* ------------------------------------------------------------ a note, read in place */
 
 function NoteCard({ id, close }: { id: string; close: () => void }) {
+  const openRecord = useContext(DashboardRecord)
   const feed = useNotesFeed({})
   const inFeed = feed.data?.notes.find((n) => n.id === id)
   // An archived note is not in the feed: read on its own.
@@ -534,7 +558,7 @@ function NoteCard({ id, close }: { id: string; close: () => void }) {
         <div className="shrink-0 flex items-center gap-8 px-14 h-[34px] text-12" style={{ borderBottom: '1px solid var(--border-default)' }}>
           <span className="font-mono text-tertiary">{id}</span>
           <span className="text-11 text-tertiary">{t('Esc closes')}</span>
-          <button type="button" className="ml-auto inline-flex items-center gap-4 rounded-input px-4 hover:bg-hover" onClick={() => { close(); openPage(pageOf.note(id)) }}>
+          <button type="button" className="ml-auto inline-flex items-center gap-4 rounded-input px-4 hover:bg-hover" onClick={() => { close(); if (!openRecord?.(id)) openPage(pageOf.note(id)) }}>
             <ExternalLink size={13} />{t('Open on the Notes page')}
           </button>
           <button type="button" className="inline-flex items-center justify-center w-[24px] h-[24px] rounded-input hover:bg-hover" aria-label={t('Close')} onClick={close}><X size={13} /></button>

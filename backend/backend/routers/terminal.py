@@ -32,6 +32,7 @@ through pywinpty (``WinPtySession``, conpty.py), plain terminals only.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -40,6 +41,7 @@ import re
 import secrets
 import signal
 import struct
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -49,11 +51,12 @@ from typing import Any, Callable
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from anyio import from_thread as anyio_from_thread
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 
-from .. import app_settings, conpty, termlib, termlog, timeauto
+from .. import app_settings, conpty, terminal_diagnostics, terminal_limit, termlib, termlog, timeauto
 from ..config import Settings
 from ..db import ViewStore
-from .deps import foreign_origin, get_store, not_found, operator_only, to_int
+from .deps import foreign_origin, get_read_store, get_store, not_found, operator_only, to_int
 
 log = logging.getLogger("sp.terminal")
 
@@ -67,7 +70,7 @@ TMUX_PANE_RESIZE_POLL_S = 0.015
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
 
-_MAX_SESSIONS = 32
+MAX_TERMINAL_VIEWS = 128
 # What a terminal asks the screen (who are you, where is the cursor): kept
 # out of a replay, or the new screen answers into the shell as if typed.
 _QUERIES = re.compile(rb"\x1b\[[>=?]?[0-9;]*c|\x1b\[[56]n")
@@ -130,9 +133,9 @@ def _wait_for_tmux_pane_size(root: Path, sid: str, size: tuple[int, int], deadli
 # The pumps' own threads. Each open terminal holds one in a blocking read for
 # as long as it lives; in the default executor about eight idle terminals
 # took every thread asyncio.to_thread uses, and the server stalled.
-# Sized from the caps below: every plain terminal and every tmux view can
-# hold one read at once.
-_PTY_READS = ThreadPoolExecutor(max_workers=_MAX_SESSIONS * 5, thread_name_prefix="pty")
+# Each PTY needs its own blocking read, including with an unlimited setting.
+# The pool creates threads on demand and the OS limits how many can exist.
+_PTY_READS = ThreadPoolExecutor(max_workers=sys.maxsize, thread_name_prefix="pty")
 
 # Set by build_router: closes every pty the router holds. Called at
 # shutdown, so no thread is left blocked in a read of a shell still open
@@ -160,7 +163,8 @@ async def _read_session(session: "PtySession") -> bytes:
 class PtySession:
     """One pty the server holds: a shell (plain) or a tmux client (tmux)."""
 
-    def __init__(self, session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str]):
+    def __init__(self, session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str], *,
+                 strict_cwd: bool = False):
         self.session_id = session_id
         # Built before the fork: the child of a threaded server only chdirs
         # and execs, it does not touch os.environ.
@@ -170,7 +174,8 @@ class PtySession:
             try:
                 os.chdir(cwd)
             except OSError:
-                pass
+                if strict_cwd:
+                    os._exit(126)
             try:
                 os.execvpe(argv[0], argv, full_env)
             finally:
@@ -307,10 +312,12 @@ class WinPtySession(PtySession):
         self.con.release()
 
 
-def open_pty(session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str]) -> PtySession:
+def open_pty(session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str], *,
+             strict_cwd: bool = False) -> PtySession:
     """A pty of this system's kind running `argv`."""
-    kind = WinPtySession if os.name == "nt" else PtySession
-    return kind(session_id, argv, cwd, cols, rows, env)
+    if os.name == "nt":
+        return WinPtySession(session_id, argv, cwd, cols, rows, env)
+    return PtySession(session_id, argv, cwd, cols, rows, env, strict_cwd=strict_cwd)
 
 
 def _cfg(data_root: Path) -> dict[str, Any]:
@@ -366,6 +373,13 @@ def _operator_page(headers: Any, app: Any) -> bool:
     return has_operator_cookie(dict(headers.raw), app)
 
 
+def _private_read(request: Request, response: Response, what: str) -> None:
+    _guard(request)
+    if not _operator_page(request.headers, request.app):
+        raise HTTPException(status_code=403, detail=f"only the operator's pages read {what}")
+    response.headers["Cache-Control"] = "no-store"
+
+
 def _need_on(request: Request) -> None:
     _guard(request)
     if not SUPPORTED:
@@ -398,7 +412,11 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     clients: dict[str, PtySession] = {}       # one tmux client per view, "<id>#<n>"
     lock = threading.Lock()
     changes = tuple(threading.Lock() for _ in range(32))
+    resume_changes = tuple(threading.Lock() for _ in changes)
     group_change = threading.Lock()
+    capacity_change = threading.Lock()
+    last_input: dict[str, float] = {}
+    attaching_plain: dict[WebSocket, str] = {}
 
     def _session_change(sid: str) -> threading.Lock:
         # Serialize lifecycle changes to one terminal without holding up every view.
@@ -407,15 +425,37 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     def _drop(sid: str) -> None:
         """Every pty of a terminal: its plain shell, and each view's tmux client."""
         with lock:
+            last_input.pop(sid, None)
+            for socket in [socket for socket, tid in attaching_plain.items() if tid == sid]:
+                del attaching_plain[socket]
             gone = [sessions.pop(sid)] if sid in sessions else []
             gone += [clients.pop(k) for k in [k for k in clients if k.split("#")[0] == sid]]
         for g in gone:
             g.close()
 
-    def _close_terminal(root: Path, sid: str, sender: PtySession | None = None) -> None:
+    def _close_terminal(root: Path, sid: str, sender: PtySession | None = None, *, confirm: bool = True) -> None:
         with _session_change(sid):
             if sender is not None and sender.closed:
                 return
+            if not confirm:
+                row = next((r for r in _live_sessions(root) if r["id"] == sid), None)
+                if row is None:
+                    # A lost listing can be a transient observation failure.
+                    with lock:
+                        retained = sid in sessions or any(key.partition("#")[0] == sid for key in clients)
+                    try:
+                        needs_confirm = retained or termlib.get(root, sid, require_readable=True) is not None
+                    except (OSError, ValueError):
+                        needs_confirm = True
+                else:
+                    (candidate,) = _close_candidates(root, [row])
+                    needs_confirm = (not candidate["attachment_known"] or not candidate["foreground_known"]
+                                     or candidate["attached"] or candidate["running"] or candidate["recent_output"])
+                if needs_confirm:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Confirm closing this terminal. It is active or its state could not be checked.",
+                    )
             _drop(sid)
             termlib.close(root, sid)
 
@@ -424,6 +464,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             gone = list(sessions.values()) + list(clients.values())
             sessions.clear()
             clients.clear()
+            last_input.clear()
+            attaching_plain.clear()
         for g in gone:
             g.close()
 
@@ -443,6 +485,53 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             live = list(sessions.items())
         return {sid: {"fg": s.foreground(), "activity": s.last_output} for sid, s in live}
 
+    def _live_sessions(root: Path) -> list[dict[str, Any]]:
+        return [row for row in termlib.listing(root, _plain_status()) if row["state"] not in ("ended", "asleep")]
+
+    def _close_candidates(root: Path, live: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        now = time.time()
+        tmux_status: dict[str, tuple[bool, float]] = {}
+        if any(row.get("backend") == "tmux" for row in live):
+            got = termlib.tmux_read(root, "list-sessions", "-F", "#{session_name}\t#{session_attached}\t#{session_activity}")
+            if got.returncode == 0:
+                for line in got.stdout.splitlines():
+                    fields = line.split("\t")
+                    if len(fields) == 3 and fields[0].startswith(termlib.PREFIX) and all(f.isdecimal() for f in fields[1:]):
+                        tmux_status[fields[0][len(termlib.PREFIX):]] = (int(fields[1]) > 0, float(fields[2]))
+        with lock:
+            attached = {key.partition("#")[0] for key in clients}
+            attached.update(attaching_plain.values())
+            attached.update(sid for sid, session in sessions.items() if session.subscribers)
+            inputs = last_input.copy()
+        candidates = []
+        for row in live:
+            sid = row["id"]
+            tmux_attached, tmux_activity = tmux_status.get(sid, (False, 0.0))
+            output = row.get("last_output") or 0
+            candidates.append({
+                "id": sid, "label": row.get("label") or sid, "project": row.get("project") or "",
+                "agent_id": row.get("agent_id") or "", "created": row.get("created") or "",
+                "last_activity": max(tmux_activity, output, inputs.get(sid, 0)) or None,
+                "last_opened": row.get("last_opened") or None,
+                "last_input": inputs.get(sid),
+                "recent_output": bool(output and now - output <= terminal_limit.RUNNING_SECONDS),
+                "agent_kind": terminal_limit.kind_of(row),
+                "attached": tmux_attached or sid in attached,
+                "attachment_known": row.get("backend") != "tmux" or sid in tmux_status,
+                "foreground_known": bool(row.get("program")),
+                "running": row["state"] in ("working", "waiting", "running"),
+            })
+        return sorted(candidates, key=lambda row: (
+            row["last_activity"] is None, row["last_activity"] or 0, row["created"], row["id"],
+        ))
+
+    def _limit_response(root: Path, live: list[dict[str, Any]], limit: int, requested: dict[str, str]) -> JSONResponse:
+        return JSONResponse(status_code=429, content={
+            "detail": f"{len(live)} terminals are open. The limit is {limit}.",
+            "count": len(live), "limit": limit, "maximum": app_settings.MAX_TERMINAL_SESSIONS,
+            "sessions": _close_candidates(root, live), "requested": requested,
+        })
+
     # ---------------------------------------------------- a plain terminal's shell
     # A plain terminal's shell starts when the terminal opens (or wakes), as a
     # tmux one does, not when a view first attaches: before, a terminal opened
@@ -450,18 +539,29 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
     # something attached, and the window then showed its "ended" card instead
     # of the screen that would have started it — every terminal on Windows.
 
-    def _hold_plain(root: Path, row: dict[str, Any], cols: int = 100, rows: int = 30) -> tuple[PtySession, bool]:
+    def _hold_plain(root: Path, row: dict[str, Any], cols: int = 100, rows: int = 30,
+                    *, limit: int | None = None) -> tuple[PtySession, bool]:
         """The pty of a plain terminal: the one the server holds, else a new
         shell (True). Raises _TooMany at the cap, or whatever stopped the shell."""
         sid = row["id"]
+        capacity = limit if limit is not None else int(_cfg(root)[app_settings.TERMINAL_SESSION_LIMIT])
         with lock:
             found = sessions.get(sid)
             if found is not None:
                 return found, False
-            if len(sessions) >= _MAX_SESSIONS:
+            if capacity and len(sessions) >= capacity:
                 raise _TooMany
             env = {"TERM": "xterm-256color", "COLORTERM": "truecolor", "SP_TERMINAL": sid}
-            found = open_pty(sid, termlib.plain_shell(), str(row.get("cwd") or root), cols, rows, env)
+            cwd = str(row.get("cwd") or root)
+            shell = termlib.plain_shell()
+            opts = {"strict_cwd": True} if row.get("strict_cwd") else {}
+            family = termlib.family_of(shell[0])
+            if opts and family in ("cmd", "powershell"):
+                if family == "cmd":
+                    shell = [shell[0], "/D", "/V:OFF", *shell[1:]]
+                env[termlib.CONFIRMED_CWD_ENV] = cwd
+                env[termlib.CONFIRMED_PYTHON_ENV] = sys.executable
+            found = open_pty(sid, shell, cwd, cols, rows, env, **opts)
             sessions[sid] = found
         return found, True
 
@@ -471,10 +571,19 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             return ""
         # Claim the pending command while the row and its PTY still belong
         # together. A late socket must not write a row after Close removed it.
+        if row.get("strict_cwd"):
+            pending = termlib.launch_in_cwd(pending, str(row["cwd"]), termlib.command_family())
         termlib.put(root, {"id": row["id"], "typed": True})
         return pending
 
-    def _attach(root: Path, sid: str, cols: int, rows: int) -> tuple[dict[str, Any], str, PtySession, bool, str]:
+    def _note_opened(root: Path, sid: str) -> None:
+        try:
+            termlib.put(root, {"id": sid, "last_opened": time.time()})
+        except OSError as exc:
+            log.warning("terminal %s could not record when its view opened: %s", sid, exc)
+
+    def _attach(root: Path, sid: str, cols: int, rows: int,
+                websocket: WebSocket) -> tuple[dict[str, Any], str, PtySession, bool, str]:
         with _session_change(sid):
             row = termlib.get(root, sid)
             if row is None:
@@ -483,7 +592,13 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 raise _NoScreen("asleep")
             if row.get("backend") != "tmux":
                 session, fresh = _hold_plain(root, row, cols, rows)
-                return row, sid, session, fresh, _plain_command(root, row)
+                _note_opened(root, sid)
+                pending = _plain_command(root, row)
+                # Count this attachment for Close as soon as it has claimed
+                # the PTY. Subscribe to output only after taking the replay.
+                with lock:
+                    attaching_plain[websocket] = sid
+                return row, sid, session, fresh, pending
             if not termlib.alive_tmux(root, sid):
                 # Leave its command and creation order for Wake or Restore.
                 raise _NoScreen("ended")
@@ -491,13 +606,14 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             key = f"{sid}#{secrets.token_hex(3)}"
             env = {"TERM": "xterm-256color", "COLORTERM": "truecolor", "SP_TERMINAL": sid}
             with lock:
-                if len(clients) >= _MAX_SESSIONS * 4:
+                if len(clients) >= MAX_TERMINAL_VIEWS:
                     raise _TooMany("too many views")
                 session = open_pty(sid, termlib.attach_argv(root, sid), str(row.get("cwd") or root), cols, rows, env)
                 clients[key] = session
+            _note_opened(root, sid)
             return row, key, session, True, ""
 
-    def _run_plain(session: PtySession, pending: str, *, enter: bool) -> None:
+    def _run_plain(session: PtySession, pending: str, *, enter: bool, guarded: bool) -> None:
         """On the event loop: read the shell and type its claimed command once."""
         if session.closed:
             return
@@ -508,12 +624,12 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
 
         async def type_later() -> None:
             await asyncio.sleep(PLAIN_SHELL_COMMAND_DELAY_S)
-            typed = termlib.typed_form(pending, termlib.plain_shell()[0])
+            typed = termlib.typed_form(pending, termlib.plain_shell()[0], guarded=guarded)
             await run_in_threadpool(session.write, (typed + ("\r" if enter else "")).encode())
         # Held on the session: a task nothing references can be collected before it runs.
         session.type_task = asyncio.create_task(type_later())
 
-    def _start_plain(root: Path, sid: str) -> None:
+    def _start_plain(root: Path, sid: str, limit: int) -> None:
         """From a route's worker thread: the shell of a plain terminal just
         opened or woken, running now. A new terminal whose shell does not
         start is taken away again; either way the caller gets a 500 with why."""
@@ -521,28 +637,25 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         if row is None or row.get("asleep") or row.get("backend") == "tmux":
             return
         try:
-            session, _ = _hold_plain(root, row)
+            session, _ = _hold_plain(root, row, limit=limit)
         except _TooMany:
-            raise HTTPException(status_code=429, detail=f"{_MAX_SESSIONS} terminals are open: close one first.")
+            if not row.get("woken_at"):
+                termlib.close(root, sid)
+            raise HTTPException(status_code=429, detail="The open terminal limit was reached.")
         except Exception as exc:  # noqa: BLE001 — Windows: no shell, no pseudo console
             log.warning("terminal %s did not open: %s", sid, exc)
             if not row.get("woken_at"):
                 termlib.close(root, sid)
             raise HTTPException(status_code=500, detail=f"the shell did not start: {str(exc) or type(exc).__name__}"[:300])
         pending = _plain_command(root, row)
-        anyio_from_thread.run_sync(lambda: _run_plain(session, pending, enter=row.get("launch") == "run"))
+        anyio_from_thread.run_sync(lambda: _run_plain(
+            session, pending, enter=row.get("launch") == "run", guarded=bool(row.get("strict_cwd"))))
 
     # ---------------------------------------------------------------- state
     @router.get("/api/terminal/state")
     def terminal_state(request: Request, response: Response) -> dict[str, Any]:
-        _guard(request)
-        if not _operator_page(request.headers, request.app):
-            # The token opens the socket that types into a shell: a GET from
-            # any program on this computer must not be handed it.
-            raise HTTPException(status_code=403, detail="only the operator's pages read the terminal's state")
-        # It carries the token: never from a cache, so after a restart the page
-        # gets the new one.
-        response.headers["Cache-Control"] = "no-store"
+        # The state carries a socket token that changes when the server restarts.
+        _private_read(request, response, "the terminal's state")
         boot: Settings = request.app.state.settings
         cfg = _cfg(boot.data_root)
         on = enabled(request.app)
@@ -557,6 +670,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             "tmux": termlib.tmux_path() is not None,
             "tmux_version": termlib.tmux_version(),
             "open_shell": True,
+            "max_sessions": cfg[app_settings.TERMINAL_SESSION_LIMIT],
             "keep": cfg.get("terminal.keep", "tmux"),
             "launch": cfg.get("terminal.launch", "run"),
             "agent": cfg.get("terminal.agent", "claude"),
@@ -584,39 +698,109 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                   for s in ("shell", "working", "waiting", "running", "ended", "asleep")}
         return {"sessions": items, "counts": counts}
 
+    @router.get("/api/terminal/limit")
+    def terminal_limit_status(request: Request, response: Response,
+                              store: ViewStore = Depends(get_read_store)) -> dict[str, Any]:
+        _private_read(request, response, "terminal recovery details")
+        root = request.app.state.settings.data_root
+        live = _live_sessions(root)
+        with lock:
+            plain_pids = {sid: session.pid for sid, session in sessions.items()}
+        memory, usage = terminal_limit.terminal_memory(root, live, plain_pids)
+        now = time.time()
+        recent = terminal_limit.recent_turns(store, {row["agent_id"] for row in live if row.get("agent_id")}, now)
+        items = _close_candidates(root, live)
+        reports = terminal_limit.reported_inputs(root, set(usage))
+        for item in items:
+            turns, recorded = recent.get(item["agent_id"], (0, 0.0))
+            typed = max(recorded, item["last_input"] or 0, reports.get(item["id"], 0))
+            item["last_activity"] = max(item["last_activity"] or 0, typed) or None
+            item["activity"] = turns + (max(0, 1 - (now - typed) / terminal_limit.WEEK_SECONDS) if typed else 0)
+            item["memory_bytes"] = usage[item["id"]]
+        return {"count": len(live), "limit": _cfg(root)[app_settings.TERMINAL_SESSION_LIMIT],
+                "maximum": app_settings.MAX_TERMINAL_SESSIONS, "memory": memory, "sessions": items}
+
+    @router.get("/api/terminal/sessions/{sid}/excerpts")
+    def terminal_excerpts(sid: str, request: Request, response: Response,
+                          store: ViewStore = Depends(get_read_store)) -> dict[str, Any]:
+        _private_read(request, response, "terminal excerpts")
+        root = request.app.state.settings.data_root
+        row = termlib.get(root, sid)
+        if row is None:
+            raise not_found("terminal", sid)
+        return terminal_limit.excerpts(root, store, row)
+
     # ---------------------------------------------------------------- open
-    @router.post("/api/terminal/sessions", status_code=201)
-    def terminal_open(request: Request, body: dict = Body(default={}), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
+    def _resume_agent(store: ViewStore, agent_id: str) -> tuple[dict[str, Any], str]:
+        agent = next((dict(a) for a in store.agents() if str(a.get("agent_id")) == agent_id), None)
+        if not agent:
+            raise not_found("agent", agent_id)
+        command = termlib.resume_command(str(agent.get("tool") or ""), str(agent.get("session_ref") or ""))
+        if not command:
+            raise HTTPException(status_code=422, detail="This chat cannot be resumed: its tool or session id was not recorded.")
+        return agent, command
+
+    def _resume_revision(agent: str, command: str, project: str, cwd: str) -> str:
+        return hashlib.sha256(json.dumps([agent, command, project, cwd]).encode()).hexdigest()
+
+    def _require_confirmable_cwd(cwd: str) -> None:
+        if termlib.cwd_has_controls(cwd):
+            raise HTTPException(status_code=422, detail=termlib.CWD_CONTROL_ERROR)
+
+    @router.get("/api/terminal/resume/{agent_id}")
+    def terminal_resume_preview(agent_id: str, request: Request, store: ViewStore = Depends(get_store)) -> dict[str, str]:
+        _need_on(request)
+        root = request.app.state.settings.data_root
+        agent, command = _resume_agent(store, agent_id)
+        project, cwd = str(agent.get("project") or ""), str(agent.get("cwd") or "")
+        resolved = str(termlib.resolve_cwd(root, project, cwd).resolve())
+        _require_confirmable_cwd(resolved)
+        return {"cwd": resolved, "resume_revision": _resume_revision(agent_id, command, project, cwd)}
+
+    @router.post("/api/terminal/sessions", status_code=201, response_model=None)
+    def terminal_open(request: Request, body: dict = Body(default={}),
+                      store: ViewStore = Depends(get_store)) -> dict[str, Any] | Response:
         _need_on(request)
         # Whoever the body names, in either field: an agent named in
         # agent_id is an agent opening a terminal, as everywhere else.
         operator_only(body, "Opening a terminal")
         root = request.app.state.settings.data_root
-        cfg = _cfg(root)
         kind = str(body.get("kind") or "shell")
+        # A body naming an agent in agent_id reads as written by that agent.
+        agent_id = str(body.get("agent") or "")
+        if kind == "resume":
+            # Keep the lookup, creation and PTY startup in one agent's turn.
+            # These locks are separate from the individual tab lifecycle locks.
+            with resume_changes[hash(agent_id) % len(resume_changes)]:
+                return _open_terminal(root, body, store, kind, agent_id)
+        return _open_terminal(root, body, store, kind, agent_id)
+
+    def _open_terminal(root: Path, body: dict, store: ViewStore, kind: str, agent_id: str) -> dict[str, Any] | Response:
+        cfg = _cfg(root)
         project = str(body.get("project") or "")
         cwd = str(body.get("cwd") or "")
         label = str(body.get("label") or "")
-        # `agent`, not `agent_id`: a body naming an agent in agent_id reads
-        # as written by that agent, and operator_only refused it above.
-        agent_id = str(body.get("agent") or "")
         task_id = str(body.get("task_id") or "")
         command = ""
+        expected_cwd = None
         if kind == "resume":
-            agent = next((dict(a) for a in store.agents() if str(a.get("agent_id")) == agent_id), None)
-            if not agent:
-                raise not_found("agent", agent_id)
-            command = termlib.resume_command(str(agent.get("tool") or ""), str(agent.get("session_ref") or ""))
-            if not command:
-                raise HTTPException(status_code=422, detail="This chat cannot be resumed: its tool or session id was not recorded.")
+            agent, command = _resume_agent(store, agent_id)
             project = project or str(agent.get("project") or "")
             cwd = cwd or str(agent.get("cwd") or "")
+            if "expected_cwd" in body or "resume_revision" in body:
+                expected_cwd = body.get("expected_cwd")
+                if (not isinstance(expected_cwd, str) or not expected_cwd
+                        or _resume_revision(agent_id, command, project, cwd) != body.get("resume_revision")):
+                    raise HTTPException(status_code=409, detail="The chat changed. Select it again.")
+                _require_confirmable_cwd(expected_cwd)
             # The name the pages show: a real name, else the chat's title, else the id.
             name = str(agent.get("agent_name") or "")
             label = label or (name if name and name != agent_id else str(agent.get("chat_title") or agent_id))
             # One terminal per resumed agent: an open one is reused.
             for r in termlib.listing(root, _plain_status()):
                 if r.get("kind") == "resume" and r.get("agent_id") == agent_id and r["state"] != "ended":
+                    if expected_cwd is not None and r.get("asleep"):
+                        raise HTTPException(status_code=409, detail="The chat has a sleeping terminal. Select it again.")
                     return {"session": r, "existing": True}
         elif kind == "start":
             task = store.query_one("SELECT * FROM tasks_mutual WHERE id = ?", (task_id,))
@@ -634,17 +818,25 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             command = str(body.get("command") or "")
         else:
             raise HTTPException(status_code=422, detail="kind must be shell, resume or start")
-        if sum(1 for r in termlib.listing(root, _plain_status()) if r["state"] not in ("ended", "asleep")) >= _MAX_SESSIONS:
-            raise HTTPException(status_code=429, detail=f"{_MAX_SESSIONS} terminals are open: close one first.")
-        group = _group_or_422(root, body.get("group"), project)
-        try:
-            row = termlib.open_session(root, cfg, kind=kind, project=project, cwd=cwd, command=command,
-                                       label=label, agent_id=agent_id, task_id=task_id,
-                                       role=str(body.get("role") or ""), group=group)
-        except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
-            raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
-        with _session_change(row["id"]):
-            _start_plain(root, row["id"])
+        with capacity_change:
+            live = _live_sessions(root)
+            limit = _cfg(root)[app_settings.TERMINAL_SESSION_LIMIT]
+            if limit and len(live) >= limit:
+                return _limit_response(root, live, limit, {
+                    "label": label, "project": project, "kind": kind,
+                    "agent_kind": terminal_limit.kind_of({"agent_id": agent_id, "command": command}),
+                })
+            group = _group_or_422(root, body.get("group"), project)
+            try:
+                row = termlib.open_session(root, cfg, kind=kind, project=project, cwd=cwd, command=command,
+                                           label=label, agent_id=agent_id, task_id=task_id,
+                                           role=str(body.get("role") or ""), group=group, expected_cwd=expected_cwd)
+            except termlib.CwdChangedError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
+                raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
+            with _session_change(row["id"]):
+                _start_plain(root, row["id"], limit)
         return {"session": {**row, "state": "working" if command else "shell"}, "existing": False}
 
     # Where each terminal's last command was typed (absolute history line):
@@ -753,6 +945,32 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             raise HTTPException(status_code=422, detail="mode must be screen, last, range, history or selection")
         return {**termlib.capture(root, sid), "mode": "screen"}
 
+    @router.post("/api/terminal/sessions/{sid}/diagnostics", status_code=201)
+    async def terminal_diagnostic(sid: str, request: Request) -> dict[str, str | bool]:
+        _guard(request)
+        if not _operator_page(request.headers, request.app):
+            raise HTTPException(status_code=403, detail="only the operator can capture terminal diagnostics")
+        if not termlib.SAFE_ID.fullmatch(sid):
+            raise HTTPException(status_code=404, detail="no such terminal")
+        browser = await terminal_diagnostics.read_browser(request)
+        root = request.app.state.settings.data_root
+
+        def capture() -> Path:
+            row = termlib.get(root, sid)
+            if not row:
+                raise HTTPException(status_code=404, detail="no such terminal")
+            backend = "tmux" if row.get("backend") == "tmux" else "plain"
+            with lock:
+                session = sessions.get(sid)
+                size = terminal_diagnostics.fd_size(session.fd) if session and not session.closed else None
+            return terminal_diagnostics.save(root, sid, backend, browser, size)
+
+        try:
+            path = await run_in_threadpool(capture)
+        except OSError as exc:
+            raise HTTPException(status_code=409, detail="the terminal snapshot could not be saved") from exc
+        return {"path": str(path), "owner_only": os.name != "nt"}
+
     @router.post("/api/terminal/sessions/{sid}/type")
     def terminal_type(sid: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
         _need_on(request)
@@ -774,6 +992,9 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             if s is None:
                 raise HTTPException(status_code=409, detail="the terminal is not open")
             s.write((text + ("\r" if enter else "")).encode())
+        if text or enter:
+            with lock:
+                last_input[sid] = time.time()
         return {"typed": True}
 
     @router.post("/api/terminal/sessions/{sid}/rename")
@@ -791,7 +1012,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         operator_only(body, "Closing a terminal")
         root = request.app.state.settings.data_root
         try:
-            _close_terminal(root, sid)
+            _close_terminal(root, sid, confirm=body.get("from_limit") is not True or body.get("confirmed") is True)
         except termlib.TmuxError as exc:
             raise _tmux_503(exc, "the terminal was not closed.") from None
         return {"closed": sid}
@@ -813,21 +1034,30 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             raise not_found("terminal", sid)
         return row
 
-    def _wake(root: Path, cfg: dict[str, Any], store: ViewStore, row: dict[str, Any], *, shell: bool = False) -> dict[str, Any]:
-        awake = sum(1 for r in termlib.listing(root, _plain_status()) if r["state"] not in ("ended", "asleep"))
-        if awake >= _MAX_SESSIONS:
-            raise HTTPException(status_code=429, detail=f"{_MAX_SESSIONS} terminals are open: close one first.")
+    def _wake(root: Path, cfg: dict[str, Any], store: ViewStore, row: dict[str, Any], *,
+              shell: bool = False, expected_cwd: str | None = None) -> dict[str, Any]:
+        awake = len(_live_sessions(root))
+        limit = cfg[app_settings.TERMINAL_SESSION_LIMIT]
+        if limit and awake >= limit:
+            raise HTTPException(status_code=429, detail=f"{awake} terminals are open. The limit is {limit}.")
         # What sleep kept; a terminal lost to a restart never slept, so its
         # command is worked out now.
         cmd = ""
         if not shell:
             cmd = str(row.get("wake") or "") if row.get("asleep") else termlib.wake_command(row, _resume_of(store, row))
         try:
-            termlib.wake(root, cfg, row["id"], cmd)
+            termlib.wake(root, cfg, row["id"], cmd, expected_cwd=expected_cwd)
+        except termlib.CwdChangedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
             raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
-        _start_plain(root, row["id"])
-        return _listed(root, row["id"])
+        _start_plain(root, row["id"], limit)
+        opened = _listed(root, row["id"])
+        if expected_cwd is not None and not cmd and opened.get("backend") == "tmux":
+            observed = termlib.tmux_pane_cwd(root, row["id"])
+            if observed and not termlib.cwd_has_controls(observed):
+                opened["observed_cwd"] = observed
+        return opened
 
     @router.post("/api/terminal/sessions/{sid}/sleep")
     def terminal_sleep(sid: str, request: Request, body: dict = Body(default={}),
@@ -844,7 +1074,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             cmd = termlib.wake_command(row, _resume_of(store, row))
             _drop(sid)
             try:
-                termlib.sleep(root, sid, cmd)
+                termlib.sleep(root, sid, cmd, agent_id=str(row.get("agent_id") or ""))
             except termlib.TmuxError as exc:
                 raise _tmux_503(exc, "the terminal was not put to sleep.") from None
             return {"session": _listed(root, sid)}
@@ -855,14 +1085,33 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         _need_on(request)
         operator_only(body, "Waking a terminal")
         root = request.app.state.settings.data_root
-        with _session_change(sid):
+        with capacity_change, _session_change(sid):
             row = _listed(root, sid)
             shell = body.get("shell") is True
+            expected_cwd = None
+            if any(key in body for key in ("expected_agent", "wake_revision", "expected_cwd")):
+                agent = body.get("expected_agent")
+                expected_cwd = body.get("expected_cwd")
+                saved = termlib.get(root, sid) or {}
+                link = termlib.agent_links(root, fresh=True).get(sid, {})
+                owners = {owner for owner in (
+                    saved.get("agent_id"), saved.get("wake_agent_id"), link.get("agent_id")
+                ) if owner}
+                if (not isinstance(agent, str) or owners != {agent} or row["state"] != "asleep"
+                        or shell or termlib.wake_revision(saved) != body.get("wake_revision")
+                        or (not saved.get("wake_agent_id") and saved.get("wake")
+                            and saved["wake"] != _resume_of(store, {"agent_id": agent}))):
+                    raise HTTPException(status_code=409, detail="The saved terminal or its agent changed. Select it again.")
+                if (not isinstance(expected_cwd, str) or not expected_cwd
+                        or expected_cwd != termlib.wake_cwd(saved)):
+                    raise HTTPException(status_code=409, detail=str(termlib.CwdChangedError()))
+                _require_confirmable_cwd(expected_cwd)
+                row = {**row, **saved, "agent_id": agent}
             if shell and row.get("asleep"):
                 raise HTTPException(status_code=409, detail="the terminal is asleep")
             if row["state"] not in ("asleep", "ended"):
                 return {"session": row}
-            return {"session": _wake(root, _cfg(root), store, row, shell=shell)}
+            return {"session": _wake(root, _cfg(root), store, row, shell=shell, expected_cwd=expected_cwd)}
 
     def _lost(root: Path) -> list[dict[str, Any]]:
         return termlib.lost(termlib.listing(root, _plain_status()), termlib.tmux_server_pid(root))
@@ -890,7 +1139,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
                 continue
             try:
                 sid = row["id"]
-                with _session_change(sid):
+                with capacity_change, _session_change(sid):
                     current = next((r for r in _lost(root) if r["id"] == sid), None)
                     if current is None:
                         continue
@@ -1063,7 +1312,11 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         # off the event loop, including when two views attach together.
         await run_in_threadpool(_reap_dead)
         try:
-            row, key, session, fresh, pending = await run_in_threadpool(_attach, root, session_id, cols, rows)
+            row, key, session, fresh, pending = await run_in_threadpool(_attach, root, session_id, cols, rows, websocket)
+        except asyncio.CancelledError:
+            with lock:
+                attaching_plain.pop(websocket, None)
+            raise
         except _NoScreen as exc:
             await websocket.close(code=4000, reason=str(exc))
             return
@@ -1076,24 +1329,31 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             await websocket.close(code=4500, reason=f"the shell did not start: {failed}"[:120])
             return
         in_tmux = row.get("backend") == "tmux"
+        replay = b""
         if not fresh:
             session.resize(cols, rows)
-            # Taken and subscribed with no await between: a chunk the pump
-            # reads meanwhile is in the replay or sent to this view, never lost.
-            replay = _QUERIES.sub(b"", bytes(session.buffer[-_REPLAY_BYTES:]))
-            session.subscribers.add(websocket)
-            if replay:
-                try:
-                    await websocket.send_bytes(replay)
-                except Exception:  # noqa: BLE001 — reconnect replay is best-effort
-                    pass
-        else:
-            session.subscribers.add(websocket)
+        # Take the replay and subscribe on the same event-loop turn. The
+        # pending attachment covers the worker-to-loop handoff for Close.
+        with lock:
+            attaching_plain.pop(websocket, None)
+            live = (clients if in_tmux else sessions).get(key) is session
+            if live:
+                if not fresh:
+                    replay = _QUERIES.sub(b"", bytes(session.buffer[-_REPLAY_BYTES:]))
+                session.subscribers.add(websocket)
+        if not live:
+            await websocket.close(code=4000, reason="ended")
+            return
+        if replay:
+            try:
+                await websocket.send_bytes(replay)
+            except Exception:  # noqa: BLE001 — reconnect replay is best-effort
+                pass
         tmux_ready = asyncio.Event() if in_tmux else None
         if tmux_ready is not None:
             session.pump_task = asyncio.create_task(_pump(session, tmux_ready))
         else:
-            _run_plain(session, pending, enter=row.get("launch") == "run")
+            _run_plain(session, pending, enter=row.get("launch") == "run", guarded=bool(row.get("strict_cwd")))
 
         # Typing in a project's terminal is working on it (the smart timer).
         timer = timeauto.of(app)
@@ -1156,6 +1416,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             with termlog.timed("write", session_id, len(b)):
                 await run_in_threadpool(session.write, b)
             if typed:
+                with lock:
+                    last_input[session_id] = time.time()
                 timer.beat(str(row.get("project") or ""), str(row.get("task_id") or ""), "terminal")
 
         # A write to the terminal waits while the program in it reads no

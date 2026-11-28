@@ -14,18 +14,7 @@
     <title>Slightly Parallel</title>
 
     <!-- Prevent theme flash: apply saved / system theme before React mounts. -->
-    <script>
-      (function () {
-        try {
-          var saved = localStorage.getItem('sp-theme') || localStorage.getItem('merkhet-theme'); // the second: a browser from before the rename
-          var sys = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-          var theme = saved === 'dark' || saved === 'light' ? saved : sys;
-          document.documentElement.setAttribute('data-theme', theme);
-        } catch (_) {
-          document.documentElement.setAttribute('data-theme', 'light');
-        }
-      })();
-    </script>
+    <script src="/initial-theme.js"></script>
   </head>
   <body class="bg-base text-primary font-sans antialiased">
     <div id="root"></div>

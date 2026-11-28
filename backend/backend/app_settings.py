@@ -24,6 +24,9 @@ from .file_safety import edit_json, safe_read_json
 log = logging.getLogger("sp.settings")
 
 SETTINGS_FILENAME = "settings.json"
+TERMINAL_SESSION_LIMIT = "terminal.max_sessions"
+DEFAULT_TERMINAL_SESSIONS = 36
+MAX_TERMINAL_SESSIONS = 256
 RESOURCE_YELLOW = "terminal.resource_yellow"
 RESOURCE_RED = "terminal.resource_red"
 
@@ -401,6 +404,12 @@ SPECS: tuple[SettingSpec, ...] = (
         type="bool", default=False, group="Terminal",
     ),
     SettingSpec(
+        key=TERMINAL_SESSION_LIMIT, label="Maximum open terminals",
+        description="How many running terminals can be open at once, including those without a view. Use 0 for unlimited.",
+        type="int", default=DEFAULT_TERMINAL_SESSIONS, group="Terminal",
+        unit="terminals", minimum=0, maximum=MAX_TERMINAL_SESSIONS,
+    ),
+    SettingSpec(
         key="terminal.launch", label="Resume and Start",
         description="run: the agent starts at once. type: the command is typed into the terminal and waits for Enter.",
         type="choice", default="run", group="Terminal", options=("run", "type"),
@@ -683,6 +692,8 @@ def coerce(key: str, value: Any) -> Any:
             return value.strip()
         raise ValueError(f"{key} must be one line of text, at most 200 characters")
     # int
+    if key == TERMINAL_SESSION_LIMIT and type(value) is not int:
+        raise ValueError(f"{key} must be an integer")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{key} must be a number")
     v = int(value)

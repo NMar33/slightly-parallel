@@ -172,7 +172,7 @@ export function useMessageActions(agentId: string, project: string) {
       const description = `${text.trim()}\n\n${source}`
       const d = await postJson<{ metadata?: { id?: string; title?: string } }>('/api/tasks', {
         project, projects: project, agent_id: OPERATOR_ACTOR, actor: OPERATOR_ACTOR, created_date: dateStr, created_time: timeStr,
-        title, description, status: 'todo', priority: 'med', assignee: '', lane: 'unassigned',
+        title, description, status: 'todo', priority: 'med', assignee: '', lane: '',
         // The server's title for now, from the message; the chat's agent gives the real one.
         title_from: 'message', title_source: target,
       })

@@ -401,7 +401,7 @@ ENTITIES: dict[str, Entity] = {
             (
                 "id", "created_date", "created_time", "project", "agent_id",
                 "title", "status", "priority", "assignee", "due_date",
-                "lane", "tags", "position", "impact", "effort", "tokens",
+                "lane", "lane_kind", "lane_choice", "tags", "position", "impact", "effort", "tokens",
                 "novelty", "projects", "sprint_id", "archived_at",
                 "resurface_on", "resurface_to", "resurface_every_days",
                 "resurfaced_at", "remember", "today_on",

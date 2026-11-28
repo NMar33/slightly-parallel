@@ -52,4 +52,27 @@ function observeFullscreen(receive) {
   }
 }
 
-contextBridge.exposeInMainWorld('spWindow', { postMessage, metrics, restoreOffer, saveDraft, observeFullscreen })
+function setDashboardView(visible, titleHeight) {
+  ipcRenderer.send('sp-dashboard-view', visible === true, titleHeight)
+}
+
+function openDashboardRecord(id) {
+  ipcRenderer.send('sp-dashboard-record', id)
+}
+
+function openAgentTerminal(agent, tab) {
+  ipcRenderer.send('sp-terminal-agent', agent, tab)
+}
+
+function observeAgentTerminal(receive) {
+  const listener = (_event, target) => receive(target)
+  ipcRenderer.on('sp-terminal-agent-selected', listener)
+  return () => ipcRenderer.removeListener('sp-terminal-agent-selected', listener)
+}
+
+if (location.pathname === '/term') {
+  contextBridge.exposeInMainWorld('spWindow', {
+    postMessage, metrics, restoreOffer, saveDraft, observeFullscreen, setDashboardView, openDashboardRecord,
+    openAgentTerminal, observeAgentTerminal,
+  })
+}
