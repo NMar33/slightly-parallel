@@ -34,15 +34,19 @@
  * (spWindow.restoreOffer, then op restore {open}), main forgets them.
  */
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
-const { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, screen, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, net, powerMonitor, screen } = require('electron')
+const { hostDashboard, shouldPreloadDashboard } = require('./dashboard')
+const { terminalAgent } = require('./agent-terminal')
+const { guardNavigation, openExternal } = require('./navigation')
 const {
   MIN_W, MIN_H, sizeOf, sameSite, pageUrl, grown, num, parseArgs,
   restoreChoice, isWayland, windowRecord, savedText, readSaved, onScreen, startPlan,
 } = require('./lib')
 
 const WINDOW_SAVE_DEBOUNCE_MS = 400
-const RESTORE_SETTINGS_TIMEOUT_MS = 4000
+const STARTUP_SETTINGS_TIMEOUT_MS = 4000
 const MAIN_WINDOW_READY_TIMEOUT_MS = 3000
 const RESTORE_AFTER_SHOW_DELAY_MS = 50
 const DRAG_POLL_INTERVAL_MS = 8
@@ -59,6 +63,8 @@ const sidebarGrowth = new WeakMap()
 /* ------------------------------------------------ windows after a restart */
 
 let mainWin = null
+let dashboard = null
+let startupSettings
 /** The app is closing: windows closing now stay in the saved set. */
 let quitting = false
 /** window id → { win, url }: every window besides the main one, in opening order. */
@@ -107,6 +113,7 @@ function saveSoon() {
 /** The app is closing: keep the set as it is now, whatever closes after. */
 function closing() {
   if (quitting) return
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.session.flushStorageData()
   saveNow()
   quitting = true
 }
@@ -136,14 +143,18 @@ function openSaved() {
   }
 }
 
-/** Settings › Terminal › On start, from the server; the default when it does not answer. */
-async function readChoice() {
+/** Both startup decisions use the same settings snapshot. */
+function readStartupSettings() {
+  return startupSettings ??= fetchSettings()
+}
+
+async function fetchSettings() {
   const ctl = new AbortController()
-  const timer = setTimeout(() => ctl.abort(), RESTORE_SETTINGS_TIMEOUT_MS)
+  const timer = setTimeout(() => ctl.abort(), STARTUP_SETTINGS_TIMEOUT_MS)
   try {
     const r = await net.fetch(args.url + '/api/settings', { signal: ctl.signal })
-    return restoreChoice(r.ok ? await r.json() : null)
-  } catch { return restoreChoice(null) } finally { clearTimeout(timer) }
+    return r.ok ? await r.json() : null
+  } catch { return null } finally { clearTimeout(timer) }
 }
 
 /** After the main window: the saved windows, as the setting says. */
@@ -152,7 +163,7 @@ async function restoreAtStart() {
   try { pending = readSaved(fs.readFileSync(stateFile(), 'utf-8'), args.url) } catch { /* no file: nothing saved */ }
   stateLoaded = true
   const saved = pending
-  const choice = saved.length ? await readChoice() : 'restore'
+  const choice = restoreChoice(saved.length ? await readStartupSettings() : null)
   if (quitting) return
   const plan = startPlan(choice, saved)
   pending = plan.open.concat(plan.ask)
@@ -175,6 +186,14 @@ async function restoreAtStart() {
 
 function openMain(url, width, height) {
   mainWin = openWindow(url, width, height)
+  const host = isDashboardHost(url) ? hostDashboard(mainWin, args.url, guardAppContents, openAgentTerminal) : null
+  dashboard = host
+  if (host) {
+    const freeBytes = os.freemem()
+    void readStartupSettings().then((settings) => {
+      if (!quitting && shouldPreloadDashboard(settings, freeBytes)) host.preload()
+    })
+  }
   // The main window closed is the app closed: the others close with it and
   // come back next time.
   mainWin.on('close', () => {
@@ -190,13 +209,17 @@ function stopDrag(win) {
   if (d) { clearInterval(d.timer); dragging.delete(win.id) }
 }
 
+function guardAppContents(contents, onMainBlocked) {
+  guardNavigation(contents, args.url, (url) => keep(openWindow(url, 900, 600), url), onMainBlocked)
+}
+
 function openWindow(url, width, height, show = true, at = null) {
   const win = new BrowserWindow({
     width, height, minWidth: MIN_W, minHeight: MIN_H, ...(at || {}),
     frame: false, show: false, backgroundColor: '#0b0d0d',
     title: 'Slightly Parallel', autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      ...(isTerminalPage(url) ? { preload: path.join(__dirname, 'preload.js') } : {}),
       contextIsolation: true, sandbox: true, nodeIntegration: false,
       spellcheck: false, devTools: args.inspect,
     },
@@ -204,19 +227,11 @@ function openWindow(url, width, height, show = true, at = null) {
   win.removeMenu()
   const wc = win.webContents
   wc.setUserAgent(wc.getUserAgent() + ' SlightlyParallelWindow/1')
-  // A link out of the app opens in the browser; a page of the app asked for
-  // in a new window gets a window like this one.
-  wc.setWindowOpenHandler(({ url: target }) => {
-    if (sameSite(args.url, target)) keep(openWindow(target, 900, 600), target)
-    else if (/^https?:\/\//.test(target)) shell.openExternal(target)
-    return { action: 'deny' }
-  })
-  wc.on('will-navigate', (event, target) => {
-    if (!sameSite(args.url, target)) {
-      event.preventDefault()
-      if (/^https?:\/\//.test(target)) shell.openExternal(target)
-    }
-  })
+  let committed = false
+  wc.once('did-navigate', () => { committed = true })
+  guardAppContents(wc, () => setImmediate(() => {
+    if (!committed && win !== mainWin && !win.isDestroyed()) win.close()
+  }))
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) sidebarGrowth.delete(win)
   })
@@ -227,15 +242,59 @@ function openWindow(url, width, height, show = true, at = null) {
   win.on('leave-full-screen', notifyFullscreen)
   win.on('closed', () => stopDrag(win))
   if (show) win.once('ready-to-show', () => win.show())
-  win.loadURL(url)
+  void win.loadURL(url).catch(() => {})
   return win
 }
+
+function isDashboardHost(url) {
+  if (!isTerminalPage(url)) return false
+  const page = new URL(url)
+  return !page.searchParams.has('detached') && !page.searchParams.has('ws')
+}
+
+function isTerminalPage(url) {
+  return sameSite(args.url, url) && new URL(url).pathname === '/term'
+}
+
+function fromTerminal(event) {
+  return event.senderFrame === event.sender.mainFrame && isTerminalPage(event.senderFrame?.url)
+}
+
+function fromDashboardHost(event) {
+  return dashboard && mainWin && !mainWin.isDestroyed() && event.sender === mainWin.webContents &&
+    event.senderFrame === event.sender.mainFrame && isDashboardHost(event.senderFrame?.url)
+}
+
+ipcMain.on('sp-dashboard-view', (event, visible, titleHeight) => {
+  if (!fromDashboardHost(event) || typeof visible !== 'boolean' ||
+      !Number.isInteger(titleHeight) || titleHeight < 12 || titleHeight > 34) return
+  dashboard.show(visible, titleHeight)
+})
+
+ipcMain.on('sp-dashboard-record', (event, id) => {
+  if (!fromDashboardHost(event) || typeof id !== 'string' || id.length !== 11 || !/^(tk|nt)_[0-9a-f]{8}$/.test(id)) return
+  dashboard.open(id)
+})
+
+function openAgentTerminal(agent, tab) {
+  const target = terminalAgent(agent, tab)
+  if (!target || !mainWin || mainWin.isDestroyed()) return
+  const contents = mainWin.webContents
+  if (!isDashboardHost(contents.getURL())) return
+  if (mainWin.isMinimized()) mainWin.restore()
+  mainWin.focus()
+  contents.send('sp-terminal-agent-selected', target)
+}
+
+ipcMain.on('sp-terminal-agent', (event, agent, tab) => {
+  if (!BrowserWindow.fromWebContents(event.sender) || !fromTerminal(event)) return
+  openAgentTerminal(agent, tab)
+})
 
 ipcMain.on('sp-window', (event, msg) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   if (!win || !msg || typeof msg !== 'object') return
-  // Only a page of our own server may ask the window for anything.
-  if (!sameSite(args.url, event.sender.getURL())) return
+  if (!fromTerminal(event)) return
   switch (msg.op) {
     case 'drag': {
       stopDrag(win)
@@ -292,16 +351,13 @@ ipcMain.on('sp-window', (event, msg) => {
       saveNow()
       break
     }
-    case 'open':
-      if (/^https?:\/\//.test(String(msg.url || ''))) shell.openExternal(String(msg.url))
-      break
+    case 'open': if (typeof msg.url === 'string') openExternal(msg.url); break
   }
 })
 
 ipcMain.handle('sp-save-draft', async (event, name, text) => {
   const win = BrowserWindow.fromWebContents(event.sender)
-  if (!win || win.isDestroyed() || event.senderFrame !== event.sender.mainFrame ||
-      !sameSite(args.url, event.senderFrame.url)) return false
+  if (!win || win.isDestroyed() || !fromTerminal(event)) return false
   if (typeof name !== 'string' || typeof text !== 'string') throw new Error('Invalid Markdown draft')
   const defaultPath = name.replace(/[^\p{L}\p{N}._-]/gu, '-').replace(/^\.+/, '').slice(0, 100)
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
@@ -321,17 +377,17 @@ ipcMain.handle('sp-save-draft', async (event, name, text) => {
 // How many windows of last time wait for the operator's answer: only the
 // main window asks, once the start has decided (0 when there is nothing to ask).
 ipcMain.handle('sp-restore-offer', async (event) => {
-  if (!sameSite(args.url, event.sender.getURL())) return 0
+  if (!fromTerminal(event)) return 0
   const n = await decided
   return askingToRestore && mainWin && event.sender === mainWin.webContents ? Math.min(n, pending.length) : 0
 })
 
 ipcMain.handle('sp-fullscreen', (event) =>
-  sameSite(args.url, event.sender.getURL()) && (BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false))
+  fromTerminal(event) && (BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false))
 
 // Read only: what the window's processes use, for the page's terminal log.
 ipcMain.handle('sp-metrics', (event) => {
-  if (!sameSite(args.url, event.sender.getURL())) return null
+  if (!fromTerminal(event)) return null
   return app.getAppMetrics().map((m) => ({
     type: m.type, kb: m.memory ? m.memory.workingSetSize : 0, cpu: m.cpu ? m.cpu.percentCPUUsage : 0,
   }))

@@ -34,8 +34,8 @@ second board. The page is Architecture › cores.
   cores match, ask first, in one line with numbers (`1 · <name>  2 · <name>
   3 · a new core "<words>"`), and wait. If none matches, offer a new core
   the same way. If there are no cores yet, say so and offer to make one.
-- `#core` alone in a message → `core_attach {id, turn, task_id?}`: the
-  message, and this chat's task when it has one, attached to the matching
+- `#core` alone in a message → `core_attach {id, message, task_id?}`: the
+  message as `<agent_id>#<turn>`, and this chat's task when it has one, attached to the matching
   core. Choose as above.
 - `#core-off <words>` → choose the matching core, ask the operator to
   confirm its number, then `core_off {id}`. The notes and links are kept;

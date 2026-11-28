@@ -6,12 +6,17 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '../../../../components/primitives'
-import { laneOf, laneUpdate as laneWrite } from '../model'
+import { taskInLane, taskInLaneProject, taskLaneName, laneUpdate as laneWrite, type LaneTarget } from '../model'
 import type { TaskRow } from '../model'
 import { posOf } from './drops'
 import { ARCHIVE } from './model'
 import type { Patch } from './writes'
 import { t, tn } from '../../../../i18n/scope/project'
+
+function laneBeforeEdit(task: TaskRow) {
+  if (!taskLaneName(task)) return { assignee: '', lane: '' }
+  return { assignee: String(task.assignee || ''), lane: String(task.lane || '') }
+}
 
 export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived }: {
   tasks: TaskRow[]
@@ -45,7 +50,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     const base = Number(first.position) || 0
     const before = selectedTasks.map((t) => ({ id: t.id, patch: {
       stack_id: t.stack_id || '', status: String(t.status || ''),
-      assignee: String(t.assignee || ''), lane: String(t.lane || ''),
+      ...laneBeforeEdit(t),
       position: String(Number(t.position) || 0),
     } }))
     const writes: Patch[] = [
@@ -53,8 +58,8 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
       ...rest.map((t, i) => ({ id: t.id, patch: {
         stack_id: stackId,
         status: String(first.status || ''),
-        assignee: String(first.assignee || ''),
-        lane: String(first.lane || first.assignee || 'unassigned'),
+        assignee: taskLaneName(first),
+        lane: taskLaneName(first),
         position: String(base + i + 1),
       } })),
     ]
@@ -71,20 +76,21 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
    * lane), keeping the order it was picked. Landing on a card puts the set
    * just before it; landing on the column appends.
    */
-  const moveSelection = async (targetStatus: string, targetLane?: string, beforeTaskId?: string | null) => {
+  const moveSelection = async (targetStatus: string, targetLane?: LaneTarget, beforeTaskId?: string | null) => {
     if (selectedTasks.length === 0) return
     if (targetStatus === ARCHIVE) {
-      const ids = selectedTasks.filter((t) => !t.archived_at).map((t) => t.id)
+      const ids = selectedTasks.filter((t) => !t.archived_at && taskInLaneProject(t, targetLane)).map((t) => t.id)
       setSelection([])
       if (ids.length) void setArchived(ids, true)
       return
     }
-    const moving = selectedTasks
+    const moving = selectedTasks.filter((t) => taskInLaneProject(t, targetLane))
+    if (!moving.length) return
     const ids = new Set(moving.map((t) => t.id))
     // Column-mates by position, a card without one last (as the server sorts).
     const inTarget = tasks
       .filter((t) => !ids.has(t.id) && columnKeyOf(t) === targetStatus)
-      .filter((t) => !targetLane || laneOf(t) === targetLane)
+      .filter((t) => taskInLane(t, targetLane))
       .sort((a, b) => posOf(a) - posOf(b))
     // Where the set lands: before the card dropped on, else after the last.
     // The column is numbered again in tens, in the order it shows: the
@@ -96,7 +102,7 @@ export function useSelection({ tasks, today, columnKeyOf, patchMany, setArchived
     const laneUpdate = laneWrite(targetLane)
     const before = moving.map((t) => ({ id: t.id, patch: {
       status: String(t.status || ''), position: t.position == null ? '' : String(t.position),
-      assignee: String(t.assignee || ''), lane: String(t.lane || ''),
+      ...laneBeforeEdit(t),
     } }))
     const writes: Patch[] = order.flatMap((t, i) => {
       const position = String((i + 1) * 10)

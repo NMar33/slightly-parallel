@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import re
 import threading
 import time
 from typing import Any
@@ -92,6 +93,27 @@ def test_a_server_that_stays_down_is_said_after_the_wait(monkeypatch) -> None:
     tr = mcp.Translator(_Restarting(down=10**6), cwd="/x")
     with pytest.raises(mcp.ApiError, match="cannot reach"):
         tr.ensure()
+
+
+@pytest.mark.parametrize(("tool", "args", "hint"), [
+    ("task_move", {"id": "tk_a", "to": "BETA"}, "task_move takes no argument to — use task_move {id, project}"),
+    ("core_attach", {"id": "cr_a", "turn": 5},
+     "core_attach takes no argument turn — use core_attach {id, message?, task_id?, note?}"),
+    ("carry_brief", {"turn": 5, "text": "brief"},
+     "carry_brief takes no argument turn — use carry_brief {message, text}"),
+    ("publish_attach", {"id": "pu_a", "links": []}, "use publish_write {id, images?, links?}"),
+])
+def test_a_cold_call_refuses_the_old_argument_without_a_schema_request(monkeypatch, tool, args, hint) -> None:
+    monkeypatch.setattr(mcp, "SCHEMA_RETRY_S", 0.0)
+    api = _Restarting(down=10**6)
+    tr = mcp.Translator(api, cwd="/x")
+    assert tr.schema is None
+    calls = api.calls
+
+    with pytest.raises(mcp.ApiError, match=re.escape(hint)):
+        tr.call(tool, args)
+
+    assert api.calls == calls
 
 
 def test_new_fields_after_a_restart_are_read_once_a_minute() -> None:

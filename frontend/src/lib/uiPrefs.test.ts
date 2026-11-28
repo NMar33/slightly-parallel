@@ -14,7 +14,7 @@ describe('isSyncable — what reaches the server', () => {
       'sp-note-draft:tk_x', 'sp-note-edit:nt_x',
       'sp-task-draft:slightly-parallel', 'sp-doc-block-draft:dc_x',
       'pdr.sidebar', 'sp-term-health-day',
-      'sp-aqua-active', 'sp-aqua-workspace', 'sp-aqua-ws-tabs',
+      'sp-aqua-active', 'sp-aqua-workspace', 'sp-aqua-ws-tabs', 'sp-aqua-window-side',
     ]) expect(isSyncable(k), k).toBe(false)
   })
 })
