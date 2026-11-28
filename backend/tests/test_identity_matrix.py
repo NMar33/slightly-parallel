@@ -1,14 +1,12 @@
 """The identity-protection matrix (tk_0b8a32d2): every agent write path ×
 every identity field × where the agent puts it.
 
-The paths are not listed by hand: the MCP rows are server._WRITE_TOOLS plus
-standup_material (it posts to claim the day), and each needs a WALK entry
-below (a new write tool without one fails here). The HTTP rows replay, as an
-agent's own body, the first request each of those tools posts: 39 tools,
-38 distinct routes (publish_attach and publish_write post to the same
-/write). Every
-pattern of server._MCP_WRITE_PATHS must be among them. The lens-create rows
-replay write_entry's request for every lens an agent may create.
+The MCP rows cover server._WRITE_TOOLS and standup_material (which posts
+to claim the day). Each needs a WALK entry. The matrix tests core_attach
+with both a task and a message. The HTTP rows replay each case's first
+request as an agent's own body. Every pattern of server._MCP_WRITE_PATHS
+must be among those requests. The lens-create rows replay write_entry's
+request for every lens an agent may create.
 
 Each cell sends one write with one forged identity field, top-level or in a
 nested object the tool carries, through the real translator into the real
@@ -255,7 +253,7 @@ def _core_off(ctx: Ctx, n: int) -> dict:
 
 
 def _task_move(ctx: Ctx, n: int) -> dict:
-    return {"id": ctx.task(f"Move me {n}"), "to": "BETA"}
+    return {"id": ctx.task(f"Move me {n}"), "project": "BETA"}
 
 
 def _messages(ctx: Ctx, n: int) -> dict:
@@ -323,9 +321,8 @@ WALK: dict[str, Walk] = {
     "core_new": (lambda x, n: {"name": f"core {n}", "type": "feature", "text": f"keep {n} in view"}, ()),
     "core_note": (lambda x, n: {"id": x.ids["core"], "text": f"note {n}", "comment": "c"}, ()),
     "core_attach": (lambda x, n: {"id": x.ids["core"], "task_id": x.task(f"Attach me {n}"), "note": f"n{n}"}, ()),
+    "core_attach message": (lambda x, n: {"id": x.ids["core"], "message": f"{A}#1/reply", "note": f"n{n}"}, ()),
     "core_off": (_core_off, ()),
-    "publish_attach": (lambda x, n: {"id": x.ids["card"], "links": [{"title": f"l{n}", "url": f"https://example.org/{n}"}]},
-                       (("links", 0),)),
     "publish_write": (lambda x, n: {"id": x.ids["card"], "context": f"ctx {n}",
                                     "links": [{"title": f"l{n}", "url": f"https://example.org/w{n}"}],
                                     "images": [{"path": _picture(x, n), "title": f"p{n}"}],
@@ -386,33 +383,36 @@ def _cell(ctx: Ctx, tool: str, args: dict, value: str) -> str:
     return "stamped over" if wrote else "no write"
 
 
-#: The tools walked: every write tool, and the one reading tool that posts.
-WALKED = (*_server._WRITE_TOOLS, "standup_material")
+#: Matrix case labels and the MCP tools they call.
+WALKED = {
+    **{tool: tool for tool in (*_server._WRITE_TOOLS, "standup_material")},
+    "core_attach message": "core_attach",
+}
 
 
 def _mcp_rows(ctx: Ctx) -> tuple[dict[str, dict[str, str]], list[tuple[str, str, dict]]]:
     """The MCP rows, and each tool's valid request as it was posted."""
-    missing = sorted(set(_server._WRITE_TOOLS) - set(WALK))
-    assert not missing, f"write tools with no walk: {missing}"
+    missing = sorted(WALKED.keys() - WALK.keys())
+    assert not missing, f"matrix cases with no walk: {missing}"
     matrix: dict[str, dict[str, str]] = {}
     posted: list[tuple[str, str, dict]] = []
     n = 0
-    for tool in WALKED:
-        make, nested = WALK[tool]
+    for case, tool in WALKED.items():
+        make, nested = WALK[case]
         n += 1
         args = make(ctx, n)
         before = _files(ctx.root)
         calls = len(ctx.tr.api.calls)
         ctx.tr.call(tool, args)          # the valid call writes: the fixture is right
         assert _stored(ctx.root, before, "\0")[0], f"{tool}: the valid call wrote nothing"
-        posted += [(tool, p, b or {}) for m, p, b in ctx.tr.api.calls[calls:] if m != "GET"]
+        posted += [(case, p, b or {}) for m, p, b in ctx.tr.api.calls[calls:] if m != "GET"]
         row: dict[str, str] = {}
         for where in ((), *nested):
             label = "top" if not where else ".".join(str(s) for s in where).replace("{n}", "N")
             for field, value in FORGED.items():
                 n += 1
                 row[f"{field}@{label}"] = _cell(ctx, tool, _with(make(ctx, n), where, field, value, n), value)
-        matrix[tool] = row
+        matrix[case] = row
     return matrix, posted
 
 
@@ -420,7 +420,7 @@ def _route(path: str) -> str:
     return re.sub(r"/(tk|dc|cr|pu|ep|nt|vs|sk|ar|dc|sr|doc|msg)_[0-9a-zA-Z_-]+", r"/{\1}", path)
 
 
-def _http_rows(ctx: Ctx, posted: list[tuple[str, str, dict]], monkeypatch) -> dict[str, dict[str, str]]:
+def _http_rows(ctx: Ctx, monkeypatch) -> dict[str, dict[str, str]]:
     """agents.mcp_only off: each route the tools post to, with the agent's own
     body (the tool's next valid request, captured) and one forged field."""
     monkeypatch.setattr(_server.AgentsViaMcp, "_enforced", lambda self: False)
@@ -431,8 +431,8 @@ def _http_rows(ctx: Ctx, posted: list[tuple[str, str, dict]], monkeypatch) -> di
     assert isinstance(api, _Api)
     out: dict[str, dict[str, str]] = {}
     n = 5000
-    for tool in WALKED:
-        make, _nested = WALK[tool]
+    for case, tool in WALKED.items():
+        make, _nested = WALK[case]
         row: dict[str, str] = {}
         route = ""
         for field, value in FORGED.items():
@@ -458,7 +458,7 @@ def _http_rows(ctx: Ctx, posted: list[tuple[str, str, dict]], monkeypatch) -> di
                 row[f"{field}@body"] = f"refused ({r.status_code}): {str(r.json().get('detail', ''))[:80]}"
             else:
                 row[f"{field}@body"] = "dropped" if wrote else "no write"
-        out[f"{route} ({tool})"] = row
+        out[f"{route} ({case})"] = row
     return out
 
 
@@ -554,7 +554,10 @@ def test_the_identity_matrix(world, monkeypatch, tmp_path) -> None:  # noqa: F81
     ctx = Ctx(tr, c, root, tmp_path)
     _seed(ctx)
     mcp_rows, posted = _mcp_rows(ctx)
-    http_rows = _http_rows(ctx, posted, monkeypatch)
+    http_rows = _http_rows(ctx, monkeypatch)
+    core_links = {body["kind"] for case, _path, body in posted if WALKED[case] == "core_attach"}
+    assert core_links == {"task", "message"}
+    assert "POST /api/cores/{cr}/links (core_attach message)" in http_rows
     lens_rows = _lens_rows(ctx, monkeypatch)
     hole = _known_hole(ctx, monkeypatch)
     matrix = {"mcp": mcp_rows, "http (mcp_only off)": http_rows, "http lens creates (mcp_only off)": lens_rows,

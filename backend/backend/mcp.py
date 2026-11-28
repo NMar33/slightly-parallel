@@ -34,7 +34,7 @@ from typing import Any
 from . import __version__, mcp_args
 # This process's parents: the capture hook reads them the same way, and the
 # two find each other by the tool process they share (hookshared.py).
-from .hookshared import ancestors
+from .hookshared import ancestors, parse_target
 from .server_address import loopback_url
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -104,7 +104,6 @@ TOOLS: dict[str, str] = {
     "pins": "The messages the operator pinned (or carried, or kept to fork later), each whole: this chat's or the project's.",
     "carry_brief": "After #carry-brief: the brief of the message, given back after a compaction instead of it.",
     "publish_write": "After the operator's #publish: write the card — text if asked, context, and what belongs to it (tasks, commits, files, images, links, notes).",
-    "publish_attach": "The older name of publish_write, for attachments only; it forwards there.",
     "entrypoints": "The project's entry points: the topics the operator comes back to, with their ways in.",
     "entrypoint_stop": "One line of where a topic stopped: at #done for a task of the topic.",
     "entrypoint_way": "Add a way in to a topic (a page, a site, an app, a file …), or change one an agent wrote.",
@@ -255,9 +254,10 @@ REPEAT_WHERE = " The answer's `where` says where it went: repeat it in your repl
 
 
 #: The ``project`` argument of the tools that read one project.
-PROJECT_READ = "a project code; leave it out for this chat's project"
+PROJECT_READ = "a project code; leave it out for this chat's home"
 #: Each project tool's ``project``, where it says more than PROJECT_READ.
 _PROJECT_ARG_OF = {
+    "task_move": "required destination project code",
     **dict.fromkeys(("write_entry", "core_new", "note_write", "map_write", "architecture_page",
                      "scan_material", "map_material", "architecture_material"), PROJECT_ARG),
     "usage": "a project code, or all",
@@ -276,25 +276,22 @@ def _with_project(defs: list[dict]) -> list[dict]:
     return defs
 
 
-def _read_project(args: dict) -> str:
-    """The ``project`` a reading tool names, or "" for this chat's own."""
-    raw = args.get("project")
-    if raw is None or raw == "":
+def _project_arg(args: dict) -> str:
+    """The explicit project code, or an empty string when omitted."""
+    project = args.get("project")
+    if project is None:
         return ""
-    if not isinstance(raw, str):
+    if not isinstance(project, str):
         raise ApiError("project is one project code, as text")
-    return raw.strip()
+    return project.strip()
 
 
-def _target(args: dict, who: dict) -> str:
-    """The project a create goes to: the one named, else the chat's home.
-    The server checks that it is one of the chat's projects."""
-    raw = args.get("project")
-    if raw is None or raw == "":
-        return str(who.get("home") or who.get("project") or "")
-    if not isinstance(raw, str):
-        raise ApiError("project is one project code, as text")
-    return raw.strip()
+def _message_ref(raw: Any) -> tuple[str, str]:
+    target = raw.strip() if isinstance(raw, str) else ""
+    parsed = parse_target(target)
+    if parsed is None:
+        raise ApiError("message is <agent_id>#<turn> or <agent_id>#<turn>/reply")
+    return target, parsed[0]
 
 
 def _argument_problems(name: str, args: dict) -> list[str]:
@@ -303,6 +300,8 @@ def _argument_problems(name: str, args: dict) -> list[str]:
     that has none was read as this chat's project. Stamped names, the other
     arguments and identity inside the objects each give a line, all at once
     (tk_90c1ba5f)."""
+    if name == "publish_attach":
+        return ["use publish_write {id, images?, links?}"]
     if name not in mcp_args.TOOL_ARGS:
         return []  # the unknown tool's own refusal says so
     out: list[str] = []
@@ -313,12 +312,17 @@ def _argument_problems(name: str, args: dict) -> list[str]:
     if stamped:
         out.append(mcp_args.stamped_refusal(stamped))
     rest = [k for k in extra if k not in mcp_args.STAMPED]
+    for key in rest[:]:
+        shape = mcp_args.LEGACY_ARGUMENTS.get((name, key))
+        if shape:
+            out.append(f"{name} takes no argument {key} — use {shape}")
+            rest.remove(key)
     listed = ", ".join(sorted(takes)) or "nothing"
     if name == "project" and rest == ["code"]:
         # Its old name for the same value (tk_0b8a32d2): one name everywhere.
         out.append(f'project takes the code as project, not code: {{"project":"{args["code"]}"}}')
     elif rest == ["project"]:
-        out.append(f"{name} takes no project: it works in this chat's project; it takes: {listed}")
+        out.append(f"{name} takes no project: it works in this chat's home; it takes: {listed}")
     elif rest:
         out.append(f"{name} takes no argument {', '.join(rest)} — it takes: {listed}")
     return out + _nested_identity(name, {k: v for k, v in args.items() if k not in extra})
@@ -463,6 +467,15 @@ class Translator:
         pids = ",".join(str(p) for p in ancestors())
         return self.api.get(f"/api/whoami?cwd={q}" + (f"&pids={pids}" if pids else ""))
 
+    def _target(self, args: dict, who: dict | None = None) -> str:
+        """Use the named project or the chat's membership home."""
+        project = _project_arg(args)
+        if project:
+            return project
+        if who is None:
+            who = self.identity()
+        return str(who.get("home") or who.get("project") or "")
+
     def _stamp(self, args: dict | None = None) -> dict:
         """agent_id / project / date / time — stamped, never asked of the
         model: whatever it sends under these names is written over. The
@@ -471,7 +484,7 @@ class Translator:
         who = self.identity()
         now = _time.localtime()
         return {
-            "project": _target(args or {}, who),
+            "project": self._target(args or {}, who),
             "agent_id": who["agent_id"],
             "created_date": f"{now.tm_year % 100:02d}{now.tm_mon:02d}-{now.tm_mday:02d}",
             "created_time": f"{now.tm_hour:02d}:{now.tm_min:02d}",
@@ -662,9 +675,8 @@ class Translator:
                  "type": "object",
                  "properties": {
                      "id": {"type": "string", "description": "the task"},
-                     "to": {"type": "string", "description": "the project code it moves to"},
                  },
-                 "required": ["id", "to"],
+                 "required": ["id", "project"],
              }},
             {"name": "task_done",
              "description": (
@@ -746,12 +758,12 @@ class Translator:
                  "message — what it says and the context needed to understand it once the chat is "
                  "compacted (who asked, what for, what was decided), a few sentences, at most 4000 "
                  "characters. After the next compaction it is given back to you instead of the message. "
-                 "`message` is <agent_id>#<turn> (or …/reply) as the notice names it; or `turn`, a turn "
-                 "of this chat. Only a message of this chat: another chat's, a branch's parent included, "
+                 "`message` is <agent_id>#<turn> (or …/reply), as the notice names it. "
+                 "Only a message of this chat: another chat's, a branch's parent included, "
                  "is refused. Writing it again replaces it."),
              "inputSchema": {"type": "object", "properties": {
-                 "message": {"type": "string"}, "turn": {"type": "integer"}, "text": {"type": "string"}},
-                 "required": ["text"]}},
+                 "message": {"type": "string"}, "text": {"type": "string"}},
+                 "required": ["message", "text"]}},
             {"name": "core_new",
              "description": (
                  "After the operator's #core-new: a new core. `name` is short (at most 60 "
@@ -790,11 +802,11 @@ class Translator:
             {"name": "core_attach",
              "description": (
                  "After #core in a message: attach that message to the matching core "
-                 "(`turn`: the message's turn number), and this chat's task when it has one "
+                 "(`message`: <agent_id>#<turn> or <agent_id>#<turn>/reply in this chat), and this chat's task when it has one "
                  "(`task_id`). A thing attached twice is attached once."),
              "inputSchema": {
                  "type": "object",
-                 "properties": {"id": {"type": "string"}, "turn": {"type": "integer"},
+                 "properties": {"id": {"type": "string"}, "message": {"type": "string"},
                                 "task_id": {"type": "string"}, "note": {"type": "string"}},
                  "required": ["id"],
              }},
@@ -939,28 +951,6 @@ class Translator:
                          "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
                          "required": ["url"]}},
                      "merge": {"type": "string", "description": "pu_… of a card this chat made about the same thing, folded into this one"},
-                 },
-                 "required": ["id"]}},
-            {"name": "publish_attach",
-             "description": (
-                 "The older name of publish_write, kept for chats that know it: attaches images "
-                 "(`path` on this machine, or `data_base64`), links, files, tasks, notes and commits to "
-                 "the card. Prefer publish_write, which also writes the card's text and context."),
-             "inputSchema": {
-                 "type": "object",
-                 "properties": {
-                     "id": {"type": "string"},
-                     "images": {"type": "array", "items": {
-                         "type": "object",
-                         "properties": {"title": {"type": "string"},
-                                        "path": {"type": "string", "description": "the image file on this machine; read by the tool"},
-                                        "ext": {"type": "string", "enum": ["png", "jpg", "jpeg", "webp", "gif"]},
-                                        "data_base64": {"type": "string"}},
-                         "required": []}},
-                     "links": {"type": "array", "items": {
-                         "type": "object",
-                         "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
-                         "required": ["url"]}},
                  },
                  "required": ["id"]}},
             {"name": "entrypoints",
@@ -1248,7 +1238,7 @@ class Translator:
                  "The tokens this chat used, the plan limits and the project's day. `block` is the text "
                  "#usage prints: give it as it is, in a code block, and add nothing but one line when "
                  "something stands out (a cache rebuild, a limit over 80%). `summary` holds the numbers "
-                 "of the Usage page for `project` (this chat's project, or all) over `range` (today, "
+                 "of the Usage page for `project` (this chat's home, or all) over `range` (today, "
                  "7d or 30d). Reads only."),
              "inputSchema": {"type": "object", "properties": {
                  "range": {"type": "string", "enum": ["today", "7d", "30d"]}}}},
@@ -1333,12 +1323,12 @@ class Translator:
         ])
 
     def call(self, name: str, args: dict) -> Any:
-        self.ensure()
-        # write_entry and update_entry name their arguments' faults with
-        # their own (tk_90c1ba5f); every other tool refuses them here.
+        # Refuse static argument faults before fetching the schema.
+        # Entry tools combine these with schema-dependent faults (tk_90c1ba5f).
         problems = _argument_problems(name, args)
         if name not in ("write_entry", "update_entry"):
             _refuse_all(problems)
+        self.ensure()
         if name == "interpret":
             lens = str(args.get("lens") or "")
             base = {"vision": "visions", "rule": "rules", "problem": "problems", "entrypoint": "entrypoints"}.get(lens)
@@ -1425,8 +1415,8 @@ class Translator:
             return self.api.post(f"/api/{spec['base']}/{_id(args)}/update",
                                  {**changes, "agent_id": self.identity()["agent_id"]})
         if name == "tasks":
-            project = _read_project(args) or self.identity()["project"]
-            q = f"/api/tasks?project={urllib.parse.quote(str(project))}"
+            project = self._target(args)
+            q = f"/api/tasks?project={urllib.parse.quote(project)}"
             if args.get("status"):
                 q += f"&status={urllib.parse.quote(str(args['status']))}"
             return self.api.get(q)
@@ -1451,10 +1441,10 @@ class Translator:
             return self.api.post("/api/undo/restore", {"agent_id": who, "id": _id(args)})
         if name == "architecture_status":
             return self.api.get(
-                f"/api/architecture/status?project={urllib.parse.quote(str(self.identity()['project']))}")
+                f"/api/architecture/status?project={urllib.parse.quote(self._target(args))}")
         if name in ("architecture_material", "architecture_page"):
             who = self.identity()
-            target = _target(args, who)
+            target = self._target(args, who)
             if name == "architecture_material":
                 return self.api.get("/api/architecture/page/material?" + self._material_query(who, target))
             return _with_where(self.api.post("/api/architecture/page", {
@@ -1462,7 +1452,7 @@ class Translator:
                 "text": args.get("text") or "", "note": args.get("note") or ""}), target)
         if name in ("map_material", "map_write"):
             who = self.identity()
-            target = _target(args, who)
+            target = self._target(args, who)
             if name == "map_material":
                 return self.api.get("/api/map/material?" + self._material_query(who, target))
             return _with_where(self.api.post("/api/map", {
@@ -1470,25 +1460,26 @@ class Translator:
                 "map": args.get("map") or {}, "note": args.get("note") or ""}), target)
         if name == "scan_material":
             who = self.identity()
-            return self.api.get("/api/scans/material?" + self._material_query(who, _target(args, who)))
+            return self.api.get("/api/scans/material?" + self._material_query(who, self._target(args, who)))
         if name in ("standup_material", "standup_postpone"):
             who = self.identity()
             # A standup is the home's only: no `project` argument (note §2).
-            who = {**who, "project": str(who.get("home") or who["project"])}
-            project = urllib.parse.quote(str(who["project"]))
+            project = self._target(args, who)
             date = str(args.get("date") or "")
             if name == "standup_postpone":
                 return self.api.post("/api/standups/postpone",
-                                     {"project": who["project"], "date": date,
+                                     {"project": project, "date": date,
                                       "hours": args.get("hours") or 4})
             if args.get("claim"):
                 got = self.api.post("/api/standups/claim",
-                                    {"project": who["project"], "date": date,
+                                    {"project": project, "date": date,
                                      "agent_id": who["agent_id"]})
                 if not got.get("claimed"):
                     return got  # written already, or another agent is writing it
-            clip = "&clip=true" if args.get("clip") else ""
-            return self.api.get(f"/api/standups/material?project={project}&date={urllib.parse.quote(date)}{clip}")
+            query = {"project": project, "date": date}
+            if args.get("clip"):
+                query["clip"] = "true"
+            return self.api.get("/api/standups/material?" + urllib.parse.urlencode(query))
         if name == "task_evidence_ask":
             return self.api.get(f"/api/tasks/{_id(args)}/evidence/ask")
         if name == "task_work":
@@ -1499,8 +1490,8 @@ class Translator:
                 {"agent_id": self.identity()["agent_id"],
                  "items": args.get("items") or []},
             )
-        if name in ("publish_write", "publish_attach"):
-            return self._publish(name, args)
+        if name == "publish_write":
+            return self._publish(args)
         if name in ("entrypoints", "entrypoint_stop", "entrypoint_way", "entrypoint_shot", "entrypoint_offer",
                     "entrypoint_ask", "entrypoint_answer", "task_topic"):
             return self._entrypoint(name, args)
@@ -1524,7 +1515,7 @@ class Translator:
                 raise ApiError("scope is chat or project")
             who = self.identity()
             query = {"full": "true", "q": str(args.get("q") or ""),
-                     "project": _read_project(args) or str(who["project"])}
+                     "project": self._target(args, who)}
             if scope == "chat":
                 query["agent_id"] = who["agent_id"]
             got = self.api.get(f"/api/{path}?{urllib.parse.urlencode(query)}")
@@ -1544,24 +1535,15 @@ class Translator:
             return self.api.post(f"/api/messages/inbox{q}", {"agent_id": self.identity()["agent_id"]})
         if name == "carry_brief":
             who = self.identity()
-            target = str(args.get("message") or "").strip()
-            by_turn = f"{who['agent_id']}#{int(args['turn'])}" if args.get("turn") is not None else ""
-            if target and by_turn and target != by_turn:
-                # Both name the message: one used to win in silence (tk_0b8a32d2).
-                raise ApiError(f"the message is given twice and differs: message {target!r}, turn "
-                               f"{args['turn']} ({by_turn}); send one of them")
-            if not target:
-                if not by_turn:
-                    raise ApiError("carry_brief needs the message (<agent_id>#<turn>) or this chat's turn")
-                target = by_turn
+            target, _ = _message_ref(args.get("message"))
             return self.api.post("/api/carries/brief", {
                 "agent_id": who["agent_id"], "target": target, "text": str(args.get("text") or "")})
         if name == "cores":
-            code = _read_project(args) or self.identity()["project"]
-            return self.api.get(f"/api/cores?project={urllib.parse.quote(str(code))}")
+            code = self._target(args)
+            return self.api.get(f"/api/cores?project={urllib.parse.quote(code)}")
         if name == "core_new":
             who = self.identity()
-            target = _target(args, who)
+            target = self._target(args, who)
             return _with_where(self.api.post("/api/cores", {
                 "project": target, "agent_id": who["agent_id"],
                 "name": str(args.get("name") or ""), "type": str(args.get("type") or ""),
@@ -1579,22 +1561,28 @@ class Translator:
         if name == "core_attach":
             who = self.identity()
             out: dict[str, Any] = {"attached": []}
-            if args.get("turn") is not None:
+            if args.get("message") is not None:
+                target, author = _message_ref(args["message"])
+                if author != who["agent_id"]:
+                    raise ApiError("core_attach needs a message of this chat")
                 out["attached"].append(self.api.post(f"/api/cores/{_id(args)}/links", {
                     "agent_id": who["agent_id"], "kind": "message",
-                    "target": f"{who['agent_id']}#{int(args['turn'])}", "note": str(args.get("note") or "")}))
+                    "target": target, "note": str(args.get("note") or "")}))
             if args.get("task_id"):
                 out["attached"].append(self.api.post(f"/api/cores/{_id(args)}/links", {
                     "agent_id": who["agent_id"], "kind": "task", "target": str(args["task_id"]),
                     "note": str(args.get("note") or "")}))
             if not out["attached"]:
-                raise ApiError("core_attach needs the message's turn, a task_id, or both")
+                raise ApiError("core_attach needs message, task_id, or both")
             return out
         if name == "core_off":
             return self.api.post(f"/api/cores/{_id(args)}/off", {"agent_id": self.identity()["agent_id"]})
         if name == "task_move":
+            project = _project_arg(args)
+            if not project:
+                raise ApiError("task_move needs a destination: task_move {id, project}")
             return self.api.post(f"/api/tasks/{_id(args)}/move",
-                                 {"agent_id": self.identity()["agent_id"], "to": str(args.get("to") or "")})
+                                 {"agent_id": self.identity()["agent_id"], "to": project})
         if name == "task_commits":
             return self.api.post(
                 f"/api/tasks/{_id(args)}/commits",
@@ -1617,8 +1605,8 @@ class Translator:
         if name == "search":
             return self.api.get(f"/api/search?q={urllib.parse.quote(str(args.get('q') or ''))}")
         if name == "project":
-            code = _read_project(args) or self.identity()["project"]
-            return self.api.get(f"/api/project/{urllib.parse.quote(str(code))}")
+            code = self._target(args)
+            return self.api.get(f"/api/project/{urllib.parse.quote(code)}")
         if name == "doctor":
             return self.api.get("/api/doctor")
         if name == "checkup":
@@ -1656,7 +1644,7 @@ class Translator:
                     block = str(chat.get("block") or "")
                 except ApiError:
                     block = ""
-            q = urllib.parse.urlencode({"project": _read_project(args) or str(who.get("project") or "all"),
+            q = urllib.parse.urlencode({"project": self._target(args, who) or "all",
                                         "range": rng})
             return {"block": block, "summary": self.api.get(f"/api/usage?{q}")}
         raise ApiError(f"unknown tool: {name}")
@@ -1686,7 +1674,7 @@ class Translator:
         if name == "notes":
             if text("id"):
                 return self.api.get(f"/api/notes/{_id(args)}/agent")
-            project = _read_project(args) or self.identity()["project"]
+            project = self._target(args)
             q = urllib.parse.urlencode({"project": project, "task": text("task_id")})
             return self.api.get(f"/api/notes/list?{q}")
         if name == "note_image":
@@ -1708,7 +1696,7 @@ class Translator:
         if base is not None and (isinstance(base, bool) or not isinstance(base, int)):
             raise ApiError("base is the version number you read, a number")
         who = self.identity()
-        target = _target(args, who)
+        target = self._target(args, who)
         body: dict[str, Any] = {"agent_id": who["agent_id"], "project": target,
                                 "text": text("text", True), "kind": text("kind", True), "title": text("title"),
                                 "id": text("id"), "images": images}
@@ -1719,8 +1707,8 @@ class Translator:
             body["base"] = base
         return _with_where(self.api.post("/api/notes/write", body), target)
 
-    def _publish(self, name: str, args: dict) -> Any:
-        """publish_write, and publish_attach forwarding to it. A file or an
+    def _publish(self, args: dict) -> Any:
+        """Write to the Publish card. A file or an
         image given by `path` is read here, on the agent's machine: base64
         through a tool call is tens of thousands of characters."""
         def read(path: Any, label: str, most: int) -> tuple[pathlib.Path, str]:
@@ -1806,13 +1794,14 @@ class Translator:
         if name == "entrypoints":
             if text("id"):
                 return self.api.get(f"/api/entrypoints/{_id(args)}/command")
-            project = _read_project(args) or str(who.get("home") or who["project"])
-            got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(str(project))}")
+            project = self._target(args, who)
+            got = self.api.get(f"/api/entrypoints/desk?project={urllib.parse.quote(project)}")
             return {"topics": [{k: t.get(k) for k in ("id", "name", "title", "state", "what", "ways", "stops", "open_tasks")}
                                for t in got.get("topics") or []]}
         if name == "entrypoint_offer":
+            project = self._target(args, who)
             words = " — ".join(x for x in (text("name", True), text("why")) if x)
-            q = urllib.parse.urlencode({"project": who["project"], "text": words})
+            q = urllib.parse.urlencode({"project": project, "text": words})
             return self.api.get(f"/api/entrypoints/similar?{q}")
         if name == "task_topic":
             return self.api.post(f"/api/tasks/{_id(args)}/topic",
@@ -1860,7 +1849,7 @@ class Translator:
         if uri == "sp://schema":
             return json.dumps(self.schema, indent=2), "application/json"
         if uri == "sp://rules":
-            project = self.identity()["project"]
+            project = self._target({})
             rules = self.api.get(
                 f"/api/rules?project={urllib.parse.quote(project)}&status=active")
             return json.dumps(rules, indent=2), "application/json"

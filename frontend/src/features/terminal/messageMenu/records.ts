@@ -307,9 +307,10 @@ export function agentView(d: AgentWire): AgentView {
   }
 }
 
-export function useAgentCard(id: string) {
+export function useAgentCard(id: string, enabled = true) {
   return useQuery({
     queryKey: ['msgmenu', 'agent', id],
+    enabled,
     queryFn: ({ signal }) => getJson<AgentWire>(`/api/agent/${encodeURIComponent(id)}`, signal).then(agentView),
     ...once,
   })

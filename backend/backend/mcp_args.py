@@ -15,10 +15,16 @@ from __future__ import annotations
 #: The tools that write to or read one project, and so take a top-level ``project``.
 PROJECT_TOOLS: frozenset[str] = frozenset({
     "write_entry", "scan_material",
-    "architecture_material", "architecture_page", "map_material", "map_write",
+    "architecture_status", "architecture_material", "architecture_page", "map_material", "map_write",
     "core_new", "note_write",
-    "tasks", "cores", "pins", "entrypoints", "notes", "usage", "project",
+    "tasks", "task_move", "cores", "pins", "entrypoints", "entrypoint_offer", "notes", "usage", "project",
 })
+
+LEGACY_ARGUMENTS: dict[tuple[str, str], str] = {
+    ("task_move", "to"): "task_move {id, project}",
+    ("core_attach", "turn"): "core_attach {id, message?, task_id?, note?}",
+    ("carry_brief", "turn"): "carry_brief {message, text}",
+}
 
 _ARGS: dict[str, tuple[str, ...]] = {
     "write_entry": ("lens", "fields"),
@@ -27,7 +33,7 @@ _ARGS: dict[str, tuple[str, ...]] = {
     "task_story": ("id", "request_id", "body", "images"),
     "task_report": ("id", "summary"),
     "task_commits": ("id", "shas"),
-    "task_move": ("id", "to"),
+    "task_move": ("id",),
     "task_done": ("proposals",),
     "next_tasks": ("numbers",),
     "undo_find": (),
@@ -36,10 +42,10 @@ _ARGS: dict[str, tuple[str, ...]] = {
     "undo_restore": ("id",),
     "cores": (),
     "pins": ("kind", "scope", "q"),
-    "carry_brief": ("message", "text", "turn"),
+    "carry_brief": ("message", "text"),
     "core_new": ("name", "type", "text", "reason", "comment", "anchors", "task_id"),
     "core_note": ("id", "text", "comment", "kind", "task_id"),
-    "core_attach": ("id", "turn", "task_id", "note"),
+    "core_attach": ("id", "message", "task_id", "note"),
     "core_off": ("id",),
     "architecture_status": (),
     "architecture_material": (),
@@ -53,7 +59,6 @@ _ARGS: dict[str, tuple[str, ...]] = {
     "task_evidence_ask": ("id",),
     "publish_write": ("id", "text", "context", "note", "merge", "base", "tasks", "notes",
                       "commits", "links", "images", "files"),
-    "publish_attach": ("id", "images", "links"),
     "entrypoints": ("id",),
     "entrypoint_stop": ("id", "text", "task_id"),
     "entrypoint_way": ("id", "way", "way_id"),

@@ -911,6 +911,10 @@
     "many": "Скопировано {n} строк"
   },
   " (cut at 20 000)": " (обрезано на 20 000)",
+  "Capture terminal state (diagnostics)": "Снять состояние терминала (диагностика)",
+  "Terminal diagnostics saved to {path}": "Снимок терминала сохранён в {path}",
+  "Terminal diagnostics saved to {path}. On Windows the file inherits the folder’s permissions.": "Снимок терминала сохранён в {path}. В Windows файл наследует права папки.",
+  "Terminal diagnostics could not be saved: {error}": "Не удалось сохранить снимок терминала: {error}",
   "The terminal could not be copied: {error}": "Не удалось скопировать терминал: {error}",
   "Opened {file}": "Открыто: {file}",
   "The terminal could not be read: {error}": "Не удалось прочитать терминал: {error}",

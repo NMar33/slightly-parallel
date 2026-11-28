@@ -51,13 +51,15 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Iterator, Literal, Mapping
 
 from .csvio import read_rows
 from .docs_md import resolve_under
-from .file_safety import edit_json, safe_read_json
+from .file_safety import FileSafetyError, acquire_flock, edit_json, lock_path, safe_read_json
 from . import chatstore, termlog
 
 log = logging.getLogger("sp.terminal")
@@ -249,6 +251,20 @@ CODEX_HELP_TIMEOUT_S = 2
 FOREGROUND_PS_TIMEOUT_S = 2
 
 
+CWD_CONTROL_ERROR = "The terminal folder contains a control character or line break."
+
+
+def cwd_has_controls(cwd: str) -> bool:
+    return any(unicodedata.category(char) in ("Cc", "Zl", "Zp") for char in cwd)
+
+
+class CwdChangedError(ValueError):
+    """The terminal could not open in the folder the operator confirmed."""
+
+    def __init__(self):
+        super().__init__("The terminal folder changed or is unavailable. Select it again.")
+
+
 class TmuxError(RuntimeError):
     """tmux did not answer in time, or could not be run. A write lets it
     reach the route, which answers 503 with this message; a read never sees
@@ -258,11 +274,18 @@ class TmuxError(RuntimeError):
 def tmux(data_root: Path, *args: str, timeout: float | None = None, input: str | None = None) -> subprocess.CompletedProcess:
     """A tmux command. A failing command comes back with its returncode; a
     tmux that does not answer in `timeout` seconds (WRITE_TIMEOUT) raises TmuxError."""
-    timeout = WRITE_TIMEOUT if timeout is None else timeout
+    return _tmux(data_root, args, timeout=WRITE_TIMEOUT if timeout is None else timeout, input=input)
+
+
+def _tmux(data_root: Path, args: tuple[str, ...], *, timeout: float, input: str | None = None,
+          read_only: bool = False) -> subprocess.CompletedProcess:
     cmd = args[0] if args else "tmux"
     t0 = time.perf_counter()
     try:
-        out = subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
+        # Reads talk to an existing server without creating or loading its config.
+        argv = ([tmux_path() or "tmux", "-L", socket_of(data_root), *args]
+                if read_only else tmux_argv(data_root, *args))
+        out = subprocess.run(argv, input=input, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=timeout)
         termlog.REC.tmux_call(cmd, (time.perf_counter() - t0) * 1000)
         return out
@@ -279,7 +302,7 @@ def tmux_read(data_root: Path, *args: str, timeout: float | None = None) -> subp
     stdout — so the terminal list, the restore offer and a capture answer
     from the registry instead of failing."""
     try:
-        return tmux(data_root, *args, timeout=READ_TIMEOUT if timeout is None else timeout)
+        return _tmux(data_root, args, timeout=READ_TIMEOUT if timeout is None else timeout, read_only=True)
     except TmuxError as exc:
         log.info("%s: read as no answer", exc)
         return subprocess.CompletedProcess(list(args), 1, "", str(exc))
@@ -387,13 +410,17 @@ def editor_of(settings: dict[str, Any]) -> str:
     return next((n for n in names if n in EDITORS and shutil.which(EDITORS[n][0])), "")
 
 
+def tmux_pane_cwd(data_root: Path, sid: str) -> str:
+    out = tmux_read(data_root, "display-message", "-p", "-t", PREFIX + sid, "#{pane_current_path}")
+    return out.stdout.removesuffix("\n") if out.returncode == 0 else ""
+
+
 def pane_dir(data_root: Path, row: dict[str, Any]) -> Path:
     """Where the terminal's shell stands now — after any `cd` — so a relative
     path it printed resolves where it was printed. A plain terminal (or a
     pane tmux cannot answer for) falls back to the folder it opened in."""
     if row.get("backend") == "tmux":
-        out = tmux_read(data_root, "display-message", "-p", "-t", PREFIX + str(row["id"]), "#{pane_current_path}")
-        here = (out.stdout or "").strip()
+        here = tmux_pane_cwd(data_root, str(row["id"]))
         if here and Path(here).is_dir():
             return Path(here)
     return Path(str(row.get("cwd") or Path.home()))
@@ -473,6 +500,13 @@ def uses_tmux(settings: dict[str, Any]) -> bool:
 
 #: How commands are quoted: bash ($'…'), PowerShell, or cmd.
 FAMILIES = ("bash", "powershell", "cmd")
+CONFIRMED_CWD_ENV = "SP_TERMINAL_CONFIRMED_CWD"
+CONFIRMED_PYTHON_ENV = "SP_TERMINAL_SERVER_PYTHON"
+WINDOWS_CWD_CHECK = (
+    "import os, sys; from pathlib import Path; "
+    "here = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd(); "
+    f"sys.exit(str(here.resolve(strict=True)) != os.environ['{CONFIRMED_CWD_ENV}'])"
+)
 
 
 def windows_shell(which=shutil.which, env: Mapping[str, str] | None = None) -> list[str]:
@@ -529,19 +563,29 @@ def registry_path(data_root: Path) -> Path:
     return Path(data_root) / FOLDER / REGISTRY
 
 
-def rows(data_root: Path) -> list[dict[str, Any]]:
+def rows(data_root: Path, *, require_readable: bool = False) -> list[dict[str, Any]]:
+    """Read the registry. An unconfirmed close must distinguish errors from absence."""
     p = registry_path(data_root)
-    if not p.exists():
-        return []
     try:
+        if not require_readable and not p.exists():
+            return []
         data = safe_read_json(p)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return []
-    return [r for r in (data.get("sessions") if isinstance(data, dict) else []) or [] if isinstance(r, dict)]
+    except (OSError, ValueError):
+        if require_readable:
+            raise
+        return []
+    sessions = data.get("sessions", []) if isinstance(data, dict) else None
+    if not isinstance(sessions, list):
+        if require_readable:
+            raise ValueError("invalid terminal registry")
+        return []
+    return [row for row in sessions if isinstance(row, dict)]
 
 
-def get(data_root: Path, sid: str) -> dict[str, Any] | None:
-    return next((r for r in rows(data_root) if r.get("id") == sid), None)
+def get(data_root: Path, sid: str, *, require_readable: bool = False) -> dict[str, Any] | None:
+    return next((r for r in rows(data_root, require_readable=require_readable) if r.get("id") == sid), None)
 
 
 def _edit(data_root: Path, change) -> Any:
@@ -634,13 +678,40 @@ def quote_for(family: str, text: str) -> str:
     return ansi_quote(text)
 
 
-def ansi_quote(text: str) -> str:
-    """One line of bash that holds any text: $'…' with the escapes spelled.
-    Other control characters are dropped: typed, ESC or ^U act as keys."""
-    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
-    body = (text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-            .replace("\r", "").replace("\t", "\\t"))
+def ansi_quote(text: str, *, literal: bool = False) -> str:
+    """One line of bash that holds text with escapes. A literal path keeps
+    its control characters as escapes. Prompt text omits terminal keys."""
+    if not literal:
+        text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
+    body = text.replace("\\", "\\\\").replace("'", "\\'")
+    if literal:
+        body = re.sub(r"[\x00-\x1f\x7f]", lambda match: f"\\x{ord(match.group()):02x}", body)
+    else:
+        body = body.replace("\n", "\\n").replace("\r", "").replace("\t", "\\t")
     return f"$'{body}'"
+
+
+def launch_in_cwd(command: str, cwd: str, family: str) -> str:
+    """Check the confirmed directory inside the shell just before the command."""
+    if family == "powershell":
+        # Resolve the provider path with the same interpreter that approved it.
+        check = f"& $env:{CONFIRMED_PYTHON_ENV} -I -c {ps_quote(WINDOWS_CWD_CHECK, literal=True)} (Get-Location).ProviderPath"
+        return (
+            f"Set-Location -LiteralPath {ps_quote(cwd, literal=True)}; if ($?) {{ "
+            f"{check}; if ($? -and $LASTEXITCODE -eq 0) {{ {command} }} }}"
+        )
+    if family == "cmd":
+        # The PTY provides the literal path with delayed expansion off.
+        check = f'"%{CONFIRMED_PYTHON_ENV}%" -I -c "{WINDOWS_CWD_CHECK}"'
+        return f'pushd "%{CONFIRMED_CWD_ENV}%" && {check} && ({command})'
+    where = ansi_quote(cwd, literal=True)
+    return f"builtin cd -- {where} && {_physical_cwd_test(cwd)} && ({command})"
+
+
+def _physical_cwd_test(cwd: str) -> str:
+    expected = ansi_quote(cwd + "\n.", literal=True)
+    # The sentinel prevents command substitution from stripping trailing newlines.
+    return f'[ "$(builtin pwd -P && printf .)" = {expected} ]'
 
 
 @lru_cache(maxsize=8)
@@ -722,7 +793,7 @@ def start_command(tool: str, task: dict[str, Any], family: str | None = None) ->
     return f"claude {q}"
 
 
-def typed_form(command: str, shell: str) -> str:
+def typed_form(command: str, shell: str, *, guarded: bool = False) -> str:
     """`command` as it is typed into `shell`. The commands built above use
     bash's ``$'…'`` quoting, and a task's text is inside them: typed as they
     are into another shell, a quote in that text would end the string and
@@ -737,10 +808,13 @@ def typed_form(command: str, shell: str) -> str:
     name = Path(shell or "bash").name
     if name in ("bash", "zsh"):
         return command
+    # A guarded child Bash must inherit the current directory without
+    # running startup code before the verifier.
+    bash = "env -u BASH_ENV -u ENV bash --norc --noprofile -c" if guarded else "bash -lc"
     if name in ("sh", "dash", "ash", "ksh"):
-        return f"bash -lc {shlex.quote(command)}"
+        return f"{bash} {shlex.quote(command)}"
     packed = base64.b64encode(command.encode("utf-8")).decode("ascii")
-    return f"bash -lc 'eval \"$(echo {packed} | base64 -d)\"'"
+    return f"{bash} 'eval \"$(echo {packed} | base64 -d)\"'"
 
 
 # ---------------------------------------------------------------------------
@@ -750,12 +824,18 @@ def typed_form(command: str, shell: str) -> str:
 
 def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, project: str, cwd: str,
                  command: str = "", label: str = "", agent_id: str = "", task_id: str = "",
-                 sid: str = "", role: str = "", group: str = "") -> dict[str, Any]:
+                 sid: str = "", role: str = "", group: str = "",
+                 expected_cwd: str | None = None) -> dict[str, Any]:
     """A new terminal: its row, and — with tmux — the session, running `command`."""
     if command == "codex":
         command = codex_in_terminal()
     sid = sid if sid and SAFE_ID.match(sid) else new_id()
     where = str(resolve_cwd(data_root, project, cwd))
+    if expected_cwd is not None:
+        resolved = Path(where).resolve()
+        if str(resolved) != expected_cwd or not resolved.is_dir():
+            raise CwdChangedError()
+        where = expected_cwd
     backend = "tmux" if uses_tmux(settings) else "plain"
     # `created` orders the tabs (and alt+1…9). To the millisecond: two
     # terminals opened in the same second tied, the page broke the tie by
@@ -767,6 +847,7 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
         "created": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}",
         "backend": backend,
         "launch": settings.get("terminal.launch", "run"),
+        "strict_cwd": expected_cwd is not None,
     }
     if role in ROLES:
         row["role"] = role
@@ -784,7 +865,9 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
                       "-e", f"SP_TERMINAL={sid}", "-e", "TERM=xterm-256color", shell, "-l")
         if command:
             wait_for_prompt(data_root, sid)
-            type_into(data_root, row, typed_form(command, shell), enter=row["launch"] == "run")
+            submitted = launch_in_cwd(command, where, "bash") if expected_cwd is not None else command
+            typed = typed_form(submitted, shell, guarded=expected_cwd is not None)
+            type_into(data_root, row, typed, enter=row["launch"] == "run", operator=False)
         # Which tmux server holds it: a terminal whose server is gone was not
         # closed by anyone (a reboot, a crash), and Restore offers it back.
         row["server"] = tmux_server_pid(data_root)
@@ -875,16 +958,116 @@ def wait_for_prompt(data_root: Path, sid: str, timeout: float = SHELL_PROMPT_TIM
         time.sleep(SHELL_PROMPT_POLL_INTERVAL_S)
 
 
-def type_into(data_root: Path, row: dict[str, Any], text: str, *, enter: bool, delay: float = 0.0) -> bool:
+
+# All SP writers of a tmux session share its input lock. Intent is recorded
+# before the lock wait, so the automatic sender gives the operator priority.
+_input_state_lock = threading.Lock()
+_operator_waiters: dict[tuple[Path, str], int] = {}
+_operator_input_at: dict[tuple[Path, str], float] = {}
+# Input written to a PTY can still be waiting for the composer to render.
+OPERATOR_EDIT_SECONDS = 3.0
+_sp_clients: dict[tuple[Path, str], set[int]] = {}
+
+
+def input_lock(data_root: Path, sid: str) -> Path:
+    return lock_path(folder(data_root) / ("input-" + sid))
+
+
+def delivery_lock(data_root: Path, sid: str) -> Path:
+    return lock_path(folder(data_root) / ("deliver-" + sid))
+
+
+@contextmanager
+def operator_intent(data_root: Path, sid: str, *, typed: bool = True) -> Iterator[None]:
+    key = (data_root, sid)
+    with _input_state_lock:
+        _operator_waiters[key] = _operator_waiters.get(key, 0) + 1
+        if typed:
+            _operator_input_at[key] = time.monotonic()
+    try:
+        yield
+    finally:
+        with _input_state_lock:
+            if typed:
+                _operator_input_at[key] = time.monotonic()
+            if _operator_waiters[key] == 1:
+                del _operator_waiters[key]
+            else:
+                _operator_waiters[key] -= 1
+
+
+def operator_editing(data_root: Path, sid: str) -> bool:
+    key = (data_root, sid)
+    with _input_state_lock:
+        if _operator_waiters.get(key):
+            return True
+        at = _operator_input_at.get(key)
+        if at is None:
+            return False
+        if time.monotonic() - at < OPERATOR_EDIT_SECONDS:
+            return True
+        del _operator_input_at[key]
+        return False
+
+
+def register_client(data_root: Path, sid: str, pid: int) -> Callable[[], None]:
+    """Identify only the tmux child actually created for a server-owned view."""
+    key = (data_root, sid)
+    with _input_state_lock:
+        _sp_clients.setdefault(key, set()).add(pid)
+
+    def release() -> None:
+        with _input_state_lock:
+            clients = _sp_clients[key]
+            clients.remove(pid)
+            if not clients:
+                del _sp_clients[key]
+
+    return release
+
+
+def owns_clients(data_root: Path, sid: str, pids: set[int]) -> bool:
+    with _input_state_lock:
+        return pids <= _sp_clients.get((data_root, sid), set())
+
+
+InputWrite = Literal["written", "failed", "uncertain"]
+
+
+def write_operator(data_root: Path, sid: str, write: Callable[[bytes], InputWrite], data: bytes) -> InputWrite:
+    # A received key stays queued until it can reach the PTY. Only the
+    # bounded final tmux submission holds this lock for an automatic notice.
+    outcome: InputWrite = "failed"
+    try:
+        with acquire_flock(input_lock(data_root, sid), timeout_s=float("inf")):
+            outcome = "uncertain"
+            outcome = write(data)
+    except OSError:
+        pass
+    return outcome
+
+
+def type_into(data_root: Path, row: dict[str, Any], text: str, *, enter: bool,
+              delay: float = 0.0, operator: bool = True) -> bool:
     """Type into a tmux terminal as if at the keyboard (a plain one: routers/terminal.py)."""
     if row.get("backend") != "tmux":
         return False
     if delay:
         time.sleep(delay)
-    target = PREFIX + row["id"]
+    sid = row["id"]
+    with operator_intent(data_root, sid, typed=operator and bool(text or enter)):
+        try:
+            with acquire_flock(input_lock(data_root, sid), timeout_s=float("inf")):
+                return _type_into_locked(data_root, sid, text, enter)
+        except FileSafetyError as exc:
+            raise TmuxError("terminal input is busy") from exc
+
+
+def _type_into_locked(data_root: Path, sid: str, text: str, enter: bool) -> bool:
+    target = PREFIX + sid
     # Through a paste buffer, not send-keys: tmux reads a trailing ";" in an
     # argument as a command separator and a leading "-" as an option.
-    buf = f"mk-type-{row['id']}"
+    buf = f"mk-type-{sid}"
     load = tmux(data_root, "load-buffer", "-b", buf, "-", input=text)
     if load.returncode != 0:
         return False
@@ -900,6 +1083,8 @@ def close(data_root: Path, sid: str) -> None:
     if row and row.get("backend") == "tmux":
         tmux(data_root, "kill-session", "-t", PREFIX + sid)
     forget(data_root, sid)
+    with _input_state_lock:
+        _operator_input_at.pop((data_root, sid), None)
 
 
 def attach_argv(data_root: Path, sid: str) -> list[str]:
@@ -958,7 +1143,26 @@ def wake_command(row: dict[str, Any], resume: str = "") -> str:
     return ""
 
 
-def sleep(data_root: Path, sid: str, wake: str) -> dict[str, Any] | None:
+def wake_cwd(row: dict[str, Any]) -> str:
+    """The existing directory the terminal confirmation can show."""
+    cwd = row.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        return ""
+    try:
+        path = Path(cwd).resolve(strict=True)
+        return str(path) if path.is_dir() else ""
+    except (OSError, RuntimeError):
+        return ""
+
+
+def wake_revision(row: dict[str, Any]) -> str:
+    """Identify the saved wake the operator selected, without returning more data."""
+    fields = ("id", "agent_id", "wake_agent_id", "kind", "project", "cwd", "backend",
+              "created", "slept_at", "woken_at", "wake")
+    return hashlib.sha256(json.dumps([row.get(key) for key in fields]).encode()).hexdigest()
+
+
+def sleep(data_root: Path, sid: str, wake: str, *, agent_id: str = "") -> dict[str, Any] | None:
     """Stop what runs in the terminal and keep its row: `wake` is what it
     runs when woken. The tmux session is killed; the caller drops a plain pty."""
     row = get(data_root, sid)
@@ -966,11 +1170,12 @@ def sleep(data_root: Path, sid: str, wake: str) -> dict[str, Any] | None:
         return None
     if row.get("backend") == "tmux":
         tmux(data_root, "kill-session", "-t", PREFIX + sid)
-    return put(data_root, {"id": sid, "asleep": True, "wake": wake,
+    return put(data_root, {"id": sid, "asleep": True, "wake": wake, "wake_agent_id": agent_id,
                            "slept_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
 
-def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | None = None) -> dict[str, Any] | None:
+def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | None = None, *,
+         expected_cwd: str | None = None) -> dict[str, Any] | None:
     """The terminal again, under its own id, running `command` (default: what
     sleep() kept). Its label, role, group, agent and task stay."""
     row = get(data_root, sid)
@@ -985,7 +1190,8 @@ def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | Non
         cwd = ""  # the folder is gone: the project's folder, or home
     out = open_session(data_root, settings, kind=str(row.get("kind") or "shell"), project=str(row.get("project") or ""),
                        cwd=cwd, command=cmd, label=str(row.get("label") or ""),
-                       agent_id=str(row.get("agent_id") or ""), task_id=str(row.get("task_id") or ""), sid=sid)
+                       agent_id=str(row.get("agent_id") or ""), task_id=str(row.get("task_id") or ""), sid=sid,
+                       expected_cwd=expected_cwd)
     # The command a terminal was opened with stays its own; what woke it is `wake`.
     # A plain terminal types `wake` when its new shell starts (routers/terminal.py
     # _pending): not typed yet. Before, it kept `typed` from its first life and a
@@ -1208,14 +1414,14 @@ def _codex_in_pane(root: Path, agent: str, tid: str, panes: dict[str, dict[str, 
     return bool(pane_pid) and msgdeliver.occupant_why(root, agent, pane_pid) == ""
 
 
-def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
+def agent_links(data_root: Path, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
     """terminal id → the agent the capture hook saw started in it (newest
     wins); a Codex chat only when it is proven to run in it (_codex_in_pane)."""
     global _link_cache
     root = Path(data_root)
     now = time.monotonic()
     cached_root, cached_at, cached_links = _link_cache
-    if cached_root == root and now - cached_at < 3:
+    if not fresh and cached_root == root and now - cached_at < 3:
         return cached_links
     out: dict[str, dict[str, Any]] = {}
     panes: dict[str, dict[str, Any]] | None = None
@@ -1287,8 +1493,17 @@ def listing(data_root: Path, plain: dict[str, dict[str, Any]] | None = None) -> 
             fg, last = (p or {}).get("fg", ""), (p or {}).get("activity", 0.0)
         if st == "ended" and r.get("asleep"):
             st = "asleep"
-        out.append({**r, "role": role_of(r), "state": st, "program": fg, "last_output": last,
-                    "agent_id": (link or {}).get("agent_id") or r.get("agent_id") or ""})
+        item = {**r, "role": role_of(r), "state": st, "program": fg, "last_output": last,
+                "agent_id": (link or {}).get("agent_id") or r.get("agent_id")
+                or (r.get("wake_agent_id") if st == "asleep" else "") or ""}
+        if st == "asleep":
+            item["wake_revision"] = wake_revision(r)
+            cwd = wake_cwd(r)
+            if cwd_has_controls(cwd):
+                item["wake_cwd_has_controls"] = True
+            else:
+                item["wake_cwd"] = cwd
+        out.append(item)
     out.sort(key=lambda x: x.get("created") or "")
     return out
 
