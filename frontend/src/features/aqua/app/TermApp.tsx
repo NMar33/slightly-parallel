@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ChevronUp, LayoutGrid, Maximize, Menu, Minimize, Minus, PanelLeft, PanelRight, Plus, RotateCcw, Settings, SquareTerminal, Sun, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, LayoutGrid, Maximize, Menu, Minimize, Minus, PanelLeft, PanelRight, PanelsTopLeft, Plus, RotateCcw, Settings, SquareTerminal, Sun, X } from 'lucide-react'
 import { smoothOn } from '../../terminal/smoothScroll'
 
 import '../design/aqua.css'
@@ -40,7 +40,8 @@ import { PYWINPTY, useTerminalActions, useTerminalStatus } from '../../../lib/te
 import type { MsgMark } from '../../../lib/pins'
 import { useMsgMarkActions } from '../../../lib/pins'
 import { sendTyping, useAquaActions, useGroups, useRestoreNeeded, useSessions, type RestoreResult } from './api'
-import { isNative, observeFullscreen, openWindow, post } from './bridge'
+import { hasNativeDashboard, isNative, observeFullscreen, openWindow, post, setDashboardView } from './bridge'
+import { DashboardRecord, useDashboard } from './dashboard'
 import {
   LW, RW, chordOf, deriveWorkspaces, lastTabIn, rememberTab, detachUrl, fitSidebarWidths, foldTabs, groupWs, isAsleep, nextWaiting, parseView, placeSide, projectWs,
   cycleLevel, moveTab, orderedTabs, resolveWs, roleOf, seatBoth, shownOf, stepIn, stepOut, tabSections, tilesOf, widths, wsIdOf,
@@ -55,6 +56,8 @@ import { TypingBatcher } from './typing'
 import { useWorkBeats } from '../../time/beats'
 import { TimerGroup } from './timer'
 import { useWindowScheme } from './scheme'
+import { terminalLimitPending, useTerminalLimit } from '../../../lib/terminalLimit'
+import { TerminalLimitPanel } from './TerminalLimitPanel'
 import { useWindowPreferences, WindowSettings } from './WindowSettings'
 import { HealthLayer, HealthTint, HealthTitle, useHealthEdge, useHealthRuntime } from './health'
 import { factsOf, markNamed, noteOscTitle, tabTitle, useNamed, useOscTitles, useTabInfo } from './tabs/facts'
@@ -197,6 +200,7 @@ function AquaWindow({ status }: { status: Status }) {
   const vp = useViewport()
   // The colour scheme (Settings › Terminal › Colour scheme) on the window's tokens.
   const scheme = useWindowScheme()
+  const pendingTerminal = useTerminalLimit()
   const [fullscreen, setFullscreen] = useState(false)
   useEffect(() => observeFullscreen(setFullscreen), [])
   const fullscreenLabel = fullscreen ? t('Exit fullscreen') : t('Enter fullscreen')
@@ -218,6 +222,8 @@ function AquaWindow({ status }: { status: Status }) {
   const fixedChat = view.detached
   const fixedWs = view.ws ? resolveWs(view.ws, workspaces) : ''
   const kind: 'main' | 'ws' | 'chat' = fixedChat ? 'chat' : fixedWs ? 'ws' : 'main'
+  const hasDashboard = native && hasNativeDashboard() && !view.detached && !view.ws
+  const dashboard = useDashboard(hasDashboard)
 
   /* ------------------------------------------------ which terminal is in front */
   const [picked, setPicked] = useState(() => fixedChat || (kind === 'main' ? store.get(ACTIVE_KEY) || '' : ''))
@@ -312,6 +318,15 @@ function AquaWindow({ status }: { status: Status }) {
       document.querySelector<HTMLTextAreaElement>('.aqua-screen .xterm-helper-textarea')?.focus()
     }, 0)
   }, [])
+  const dashboardShown = dashboard.shown
+  const terminalInput = useRef<HTMLTextAreaElement | null>(null)
+  const returnToTerminal = () => {
+    dashboard.show(false)
+    const input = terminalInput.current
+    if (input?.isConnected && input.closest('.aqua-screen, .aqua-right-pane')) {
+      requestAnimationFrame(() => input.focus({ preventScroll: true }))
+    } else refocus()
+  }
   const focusRight = useCallback(() => {
     setTimeout(() => document.querySelector<HTMLTextAreaElement>('.aqua-right-pane .xterm-helper-textarea')?.focus(), 0)
   }, [])
@@ -391,6 +406,9 @@ function AquaWindow({ status }: { status: Status }) {
   const termX = native ? lw : Math.round((vp.w - termW) / 2) + slide
   const frameH = native ? vp.h : vp.h - 2 * MARGIN
   const bar = folded ? BAR_FOLDED : Math.round(BAR / layout.prefs.titleScale)
+  useLayoutEffect(() => {
+    if (hasDashboard) setDashboardView(dashboardShown, bar)
+  }, [hasDashboard, dashboardShown, bar])
   const strip = kind === 'chat' ? 0 : Math.round(STRIP / layout.prefs.tabsScale)
   const bodyH = Math.max(120, frameH - bar - strip - (native ? 0 : 2))
 
@@ -476,7 +494,8 @@ function AquaWindow({ status }: { status: Status }) {
   // app's pages send, source "window"; timeauto.py counts them).
   const workProject = active?.project ?? ''
   const workTask = active?.task_id ?? ''
-  useWorkBeats(() => (workProject ? { project: workProject, taskId: workTask } : null), 'window', `${workProject}\n${workTask}`)
+  useWorkBeats(() => (workProject && !dashboardShown ? { project: workProject, taskId: workTask } : null), 'window',
+    dashboardShown ? '' : `${workProject}\n${workTask}`)
 
   /* ------------------------------------------------- health and time */
   // Variant a «quiet» (tk_810245f2): the main window only, so two windows never count the same work twice.
@@ -611,10 +630,11 @@ function AquaWindow({ status }: { status: Status }) {
     : undefined
   visibleTabs.slice(0, 9).forEach((s, i) => { keys[`alt+Digit${i + 1}`] = () => go(s.id) })
   const keysRef = useRef(keys)
-  keysRef.current = keys
+  keysRef.current = dashboardShown ? {} : keys
   useEffect(() => {
     // Capture: the terminal takes every key it sees, so the window's chords are read before it.
     const onKey = (e: KeyboardEvent) => {
+      if (terminalLimitPending()) return
       if (e.target instanceof Element && e.target.closest('[data-inspector-edit]')) return
       const f = keysRef.current[chordOf(e)]
       if (!f || e.isComposing) return
@@ -968,37 +988,51 @@ function AquaWindow({ status }: { status: Status }) {
         boxShadow: 'var(--shadow-lg)', border: `1px solid ${health && healthEdge ? healthEdge : 'var(--border-strong)'}`, borderTop: kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined,
       }}>
         {/* the title row: folds to a 12px strip */}
-        <div data-window-title data-compact={layout.prefs.titleScale > 1 || undefined} className={`relative shrink-0 select-none ${native ? 'aq-app-drag' : ''}`} style={{ height: bar, background: 'var(--r2-bar)', color: 'var(--r2-bar-ink)', transition: instant ? undefined : 'height 120ms var(--aq-ease)', borderTop: native && kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined }}
+        <div data-window-title data-compact={layout.prefs.titleScale > 1 || undefined} className={`relative shrink-0 select-none ${native ? 'aq-app-drag' : ''}`} style={{ height: bar, background: 'var(--r2-bar)', color: 'var(--r2-bar-ink)', transition: instant || dashboardShown ? undefined : 'height 120ms var(--aq-ease)', borderTop: native && kind !== 'main' && wsObj ? `3px solid ${lane(wsObj.color)}` : undefined }}
           onPointerDown={onBarDown} onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest('button') && Date.now() - unfoldedAt.current > 600) { setFolded(!folded); refocus() } }}>
           {health && <HealthTint />}
           {kind !== 'chat' && !folded && toggleBtn('left')}
           {!folded && (
-            <div className="absolute inset-y-0 grid items-center gap-4" style={{
+            <div className="absolute inset-y-0" data-window-title-controls style={{
               left: headerLeft + (kind === 'chat' ? 8 : 36), right: headerRight + (kind === 'chat' ? 8 : 36),
-              gridTemplateColumns: 'minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr)',
             }}>
-              <span className="flex min-w-0 items-center gap-2">
-                <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Window settings')} title={t('Window settings')}
-                  aria-expanded={settingsOpen} onClick={toggleSettings}><Settings size={13} /></button>
-                <ResourceMeter />
-              </span>
-              <span className="truncate text-center text-13 pointer-events-none" data-window-name>{title}</span>
-              <span className="flex min-w-0 items-center justify-end gap-2" data-window-actions data-narrow={headerWidth < 480 || undefined}>
-                <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Fold the title row (alt+T)')} title={t('Fold the title row (alt+T)')} onClick={() => { setFolded(true); refocus() }}><ChevronUp size={14} /></button>
-                <TimerGroup project={active?.project ?? ''} prefs={layout.prefs} session={health ? <HealthTitle folded={false} /> : undefined} />
-                {kind !== 'chat' && (
-                  <button type="button" data-nodrag className="aq-btn shrink-0" aria-pressed={level !== 'chat'} onClick={cycle}
-                    title={t('Workspaces: the chat, its workspace, every workspace (Ctrl+Shift+↑)')} aria-label={t('Workspaces')}>
-                    <LayoutGrid size={13} />{wsObj && headerWidth >= 640 && <span className="text-11 max-w-[120px] truncate">{wsObj.name}</span>}
-                    {waitingHere > 0 && headerWidth >= 640 && <span className="text-11 font-semibold" style={{ color: 'var(--aq-wait)' }}>● {waitingHere}</span>}
-                  </button>
-                )}
-                {native && <>
-                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Minimise')} title={t('Minimise')} onClick={() => post({ op: 'minimize' })}><Minus size={13} /></button>
-                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={fullscreenLabel} title={fullscreenLabel} onClick={() => post({ op: 'fullscreen' })}>{fullscreen ? <Minimize size={13} /> : <Maximize size={13} />}</button>
-                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Close the window')} title={t('Close the window')} onClick={() => post({ op: 'close' })}><X size={13} /></button>
-                </>}
-              </span>
+              <div className="grid h-full items-center gap-4" data-window-title-grid>
+                <span className="flex min-w-0 items-center gap-2">
+                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Window settings')} title={t('Window settings')}
+                    aria-expanded={settingsOpen} onClick={toggleSettings}><Settings size={13} /></button>
+                  <ResourceMeter />
+                </span>
+                <span className="truncate text-center text-13 pointer-events-none" data-window-name>{title}</span>
+                <span className="flex min-w-0 items-center justify-end gap-2" data-window-actions>
+                  <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Fold the title row (alt+T)')} title={t('Fold the title row (alt+T)')} onClick={() => { setFolded(true); refocus() }}><ChevronUp size={14} /></button>
+                  <TimerGroup project={active?.project ?? ''} prefs={layout.prefs} session={health ? <HealthTitle folded={false} /> : undefined} />
+                  {kind !== 'chat' && (
+                    <button type="button" data-nodrag data-title-action className="aq-btn shrink-0" aria-pressed={level !== 'chat'} onClick={cycle}
+                      title={t('Workspaces: the chat, its workspace, every workspace (Ctrl+Shift+↑)')} aria-label={t('Workspaces')}>
+                      <LayoutGrid size={13} />{wsObj && <span data-title-action-label className="text-11 max-w-[120px] truncate">{wsObj.name}</span>}
+                      {waitingHere > 0 && <span data-title-action-label className="text-11 font-semibold" style={{ color: 'var(--aq-wait)' }}>● {waitingHere}</span>}
+                    </button>
+                  )}
+                  {hasDashboard && (
+                    <button type="button" data-nodrag data-title-action className="aq-btn line shrink-0"
+                      aria-label={dashboardShown ? t('Terminal') : t('Dashboard')}
+                      title={dashboardShown ? t('Terminal') : t('Dashboard')}
+                      onClick={() => {
+                        setMenu(null)
+                        if (dashboardShown) returnToTerminal()
+                        else dashboard.show(true)
+                      }}>
+                      {dashboardShown ? <SquareTerminal size={13} /> : <PanelsTopLeft size={13} />}
+                      <span data-title-action-label className="text-11">{dashboardShown ? t('Terminal') : t('Dashboard')}</span>
+                    </button>
+                  )}
+                  {native && <>
+                    <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Minimise')} title={t('Minimise')} onClick={() => post({ op: 'minimize' })}><Minus size={13} /></button>
+                    <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={fullscreenLabel} title={fullscreenLabel} onClick={() => post({ op: 'fullscreen' })}>{fullscreen ? <Minimize size={13} /> : <Maximize size={13} />}</button>
+                    <button type="button" data-nodrag className="aq-btn icon shrink-0" aria-label={t('Close the window')} title={t('Close the window')} onClick={() => post({ op: 'close' })}><X size={13} /></button>
+                  </>}
+                </span>
+              </div>
             </div>
           )}
           {folded && <span className="absolute truncate text-center pointer-events-none text-9 aq-ink3"
@@ -1011,12 +1045,21 @@ function AquaWindow({ status }: { status: Status }) {
           {folded && health && layout.prefs.showSessionTimer && <span className="absolute z-[2]" style={{ right: headerRight + 40, top: 0 }}><HealthTitle folded /></span>}
           {kind !== 'chat' && !folded && toggleBtn('right')}
         </div>
-        <div className="relative flex min-h-0 flex-1" style={{ background: 'var(--aq-panel)' }}>
+        {/* Keep terminal geometry and xterm's live screen while the other side is up. */}
+        <div className="relative flex min-h-0 flex-1" aria-hidden={dashboardShown || undefined}
+          {...(dashboardShown ? { inert: '' } : {})}
+          onFocusCapture={(e) => {
+            if (e.target instanceof HTMLTextAreaElement && e.target.matches('.xterm-helper-textarea')) terminalInput.current = e.target
+          }}
+          style={{ background: 'var(--aq-panel)', visibility: dashboardShown ? 'hidden' : undefined }}>
           {leftSeated.map(panel)}
           <div className="flex flex-col min-w-0 relative" style={{ width: termW }}>
             {stripEl}
             {!fixedSidebarControls && foldedToggles}
-            {body}
+            <div ref={(element) => { if (element) element.inert = pendingTerminal !== null }}>{body}</div>
+            {pendingTerminal && <div className="absolute inset-x-0 bottom-0 z-[19] flex flex-col" style={{ top: strip }}>
+              <TerminalLimitPanel pending={pendingTerminal} className="flex-1" />
+            </div>}
             {health && <HealthLayer top={strip} project={workProject} />}
           </div>
           {rightSeated.map(panel)}
@@ -1151,7 +1194,7 @@ function AquaWindow({ status }: { status: Status }) {
 
   return (
     <div className="aq fixed inset-0 overflow-clip" data-v="j" data-scheme={scheme.id} data-scheme-scope={scheme.scope} style={{ ...scheme.style, background: native ? 'var(--aq-panel)' : 'var(--r2-wall)' }}>
-      {frame}
+      <DashboardRecord.Provider value={hasDashboard ? dashboard.openRecord : null}>{frame}</DashboardRecord.Provider>
     </div>
   )
 }
