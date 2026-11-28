@@ -494,7 +494,7 @@ def test_the_state_endpoint_describes_the_ladder_and_the_source(client):
     assert body["source"]["files"] > 0
     assert [r["days"] for r in body["rungs"]] == [1, 3, 7, 14, 30, 90]
     assert body["keep"]["manual"] == 10
-    assert body["excluded"] == ["*.lock", "operator.token", "tour_shots/", "monitor/", "terminal/"]
+    assert body["excluded"] == ["*.lock", "operator.token", "tour_shots/", "monitor/", "terminal/", "diagnostics/"]
     assert body["backup_root"].endswith("-backups")
 
 
@@ -715,3 +715,44 @@ def test_a_restore_waits_until_every_file_can_be_copied_first(roots):
     finally:
         locked.chmod(0o644)
     assert locked.read_text(encoding="utf-8") == "only here\n"
+
+
+def test_terminal_diagnostics_stay_out_of_an_archive(roots):
+    data, dest = roots
+    diagnostics = data / "diagnostics"
+    diagnostics.mkdir()
+    capture = diagnostics / "terminal-example.json"
+    capture.write_text('{"screen":"local terminal transcript"}', encoding="utf-8")
+    archive = backup.create(data, dest, kind="manual")
+    assert archive.path is not None
+    with tarfile.open(archive.path) as tar:
+        assert not any(name.startswith(f"{data.name}/diagnostics") for name in tar.getnames())
+    assert capture.is_file()
+
+
+@pytest.mark.parametrize("has_local_capture", [False, True])
+def test_restoring_an_old_backup_keeps_diagnostics_local(roots, monkeypatch, has_local_capture):
+    source, dest = roots
+    archived = source / "diagnostics"
+    archived.mkdir()
+    (archived / "terminal-archived.json").write_text('{"screen":"old capture"}', encoding="utf-8")
+    with monkeypatch.context() as old:
+        old.setattr(backup, "EXCLUDE_DIRS", tuple(d for d in backup.EXCLUDE_DIRS if d != "diagnostics"))
+        archive = backup.create(source, dest, kind="manual")
+    assert archive.path is not None
+    with tarfile.open(archive.path) as tar:
+        assert f"{source.name}/diagnostics/terminal-archived.json" in tar.getnames()
+
+    target = source.parent / "restored"
+    target.mkdir()
+    local = target / "diagnostics" / "terminal-local.json"
+    if has_local_capture:
+        local.parent.mkdir()
+        local.write_text('{"screen":"local capture"}', encoding="utf-8")
+    backup.restore(dest, archive.name, target)
+    assert (target / "tasks.csv").read_bytes() == (source / "tasks.csv").read_bytes()
+    if has_local_capture:
+        assert list(local.parent.iterdir()) == [local]
+        assert local.read_text(encoding="utf-8") == '{"screen":"local capture"}'
+    else:
+        assert not local.parent.exists()

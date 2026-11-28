@@ -6,12 +6,15 @@ title: Reading
 enabled: true
 ---
 
-Reading is open: the MCP readers and the HTTP `GET` routes both answer.
+Project reads through MCP and HTTP `GET` are open to any existing project.
+A project-scoped MCP reader defaults to the chat's home project.
+The scan, map and architecture material tools prepare a write and require
+membership in the target project.
 
 - `tasks {project?, status?}` — the board; `search {q}` — tasks,
   decisions and agents by text; `project {project}` — one project's bundle;
   `deck` — every running sprint block; `doctor` — the data-integrity report.
-- `sp://rules` — the active rules; `sp://schema` — every lens,
+- `sp://rules` — the active rules of the chat's home project; `sp://schema` — every lens,
   its fields and what is mutable; `sp://contract` — this file.
 - `GET /api/<entity>?project=<PROJECT>` — any ledger, filterable.
 - `GET /api/<entity>/{id}` — one entry with its text and fields.

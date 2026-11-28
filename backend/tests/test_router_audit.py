@@ -10,6 +10,7 @@ import csv
 import json
 import threading
 import tomllib
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -222,6 +223,35 @@ def test_codex_reinstall_lifts_a_notify_written_under_a_table(client: TestClient
     assert client.post("/api/setup/codex", json={"action": "install"}).status_code == 200
     data = tomllib.loads(cfg.read_text(encoding="utf-8"))
     assert "notify" in data and "notify" not in data["projects"]["/x"]
+
+
+@pytest.mark.parametrize("component", ["Über-🚀", 'quote"\\slash', "control-\t\n\r\x01\x7f"])
+def test_codex_setup_round_trips_toml_strings(client: TestClient, tmp_path: Path, monkeypatch, component: str) -> None:
+    from backend.routers import setup as setup_router
+
+    cfg = tmp_path / "codex-config.toml"
+    data_root = tmp_path / component
+    script = data_root / "codex-capture.py"
+    entry = {
+        "command": str(data_root / "python"),
+        "args": ["-m", "backend.mcp", component],
+        "env": {"PYTHONPATH": str(data_root / "backend"), "PYTHONUTF8": "1"},
+    }
+    settings = client.app.state.settings
+    monkeypatch.setattr(client.app.state, "settings", replace(settings, data_root=data_root))
+    monkeypatch.setattr(setup_router, "CODEX_CONFIG_PATH", cfg)
+    monkeypatch.setattr(setup_router, "_CODEX_SCRIPT", script)
+    monkeypatch.setattr(setup_router, "mcp_server_entry", lambda _url: entry)
+
+    response = client.post("/api/setup/codex", json={"action": "install"})
+    assert response.status_code == 200, response.text
+
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+    assert data["notify"][1:] == [str(script), "--data-root", str(data_root)]
+    server = data["mcp_servers"]["slightly-parallel"]
+    assert server["command"] == entry["command"]
+    assert server["args"] == entry["args"]
+    assert server["env"] == {**entry["env"], "SP_API": f"http://{settings.host}:{settings.port}"}
 
 
 # 7 — one post per story request -------------------------------------------

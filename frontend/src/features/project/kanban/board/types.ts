@@ -5,7 +5,7 @@
  */
 
 import type { ReactNode, RefObject } from 'react'
-import type { Axis, Glow, LinkInfo, MentionSummary, SortMode, TaskRow } from '../model'
+import type { Axis, Glow, LinkInfo, MentionSummary, SortMode, TaskRow, BoardLane, LaneRef, LaneTarget } from '../model'
 
 type BoardColumn = { key: string; label: string; className?: string; strip?: boolean }
 
@@ -39,7 +39,7 @@ export type GridProps = {
   showArchived: boolean
   tasksByStatus: Record<string, TaskRow[]>
   toggleStrip: (key: string) => void
-  handleDrop: (draggedId: string, targetStatus: string, targetLane?: string, beforeTaskId?: string | null, force?: boolean) => void
+  handleDrop: (draggedId: string, targetStatus: string, targetLane?: LaneTarget, beforeTaskId?: string | null, force?: boolean) => void
   copyMode: boolean
   sorts: Record<string, SortMode>
   setSort: (col: string, mode: SortMode) => void
@@ -73,11 +73,15 @@ export type GridProps = {
 }
 
 export type LanesGridProps = GridProps & {
-  lanes: string[]
+  lanes: BoardLane[]
+  agentLanes: BoardLane[]
+  agentsOpen: boolean
+  toggleAgents: () => void
+  promoteLane: (lane: BoardLane) => Promise<void>
   collapsedLanes: Set<string>
   toggleLane: (lane: string) => void
-  renameLane: (oldName: string, newName: string) => Promise<void>
-  deleteLane: (name: string) => void
+  renameLane: (oldName: BoardLane, newName: string) => Promise<void>
+  deleteLane: (lane: BoardLane) => Promise<void>
   moveLaneBefore: (lane: string, target: string) => void
   allCollapsed: boolean
   collapseAll: () => void
@@ -85,8 +89,8 @@ export type LanesGridProps = GridProps & {
   setAddingLane: (v: boolean) => void
   laneDraft: string
   setLaneDraft: (v: string) => void
-  commitAddLane: () => void
-  setAddingAssignee: (v: string | null) => void
+  commitAddLane: () => Promise<void>
+  setAddingLaneTarget: (v: LaneRef) => void
 }
 
 export type ColumnsGridProps = GridProps & {
