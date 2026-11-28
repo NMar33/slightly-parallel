@@ -44,7 +44,10 @@ import os
 import subprocess
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .termlib import InputWrite
 
 log = logging.getLogger("sp.terminal")
 HOST_LOOKUP_ATTEMPTS = 11
@@ -187,14 +190,19 @@ class ConPty:
             time.sleep(PTY_EMPTY_READ_RETRY_DELAY_S)
 
     # -------------------------------------------------------------- input
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes) -> InputWrite:
         pty = self._pty
         if pty is None or self.closed:
-            return
+            return "failed"
+        if not data:
+            return "written"
         try:
+            # Async ConPTY can report zero or bytes from a previous write.
+            # A normal return accepts this frame for submission.
             pty.write(data.decode("utf-8", "replace"))
-        except self._error:
-            pass
+        except (OSError, self._error):
+            return "failed"
+        return "written"
 
     def resize(self, cols: int, rows: int) -> None:
         pty = self._pty
