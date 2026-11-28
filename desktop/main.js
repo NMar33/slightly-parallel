@@ -107,6 +107,7 @@ function saveSoon() {
 /** The app is closing: keep the set as it is now, whatever closes after. */
 function closing() {
   if (quitting) return
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.session.flushStorageData()
   saveNow()
   quitting = true
 }
@@ -217,6 +218,16 @@ function openWindow(url, width, height, show = true, at = null) {
       if (/^https?:\/\//.test(target)) shell.openExternal(target)
     }
   })
+  // Keep the dashboard on the server even when an in-frame link or redirect
+  // requests another site. Its ordinary new-window links use the handler above.
+  const keepDashboardOnServer = (details) => {
+    if (details.isMainFrame || details.frame?.name !== 'sp-dashboard' ||
+        details.frame.parent !== wc.mainFrame || sameSite(args.url, details.url)) return
+    details.preventDefault()
+    if (/^https?:\/\//.test(details.url)) shell.openExternal(details.url)
+  }
+  wc.on('will-frame-navigate', keepDashboardOnServer)
+  wc.on('will-redirect', keepDashboardOnServer)
   wc.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) sidebarGrowth.delete(win)
   })

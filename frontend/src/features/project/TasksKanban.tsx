@@ -56,9 +56,13 @@ import { decodeSafe } from '../../hooks/useHashState'
 export function TasksKanban({
   projectCode,
   board,
+  linkedTask,
+  onCloseLinkedTask,
 }: {
   projectCode: string
   board?: KanbanBoard
+  linkedTask?: TaskRow
+  onCloseLinkedTask?: () => void
 }) {
   const evidenceAsk = useEvidenceAsk()
   // Every per-board memory (view, lanes, order, collapse) keys on this.
@@ -228,6 +232,22 @@ export function TasksKanban({
     }
   }, [loading, tasks])
 
+  const openedLink = useRef('')
+  useEffect(() => {
+    if (!linkedTask) { openedLink.current = ''; return }
+    if (openedLink.current === linkedTask.id) return
+    openedLink.current = linkedTask.id
+    setEditingTask(linkedTask)
+  }, [linkedTask])
+
+  const closeEditor = () => {
+    if (linkedTask) onCloseLinkedTask?.()
+    setAddingStatus(null)
+    setAddingLaneTarget(null)
+    setEditingTask(null)
+    setAxes(readModalPrefs().axes)
+  }
+
   const [colSettings, setColSettings] = useState(false)
 
   // Swim lanes: their state and operations live in board/useLanes.
@@ -383,20 +403,11 @@ export function TasksKanban({
           initialStatus={addingStatus || editingTask?.status || 'unclassified'}
           initialAssignee={addingLaneTarget?.name}
           existingTask={editingTask}
-          onClose={() => {
-            setAddingStatus(null)
-            setAddingLaneTarget(null)
-            setEditingTask(null)
-            setAxes(readModalPrefs().axes)
-          }}
+          onClose={closeEditor}
           onSaved={(o) => {
             // ▶ keeps the window open for the next task — only refresh.
-            if (!o?.keepOpen) {
-              setAddingStatus(null)
-              setAddingLaneTarget(null)
-              setEditingTask(null)
-            }
-            setAxes(readModalPrefs().axes)
+            if (o?.keepOpen) setAxes(readModalPrefs().axes)
+            else closeEditor()
             setRefreshTick((t) => t + 1)
           }}
           onLinksChanged={() => void reloadLinks()}

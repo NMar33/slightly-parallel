@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import runpy
 import sys
 from pathlib import Path
 from shutil import copytree
 
-from backend import keeplib, skilllib
+import pytest
+
+from backend import db, keeplib, skilllib
+from backend.csvio import read_rows, rewrite_rows
 from backend.db import FIXTURES, ViewStore
 from tests.conftest import make_chat
 
@@ -500,12 +504,51 @@ def test_an_install_that_wrote_nothing_leaves_the_stamp_alone(client, tmp_path):
     assert row()["version"] > first["version"] and ledger.read_bytes() != before
 
 
-def test_shipped_builtin_skill_fixtures_match_the_templates(tmp_path: Path) -> None:
+def _run_fixture_refresh(staged: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "FIXTURES", staged)
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    runpy.run_path(str(_HOOKS.parent / "refresh_builtin_skill_fixtures.py"), run_name="__main__")
+
+
+def test_shipped_builtin_skill_fixtures_match_the_templates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
     staged = Path(copytree(FIXTURES, tmp_path / "fixtures"))
     before = (staged / "skills.csv").read_bytes()
-    updated = skilllib.seed_builtin_skills(ViewStore(staged))
-    assert not updated and (staged / "skills.csv").read_bytes() == before, (
-        f"Built-in skills in fixtures/ are stale ({updated}). "
+    _run_fixture_refresh(staged, monkeypatch)
+    result = capsys.readouterr().out.strip()
+    assert result == "Built-in fixture skills updated: none" and (staged / "skills.csv").read_bytes() == before, (
+        f"Built-in skills in fixtures/ are stale ({result}). "
         "Run backend/.venv/bin/python scripts/refresh_builtin_skill_fixtures.py "
         "and commit the fixture changes."
     )
+
+
+@pytest.mark.parametrize(("stale_csv", "stale_card"), [(True, True), (True, False), (False, True)])
+def test_fixture_refresh_reports_partial_version_updates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stale_csv: bool, stale_card: bool,
+) -> None:
+    staged = Path(copytree(FIXTURES, tmp_path / "fixtures"))
+    kid = skilllib.builtin_id("write-a-task")
+    csv_file = staged / "skills.csv"
+    row = next(row for row in read_rows(csv_file) if row["id"] == kid)
+    card = staged / row["md_ref"]
+    history = staged / keeplib.versions_ref(kid)
+    n = max(version.n for version in keeplib.read_versions(ViewStore(staged), kid))
+    if stale_csv:
+        def lower_csv(rows: list[dict[str, str]]) -> bool:
+            next(item for item in rows if item["id"] == kid)["versions_n"] = str(n - 1)
+            return True
+
+        rewrite_rows(csv_file, list(row), lower_csv)
+    if stale_card:
+        card.write_text(card.read_text(encoding="utf-8").replace(
+            f"versions_n: {n}\n", f"versions_n: {n - 1}\n",
+        ), encoding="utf-8")
+    before = [path.read_bytes() for path in (csv_file, card, history)]
+
+    expected = rf"{kid}.*history={n}.*skills\.csv={n - int(stale_csv)}.*card={n - int(stale_card)}"
+    with pytest.raises(SystemExit, match=expected):
+        _run_fixture_refresh(staged, monkeypatch)
+
+    assert [path.read_bytes() for path in (csv_file, card, history)] == before
