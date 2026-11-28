@@ -206,9 +206,10 @@ miss of a code or alias (difflib ratio ≥ 0.8) refused with a hint; anything
 else a new lane. Two projects or two lanes are refused and no card is made.
 Every refusal of the braces is named at once (`reasons`; the hook's notice
 joins them with "; "), except a project the chat is not a member of, which
-is said alone. A lane the braces leave unclear (a near miss of a live lane, a
-name both a project and a lane) makes the card in the default lane and the
-agent asks after. An agent's create on that command must send the project
+is said alone. A lane name close to an existing lane files the card in the
+default lane with its proposed name and suggestions. A bare name that is
+both a project and a lane still asks which after filing. A new lane named
+by the operator opens on the board. An exact match to an agent lane promotes it. An agent's create on that command must send the project
 the braces named; its status, text, lane, title and tags are then checked
 together, every refusal in one answer.
 - `POST /api/agents/{agent_id}/group` — body: `group` (empty removes).
@@ -315,6 +316,18 @@ The board, its blocks, and everything hung off a task.
   message for now, and the title waits for that chat's agent, who sets it
   once with `title` on update (the hook's `#task-title` notice asks); an
   operator rename first ends the wait.
+  For a card filed on the agent's own initiative, `lane` uses an existing
+  lane or creates one in the Agents group. A similar name is refused
+  with suggestions. The task rows carry `lane_kind` (`agent` or empty)
+  and `lane_choice` (empty or a JSON cell with `name` and `options`).
+- `POST /api/tasks/{task_id}/lane-choice` — operator only. Body: `lane`,
+  the proposed name or one of the card's suggestions. Assigns the existing
+  card and clears its unresolved choice.
+- `GET /api/tasks/lanes?project=` lists lane names the operator saved on
+  the board, including empty ones. `POST /api/tasks/lanes` takes `project`,
+  `lane` and `op` (`add`, `remove` or `rename` with `previous`).
+- `POST /api/tasks/lanes/promote` — operator only. Body: `project`, `lane`.
+  Moves a lane and its tasks out of the Agents group.
 - `POST /api/tasks/{task_id}/update` — body: `title`, `description`,
   `status`, `turn` (which round to rewrite), plus the mutable columns
   (`assignee`, `priority`, `lane`, `sprint_id`, `remember`, `today_on`,
@@ -660,14 +673,21 @@ One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
 - `GET /api/messages/{message_id}` — `{message, thread}`. The thread is the
   connected replies between the same two participants, in ledger order.
   Returns 404 for an unknown message. Does not mark messages read.
-- `GET /api/messages/terminal?agent_id=` — `{agent_id, terminal, types, why,
-  data_root}`: whether this server types the chat's waiting messages into
-  its terminal, now or once the operator's input line is empty or copy mode
-  ends. Claude Code's Stop hook asks it before it blocks a Stop for a
-  waiting message: where `types` is true, it leaves the message to the
-  typed prompt and does not block, so Claude Code shows no "Stop hook
-  reported a problem". Elsewhere the block's reason opens with a line
-  saying the message is not an error. No write, nothing typed.
+- `GET /api/messages/terminal?agent_id=&terminal=` — `{types}`: whether
+  this server types the calling chat's waiting messages into that terminal.
+  Claude Code's Stop hook sends a proof for its own chat and data root in
+  `X-SP-Stop-Proof`. With `types: true`, the terminal delivers the notice
+  once input is empty and copy mode has ended. Otherwise the Stop block
+  opens with a line saying the message is not an error. The lookup changes
+  no files and types nothing.
+
+The inbox delivers each message body once. An automatic terminal wake is
+best effort. If the server crashes mid-send and the paste may already have
+reached the terminal, the message stays available on the next prompt or in
+the inbox. A late terminal notice after that delivery is ignored.
+If an exact late notice starts a submission, capture keeps the operator's
+text that follows and processes its commands normally. A notice quoted
+elsewhere in the submission stays in the operator's text.
 
 The capture hook reads a prompt that opens with the marker as the sender's
 message only when the ledger holds that id, for this chat, from that
@@ -1220,7 +1240,12 @@ block, and kept current.
   `label`.
 - `POST /api/backup/reveal` — open the backup folder in the file manager.
   Body: `name`. Answers: `opened`, `path`, `detail`.
-- `GET /api/backup/{name}/download` — the archive itself.
+- `GET /api/backup/{name}/download` — the archive itself. Unpacking a new
+  archive by hand yields a single `sp-data/` folder. Restore also reads
+  older wrappers named after the original data folder. A legacy wrapper
+  named `diagnostics` in any letter case can contain ordinary data.
+  Restore refuses an empty or snapshots-only diagnostics folder. It omits
+  capture files from a mixed diagnostics wrapper and keeps the local snapshots.
 - `POST /api/backup/{name}/trial` — a trial restore: verify, then unpack into
   a temporary folder and read it as the dashboard would (every file loads,
   the data check finds no error, each ledger's rows all readable). Answers
@@ -1728,17 +1753,37 @@ Every route refuses a foreign `Origin` or a cross-site request.
   passes it to the socket), `tmux`, `supported` (false only on Windows
   without the pywinpty package; the other routes then answer 501 saying what
   to install), `windows` (true on Windows: plain terminals only), and the
-  settings: `keep`, `launch`, `agent`, `font_size`, and the `projects` a
+  settings: `keep`, `launch`, `agent`, `font_size`, `max_sessions`, and the `projects` a
   terminal may open in.
 - `GET /api/terminal/sessions?project=` — every terminal: `id`, `label`,
   `kind` (shell · resume · start), `project`, `cwd`, `command`,
   `agent_id` (the agent the capture hook saw started in it), `task_id`, and
   its `state` — shell · working · waiting (an agent done answering: your
   turn) · running (another program, quiet) · ended — with the foreground `program`; `counts` by state.
+- `GET /api/terminal/resume/{agent_id}` — the folder where this chat would
+  resume and its `resume_revision`. The terminal confirmation sends these
+  as `expected_cwd` and `resume_revision` when opening. A changed chat
+  or destination returns 409. The shell checks the physical folder before
+  running the command. Simultaneous resume requests for one chat reuse one
+  terminal.
 - `POST /api/terminal/sessions` — open one: `kind`, `project`, and `cwd` ·
   `command` (shell), `agent` (resume: its chat's resume command, reused
   when already open), `task_id` (start: the agent of setting
   `terminal.agent` with the task as its first message). The operator's.
+  At `terminal.max_sessions` (default 36, range 1–256, 0 for unlimited), returns 429 with
+  `detail`, `count`, `limit`, `maximum`, `requested` (label, project and
+  kind), and `sessions` in activity order.
+  Each session has its project, agent id, creation time and last activity
+  (Unix seconds or null), plus `attached` and `running`. The
+  `attachment_known` and `foreground_known` flags indicate whether the
+  attachment and foreground program checks answered.
+- `GET /api/terminal/limit` — the live count, limit, terminal process-tree
+  RSS in bytes (total, available and used RAM with totals by agent kind),
+  plus the live sessions with last attach, activity index, and RSS. An
+  unreadable host memory sample leaves total and available RAM null.
+- `GET /api/terminal/sessions/{sid}/excerpts` — the first and last captured
+  operator messages or tmux history lines. Returns `kind`, `first`, and `last`.
+  Both reads leave the session and its history untouched.
 - `POST /api/terminal/sessions/{sid}/type` — `{text, enter}`: type into it.
 - `GET /api/terminal/sessions/{sid}/pos` — where the pane stands in its
   history: `history`, `scroll`, `rows`, `cursor`. The page anchors a
@@ -1750,6 +1795,13 @@ Every route refuses a foreign `Origin` or a cross-site request.
   ids. At most 20 000 lines (`truncated` says when). `{mode: "selection"}`
   asks tmux to send its active selection as an explicit clipboard copy.
   It returns `copied: false` when there is no selection. tmux only.
+- `POST /api/terminal/sessions/{sid}/diagnostics` — operator cookie required.
+  Takes the browser snapshot (`capturedAt`, `xterm`, `dom`, `scrollLayer`).
+  Saves it with the current pane, PTY sizes and ANSI screen under
+  `diagnostics/` in the data folder. Returns the local file `path` and
+  `owner_only`. On Windows the file inherits the folder's permissions.
+  The top-level `diagnostics` name is reserved in any letter case. Backups
+  omit it, and restoring an archive keeps the local folder.
 - `POST /api/terminal/sessions/{sid}/open` — `{path, line?, col?}`: open a
   path the terminal printed in the operator's editor (Settings › Terminal ›
   Open printed paths in; `auto` takes the first installed). A relative path
@@ -1759,11 +1811,17 @@ Every route refuses a foreign `Origin` or a cross-site request.
   copy mode; answers the new position.
 - `POST /api/terminal/sessions/{sid}/rename` — `{label}`.
 - `POST /api/terminal/sessions/{sid}/close` — end it (tmux too).
+  When `from_limit: true`, an active terminal or one whose state could
+  not be checked requires `confirmed: true`. Without confirmation the
+  route returns 409.
 - `POST /api/terminal/sessions/{sid}/sleep` — stop what runs in it and keep
   its row (`state: asleep`, `wake`: what it will run): a chat's agent is
   resumed on waking, a server (`role: server`) runs its command again, a
   plain shell comes back empty.
 - `POST /api/terminal/sessions/{sid}/wake` — bring it back under the same id.
+  The agent menu sends `expected_agent` and the sleeping row's `wake_revision`
+  and resolved `wake_cwd` (as `expected_cwd`). A changed owner, wake command
+  or folder returns 409.
   With `{shell: true}`, open an ended terminal with an empty shell and keep its
   original command for a later wake. A sleeping terminal refuses this mode with
   409. `GET …/state` advertises support as `open_shell`.

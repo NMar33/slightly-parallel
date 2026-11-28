@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from shutil import copytree
 
 import pytest
 
@@ -184,13 +185,17 @@ def test_nothing_to_migrate_writes_no_backup(tmp_path: Path, monkeypatch) -> Non
     assert json.loads((r / E.MIGRATION_FILE).read_text(encoding="utf-8"))["version"] == 1
 
 
-def test_the_server_migrates_at_start_but_never_the_shipped_fixtures(root: Path) -> None:
-    from backend.db import FIXTURES
-    from backend.server import create_app
-    create_app(data_root=root, watch=False)
+def test_the_server_migrates_at_start_but_never_the_shipped_fixtures(root: Path, tmp_path: Path, monkeypatch) -> None:
+    from backend import server
+
+    server.create_app(data_root=root, watch=False)
     assert (root / E.MIGRATION_FILE).is_file() and _ways(root)
-    create_app(data_root=FIXTURES, watch=False)
-    assert not (FIXTURES / E.MIGRATION_FILE).exists() and not (FIXTURES / E.WAYS_FILE).exists()
+
+    shipped = tmp_path / "shipped"
+    copytree(server.FIXTURES, shipped)
+    monkeypatch.setattr(server, "FIXTURES", shipped)
+    server.create_app(data_root=shipped, watch=False)
+    assert not (shipped / E.MIGRATION_FILE).exists() and not (shipped / E.WAYS_FILE).exists()
 
 
 @pytest.mark.parametrize("line, want", [
