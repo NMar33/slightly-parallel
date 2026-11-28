@@ -494,7 +494,7 @@ def test_the_state_endpoint_describes_the_ladder_and_the_source(client):
     assert body["source"]["files"] > 0
     assert [r["days"] for r in body["rungs"]] == [1, 3, 7, 14, 30, 90]
     assert body["keep"]["manual"] == 10
-    assert body["excluded"] == ["*.lock", "operator.token", "tour_shots/", "monitor/", "terminal/"]
+    assert body["excluded"] == ["*.lock", "operator.token", "tour_shots/", "monitor/", "terminal/", "diagnostics/"]
     assert body["backup_root"].endswith("-backups")
 
 
@@ -715,3 +715,89 @@ def test_a_restore_waits_until_every_file_can_be_copied_first(roots):
     finally:
         locked.chmod(0o644)
     assert locked.read_text(encoding="utf-8") == "only here\n"
+
+
+@pytest.mark.parametrize("folder", ["diagnostics", "Diagnostics"])
+def test_terminal_diagnostics_stay_out_of_an_archive(roots, folder):
+    data, dest = roots
+    diagnostics = data / folder
+    diagnostics.mkdir()
+    capture = diagnostics / "terminal-example.json"
+    capture.write_text('{"screen":"local terminal transcript"}', encoding="utf-8")
+    archive = backup.create(data, dest, kind="manual")
+    assert archive.path is not None
+    with tarfile.open(archive.path) as tar:
+        assert not any(name.casefold().startswith(f"{data.name}/diagnostics") for name in tar.getnames())
+    assert capture.is_file()
+
+
+def _legacy_archive(dest: Path, *entries: tuple[Path, str]) -> str:
+    dest.mkdir(exist_ok=True)
+    name = backup.archive_name(datetime(2026, 1, 1), "manual")
+    with tarfile.open(dest / (name + backup.ARCHIVE_SUFFIX), "w:gz") as tar:
+        for path, arcname in entries:
+            tar.add(path, arcname=arcname)
+    return name
+
+
+@pytest.mark.parametrize("folder", ["diagnostics", "Diagnostics"])
+@pytest.mark.parametrize("has_local_capture", [False, True])
+def test_restoring_an_old_backup_keeps_diagnostics_local(roots, folder, has_local_capture):
+    source, dest = roots
+    archived = source / folder
+    archived.mkdir()
+    (archived / "terminal-archived.json").write_text('{"screen":"old capture"}', encoding="utf-8")
+    name = _legacy_archive(dest, (source / "tasks.csv", f"{source.name}/tasks.csv"), (archived, f"{source.name}/{folder}"))
+
+    target = source.parent / "restored"
+    target.mkdir()
+    local = target / folder / "terminal-local.json"
+    if has_local_capture:
+        local.parent.mkdir()
+        local.write_text('{"screen":"local capture"}', encoding="utf-8")
+    backup.restore(dest, name, target)
+    assert (target / "tasks.csv").read_bytes() == (source / "tasks.csv").read_bytes()
+    if has_local_capture:
+        assert list(local.parent.iterdir()) == [local]
+        assert local.read_text(encoding="utf-8") == '{"screen":"local capture"}'
+    else:
+        assert not local.parent.exists()
+
+
+@pytest.mark.parametrize("folder", ["diagnostics", "Diagnostics"])
+def test_reserved_diagnostics_cannot_be_the_archive_root(roots, folder):
+    data, dest = roots
+    diagnostics = data.parent / "capture"
+    diagnostics.mkdir()
+    (diagnostics / "terminal.json").write_text('{"screen":"old capture"}', encoding="utf-8")
+    name = _legacy_archive(dest, (diagnostics, folder))
+    original_tasks = (data / "tasks.csv").read_bytes()
+
+    with pytest.raises(backup.BackupError, match="reserved diagnostics folder"):
+        backup.restore(dest, name, data)
+
+    assert (data / "tasks.csv").read_bytes() == original_tasks
+    assert not (data / "terminal.json").exists()
+
+
+def test_trial_and_restore_read_the_same_flat_archive(roots):
+    data, dest = roots
+    diagnostics = data / "Diagnostics"
+    diagnostics.mkdir()
+    (diagnostics / "terminal.json").write_text('{"screen":"old capture"}', encoding="utf-8")
+    name = _legacy_archive(
+        dest, (data / "tasks.csv", "tasks.csv"), (data / "projects", "projects"),
+        (diagnostics, "Diagnostics"),
+    )
+
+    report = backup.trial(dest, name)
+    assert report["counts"].get("task") == 1, report
+    assert report["ok"], report["problems"]
+
+    target = data.parent / "restored"
+    target.mkdir()
+    backup.restore(dest, name, target)
+    assert (target / "tasks.csv").read_bytes() == (data / "tasks.csv").read_bytes()
+    log = "projects/ALPHA/log.md"
+    assert (target / log).read_bytes() == (data / log).read_bytes()
+    assert not (target / "Diagnostics").exists()

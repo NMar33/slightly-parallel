@@ -82,6 +82,16 @@ type Server = { url: string; api: APIRequestContext; dir: string }
 type Shell = { id: string; label: string; backend: string }
 type Win = { app: ElectronApplication; page: Page; userData: string }
 
+/** Electron also advertises the dashboard view as a Playwright page. */
+export async function mainTerminalPage(app: ElectronApplication) {
+  let terminal: Page | undefined
+  await expect.poll(() => {
+    terminal = app.context().pages().find((page) => /^https?:\/\/[^/]+\/term(?:[?#]|$)/.test(page.url()))
+    return !!terminal
+  }).toBe(true)
+  return terminal!
+}
+
 async function withWindow(use: (w: Win) => Promise<void>) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-desktop-e2e-profile-'))
   const app = await _electron.launch({ executablePath: ELECTRON, args: launchArgs(userData), env: launchEnv(), timeout: 30_000 })
@@ -92,7 +102,7 @@ async function withWindow(use: (w: Win) => Promise<void>) {
   context.on('page', watchErrors)
   try {
     await catchLinksOut(app)
-    const page = await app.firstWindow()
+    const page = await mainTerminalPage(app)
     await page.waitForLoadState('domcontentloaded')
     await use({ app, page, userData })
     expect(pageErrors, 'uncaught errors in Electron renderers').toEqual([])
