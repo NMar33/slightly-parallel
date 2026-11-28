@@ -32,6 +32,7 @@ through pywinpty (``WinPtySession``, conpty.py), plain terminals only.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -67,7 +68,7 @@ TMUX_PANE_RESIZE_POLL_S = 0.015
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
 
-_MAX_SESSIONS = 32
+_MAX_SESSIONS = 36
 # What a terminal asks the screen (who are you, where is the cursor): kept
 # out of a replay, or the new screen answers into the shell as if typed.
 _QUERIES = re.compile(rb"\x1b\[[>=?]?[0-9;]*c|\x1b\[[56]n")
@@ -160,7 +161,8 @@ async def _read_session(session: "PtySession") -> bytes:
 class PtySession:
     """One pty the server holds: a shell (plain) or a tmux client (tmux)."""
 
-    def __init__(self, session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str]):
+    def __init__(self, session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str], *,
+                 strict_cwd: bool = False):
         self.session_id = session_id
         # Built before the fork: the child of a threaded server only chdirs
         # and execs, it does not touch os.environ.
@@ -170,7 +172,8 @@ class PtySession:
             try:
                 os.chdir(cwd)
             except OSError:
-                pass
+                if strict_cwd:
+                    os._exit(126)
             try:
                 os.execvpe(argv[0], argv, full_env)
             finally:
@@ -307,10 +310,12 @@ class WinPtySession(PtySession):
         self.con.release()
 
 
-def open_pty(session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str]) -> PtySession:
+def open_pty(session_id: str, argv: list[str], cwd: str, cols: int, rows: int, env: dict[str, str], *,
+             strict_cwd: bool = False) -> PtySession:
     """A pty of this system's kind running `argv`."""
-    kind = WinPtySession if os.name == "nt" else PtySession
-    return kind(session_id, argv, cwd, cols, rows, env)
+    if os.name == "nt":
+        return WinPtySession(session_id, argv, cwd, cols, rows, env)
+    return PtySession(session_id, argv, cwd, cols, rows, env, strict_cwd=strict_cwd)
 
 
 def _cfg(data_root: Path) -> dict[str, Any]:
@@ -461,7 +466,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             if len(sessions) >= _MAX_SESSIONS:
                 raise _TooMany
             env = {"TERM": "xterm-256color", "COLORTERM": "truecolor", "SP_TERMINAL": sid}
-            found = open_pty(sid, termlib.plain_shell(), str(row.get("cwd") or root), cols, rows, env)
+            opts = {"strict_cwd": True} if row.get("strict_cwd") else {}
+            found = open_pty(sid, termlib.plain_shell(), str(row.get("cwd") or root), cols, rows, env, **opts)
             sessions[sid] = found
         return found, True
 
@@ -585,6 +591,27 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         return {"sessions": items, "counts": counts}
 
     # ---------------------------------------------------------------- open
+    def _resume_agent(store: ViewStore, agent_id: str) -> tuple[dict[str, Any], str]:
+        agent = next((dict(a) for a in store.agents() if str(a.get("agent_id")) == agent_id), None)
+        if not agent:
+            raise not_found("agent", agent_id)
+        command = termlib.resume_command(str(agent.get("tool") or ""), str(agent.get("session_ref") or ""))
+        if not command:
+            raise HTTPException(status_code=422, detail="This chat cannot be resumed: its tool or session id was not recorded.")
+        return agent, command
+
+    def _resume_revision(agent: str, command: str, project: str, cwd: str) -> str:
+        return hashlib.sha256(json.dumps([agent, command, project, cwd]).encode()).hexdigest()
+
+    @router.get("/api/terminal/resume/{agent_id}")
+    def terminal_resume_preview(agent_id: str, request: Request, store: ViewStore = Depends(get_store)) -> dict[str, str]:
+        _need_on(request)
+        root = request.app.state.settings.data_root
+        agent, command = _resume_agent(store, agent_id)
+        project, cwd = str(agent.get("project") or ""), str(agent.get("cwd") or "")
+        return {"cwd": str(termlib.resolve_cwd(root, project, cwd).resolve()),
+                "resume_revision": _resume_revision(agent_id, command, project, cwd)}
+
     @router.post("/api/terminal/sessions", status_code=201)
     def terminal_open(request: Request, body: dict = Body(default={}), store: ViewStore = Depends(get_store)) -> dict[str, Any]:
         _need_on(request)
@@ -602,21 +629,24 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         agent_id = str(body.get("agent") or "")
         task_id = str(body.get("task_id") or "")
         command = ""
+        expected_cwd = None
         if kind == "resume":
-            agent = next((dict(a) for a in store.agents() if str(a.get("agent_id")) == agent_id), None)
-            if not agent:
-                raise not_found("agent", agent_id)
-            command = termlib.resume_command(str(agent.get("tool") or ""), str(agent.get("session_ref") or ""))
-            if not command:
-                raise HTTPException(status_code=422, detail="This chat cannot be resumed: its tool or session id was not recorded.")
+            agent, command = _resume_agent(store, agent_id)
             project = project or str(agent.get("project") or "")
             cwd = cwd or str(agent.get("cwd") or "")
+            if "expected_cwd" in body or "resume_revision" in body:
+                expected_cwd = body.get("expected_cwd")
+                if (not isinstance(expected_cwd, str) or not expected_cwd
+                        or _resume_revision(agent_id, command, project, cwd) != body.get("resume_revision")):
+                    raise HTTPException(status_code=409, detail="The chat changed. Select it again.")
             # The name the pages show: a real name, else the chat's title, else the id.
             name = str(agent.get("agent_name") or "")
             label = label or (name if name and name != agent_id else str(agent.get("chat_title") or agent_id))
             # One terminal per resumed agent: an open one is reused.
             for r in termlib.listing(root, _plain_status()):
                 if r.get("kind") == "resume" and r.get("agent_id") == agent_id and r["state"] != "ended":
+                    if expected_cwd is not None and r.get("asleep"):
+                        raise HTTPException(status_code=409, detail="The chat has a sleeping terminal. Select it again.")
                     return {"session": r, "existing": True}
         elif kind == "start":
             task = store.query_one("SELECT * FROM tasks_mutual WHERE id = ?", (task_id,))
@@ -640,7 +670,9 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         try:
             row = termlib.open_session(root, cfg, kind=kind, project=project, cwd=cwd, command=command,
                                        label=label, agent_id=agent_id, task_id=task_id,
-                                       role=str(body.get("role") or ""), group=group)
+                                       role=str(body.get("role") or ""), group=group, expected_cwd=expected_cwd)
+        except termlib.CwdChangedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
             raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
         with _session_change(row["id"]):
@@ -813,7 +845,8 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             raise not_found("terminal", sid)
         return row
 
-    def _wake(root: Path, cfg: dict[str, Any], store: ViewStore, row: dict[str, Any], *, shell: bool = False) -> dict[str, Any]:
+    def _wake(root: Path, cfg: dict[str, Any], store: ViewStore, row: dict[str, Any], *,
+              shell: bool = False, expected_cwd: str | None = None) -> dict[str, Any]:
         awake = sum(1 for r in termlib.listing(root, _plain_status()) if r["state"] not in ("ended", "asleep"))
         if awake >= _MAX_SESSIONS:
             raise HTTPException(status_code=429, detail=f"{_MAX_SESSIONS} terminals are open: close one first.")
@@ -823,7 +856,9 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         if not shell:
             cmd = str(row.get("wake") or "") if row.get("asleep") else termlib.wake_command(row, _resume_of(store, row))
         try:
-            termlib.wake(root, cfg, row["id"], cmd)
+            termlib.wake(root, cfg, row["id"], cmd, expected_cwd=expected_cwd)
+        except termlib.CwdChangedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except Exception as exc:  # noqa: BLE001 — tmux failing is the operator's to see
             raise HTTPException(status_code=500, detail=f"the terminal could not open: {exc}")
         _start_plain(root, row["id"])
@@ -844,7 +879,7 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
             cmd = termlib.wake_command(row, _resume_of(store, row))
             _drop(sid)
             try:
-                termlib.sleep(root, sid, cmd)
+                termlib.sleep(root, sid, cmd, agent_id=str(row.get("agent_id") or ""))
             except termlib.TmuxError as exc:
                 raise _tmux_503(exc, "the terminal was not put to sleep.") from None
             return {"session": _listed(root, sid)}
@@ -858,11 +893,29 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         with _session_change(sid):
             row = _listed(root, sid)
             shell = body.get("shell") is True
+            expected_cwd = None
+            if any(key in body for key in ("expected_agent", "wake_revision", "expected_cwd")):
+                agent = body.get("expected_agent")
+                expected_cwd = body.get("expected_cwd")
+                saved = termlib.get(root, sid) or {}
+                link = termlib.agent_links(root, fresh=True).get(sid, {})
+                owners = {owner for owner in (
+                    saved.get("agent_id"), saved.get("wake_agent_id"), link.get("agent_id")
+                ) if owner}
+                if (not isinstance(agent, str) or owners != {agent} or row["state"] != "asleep"
+                        or shell or termlib.wake_revision(saved) != body.get("wake_revision")
+                        or (not saved.get("wake_agent_id") and saved.get("wake")
+                            and saved["wake"] != _resume_of(store, {"agent_id": agent}))):
+                    raise HTTPException(status_code=409, detail="The saved terminal or its agent changed. Select it again.")
+                if (not isinstance(expected_cwd, str) or not expected_cwd
+                        or expected_cwd != termlib.wake_cwd(saved)):
+                    raise HTTPException(status_code=409, detail=str(termlib.CwdChangedError()))
+                row = {**row, **saved, "agent_id": agent}
             if shell and row.get("asleep"):
                 raise HTTPException(status_code=409, detail="the terminal is asleep")
             if row["state"] not in ("asleep", "ended"):
                 return {"session": row}
-            return {"session": _wake(root, _cfg(root), store, row, shell=shell)}
+            return {"session": _wake(root, _cfg(root), store, row, shell=shell, expected_cwd=expected_cwd)}
 
     def _lost(root: Path) -> list[dict[str, Any]]:
         return termlib.lost(termlib.listing(root, _plain_status()), termlib.tmux_server_pid(root))

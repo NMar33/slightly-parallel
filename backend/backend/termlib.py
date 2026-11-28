@@ -249,6 +249,13 @@ CODEX_HELP_TIMEOUT_S = 2
 FOREGROUND_PS_TIMEOUT_S = 2
 
 
+class CwdChangedError(ValueError):
+    """The terminal could not open in the folder the operator confirmed."""
+
+    def __init__(self):
+        super().__init__("The terminal folder changed or is unavailable. Select it again.")
+
+
 class TmuxError(RuntimeError):
     """tmux did not answer in time, or could not be run. A write lets it
     reach the route, which answers 503 with this message; a read never sees
@@ -258,11 +265,18 @@ class TmuxError(RuntimeError):
 def tmux(data_root: Path, *args: str, timeout: float | None = None, input: str | None = None) -> subprocess.CompletedProcess:
     """A tmux command. A failing command comes back with its returncode; a
     tmux that does not answer in `timeout` seconds (WRITE_TIMEOUT) raises TmuxError."""
-    timeout = WRITE_TIMEOUT if timeout is None else timeout
+    return _tmux(data_root, args, timeout=WRITE_TIMEOUT if timeout is None else timeout, input=input)
+
+
+def _tmux(data_root: Path, args: tuple[str, ...], *, timeout: float, input: str | None = None,
+          read_only: bool = False) -> subprocess.CompletedProcess:
     cmd = args[0] if args else "tmux"
     t0 = time.perf_counter()
     try:
-        out = subprocess.run(tmux_argv(data_root, *args), input=input, capture_output=True, text=True,
+        # Reads talk to an existing server without creating or loading its config.
+        argv = ([tmux_path() or "tmux", "-L", socket_of(data_root), *args]
+                if read_only else tmux_argv(data_root, *args))
+        out = subprocess.run(argv, input=input, capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=timeout)
         termlog.REC.tmux_call(cmd, (time.perf_counter() - t0) * 1000)
         return out
@@ -279,7 +293,7 @@ def tmux_read(data_root: Path, *args: str, timeout: float | None = None) -> subp
     stdout — so the terminal list, the restore offer and a capture answer
     from the registry instead of failing."""
     try:
-        return tmux(data_root, *args, timeout=READ_TIMEOUT if timeout is None else timeout)
+        return _tmux(data_root, args, timeout=READ_TIMEOUT if timeout is None else timeout, read_only=True)
     except TmuxError as exc:
         log.info("%s: read as no answer", exc)
         return subprocess.CompletedProcess(list(args), 1, "", str(exc))
@@ -750,12 +764,18 @@ def typed_form(command: str, shell: str) -> str:
 
 def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, project: str, cwd: str,
                  command: str = "", label: str = "", agent_id: str = "", task_id: str = "",
-                 sid: str = "", role: str = "", group: str = "") -> dict[str, Any]:
+                 sid: str = "", role: str = "", group: str = "",
+                 expected_cwd: str | None = None) -> dict[str, Any]:
     """A new terminal: its row, and — with tmux — the session, running `command`."""
     if command == "codex":
         command = codex_in_terminal()
     sid = sid if sid and SAFE_ID.match(sid) else new_id()
     where = str(resolve_cwd(data_root, project, cwd))
+    if expected_cwd is not None:
+        resolved = Path(where).resolve()
+        if resolved != Path(expected_cwd) or not resolved.is_dir():
+            raise CwdChangedError()
+        where = str(resolved)
     backend = "tmux" if uses_tmux(settings) else "plain"
     # `created` orders the tabs (and alt+1…9). To the millisecond: two
     # terminals opened in the same second tied, the page broke the tie by
@@ -767,6 +787,7 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
         "created": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}",
         "backend": backend,
         "launch": settings.get("terminal.launch", "run"),
+        "strict_cwd": expected_cwd is not None,
     }
     if role in ROLES:
         row["role"] = role
@@ -784,6 +805,13 @@ def open_session(data_root: Path, settings: dict[str, Any], *, kind: str, projec
                       "-e", f"SP_TERMINAL={sid}", "-e", "TERM=xterm-256color", shell, "-l")
         if command:
             wait_for_prompt(data_root, sid)
+        if expected_cwd is not None:
+            pane = tmux_read(data_root, "display-message", "-p", "-t", PREFIX + sid, "#{pane_current_path}")
+            opened = pane.stdout.strip()
+            if not opened or Path(opened).resolve() != Path(expected_cwd):
+                tmux(data_root, "kill-session", "-t", PREFIX + sid)
+                raise CwdChangedError()
+        if command:
             type_into(data_root, row, typed_form(command, shell), enter=row["launch"] == "run")
         # Which tmux server holds it: a terminal whose server is gone was not
         # closed by anyone (a reboot, a crash), and Restore offers it back.
@@ -958,7 +986,26 @@ def wake_command(row: dict[str, Any], resume: str = "") -> str:
     return ""
 
 
-def sleep(data_root: Path, sid: str, wake: str) -> dict[str, Any] | None:
+def wake_cwd(row: dict[str, Any]) -> str:
+    """The existing directory the terminal confirmation can show."""
+    cwd = row.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        return ""
+    try:
+        path = Path(cwd).resolve(strict=True)
+        return str(path) if path.is_dir() else ""
+    except (OSError, RuntimeError):
+        return ""
+
+
+def wake_revision(row: dict[str, Any]) -> str:
+    """Identify the saved wake the operator selected, without returning more data."""
+    fields = ("id", "agent_id", "wake_agent_id", "kind", "project", "cwd", "backend",
+              "created", "slept_at", "woken_at", "wake")
+    return hashlib.sha256(json.dumps([row.get(key) for key in fields]).encode()).hexdigest()
+
+
+def sleep(data_root: Path, sid: str, wake: str, *, agent_id: str = "") -> dict[str, Any] | None:
     """Stop what runs in the terminal and keep its row: `wake` is what it
     runs when woken. The tmux session is killed; the caller drops a plain pty."""
     row = get(data_root, sid)
@@ -966,11 +1013,12 @@ def sleep(data_root: Path, sid: str, wake: str) -> dict[str, Any] | None:
         return None
     if row.get("backend") == "tmux":
         tmux(data_root, "kill-session", "-t", PREFIX + sid)
-    return put(data_root, {"id": sid, "asleep": True, "wake": wake,
+    return put(data_root, {"id": sid, "asleep": True, "wake": wake, "wake_agent_id": agent_id,
                            "slept_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
 
-def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | None = None) -> dict[str, Any] | None:
+def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | None = None, *,
+         expected_cwd: str | None = None) -> dict[str, Any] | None:
     """The terminal again, under its own id, running `command` (default: what
     sleep() kept). Its label, role, group, agent and task stay."""
     row = get(data_root, sid)
@@ -985,7 +1033,8 @@ def wake(data_root: Path, settings: dict[str, Any], sid: str, command: str | Non
         cwd = ""  # the folder is gone: the project's folder, or home
     out = open_session(data_root, settings, kind=str(row.get("kind") or "shell"), project=str(row.get("project") or ""),
                        cwd=cwd, command=cmd, label=str(row.get("label") or ""),
-                       agent_id=str(row.get("agent_id") or ""), task_id=str(row.get("task_id") or ""), sid=sid)
+                       agent_id=str(row.get("agent_id") or ""), task_id=str(row.get("task_id") or ""), sid=sid,
+                       expected_cwd=expected_cwd)
     # The command a terminal was opened with stays its own; what woke it is `wake`.
     # A plain terminal types `wake` when its new shell starts (routers/terminal.py
     # _pending): not typed yet. Before, it kept `typed` from its first life and a
@@ -1208,14 +1257,14 @@ def _codex_in_pane(root: Path, agent: str, tid: str, panes: dict[str, dict[str, 
     return bool(pane_pid) and msgdeliver.occupant_why(root, agent, pane_pid) == ""
 
 
-def agent_links(data_root: Path) -> dict[str, dict[str, Any]]:
+def agent_links(data_root: Path, *, fresh: bool = False) -> dict[str, dict[str, Any]]:
     """terminal id → the agent the capture hook saw started in it (newest
     wins); a Codex chat only when it is proven to run in it (_codex_in_pane)."""
     global _link_cache
     root = Path(data_root)
     now = time.monotonic()
     cached_root, cached_at, cached_links = _link_cache
-    if cached_root == root and now - cached_at < 3:
+    if not fresh and cached_root == root and now - cached_at < 3:
         return cached_links
     out: dict[str, dict[str, Any]] = {}
     panes: dict[str, dict[str, Any]] | None = None
@@ -1287,8 +1336,13 @@ def listing(data_root: Path, plain: dict[str, dict[str, Any]] | None = None) -> 
             fg, last = (p or {}).get("fg", ""), (p or {}).get("activity", 0.0)
         if st == "ended" and r.get("asleep"):
             st = "asleep"
-        out.append({**r, "role": role_of(r), "state": st, "program": fg, "last_output": last,
-                    "agent_id": (link or {}).get("agent_id") or r.get("agent_id") or ""})
+        item = {**r, "role": role_of(r), "state": st, "program": fg, "last_output": last,
+                "agent_id": (link or {}).get("agent_id") or r.get("agent_id")
+                or (r.get("wake_agent_id") if st == "asleep" else "") or ""}
+        if st == "asleep":
+            item["wake_revision"] = wake_revision(r)
+            item["wake_cwd"] = wake_cwd(r)
+        out.append(item)
     out.sort(key=lambda x: x.get("created") or "")
     return out
 

@@ -16,7 +16,7 @@ import { getJson, postJson } from '../../../lib/getJson'
 import { entryText } from '../../../lib/entryText'
 import { todayYYMMDD } from '../../../utils/dateUtils'
 import { useAquaActions, useSessions } from '../../aqua/app/api'
-import { openWindow } from '../../aqua/app/bridge'
+import { hasNativeAgentTerminal, openWindow } from '../../aqua/app/bridge'
 import { detachUrl, shownOf } from '../../aqua/app/model'
 import { useTabInfo } from '../../aqua/app/tabs/facts'
 import { coreColor, useCoreWrites } from '../../architecture/cores/data'
@@ -24,6 +24,7 @@ import { chooseCoresMode } from '../../architecture/page/mode'
 import { useKeptRecord, useRestoreKeptRecord, useSetFields } from '../../visions/data'
 import { t, tn } from '../../../i18n/scope/msgmenu'
 import type { IdKind } from './ids'
+import { AgentTerminalActions } from './AgentTerminalMenu'
 import { Action, copyId, DIM, FG, openPage, Part, placeCard, RecordCard } from './pop'
 import {
   coreView, pageOf, useAgentCard, useAgentTasks, useCommit, useCommitDiff, useCoreCard, useDecision, useEntryCard,
@@ -418,8 +419,12 @@ export function AgentCard(p: CardProps & { goTo?: (sid: string) => void }) {
         {state && <Chip style={state === 'waiting' ? { color: 'var(--status-amber)' } : undefined}>{STATE_WORD[state] ?? state}</Chip>}
       </> : null}
       actions={<>
-        {live && <Action icon={<CornerDownRight size={15} />} label={t('Go to its tab')} onClick={() => { p.close(); show(live.id) }} />}
-        {d?.canResume && !live && <Action icon={<RotateCcw size={15} />} label={t('Resume')} onClick={resume} />}
+        {hasNativeAgentTerminal() ? (
+          <div role="menu" aria-label={t('Chat')}><AgentTerminalActions agent={p.id} close={p.close} /></div>
+        ) : <>
+          {live && <Action icon={<CornerDownRight size={15} />} label={t('Go to its tab')} onClick={() => { p.close(); show(live.id) }} />}
+          {d?.canResume && !live && <Action icon={<RotateCcw size={15} />} label={t('Resume')} onClick={resume} />}
+        </>}
         {d?.canBranch && <Action icon={<GitBranch size={15} />} label={t('Branch into a new window')} onClick={branch} />}
         <Action icon={<SquareTerminal size={15} />} label={t('Open the chat in Slightly Parallel')} disabled={!d}
           onClick={() => { p.close(); openPage(pageOf.agent(p.id)) }} />

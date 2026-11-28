@@ -9,7 +9,7 @@ import { ReleasePromptModal } from './kanban/ReleasePrompt'
 import { CarryOverModal } from './kanban/CarryOver'
 import { OPERATOR_ACTOR } from './types'
 import { fail, postJson } from '../../lib/getJson'
-import { SELECTION, glowOf, isToday, normalizeStatus, readModalPrefs } from './kanban/model'
+import { SELECTION, glowOf, isToday, normalizeStatus, readModalPrefs, type LaneRef } from './kanban/model'
 import { useBoardData } from './kanban/boardData'
 import { LinksHelp, LinksOverlay } from './kanban/LinksOverlay'
 import { TaskAddModal } from './kanban/TaskWindow'
@@ -56,9 +56,13 @@ import { decodeSafe } from '../../hooks/useHashState'
 export function TasksKanban({
   projectCode,
   board,
+  linkedTask,
+  onCloseLinkedTask,
 }: {
   projectCode: string
   board?: KanbanBoard
+  linkedTask?: TaskRow
+  onCloseLinkedTask?: () => void
 }) {
   const evidenceAsk = useEvidenceAsk()
   // Every per-board memory (view, lanes, order, collapse) keys on this.
@@ -74,7 +78,7 @@ export function TasksKanban({
   // notes, evidence and links. `setTasks` edits the cache optimistically.
   const {
     tasks, setTasks, loading, loadError,
-    mentions, statusSince, noteCounts, evidenceCounts, links,
+    mentions, statusSince, noteCounts, evidenceCounts, links, savedLanes,
     refresh: refreshBoard, reloadLinks,
   } = useBoardData(boardKey, boardProjects, needsBodies)
   // A reload asked for by a write (`refreshTick`) refetches the board's
@@ -89,7 +93,7 @@ export function TasksKanban({
 
   const [addingStatus, setAddingStatus] = useState<string | null>(null)
   // Lane a cell "+" was pressed in (swim lanes); '' = unassigned, null = none.
-  const [addingAssignee, setAddingAssignee] = useState<string | null>(null)
+  const [addingLaneTarget, setAddingLaneTarget] = useState<LaneRef | null>(null)
   const [editingTask, setEditingTask] = useState<TaskRow | null>(null)
   const [releaseTask, setReleaseTask] = useState<TaskRow | null>(null)
   // Sprint blocks: filter (sprint id | 'none' | null) — active filter also
@@ -228,14 +232,31 @@ export function TasksKanban({
     }
   }, [loading, tasks])
 
+  const openedLink = useRef('')
+  useEffect(() => {
+    if (!linkedTask) { openedLink.current = ''; return }
+    if (openedLink.current === linkedTask.id) return
+    openedLink.current = linkedTask.id
+    setEditingTask(linkedTask)
+  }, [linkedTask])
+
+  const closeEditor = () => {
+    if (linkedTask) onCloseLinkedTask?.()
+    setAddingStatus(null)
+    setAddingLaneTarget(null)
+    setEditingTask(null)
+    setAxes(readModalPrefs().axes)
+  }
+
   const [colSettings, setColSettings] = useState(false)
 
   // Swim lanes: their state and operations live in board/useLanes.
   const {
-    lanes, collapsedLanes, toggleLane, allCollapsed, collapseAll,
+    lanes, agentLanes, agentsOpen, toggleAgents, promoteLane, collapsedLanes, toggleLane, allCollapsed, collapseAll,
     addingLane, setAddingLane, laneDraft, setLaneDraft,
     renameLane, deleteLane, commitAddLane, moveLaneBefore,
-  } = useLanes({ boardKey, view, tasks, setTasks, setRefreshTick })
+  } = useLanes({ boardKey, view, tasks, setTasks, setRefreshTick, savedLanes,
+    project: boardProjects.includes(projectCode) ? projectCode : boardProjects[0] })
 
   // Drops — a card, a batch, the selection, the archive (board/drops).
   const { handleDrop } = boardDrops({
@@ -302,12 +323,13 @@ export function TasksKanban({
       {view === 'lanes' ? (
         <div className="overflow-x-auto">
           <LanesGrid {...gridProps}
-            lanes={lanes} collapsedLanes={collapsedLanes} toggleLane={toggleLane}
+            lanes={lanes} agentLanes={agentLanes} agentsOpen={agentsOpen}
+            toggleAgents={toggleAgents} promoteLane={promoteLane} collapsedLanes={collapsedLanes} toggleLane={toggleLane}
             renameLane={renameLane} deleteLane={deleteLane} moveLaneBefore={moveLaneBefore}
             allCollapsed={allCollapsed} collapseAll={collapseAll}
             addingLane={addingLane} setAddingLane={setAddingLane}
             laneDraft={laneDraft} setLaneDraft={setLaneDraft} commitAddLane={commitAddLane}
-            setAddingAssignee={setAddingAssignee}
+            setAddingLaneTarget={setAddingLaneTarget}
           />
         </div>
       ) : (
@@ -375,26 +397,17 @@ export function TasksKanban({
       {/* Add / edit task popup modal */}
       {(addingStatus || editingTask) && (
         <TaskAddModal
-          projectCode={projectCode}
+          projectCode={addingLaneTarget?.project || projectCode}
           boardProjects={boardProjects}
           initialSprint={sprintFilter && sprintFilter !== 'none' ? sprintFilter : undefined}
           initialStatus={addingStatus || editingTask?.status || 'unclassified'}
-          initialAssignee={addingAssignee ?? undefined}
+          initialAssignee={addingLaneTarget?.name}
           existingTask={editingTask}
-          onClose={() => {
-            setAddingStatus(null)
-            setAddingAssignee(null)
-            setEditingTask(null)
-            setAxes(readModalPrefs().axes)
-          }}
+          onClose={closeEditor}
           onSaved={(o) => {
             // ▶ keeps the window open for the next task — only refresh.
-            if (!o?.keepOpen) {
-              setAddingStatus(null)
-              setAddingAssignee(null)
-              setEditingTask(null)
-            }
-            setAxes(readModalPrefs().axes)
+            if (o?.keepOpen) setAxes(readModalPrefs().axes)
+            else closeEditor()
             setRefreshTick((t) => t + 1)
           }}
           onLinksChanged={() => void reloadLinks()}
@@ -407,7 +420,7 @@ export function TasksKanban({
           onRelease={(t) => {
             // One window at a time: the release window takes the editor's place.
             setAddingStatus(null)
-            setAddingAssignee(null)
+            setAddingLaneTarget(null)
             setEditingTask(null)
             setReleaseTask(t)
           }}

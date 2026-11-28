@@ -280,6 +280,21 @@
 .aq-btn.icon { width: 24px; padding: 0; }
 .aq-btn.line { border-color: var(--aq-line); }
 
+[data-window-title-controls] { container: aqua-title / inline-size; }
+[data-window-title-grid] { grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr); }
+/* Use the space between the sidebar buttons, even before the native resize
+   reaches React. Collapse the title and labels before moving the controls. */
+@container aqua-title (width < 568px) {
+  [data-title-action] { width: 24px; padding: 0; }
+  [data-title-action-label] { display: none; }
+}
+@container aqua-title (width < 408px) {
+  [data-window-title-grid] { grid-template-columns: max-content minmax(0, 1fr) minmax(0, auto); gap: 2px; }
+  [data-window-actions] { gap: 1px; }
+  [data-timer-group] { gap: 0; margin-left: 0; }
+  [data-timer], [data-health-label] { padding-inline: 2px !important; }
+}
+
 [data-timer-group] [data-timer] { height: 22px; }
 [data-window-title][data-compact] .aq-btn { height: 16px; }
 [data-window-title][data-compact] [data-resource-bars] { row-gap: 0; }

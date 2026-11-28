@@ -44,6 +44,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import NoReturn
@@ -1005,6 +1006,25 @@ def sandbox_usable(dist: Path) -> bool:
     return st.st_uid == 0 and bool(st.st_mode & 0o4000)
 
 
+def window_origin() -> str:
+    """Select Vite only when the backend redirects to our configured dev UI."""
+    class WithoutRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    backend, dev = base_url(), app_url()
+    try:
+        with urllib.request.build_opener(WithoutRedirect()).open(f"{backend}/term", timeout=2):
+            pass
+    except urllib.error.HTTPError as error:
+        with error:
+            if error.code == 307 and error.headers.get("Location") == f"{dev}/term":
+                return dev
+    except (OSError, ValueError):
+        pass
+    return backend
+
+
 def cmd_window(args: list[str]) -> None:
     """The terminal in a window of its own (desktop/, Electron)."""
     word = args[0] if args else ""
@@ -1048,7 +1068,7 @@ def cmd_window(args: list[str]) -> None:
         extra.append("--no-sandbox")
         say("window: this Linux does not let Chromium's sandbox start without an administrator; running without it.")
         say(f"        to switch it on: sudo chown root '{dist / 'chrome-sandbox'}' && sudo chmod 4755 '{dist / 'chrome-sandbox'}'")
-    pid = detached([str(electron_bin()), str(DESKTOP), *extra, f"--url={base_url()}", *args], STATE / "window.log")
+    pid = detached([str(electron_bin()), str(DESKTOP), *extra, f"--url={window_origin()}", *args], STATE / "window.log")
     say(f"window: started (pid {pid}); its log is {STATE / 'window.log'}")
 
 

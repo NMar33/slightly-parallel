@@ -15,9 +15,9 @@ from __future__ import annotations
 #: The tools that write to or read one project, and so take a top-level ``project``.
 PROJECT_TOOLS: frozenset[str] = frozenset({
     "write_entry", "scan_material",
-    "architecture_material", "architecture_page", "map_material", "map_write",
+    "architecture_status", "architecture_material", "architecture_page", "map_material", "map_write",
     "core_new", "note_write",
-    "tasks", "cores", "pins", "entrypoints", "notes", "usage", "project",
+    "tasks", "cores", "pins", "entrypoints", "entrypoint_offer", "notes", "usage", "project",
 })
 
 _ARGS: dict[str, tuple[str, ...]] = {

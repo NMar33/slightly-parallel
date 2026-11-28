@@ -78,7 +78,7 @@ export function useAquaActions() {
   const sid = (id: string) => `/api/terminal/sessions/${encodeURIComponent(id)}`
   return {
     /** A new terminal, handed back (never shown in the app's drawer). */
-    open: async (req: { kind: 'shell' | 'resume' | 'start'; project?: string; cwd?: string; label?: string; command?: string; agent?: string; task_id?: string; role?: Role; group?: string }) => {
+    open: async (req: { kind: 'shell' | 'resume' | 'start'; project?: string; cwd?: string; label?: string; command?: string; agent?: string; task_id?: string; role?: Role; group?: string; expected_cwd?: string; resume_revision?: string }) => {
       const d = await postJson<{ session: AquaSession }>('/api/terminal/sessions', { ...req, actor: 'operator' }).catch(failed(t('The terminal did not open')))
       refresh()
       return d?.session ?? null
@@ -86,7 +86,11 @@ export function useAquaActions() {
     close: async (id: string) => { await postJson(`${sid(id)}/close`, { actor: 'operator' }).catch(failed(t('The terminal did not close'))); refresh() },
     rename: async (id: string, label: string) => { await postJson(`${sid(id)}/rename`, { label, actor: 'operator' }).catch(failed(t('The terminal was not renamed'))); refresh() },
     sleep: async (id: string) => { await postJson(`${sid(id)}/sleep`, { actor: 'operator' }).catch(failed(t('The chat did not go to sleep'))); refresh() },
-    wake: async (id: string) => { await postJson(`${sid(id)}/wake`, { actor: 'operator' }).catch(failed(t('The chat did not wake'))); refresh() },
+    wake: async (id: string, expected?: { expected_agent: string; wake_revision: string; expected_cwd: string }) => {
+      const result = await postJson(`${sid(id)}/wake`, { actor: 'operator', ...expected }).catch(failed(t('The chat did not wake')))
+      refresh()
+      return !!result
+    },
     setGroup: async (id: string, group: string) => {
       const result = await postJson(`${sid(id)}/group`, { group, actor: 'operator' }).catch(failed(t('The chat did not move')))
       refresh()
