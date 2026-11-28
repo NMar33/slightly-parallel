@@ -501,10 +501,11 @@ def test_idle_terminals_do_not_take_the_threads_the_server_works_on() -> None:
     default executor, about eight idle terminals left asyncio.to_thread no
     thread to run on."""
     import asyncio
-    from backend.routers.terminal import _MAX_SESSIONS, _PTY_READS, _read_pty
+    from backend.app_settings import MAX_TERMINAL_SESSIONS
+    from backend.routers.terminal import MAX_TERMINAL_VIEWS, _PTY_READS, _read_pty
 
     # Every plain terminal and every tmux view can hold a read at once.
-    assert _PTY_READS._max_workers >= _MAX_SESSIONS * 5
+    assert _PTY_READS._max_workers >= MAX_TERMINAL_SESSIONS + MAX_TERMINAL_VIEWS
 
     async def main() -> None:
         pipes = [os.pipe() for _ in range(40)]
@@ -1290,3 +1291,158 @@ def test_a_new_scheme_with_no_tmux_running_changes_nothing(env) -> None:
     assert c.post("/api/settings", json={"values": {"terminal.scheme": "nord"}}).status_code == 200
     if TMUX:
         assert termlib.tmux(root, "list-sessions").returncode != 0
+
+
+def test_terminal_limit_reports_live_sessions_and_can_be_raised(env, monkeypatch) -> None:
+    import subprocess
+
+    from backend.routers import terminal
+
+    c, _root, _work = env
+    monkeypatch.setattr(terminal, "SUPPORTED", True)
+    _on(c)
+    assert c.get("/api/terminal/state").json().get("max_sessions") == 36
+    for invalid in (-1, 257, 2.5, "2", True):
+        refused = c.post("/api/settings", json={"values": {"terminal.max_sessions": invalid}})
+        assert refused.status_code == 422
+        assert "terminal.max_sessions" in refused.json()["detail"]
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 2}}).status_code == 200
+    live = [
+        {"id": "recent", "state": "working", "project": "alpha", "agent_id": "cc-recent",
+         "label": "Recent", "backend": "tmux", "created": "2026-11-26T12:00:00", "last_output": 200.0},
+        {"id": "idle", "state": "shell", "project": "alpha",
+         "label": "Idle", "created": "2026-11-25T12:00:00", "last_output": 100.0},
+        {"id": "asleep", "state": "asleep", "last_output": 0.0},
+    ]
+    opened = []
+    monkeypatch.setattr(termlib, "listing", lambda *_: live)
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: subprocess.CompletedProcess(
+        [], 0, stdout=f"{termlib.PREFIX}recent\t1\t150\n", stderr=""))
+
+    def open_session(*_args, **kwargs):
+        opened.append(kwargs)
+        return {"id": "new", "backend": "tmux"}
+
+    monkeypatch.setattr(termlib, "open_session", open_session)
+    req = {"kind": "shell", "project": "alpha"}
+    refused = c.post("/api/terminal/sessions", json=req)
+    assert refused.status_code == 429
+    body = refused.json()
+    assert isinstance(body["detail"], str)
+    assert (body["count"], body["limit"]) == (2, 2)
+    assert [row["id"] for row in body["sessions"]] == ["idle", "recent"]
+    recent = body["sessions"][1]
+    assert recent["agent_id"] == "cc-recent"
+    assert recent["created"] == "2026-11-26T12:00:00"
+    assert recent["last_activity"] == 200.0
+    assert recent["running"] is True
+    assert recent["attached"] is True
+    assert not opened
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 3}}).status_code == 200
+    assert c.post("/api/terminal/sessions", json=req).status_code == 201
+    assert len(opened) == 1
+    assert c.post("/api/settings", json={"values": {"terminal.max_sessions": 0}}).status_code == 200
+    assert c.get("/api/terminal/state").json()["max_sessions"] == 0
+    assert c.post("/api/terminal/sessions", json=req).status_code == 201
+    assert len(opened) == 2
+
+
+@pytest.mark.parametrize(("state", "attached"), [("working", False), ("shell", True)])
+def test_closing_from_the_terminal_limit_requires_confirmation(env, monkeypatch, state, attached) -> None:
+    import subprocess
+
+    c, _root, _work = env
+    monkeypatch.setattr(termlib, "listing", lambda *_: [
+        {"id": "sid", "state": state, "backend": "tmux"},
+    ])
+    monkeypatch.setattr(termlib, "tmux_read", lambda *_: subprocess.CompletedProcess(
+        [], 0, stdout=f"{termlib.PREFIX}sid\t{int(attached)}\t100\n", stderr=""))
+    closed = []
+    monkeypatch.setattr(termlib, "close", lambda _root, sid: closed.append(sid))
+    path = "/api/terminal/sessions/sid/close"
+    assert c.post(path, json={"from_limit": True}).status_code == 409
+    assert closed == []
+    assert c.post(path, json={"from_limit": True, "confirmed": True}).status_code == 200
+    assert closed == ["sid"]
+
+
+def test_terminal_limit_memory_counts_live_process_trees_without_writing(env, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import psutil
+
+    c, root, _work = env
+    now = time.time()
+    termlib.put(root, {"id": "claude", "label": "Review", "project": "alpha",
+                       "backend": "tmux", "kind": "start", "agent_id": "cc-aaaa1111",
+                       "last_opened": now - 20})
+    termlib.put(root, {"id": "shell", "label": "Shell", "project": "alpha",
+                       "backend": "tmux", "kind": "shell"})
+    termlib.put(root, {"id": "sleep", "backend": "tmux", "asleep": True})
+    monkeypatch.setattr(termlib, "tmux_panes", lambda _root: {
+        "claude": {"pid": "11", "fg": "claude", "activity": now - 1, "dead": False},
+        "shell": {"pid": "21", "fg": "sh", "activity": now - 1200, "dead": False},
+    })
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def children(self, recursive=False):
+            assert recursive is True
+            return [Process(12)] if self.pid == 11 else []
+
+        def memory_info(self):
+            return SimpleNamespace(rss={11: 120, 12: 80, 21: 5}[self.pid])
+
+    monkeypatch.setattr(psutil, "Process", Process)
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(total=1000, available=500))
+    registry = termlib.registry_path(root)
+    before = registry.read_bytes(), registry.stat().st_mtime_ns
+    response = c.get("/api/terminal/limit")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert (data["count"], data["limit"]) == (2, 36)
+    assert data["memory"]["total"] == 1000
+    assert data["memory"]["available"] == 500
+    assert data["memory"]["used"] == 205
+    assert data["memory"]["kinds"]["claude"] == {"count": 1, "bytes": 200, "measured": 1}
+    assert data["memory"]["kinds"]["shell"] == {"count": 1, "bytes": 5, "measured": 1}
+    sessions = {row["id"]: row for row in data["sessions"]}
+    assert sessions["claude"]["last_opened"] == now - 20
+    assert sessions["claude"]["recent_output"] is True
+    assert sessions["shell"]["recent_output"] is False
+    assert (registry.read_bytes(), registry.stat().st_mtime_ns) == before
+
+
+def test_terminal_limit_excerpts_are_read_only(env, monkeypatch) -> None:
+    from tests.conftest import make_chat
+
+    c, root, _work = env
+    agent = "cc-aaaa1111"
+    make_chat(root, "alpha", agent, [
+        (f"2026-11-20T10:0{i}:00", f"User prompt {i}", f"Agent output {i}") for i in range(1, 9)
+    ])
+    c.app.state.store.rebuild()
+    termlib.put(root, {"id": "chat", "backend": "tmux", "project": "alpha",
+                       "kind": "resume", "agent_id": agent})
+    termlib.put(root, {"id": "shell", "backend": "tmux", "project": "alpha", "kind": "shell"})
+    monkeypatch.setattr(termlib, "agent_links", lambda _root: {})
+    monkeypatch.setattr(termlib, "pane_pos", lambda *_: {"history": 50, "cursor": 22})
+    monkeypatch.setattr(termlib, "capture", lambda _root, sid, a, b: {
+        "text": "\n".join(f"Line {i}" for i in range(a, b + 1)),
+    })
+
+    def tree():
+        return {p.relative_to(root): (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in root.rglob("*") if p.is_file()}
+
+    before = tree()
+    chat = c.get("/api/terminal/sessions/chat/excerpts")
+    shell = c.get("/api/terminal/sessions/shell/excerpts")
+    assert chat.status_code == shell.status_code == 200
+    assert [item["text"] for item in chat.json()["first"]] == [f"User prompt {i}" for i in range(1, 4)]
+    assert [item["text"] for item in chat.json()["last"]] == [f"User prompt {i}" for i in range(6, 9)]
+    assert [item["text"] for item in shell.json()["first"]] == ["Line 0", "Line 1", "Line 2"]
+    assert [item["text"] for item in shell.json()["last"]] == ["Line 70", "Line 71", "Line 72"]
+    assert tree() == before

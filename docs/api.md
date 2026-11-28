@@ -673,6 +673,21 @@ One ledger, `<data root>/messages.csv`: `id` (`msg_…`), `project`,
 - `GET /api/messages/{message_id}` — `{message, thread}`. The thread is the
   connected replies between the same two participants, in ledger order.
   Returns 404 for an unknown message. Does not mark messages read.
+- `GET /api/messages/terminal?agent_id=&terminal=` — `{types}`: whether
+  this server types the calling chat's waiting messages into that terminal.
+  Claude Code's Stop hook sends a proof for its own chat and data root in
+  `X-SP-Stop-Proof`. With `types: true`, the terminal delivers the notice
+  once input is empty and copy mode has ended. Otherwise the Stop block
+  opens with a line saying the message is not an error. The lookup changes
+  no files and types nothing.
+
+The inbox delivers each message body once. An automatic terminal wake is
+best effort. If the server crashes mid-send and the paste may already have
+reached the terminal, the message stays available on the next prompt or in
+the inbox. A late terminal notice after that delivery is ignored.
+If an exact late notice starts a submission, capture keeps the operator's
+text that follows and processes its commands normally. A notice quoted
+elsewhere in the submission stays in the operator's text.
 
 The capture hook reads a prompt that opens with the marker as the sender's
 message only when the ledger holds that id, for this chat, from that
@@ -1733,7 +1748,7 @@ Every route refuses a foreign `Origin` or a cross-site request.
   passes it to the socket), `tmux`, `supported` (false only on Windows
   without the pywinpty package; the other routes then answer 501 saying what
   to install), `windows` (true on Windows: plain terminals only), and the
-  settings: `keep`, `launch`, `agent`, `font_size`, and the `projects` a
+  settings: `keep`, `launch`, `agent`, `font_size`, `max_sessions`, and the `projects` a
   terminal may open in.
 - `GET /api/terminal/sessions?project=` — every terminal: `id`, `label`,
   `kind` (shell · resume · start), `project`, `cwd`, `command`,
@@ -1744,6 +1759,17 @@ Every route refuses a foreign `Origin` or a cross-site request.
   `command` (shell), `agent` (resume: its chat's resume command, reused
   when already open), `task_id` (start: the agent of setting
   `terminal.agent` with the task as its first message). The operator's.
+  At `terminal.max_sessions` (default 36, range 1–256, 0 for unlimited), returns 429 with
+  `detail`, `count`, `limit`, `maximum`, `requested` (label, project and
+  kind), and `sessions` in activity order.
+  Each session has its project, agent id, creation time and last activity
+  (Unix seconds or null), plus `attached` and `running`.
+- `GET /api/terminal/limit` — the live count, limit, terminal process-tree
+  RSS in bytes (total, available and used RAM with totals by agent kind),
+  plus the live sessions with last attach, activity index, and RSS.
+- `GET /api/terminal/sessions/{sid}/excerpts` — the first and last captured
+  operator messages or tmux history lines. Returns `kind`, `first`, and `last`.
+  Both reads leave the session and its history untouched.
 - `POST /api/terminal/sessions/{sid}/type` — `{text, enter}`: type into it.
 - `GET /api/terminal/sessions/{sid}/pos` — where the pane stands in its
   history: `history`, `scroll`, `rows`, `cursor`. The page anchors a
@@ -1764,6 +1790,8 @@ Every route refuses a foreign `Origin` or a cross-site request.
   copy mode; answers the new position.
 - `POST /api/terminal/sessions/{sid}/rename` — `{label}`.
 - `POST /api/terminal/sessions/{sid}/close` — end it (tmux too).
+  When `from_limit: true`, an attached terminal or one with a running
+  program requires `confirmed: true`. The route returns 409 without confirmation.
 - `POST /api/terminal/sessions/{sid}/sleep` — stop what runs in it and keep
   its row (`state: asleep`, `wake`: what it will run): a chat's agent is
   resumed on waking, a server (`role: server`) runs its command again, a

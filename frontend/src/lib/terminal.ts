@@ -20,6 +20,7 @@ import { persistPref, readPref } from './uiPrefs'
 import { SETTINGS_QUERY_KEY, saveSettings } from './settings'
 import { t } from '../i18n/scope/shell'
 import { isTypingTarget } from './typing'
+import { openWithTerminalLimit, terminalLimitPending } from './terminalLimit'
 
 export type TermState = 'shell' | 'working' | 'waiting' | 'running' | 'ended'
 
@@ -190,15 +191,20 @@ export function useTerminalActions() {
   const open = useMutation({
     // The agent goes as `agent`: an `agent_id` in a body reads as the agent writing.
     mutationFn: ({ quiet: _q, agent_id, ...req }: OpenRequest & { quiet?: boolean }) =>
-      postJson<{ session: TermSession; existing: boolean }>('/api/terminal/sessions', { ...req, agent: agent_id, actor: 'operator' }),
+      openWithTerminalLimit(req, () =>
+        postJson<{ session: TermSession; existing: boolean }>('/api/terminal/sessions', { ...req, agent: agent_id, actor: 'operator' }),
+      ),
     // `quiet`: the caller shows the terminal itself (focus mode's split).
     onSuccess: (d, v) => {
+      if (!d) return
       if (!v.quiet) showTerminal(d.session.id)
       refresh()
       // Starting an agent or resuming one is starting work: the timer may ask.
       if (!d.existing) askToTrack({ project: d.session.project, taskId: d.session.task_id, title: d.session.label })
     },
-    onError: (e: Error) => toast.error(t('Could not open the terminal: {error}', { error: e.message })),
+    onError: (e: Error) => {
+      toast.error(t('Could not open the terminal: {error}', { error: e.message }))
+    },
   })
   // Read through the hook: before it loads, an open waits on the drawer's switch
   // instead of going to the server and coming back refused.
@@ -214,7 +220,7 @@ export function useTerminalActions() {
     openAsync: async (req: OpenRequest): Promise<TermSession | null> => {
       try {
         const d = await open.mutateAsync({ ...req, quiet: true })
-        return d.session
+        return d?.session ?? null
       } catch {
         return null
       }
@@ -266,7 +272,7 @@ export function useTerminalActions() {
 export function useDockShortcut() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== '`' || e.altKey || e.metaKey) return
+      if (terminalLimitPending() || e.key !== '`' || e.altKey || e.metaKey) return
       const typing = isTypingTarget(e)
       // Inside a terminal ` is a character; Ctrl+` still toggles.
       if (typing && !e.ctrlKey) return

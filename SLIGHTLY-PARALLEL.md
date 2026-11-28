@@ -182,7 +182,10 @@ lens:
 Section 4 says what goes in each, per lens. `sp://schema` lists every
 lens with its names and columns. A name the lens does not have is refused,
 and the refusal lists the names it has. Do not send agent id, date or
-time: the tool stamps them. The project is this chat's home unless you name another of its projects: put `project` next to lens, never inside `fields`: `{"lens":"task","project":"<code>","fields":{…}}`.
+time: the tool stamps them. A project-scoped write defaults to the chat's
+home project. The chat must be a member of the project it writes to.
+In `write_entry`, put `project` next to lens, never inside `fields`.
+For example, `{"lens":"task","project":"<code>","fields":{…}}`.
 The answer's `where` says where the entry went.
 
 Two rules hold everywhere. The first field is one sentence: what happened,
@@ -571,12 +574,15 @@ agent"): it says where things are and where the work stopped.
 
 ## 5. Reading
 
-Reading is open: the MCP readers and the HTTP `GET` routes both answer.
+Project reads through MCP and HTTP `GET` are open to any existing project.
+A project-scoped MCP reader defaults to the chat's home project.
+The scan, map and architecture material tools prepare a write and require
+membership in the target project.
 
 - `tasks {project?, status?}` — the board; `search {q}` — tasks,
   decisions and agents by text; `project {project}` — one project's bundle;
   `deck` — every running sprint block; `doctor` — the data-integrity report.
-- `sp://rules` — the active rules; `sp://schema` — every lens,
+- `sp://rules` — the active rules of the chat's home project; `sp://schema` — every lens,
   its fields and what is mutable; `sp://contract` — this file.
 - `GET /api/<entity>?project=<PROJECT>` — any ledger, filterable.
 - `GET /api/<entity>/{id}` — one entry with its text and fields.
