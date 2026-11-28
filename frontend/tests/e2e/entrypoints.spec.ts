@@ -94,8 +94,21 @@ test.describe('entry points', () => {
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.goto('/entrypoints?layout=list')
     // The shell has no phone layout of its own: its sidebar is folded, as on a narrow window.
-    await page.getByRole('button', { name: 'Collapse sidebar' }).click()
+    // Hold the wide geometry briefly after the click, as on the slow macOS
+    // runner. The overflow check is about the collapsed layout.
     await expect(page.getByTestId('ep-card')).toBeVisible()
+    await page.addStyleTag({
+      content: 'aside[aria-label="Primary navigation"] { transition: width 1200ms step-end !important }',
+    })
+    await page.getByRole('button', { name: 'Collapse sidebar' }).click()
+    const sidebar = page.getByRole('complementary', { name: 'Primary navigation' })
+    await expect(sidebar).toHaveAttribute('data-collapsed', 'true')
+    await sidebar.evaluate(async (el) => {
+      const widthTransitions = el.getAnimations().filter((animation) =>
+        animation instanceof CSSTransition && animation.transitionProperty === 'width',
+      )
+      await Promise.all(widthTransitions.map((animation) => animation.finished))
+    })
     // The page's own parts (the shell's top bar is the shell's): no element
     // of the topic list, the card or the shelves past the screen's edge.
     const past = () => page.evaluate(() => {
