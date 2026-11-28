@@ -67,7 +67,7 @@ TMUX_PANE_RESIZE_POLL_S = 0.015
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
 
-_MAX_SESSIONS = 32
+_MAX_SESSIONS = 36
 # What a terminal asks the screen (who are you, where is the cursor): kept
 # out of a replay, or the new screen answers into the shell as if typed.
 _QUERIES = re.compile(rb"\x1b\[[>=?]?[0-9;]*c|\x1b\[[56]n")

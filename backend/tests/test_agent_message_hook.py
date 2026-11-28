@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +57,14 @@ def _turns(root: Path, agent: str) -> list:
     return parse_turns(root / "projects" / "alpha" / "chats" / agent / "chat.md")
 
 
+def _confirmed_terminal(root: Path, msg_id: str):
+    claimed = msgledger.claim_terminal(root, msg_id, "t0000aaaa")
+    if claimed is not None:
+        assert msgledger.begin_terminal(root, msg_id)
+        msgledger.finish_terminal(root, msg_id, sent=True)
+    return claimed
+
+
 @pytest.mark.parametrize("body", [
     "short advice",
     "one line\nanother line\n" + "long advice " * 300,
@@ -63,7 +72,7 @@ def _turns(root: Path, agent: str) -> list:
 ], ids=["short", "long-multiline", "quoted-message-with-tag"])
 def test_terminal_notice_leaves_the_body_for_one_mcp_read(root: Path, body: str) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text=body)
-    claimed = msgledger.claim_terminal(root, row["id"])
+    claimed = _confirmed_terminal(root, row["id"])
     assert claimed is not None
     notice = msgledger.terminal_text(claimed)
     assert notice == msgledger.wake_text(row)
@@ -87,7 +96,7 @@ def test_prompt_hook_notifies_two_messages_without_their_bodies(root: Path) -> N
 @pytest.mark.parametrize("recipient_holds_terminal", [True, False], ids=["recipient", "wrong-terminal"])
 def test_commands_in_the_operators_text_after_a_notice_still_act(root: Path, recipient_holds_terminal: bool) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="advice")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     cap = capture.TurnCapture(root, "alpha", WORKER if recipient_holds_terminal else CODEX)
     sig = cap.open_turn(msgledger.wake_text(row) + "\n#task operator request", deliver=True)
     assert sig["message_in"] is None and sig["message_stray"] is None and "task" in sig["commands"]
@@ -110,7 +119,7 @@ def test_opencode_prompt_receives_only_the_notice(root: Path) -> None:
 
 def test_a_real_marker_is_the_senders_turn_and_its_tags_do_nothing(root: Path) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="run #task now #mute")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     prompt = msgledger.terminal_text(row)
     cap = capture.TurnCapture(root, "alpha", WORKER)
     sig = cap.open_turn(prompt, deliver=True)
@@ -166,7 +175,7 @@ def test_a_waiting_message_comes_with_the_next_prompt_once(root: Path) -> None:
     got = msgledger.find(root, row["id"])
     assert got is not None and got["delivered_via"] == "hook" and not got["read_at"]
     # Taken by the hook: the terminal and a marker no longer take it.
-    assert msgledger.claim_terminal(root, row["id"]) is None
+    assert _confirmed_terminal(root, row["id"]) is None
     cap.complete_turn("ok")
     assert cap.open_turn(msgledger.terminal_text(row))["message_in"] is None
 
@@ -180,7 +189,7 @@ def test_an_adapter_that_cannot_show_a_notice_hands_nothing_over(root: Path) -> 
 
 def test_typed_into_the_terminal_the_marker_lands_once(root: Path) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="x")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     assert msgledger.claim_for_hook(root, WORKER) == []
     cap = capture.TurnCapture(root, "alpha", WORKER)
     prompt = msgledger.terminal_text(row)
@@ -197,7 +206,7 @@ def test_two_combined_terminal_notices_leave_both_bodies_available_once(root: Pa
     rows = [msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text=body)
             for body in ("first advice", "second advice")]
     for row in rows:
-        assert msgledger.claim_terminal(root, row["id"]) is not None
+        assert _confirmed_terminal(root, row["id"]) is not None
     prompt = "\n".join(msgledger.wake_text(row) for row in rows)
     capture.TurnCapture(root, "alpha", WORKER).open_turn(prompt, deliver=True)
     assert [m["id"] for m in msgledger.inbox(root, WORKER)["unread"]] == [row["id"] for row in rows]
@@ -215,13 +224,30 @@ def _run_hook(root: Path, tool: str, session: str, prompt: str) -> str:
     return proc.stdout
 
 
+def test_claude_submit_after_an_indented_quote_records_the_real_notice(root: Path) -> None:
+    mid, notice = _recovered_notice(root)
+    session = "w0rker01-0000-0000-0000-000000000000"
+
+    first = _run_hook(root, "claude-code", session, f"    {notice}")
+    assert "already delivered" not in first
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["terminal_state"] == "uncertain" and not saved["landed_at"]
+
+    # The actual terminal wake follows before the earlier prompt has a Stop.
+    second = _run_hook(root, "claude-code", session, notice)
+    assert f"message {mid} was already delivered" in second
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["delivered_via"] == "hook" and saved["landed_turn"] == "2"
+    assert len(_turns(root, WORKER)) == 2
+
+
 @pytest.mark.parametrize("tool, session, agent", [
     ("claude-code", "w0rker01-0000-0000-0000-000000000000", WORKER),
     ("codex", "00000000-0000-7000-8000-00000c0dex01", CODEX),
 ])
 def test_the_prompt_hooks_of_claude_code_and_codex(root: Path, tool: str, session: str, agent: str) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="typed in #task")
-    msgledger.claim_terminal(root, row["id"])
+    _confirmed_terminal(root, row["id"])
     waiting = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="the second one")
     out = _run_hook(root, tool, session, msgledger.terminal_text(row))
     if tool == "codex":
@@ -243,7 +269,7 @@ def test_a_marker_typed_into_another_chats_terminal_is_a_stray_and_goes_back(roo
     wrong chat records a stray (tags muted), the ledger notes it, and the
     message reaches its own chat once."""
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="for the worker #task #decision x")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert _confirmed_terminal(root, row["id"]) is not None
     other = capture.TurnCapture(root, "alpha", CODEX)
     sig = other.open_turn(msgledger.terminal_text(row), deliver=True)
     assert sig["message_in"] is None
@@ -272,11 +298,12 @@ def test_a_marker_typed_into_another_chats_terminal_is_a_stray_and_goes_back(roo
 @pytest.mark.parametrize("typing_failed", [True, False], ids=["paste-failed", "wrong-terminal"])
 def test_read_during_pending_terminal_notice_never_requeues_the_body(root: Path, typing_failed: bool) -> None:
     row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="typed")
-    assert msgledger.claim_terminal(root, row["id"]) is not None
+    assert msgledger.claim_terminal(root, row["id"], "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, row["id"])
     got = msgledger.inbox(root, WORKER)
     assert [m["id"] for m in got["unread"]] == [row["id"]] and got["in_flight"] == []
     if typing_failed:
-        msgledger.release_terminal(root, row["id"])
+        msgledger.finish_terminal(root, row["id"])
     else:
         msgledger.take_stray(root, CODEX, msgledger.terminal_text(row), 3)
     assert msgledger.find(root, row["id"])["delivered_via"] == "inbox"  # type: ignore[index]
@@ -291,6 +318,172 @@ def test_a_pasted_marker_of_a_message_never_typed_stays_the_operators_text(root:
     sig = capture.TurnCapture(root, "alpha", CODEX).open_turn(msgledger.terminal_text(row) + " #task", deliver=True)
     assert sig["message_stray"] is None and "task" in sig["commands"]
     assert msgledger.find(root, row["id"])["strayed"] == ""  # type: ignore[index]
+
+
+def test_an_edited_notice_in_the_wrong_chat_preserves_the_operator_command(root: Path) -> None:
+    from backend.sessions import _operator_text
+
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="recover")
+    mid = row["id"]
+    assert msgledger.claim_terminal(root, mid, "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, mid)
+    msgledger.finish_terminal(root, mid)
+    assert [r["id"] for r in msgledger.claim_for_hook(root, WORKER)] == [mid]
+
+    edited = msgledger.wake_text(row).removesuffix(".") + "! #task operator request"
+    cap = capture.TurnCapture(root, "alpha", CODEX)
+    signals = cap.open_turn(edited, deliver=True)
+    cap.complete_turn("noted")
+
+    assert signals["message_stray"] is None
+    assert "task" in signals["commands"]
+    assert _operator_text(_turns(root, CODEX)[-1]) == edited
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["delivered_via"] == "hook" and not saved["strayed"]
+
+
+@pytest.mark.parametrize(("agent", "muted"), [
+    (WORKER, False),
+    (WORKER, True),
+    (CODEX, True),
+    (CODEX, False),
+])
+def test_a_mixed_late_notice_keeps_only_the_operator_text_and_tag_behavior(root, agent, muted):
+    from backend.sessions import _operator_text
+
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="recover")
+    mid = row["id"]
+    assert msgledger.claim_terminal(root, mid, "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, mid)
+    msgledger.finish_terminal(root, mid)
+    assert [r["id"] for r in msgledger.claim_for_hook(root, WORKER)] == [mid]
+
+    said = '<pasted_content id="x">#task operator request</pasted_content>'
+    if muted:
+        said += "\n#mute"
+    notice = msgledger.wake_text(row)
+    cap = capture.TurnCapture(root, "alpha", agent)
+    signals = cap.open_turn(f"{notice}\n{said}", deliver=True)
+    cap.complete_turn("noted")
+
+    assert signals["message_in"] is None and signals["message_stray"] is None
+    assert ("task" in signals["commands"]) is not muted
+    assert _operator_text(_turns(root, agent)[-1]) == said
+    response = capture.format_signals(signals)
+    assert f"message {mid} was already delivered" in response
+    assert notice not in response
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["delivered_via"] == "hook" and not saved["strayed"]
+
+
+def test_a_quoted_notice_without_a_terminal_attempt_stays_in_the_operators_text(root: Path) -> None:
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="not yet sent")
+    assert msgledger.claim_for_hook(root, WORKER)
+    said = f"Here is the notification text\n{msgledger.wake_text(row)}\n#task operator request"
+    cap = capture.TurnCapture(root, "alpha", WORKER)
+    signals = cap.open_turn(said)
+    cap.complete_turn("noted")
+    assert not signals["message_late"] and "task" in signals["commands"]
+    assert _turns(root, WORKER)[-1].user_summary == said
+
+
+@pytest.mark.parametrize(("quote", "via", "agent"), [
+    ('Translate "{notice}" into French.', "hook", WORKER),
+    ("```text\n{notice}\n```", "inbox", WORKER),
+    ("Here is a message:\n> {notice}", "hook", CODEX),
+    ("#task Investigate this log\n{notice}", "inbox", WORKER),
+    ("    {notice}\n    end of the quoted log", "hook", WORKER),
+])
+def test_a_quoted_late_notice_stays_in_history_and_does_not_spend_the_real_marker(root, quote, via, agent):
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="recover")
+    mid = row["id"]
+    assert msgledger.claim_terminal(root, mid, "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, mid)
+    msgledger.finish_terminal(root, mid)
+    if via == "hook":
+        assert [r["id"] for r in msgledger.claim_for_hook(root, WORKER)] == [mid]
+    else:
+        assert [r["id"] for r in msgledger.inbox(root, WORKER)["unread"]] == [mid]
+
+    notice = msgledger.wake_text(row)
+    quoted = quote.format(notice=notice)
+    cap = capture.TurnCapture(root, "alpha", agent)
+    signals = cap.open_turn(quoted, deliver=True)
+    cap.complete_turn("noted")
+    assert _turns(root, agent)[-1].user_summary == quoted.strip()
+    assert "already delivered" not in capture.format_signals(signals)
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["terminal_state"] == "uncertain" and not saved["landed_at"]
+
+    recipient = capture.TurnCapture(root, "alpha", WORKER)
+    late = recipient.open_turn(notice, deliver=True)
+    assert f"message {mid} was already delivered" in capture.format_signals(late)
+    saved = msgledger.find(root, mid)
+    assert saved is not None and saved["delivered_via"] == via and saved["landed_at"]
+
+
+def _recovered_notice(root: Path) -> tuple[str, str]:
+    row = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="recover")
+    mid = row["id"]
+    assert msgledger.claim_terminal(root, mid, "t0000aaaa") is not None
+    assert msgledger.begin_terminal(root, mid)
+    msgledger.finish_terminal(root, mid)
+    assert [r["id"] for r in msgledger.claim_for_hook(root, WORKER)] == [mid]
+    return mid, msgledger.wake_text(row)
+
+
+@pytest.mark.parametrize("adapter", ["codex-notify", "opencode"])
+def test_adapter_capture_preserves_an_indented_notice_quote(root, tmp_path, monkeypatch, adapter):
+    mid, notice = _recovered_notice(root)
+    quoted = f"    {notice}\n    end of the quoted log"
+    if adapter == "codex-notify":
+        session = "00000000-0000-0000-0000-0000cafef00d"
+        agent = "codex-cafef00d"
+        (root / "integrations.csv").write_text(f"project,path\nalpha,{tmp_path.resolve()}\n", encoding="utf-8")
+        payload = {"type": "agent-turn-complete", "thread-id": session, "cwd": str(tmp_path),
+                   "input-messages": [quoted], "last-assistant-message": "Noted."}
+        args = [sys.executable, str(_HOOKS / "codex-capture.py"), "--data-root", str(root), json.dumps(payload)]
+    else:
+        from backend.routers import setup as setup_router
+        from tests.conftest import need
+
+        node = shutil.which("node")
+        if not node:
+            need("node")
+        agent = "oc-cafef00d"
+        monkeypatch.setattr(setup_router, "_plugin_python", lambda: [sys.executable])
+        plugin = tmp_path / "capture.mjs"
+        plugin.write_text(setup_router._compose_opencode_plugin("alpha", root), encoding="utf-8")
+        # The real plugin invokes the real capture CLI. Stand in for the
+        # host's shell template and unused session metadata API.
+        harness = r"""
+import { execFileSync } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
+const [plugin, directory, text] = process.argv.slice(1)
+const { SlightlyParallelCapture } = await import(pathToFileURL(plugin))
+const shell = (strings, ...values) => ({
+  quiet: async () => {
+    const words = []
+    for (let i = 0; i < values.length - 1; i++) {
+      words.push(...strings[i].trim().split(/\s+/).filter(Boolean), ...[values[i]].flat())
+    }
+    const [exe, ...args] = words
+    const out = execFileSync(exe, args, { input: await values.at(-1).text(), encoding: 'utf8' })
+    return { text: () => out }
+  }
+})
+const hooks = await SlightlyParallelCapture({ client: { session: {} }, directory, $: shell })
+await hooks['chat.message']({ sessionID: 'ses_cafef00d' }, { parts: [{ type: 'text', text }] })
+process.exit(0)
+"""
+        args = [node, "--input-type=module", "-e", harness, str(plugin), str(tmp_path), quoted]
+
+    proc = subprocess.run(args, capture_output=True, encoding="utf-8", timeout=45)
+    assert proc.returncode == 0, proc.stderr
+    chat = root / "projects" / "alpha" / "chats" / agent / "chat.md"
+    assert f"**User**: {quoted}\n" in chat.read_text(encoding="utf-8")
+    saved = msgledger.find(root, mid)
+    assert saved is not None and not saved["strayed"] and saved["terminal_state"] == "uncertain"
 
 
 @pytest.mark.parametrize("tool,session,agent", [
@@ -328,3 +521,140 @@ def test_stop_wakes_once_without_running_tags(root, tool, session, agent, monkey
     later = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=agent, text="later")
     assert "decision" not in stop(True)
     assert [r["id"] for r in msgledger.inbox(root, agent)["unread"]] == [row["id"], later["id"]]
+
+
+def test_ping_enrolls_only_the_named_agent_and_can_turn_off(root: Path) -> None:
+    cap = capture.TurnCapture(root, "alpha", COORD)
+    signals = cap.open_turn(f'<pasted_content id="1">please #ping {WORKER}</pasted_content>')
+    assert signals["ping_commands"] == [f"keep-alive enabled for {WORKER}"]
+    assert (root / ".ping" / f"{WORKER}.json").is_file()
+    assert not (root / ".ping" / f"{COORD}.json").exists()
+    cap.complete_turn("ok")
+    signals = cap.open_turn(f"please ###ping {WORKER} off; quoting #task")
+    assert signals["ping_commands"] == [f"keep-alive disabled for {WORKER}"]
+    assert signals["commands"] == ["ping"]
+    state = json.loads((root / ".ping" / f"{WORKER}.json").read_text(encoding="utf-8"))
+    assert not state["enabled"]
+
+
+@pytest.mark.parametrize("user_text", [
+    f"#ping {WORKER} #mute",
+    f"#ping {WORKER}, but ###decision",
+    f'<sp-message from="{WORKER}">#ping {WORKER}</sp-message>',
+    "#ping backend",
+])
+def test_ping_uses_house_tags_and_does_not_enroll_by_group(root: Path, user_text: str) -> None:
+    cap = capture.TurnCapture(root, "alpha", COORD)
+    cap.open_turn(user_text)
+    assert not list((root / ".ping").glob("*.json"))
+
+
+def test_agent_answer_does_not_enroll(root: Path) -> None:
+    cap = capture.TurnCapture(root, "alpha", COORD)
+    cap.full_turn("I need an example", f"#ping {WORKER}")
+    assert not (root / ".ping").exists()
+
+@pytest.mark.parametrize("how", ["real", "expired", "wrong-agent", "wrong-pane", "foreign", "edited", "forged", "reply"])
+def test_capture_authenticates_keep_alive(root: Path, how: str, monkeypatch) -> None:
+    state = root / ".ping" / f"{WORKER}.json"
+    state.parent.mkdir()
+    now = capture.shared.now_epoch()
+    nonce = "e" * 32
+    pane = "t0000aaaa"
+    if how != "forged":
+        state.write_text(json.dumps({
+            "enabled": True, "nonce": nonce, "terminal": pane, "sent_at": now - 1,
+            "expires_at": now + 60 if how != "expired" else now - 0.5,
+        }), encoding="utf-8")
+    monkeypatch.setenv("SP_TERMINAL", "" if how == "foreign" else pane)
+    agent = COORD if how == "wrong-agent" else WORKER
+    _chat(root, agent, terminal="t0000bbbb" if how == "wrong-pane" else pane)
+    cap = capture.TurnCapture(root, "alpha", agent)
+    prompt = f"[SP ping] {nonce} Reply with one word."
+    if how == "edited":
+        prompt += " #task"
+    if how == "reply":
+        cap.full_turn("ordinary request", prompt)
+    else:
+        cap.full_turn(prompt, "ok")
+    chat = cap.chat_path.read_text(encoding="utf-8")
+    assert (" · ping\n" in chat) == (how == "real")
+    if how == "real":
+        outcome = cap.full_turn(prompt, "replay stays a work turn")
+        assert not outcome.get("ping")
+        assert cap.chat_path.read_text(encoding="utf-8").count(" · ping\n") == 1
+
+
+def test_ping_does_not_spend_work_notices_or_create_work_stamps(root: Path, monkeypatch) -> None:
+    now = capture.shared.now_epoch()
+    nonce = "c" * 32
+    pane = "t0000aaaa"
+    monkeypatch.setenv("SP_TERMINAL", pane)
+    _chat(root, WORKER, terminal=pane, unsigned_commits=[{"sha": "abcdef0", "subject": "change"}])
+    state = root / ".ping" / f"{WORKER}.json"
+    state.parent.mkdir()
+    state.write_text(json.dumps({"enabled": True, "nonce": nonce, "terminal": pane,
+                                 "sent_at": now - 1, "expires_at": now + 60}), encoding="utf-8")
+    mail = msgledger.add(root, project="alpha", from_agent=COORD, to_agent=WORKER, text="work later")
+    cap = capture.TurnCapture(root, "alpha", WORKER)
+    ping = cap.open_turn(f"[SP ping] {nonce} Reply with one word.", deliver=True)
+    assert ping.get("ping") and not ping.get("messages") and not ping.get("identity")
+    assert cap.open_turn(f"[SP ping] {nonce} Reply with one word.", deliver=True).get("ping")
+    cap.complete_turn("ok")
+    assert not (cap.folder / "work.jsonl").exists()
+    assert json.loads((cap.folder / "turns.jsonl").read_text(encoding="utf-8"))["ping"]
+    ordinary = cap.open_turn("Ready to work", deliver=True)
+    assert ordinary["messages"][0]["id"] == mail["id"] and ordinary["identity"]
+    assert ordinary["unsigned_commits"]["commits"][0]["sha"] == "abcdef0"
+
+def _mixed_chat(root: Path) -> tuple[Path, str]:
+    from datetime import datetime, timedelta
+
+    cap = capture.TurnCapture(root, "alpha", WORKER)
+    yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+    turns = [
+        (1, "10:00:00", "", "work on tk_11111111", "first answer"),
+        (2, "10:55:00", " · ping", "[SP ping] received", "ok tk_99999999"),
+        (3, "11:20:00", "", "[SP ping]", "ordinary request quoting ping"),
+    ]
+    raw = "".join(f"## Turn {n} · {yesterday}T{at}{suffix}\n**User**: {user}\n**Agent**: {answer}\n\n"
+                  for n, at, suffix, user, answer in turns)
+    cap.chat_path.write_text(raw, encoding="utf-8")
+    stamps = [{
+        "turn": n, "start": f"{yesterday}T{at}", "end": f"{yesterday}T{at[:-2]}30",
+        "ping": bool(suffix), "active_sec": 120 if suffix else 30, "source": "hook",
+    } for n, at, suffix, _, _ in turns]
+    (cap.folder / "turns.jsonl").write_text("".join(json.dumps(row) + "\n" for row in stamps), encoding="utf-8")
+    return cap.chat_path, yesterday
+
+
+def test_ping_is_excluded_from_work_sessions_task_mentions_and_standup_nudge(root: Path) -> None:
+    from backend import sessions, turntimes
+
+    path, _ = _mixed_chat(root)
+    assert [turn.number for turn in sessions.parse_turns(path)] == [1, 3]
+    sessions_for_chat = sessions.derive_sessions([("alpha", WORKER, path)], 120)
+    assert len(sessions_for_chat) == 1 and sessions_for_chat[0].turns_n == 2
+    assert {hit["task_id"] for hit in sessions_for_chat[0].mentions} == {"tk_11111111"}
+    timing = turntimes.times(path.parent)
+    assert set(timing) == {1, 3}
+    raw_lines = path.read_text(encoding="utf-8").splitlines()
+    excerpt = "\n".join(sessions.work_chat_lines(line + "\r" for line in raw_lines))
+    assert "tk_99999999" not in excerpt and "ordinary request quoting ping" in excerpt
+    standup = capture._standup_owed(root, "alpha")
+    assert standup and standup["messages_n"] == 2
+
+
+def test_ping_usage_keeps_its_turn_number_but_does_not_count_in_work_rhythm(root: Path, monkeypatch) -> None:
+    from backend import rhythm, usagebackfill, usagelib
+
+    path, day = _mixed_chat(root)
+    assert [n for n, *_ in usagebackfill.chat_turns(path.parent, {})] == [1, 2, 3]
+    monkeypatch.setattr(usagelib, "chat_usage", lambda _path: {"turns": {
+        1: {"at": f"{day}T10:00:00", "main": {"new": 10}},
+        2: {"at": f"{day}T10:55:00", "main": {"new": 20}},
+        3: {"at": f"{day}T11:20:00", "main": {"new": 30}},
+    }})
+    points = rhythm._folder_points(path.parent)
+    assert sum(kind == "msg" for kind, _, _ in points) == 4
+    assert [amount for kind, _, amount in points if kind == "tok"] == [10, 30]

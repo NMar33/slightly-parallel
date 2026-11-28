@@ -139,6 +139,7 @@ silenced, and the notice names only that one.
 | `#usage-warnings-on` | The hook answers: Claude Code shows the usage warnings under the replies of this chat again (Codex and OpenCode show none, and the hook says so). Add nothing |
 | `#usage-warnings-off` | The hook answers: Claude Code no longer shows the usage warnings in this chat; tokens are still recorded (Codex and OpenCode show none, and the hook says so). Add nothing |
 | `#usage-price` | Update the API prices the Usage page counts dollars with: say which pages you are going to, a helper agent reads them, then usage_prices_write (the skill update-usage-prices) |
+| `#ping <agent id, optional off>` | Turn keep-alive on or off for the named agent. The hook applies it. |
 
 **Resolving `<id or text>`**: if it looks like an id (`sp_…`, `pb_…`), use it.
 Otherwise read the lens (`search`, or `GET /api/<lens>?project=…`), match
@@ -182,7 +183,10 @@ lens:
 Section 4 says what goes in each, per lens. `sp://schema` lists every
 lens with its names and columns. A name the lens does not have is refused,
 and the refusal lists the names it has. Do not send agent id, date or
-time: the tool stamps them. The project is this chat's home unless you name another of its projects: put `project` next to lens, never inside `fields`: `{"lens":"task","project":"<code>","fields":{…}}`.
+time: the tool stamps them. A project-scoped write defaults to the chat's
+home project. The chat must be a member of the project it writes to.
+In `write_entry`, put `project` next to lens, never inside `fields`.
+For example, `{"lens":"task","project":"<code>","fields":{…}}`.
 The answer's `where` says where the entry went.
 
 Two rules hold everywhere. The first field is one sentence: what happened,
@@ -297,7 +301,7 @@ final in the pack's shape, then post the whole text with
 this version changed. Each post is the next version; the operator reads
 and compares them on the Storyboard. An unknown id is refused.
 
-**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `task_update` changes the title, text and day only of a task you created; on the operator's or another agent's, add a comment. `{lane}` after the tag names the board lane; the server sets it. `#think` marks a task as the operator's to think through: never start, move or finish it; comment and ask instead. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
+**Agent task** (`#task <hint>`, `#now <text>`, `#now-todo <text>`). Only when the user writes one of them, with `write_entry {lens: "task"}`. `#task`: you write the task from the conversation, title and text, into the `agent` column for later. `#now`: the task this chat starts on, in `doing`; `#now-todo` (`-next`, `-backlog`, `-review`, `-parked`, `-done`) files it in that column, not started. A `#now` task's text is the operator's message as written, kept by the server: you send the title and tags only; a note of yours goes after it with `task_update {id, comment}`. `task_update` changes the title, text and day only of a task you created; on the operator's or another agent's, add a comment. `{lane}` after the tag names the board lane. Write the card immediately. A similar spelling leaves a choice on the card. An exact agent lane named by the operator moves onto the board. An agent can name a lane for its own card when the operator supplied none. `#think` marks a task as the operator's to think through: never start, move or finish it; comment and ask instead. Every commit you make for a task ends with `Task: tk_…` and `Agent: <your agent_id>`; a commit without it is linked with `task_commits`. The skill `write-a-task` holds the steps.
 
 **Architecture page** (part of `#architecture`, and at the end of a `#scan`; `#page` still asks for it alone). One page per project: what it is, what it does now, what it is made of and what is owed, as claims with their evidence, for a team lead who was not in the chat. Call `architecture_material`: it returns the computed facts, the current page and the instructions. Write the next version with `architecture_page {text, note}`. The skill `keep-the-architecture-page` holds the steps.
 
@@ -571,12 +575,15 @@ agent"): it says where things are and where the work stopped.
 
 ## 5. Reading
 
-Reading is open: the MCP readers and the HTTP `GET` routes both answer.
+Project reads through MCP and HTTP `GET` are open to any existing project.
+A project-scoped MCP reader defaults to the chat's home project.
+The scan, map and architecture material tools prepare a write and require
+membership in the target project.
 
 - `tasks {project?, status?}` — the board; `search {q}` — tasks,
   decisions and agents by text; `project {project}` — one project's bundle;
   `deck` — every running sprint block; `doctor` — the data-integrity report.
-- `sp://rules` — the active rules; `sp://schema` — every lens,
+- `sp://rules` — the active rules of the chat's home project; `sp://schema` — every lens,
   its fields and what is mutable; `sp://contract` — this file.
 - `GET /api/<entity>?project=<PROJECT>` — any ledger, filterable.
 - `GET /api/<entity>/{id}` — one entry with its text and fields.

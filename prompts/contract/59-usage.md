@@ -9,6 +9,7 @@ command: #usage-off | The hook answers: the replies in this chat no longer show 
 command: #usage-warnings-on | The hook answers: Claude Code shows the usage warnings under the replies of this chat again (Codex and OpenCode show none, and the hook says so). Add nothing
 command: #usage-warnings-off | The hook answers: Claude Code no longer shows the usage warnings in this chat; tokens are still recorded (Codex and OpenCode show none, and the hook says so). Add nothing
 command: #usage-price | Update the API prices the Usage page counts dollars with: say which pages you are going to, a helper agent reads them, then usage_prices_write (the skill update-usage-prices)
+command: #ping <agent id, optional off> | Turn keep-alive on or off for the named agent. The hook applies it.
 brief: **Usage prices** (`#usage-price`). The operator asks; you say in one line which pages you are going to, a helper agent reads the providers' own pricing pages (`usage_prices_material`) and writes the prices (`usage_prices_write`), and you say what changed. Never on your own. **Usage** (`#usage`, `#usage-on`, `#usage-off`, `#usage-warnings-on`, `#usage-warnings-off`). The hook answers these itself; in Claude Code the message does not reach you. Add nothing. When it does reach you, the notice says so: in Codex and OpenCode it carries the #usage text, which you give as it is, in a code block; in a message with other text, the hook printed the text already and you add nothing about it. Tokens are recorded for every reply of Claude Code, Codex and OpenCode in any case (Cursor's are not recorded); `#usage-on` and `#usage-off` only show or hide the line after each reply (`→ 1.9k ↑ 512 ↓ (108k)`: new input, output, cache in brackets). In Claude Code a warning may follow that line: the chat is 70k tokens short of its context window, where Claude Code compacts it and keeps only a summary; the chat's context passed 300k, 500k or 800k tokens; a reply read the whole chat again after a break of over an hour; or the chat used more than 25% of the 5-hour limit. `#usage-warnings-on` and `#usage-warnings-off` show or hide them for this chat; in Codex and OpenCode the hook answers that warnings are shown in Claude Code only. The Usage page also counts dollars at the providers' API prices; give a dollar or percent figure only as `usage {}` or the page gives it, never your own. Asked about tokens or limits in words, call `usage {}` and give its `block` the same way. The Usage page is `/usage` on the server.
 ---
 
@@ -57,3 +58,7 @@ much of the 5-hour limit a dollar of each model took.
 Never: work out a price or a percent yourself (give the ones `usage {}` and
 the page give), guess a number the tool did not give (it is `—`), or say a
 limit counts tokens in a fixed way.
+
+- `#ping <agent id>` enables keep-alive for the named chat. Add `off` to disable it.
+  When a verified Slightly Parallel terminal is idle, the scheduler can send a short
+  keep-alive prompt. On that prompt, answer with one word.

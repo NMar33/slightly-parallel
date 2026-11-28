@@ -81,11 +81,15 @@ def _folder_points(folder: Path) -> list[tuple[str, datetime, int]]:
         return hit[1]
     pts: list[tuple[str, datetime, int]] = []
     hooked: set[int] = set()
+    pings: set[int] = set()
     for rec in turntimes._lines(folder / turntimes.FILE):
         n = rec.get("turn")
         if not isinstance(n, int) or n in hooked:
             continue          # a second stamp of a turn (a helper's report): one answer
         hooked.add(n)
+        if rec.get("ping"):
+            pings.add(n)
+            continue
         for k in ("start", "end"):
             at = _moment(rec.get(k))
             if at is not None:
@@ -98,7 +102,9 @@ def _folder_points(folder: Path) -> list[tuple[str, datetime, int]]:
             if at is not None:
                 pts.append(("msg", at, 1))
     cu = usagelib.chat_usage(folder / usagelib.USAGE_FILE)
-    for t in (cu.get("turns") or {}).values():
+    for n, t in (cu.get("turns") or {}).items():
+        if n in pings:
+            continue
         at = _moment(t.get("at"))
         main = t.get("main") or {}
         tok = int(main.get("new") or 0) + int(main.get("output") or 0)

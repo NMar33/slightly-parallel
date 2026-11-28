@@ -46,6 +46,18 @@ class SettingSpec:
 
 
 SPECS: tuple[SettingSpec, ...] = (
+    SettingSpec(
+        key="ping.interval_minutes",
+        label="Keep-alive interval",
+        description="Minutes after an enrolled agent finishes its answer before a keep-alive is due.",
+        type="int", default=55, group="Keep-alive", unit="min", minimum=1,
+    ),
+    SettingSpec(
+        key="ping.quiet_hours",
+        label="Keep-alive quiet hours",
+        description="Local time, HH:MM-HH:MM. Leave blank to send keep-alives around the clock.",
+        type="text", default="", group="Keep-alive",
+    ),
     # ------------------------------------------------------------- agent ---
     SettingSpec(
         key="agent.contract_refresh_turns",
@@ -680,7 +692,11 @@ def coerce(key: str, value: Any) -> Any:
         raise ValueError(f"{key} must be one of: {', '.join(spec.options)}")
     if spec.type == "text":
         if isinstance(value, str) and len(value.strip()) <= 200 and "\n" not in value:
-            return value.strip()
+            text = value.strip()
+            clock = r"(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+            if key == "ping.quiet_hours" and text and not re.fullmatch(rf"{clock}-{clock}", text):
+                raise ValueError(f"{key} must use HH:MM-HH:MM")
+            return text
         raise ValueError(f"{key} must be one line of text, at most 200 characters")
     # int
     if isinstance(value, bool) or not isinstance(value, (int, float)):

@@ -89,6 +89,11 @@ def times(chat_dir: Path) -> dict[int, Timed]:
         if at is not None and isinstance(rec.get("turn"), int):
             out[rec["turn"]] = Timed(at)
     for rec in _lines(chat_dir / FILE):   # the hook's own stamp wins
+        if rec.get("ping"):
+            n = rec.get("turn")
+            if isinstance(n, int):
+                out.pop(n, None)
+            continue
         at = _parse(rec.get("end"))
         if at is None or not isinstance(rec.get("turn"), int):
             continue
@@ -369,7 +374,7 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
             continue
         lines = list(_lines(folder / FILE))
         # A hook line from before busy stretches were measured is measured again.
-        hook = [r for r in lines if r.get("source") == "hook" and "busy" in r]
+        hook = [r for r in lines if r.get("source") == "hook" and ("busy" in r or r.get("ping"))]
         timed = {r.get("turn") for r in hook}
         pending = meta.get("pending_turn")
         turns = parse_turns(chat_md)
@@ -389,7 +394,7 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
             m = measure(transcript, starts[n], end, since if since and since < starts[n] else None)
             fresh.append({"turn": n, "start": starts[n].isoformat(),
                           "end": end.replace(microsecond=0).isoformat(), **m, "source": "transcript"})
-        old = [r for r in lines if r.get("source") == "transcript" or (r.get("source") == "hook" and "busy" not in r)]
+        old = [r for r in lines if r.get("source") == "transcript" or (r.get("source") == "hook" and "busy" not in r and not r.get("ping"))]
         if fresh == old:
             continue
         # The hook may have timed a turn meanwhile: take its lines as they are
@@ -398,13 +403,13 @@ def backfill(data_root: Path, claude_dir: Path | None = None) -> int:
         try:
             with acquire_flock(lock_path(folder / FILE), timeout_s=BACKFILL_TURN_LOCK_TIMEOUT_S):
                 now = [r for r in _lines(folder / FILE) if r.get("source") == "hook"]
-                hook = [r for r in now if "busy" in r]
+                hook = [r for r in now if "busy" in r or r.get("ping")]
                 fresh = [r for r in fresh if r["turn"] not in {h.get("turn") for h in hook}]
                 # A hook line without busy stretches is measured again from
                 # the transcript; where the transcript has nothing for its
                 # turn, the hook's end is still the only one and is kept.
                 replaced = {r["turn"] for r in fresh}
-                kept = [r for r in now if "busy" not in r and r.get("turn") not in replaced]
+                kept = [r for r in now if "busy" not in r and not r.get("ping") and r.get("turn") not in replaced]
                 body = "".join(json.dumps(r) + "\n" for r in [*hook, *kept, *fresh])
                 tmp = folder / (FILE + ".tmp")
                 tmp.write_text(body, encoding="utf-8")

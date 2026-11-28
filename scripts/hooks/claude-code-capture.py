@@ -712,7 +712,7 @@ def close_overtaken(cap: TurnCapture, prompt: str, transcript_path: str) -> None
     and close nothing. The read position does not move: the Stop reads the
     stretch again for its tokens."""
     meta = cap._load_meta() if cap.meta_path.exists() else {}
-    if meta.get("pending_turn") is None or meta.get("pending_user_text") == prompt.strip():
+    if meta.get("pending_turn") is None or meta.get("pending_user_text") == prompt.rstrip():
         return
     seg = Segment(transcript_path, cap.transcript_pos(transcript_path), _turntimes()) if transcript_path else None
     if seg is not None:
@@ -789,7 +789,8 @@ def main() -> int:
             cwd = str(payload.get("cwd") or "")
             # Before the message is recorded: a helper's commands never act.
             kind, parent, by = helper_signal(args.tool, payload, session_id, args.data_root)
-            cap.note_origin(args.tool, session_id, cwd, helper_kind=kind, helper_of=parent, helper_of_by=by)
+            cap.note_origin(args.tool, session_id, cwd, helper_kind=kind, helper_of=parent,
+                            helper_of_by=by, prompt_hook=True)
             if not other_thread:
                 # A subagent shares its parent's process: its breadcrumb would
                 # make the parent's MCP calls its own.
@@ -809,7 +810,7 @@ def main() -> int:
                 close_overtaken(cap, prompt, str(payload.get("transcript_path") or ""))
             signals = cap.open_turn(prompt, deliver=True)
             notice = format_signals(signals, args.tool)
-            if args.tool == "claude-code" and not cap.is_helper():
+            if args.tool == "claude-code" and not signals.get("ping") and not cap.is_helper():
                 # A compaction no SessionStart answered (a folder set up before
                 # that hook): the carried messages come with this prompt.
                 due = cap.compactions_due(str(payload.get("transcript_path") or ""))
@@ -873,7 +874,7 @@ def main() -> int:
                           transcript=(transcript_path, seg.end) if transcript_path and kept else None)
             cap.record_skills(seg.skills)
             helper_paths = helpers.touched if helpers else []
-            cap.complete_turn(text, close_if_missing=True, transcript=transcript_path or None,
+            ping = cap.complete_turn(text, close_if_missing=True, transcript=transcript_path or None,
                               continuation=seg.woken,
                               points=seg.points if transcript_path else None,
                               touched=(seg.touched + [p for p in helper_paths if p not in seg.touched])
@@ -881,6 +882,8 @@ def main() -> int:
                               committed=seg.committed if transcript_path else None,
                               commit_calls=seg.calls.finish(shared.local_iso(datetime.now().astimezone().isoformat()))
                               if transcript_path else None)
+            if ping:
+                return 0
             cap.note_chat_title(seg.title)
             response = {}
             if args.tool == "claude-code":
