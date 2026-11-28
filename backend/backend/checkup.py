@@ -100,7 +100,7 @@ SURE = ("process", "thread", "given")
 
 def this_chat(store: ViewStore, agent_id: str, now: float, identity: str = "given") -> dict[str, Any]:
     """This chat is being recorded (the hook writes each message first)."""
-    from .sessions import chat_path, parse_turns
+    from .sessions import chat_path, parse_chat
     if not agent_id:
         return finding("chat:identity_unknown", "capture", UNKNOWN, "This chat's identity is not known",
                        "no chat was found for the caller", "run #sp in the chat itself, through the MCP tool")
@@ -115,7 +115,7 @@ def this_chat(store: ViewStore, agent_id: str, now: float, identity: str = "give
                        f"no chat folder for {agent_id}",
                        "check the hook in this folder (Setup › Re-integrate), then send a message")
     try:
-        turns = parse_turns(path)
+        turns, _ = parse_chat(path, include_pings=True)
     except OSError as exc:
         return finding("chat:unreadable", "capture", CONCERN, "This chat's record cannot be read", str(exc))
     if not turns:

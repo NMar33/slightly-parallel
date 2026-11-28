@@ -45,12 +45,13 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from . import chatstore, codexdelivery, msgledger, termlib
+from . import app_settings, chatstore, codexdelivery, msgledger, pingstate, termlib
 from .file_safety import FileSafetyError, acquire_flock, lock_path
-from .hookshared import process_started
+from .hookshared import epoch_of, process_started
 
 log = logging.getLogger("sp.messages")
 
@@ -132,7 +133,7 @@ def _after_prompt(cells: list[tuple[str, bool]], glyph: str) -> list[tuple[str, 
     return cells[k + 1:]
 
 
-def _input_state(screen: str, tool: str) -> bool | None:
+def _input_state(screen: str, tool: str, *, expected: str = "", cursor_row: int | None = None) -> bool | None:
     """True for an empty composer, False for a draft, None when unreadable."""
     rows = [_cells(r) for r in screen.split("\n")]
     while rows and not _text(rows[-1]).strip():
@@ -141,19 +142,20 @@ def _input_state(screen: str, tool: str) -> bool | None:
     if not glyph:
         return None
     at = next((i for i in range(len(rows) - 1, -1, -1) if _after_prompt(rows[i], glyph) is not None), None)
-    if at is None:
+    if at is None or (cursor_row is not None and at != cursor_row):
         return None
     rest = _after_prompt(rows[at], glyph) or []
+    matches = _text(rest).strip() == expected if expected else not _typed(rest)
     if tool == "claude-code":
         if at == 0 or not _is_rule(rows[at - 1]):
             return None
         bottom = next((i for i in range(at + 1, len(rows)) if _is_rule(rows[i])), None)
         if bottom is None:
             return None
-        return bottom == at + 1 and not _typed(rest)
+        return bottom == at + 1 and matches
     # Codex: the composer is the last "›" row; a row of input under it would
     # be the operator's second line.
-    return not _typed(rest) and (at + 1 >= len(rows) or not _typed(rows[at + 1]))
+    return matches and (at + 1 >= len(rows) or not _typed(rows[at + 1]))
 
 
 def input_empty(screen: str, tool: str) -> bool:
@@ -194,13 +196,15 @@ def terminal_of(data_root: Path, agent_id: str) -> str:
 
 def _pane(data_root: Path, sid: str) -> dict[str, str] | None:
     got = termlib.tmux_read(data_root, "display-message", "-p", "-t", termlib.PREFIX + sid,
-                            "#{pane_current_command}\t#{pane_in_mode}\t#{pane_dead}\t#{pane_pid}")
+                            "#{pane_current_command}\t#{pane_in_mode}\t#{pane_dead}\t#{pane_pid}"
+                            "\t#{cursor_y}\t#{pane_width}")
     if got.returncode != 0:
         return None
     parts = (got.stdout or "").rstrip("\n").split("\t")
     if len(parts) < 4:
         return None
-    return {"fg": parts[0], "in_mode": parts[1], "dead": parts[2], "pid": parts[3]}
+    keys = ("fg", "in_mode", "dead", "pid", "cursor_y", "width")
+    return dict(zip(keys, parts))
 
 
 #: A process that started more than this after the breadcrumb was written
@@ -263,7 +267,8 @@ WHY_COPY_MODE = "the terminal is in copy mode"
 _PASSING = (WHY_INPUT, WHY_COPY_MODE)
 
 
-def check(data_root: Path, agent_id: str) -> tuple[str, str]:
+def check(data_root: Path, agent_id: str, *, idle_only: bool = False, expected: str = "",
+          columns: int = 0) -> tuple[str, str]:
     """(terminal id, why not) for typing into this chat's terminal now:
     why is '' when it may be typed into."""
     if termlib.tmux_path() is None:
@@ -272,6 +277,10 @@ def check(data_root: Path, agent_id: str) -> tuple[str, str]:
     if meta is None:
         return "", "no such chat"
     tool = str(meta.get("tool") or "")
+    if idle_only and (meta.get("pending_turn") is not None or meta.get("helper")):
+        return "", "the agent is working or is a helper"
+    if idle_only and tool == "codex" and not meta.get("prompt_hook"):
+        return "", WHY_UNREADABLE_INPUT
     if tool not in TOOLS:
         return "", f"the chat's tool ({tool or 'unknown'}) has no input line this server can read"
     sid = terminal_of(data_root, agent_id)
@@ -293,8 +302,19 @@ def check(data_root: Path, agent_id: str) -> tuple[str, str]:
         return sid, why
     if pane["in_mode"] == "1":
         return sid, WHY_COPY_MODE
+    width = pane.get("width", "")
+    if columns and (not width.isdecimal() or int(width) < columns):
+        return sid, WHY_UNREADABLE_INPUT
+    cursor = pane.get("cursor_y", "")
+    if idle_only and tool == "codex" and not cursor.isdecimal():
+        return sid, WHY_UNREADABLE_INPUT
+    cursor_row = int(cursor) if idle_only and tool == "codex" else None
     screen = termlib.tmux_read(data_root, "capture-pane", "-p", "-e", "-t", termlib.PREFIX + sid)
-    state = _input_state(screen.stdout or "", tool) if screen.returncode == 0 else None
+    display = screen.stdout or ""
+    if idle_only and any("esc to interrupt" in _text(_cells(line)).lower()
+                         for line in display.split("\n")):
+        return sid, "the agent is working"
+    state = _input_state(display, tool, expected=expected, cursor_row=cursor_row) if screen.returncode == 0 else None
     if state is None:
         return sid, WHY_UNREADABLE_INPUT
     return sid, "" if state else WHY_INPUT
@@ -319,19 +339,39 @@ def stop_leaves(data_root: Path, agent_id: str) -> tuple[str, str]:
     return sid, "" if why in _PASSING else why
 
 
-def _type(data_root: Path, sid: str, row: dict[str, str]) -> bool:
-    """The text as one paste (bracketed, when the program asked for that), then Enter."""
+def _paste(data_root: Path, sid: str, buffer_id: str, text: str,
+           before_paste: Callable[[], bool], before_enter: Callable[[], bool] | None = None) -> bool:
+    """Load and paste one buffer, then Enter if it may still be submitted."""
     target = termlib.PREFIX + sid
-    buf = "sp-" + row["id"]
-    if termlib.tmux(data_root, "load-buffer", "-b", buf, "-", input=msgledger.terminal_text(row)).returncode != 0:
+    buf = "sp-" + buffer_id
+    if termlib.tmux(data_root, "load-buffer", "-b", buf, "-", input=text).returncode != 0:
         return False
-    if check(data_root, row["to_agent"]) != (sid, "") or not msgledger.begin_terminal(data_root, row["id"]):
-        termlib.tmux(data_root, "delete-buffer", "-b", buf)
-        return False
-    if termlib.tmux(data_root, "paste-buffer", "-p", "-d", "-b", buf, "-t", target).returncode != 0:
-        return False
+    pasted = False
+    try:
+        if not before_paste():
+            return False
+        if termlib.tmux(data_root, "paste-buffer", "-p", "-d", "-b", buf, "-t", target).returncode != 0:
+            return False
+        pasted = True
+    finally:
+        # paste-buffer -d normally removes it. A refusal before the paste leaves it.
+        if not pasted:
+            termlib.tmux(data_root, "delete-buffer", "-b", buf)
     time.sleep(ENTER_AFTER_S)
+    if before_enter is not None and not before_enter():
+        return False
     return termlib.tmux(data_root, "send-keys", "-t", target, "Enter").returncode == 0
+
+
+def _type(data_root: Path, sid: str, row: dict[str, str]) -> bool:
+    def begin() -> bool:
+        return check(data_root, row["to_agent"]) == (sid, "") and msgledger.begin_terminal(data_root, row["id"])
+
+    return _paste(data_root, sid, row["id"], msgledger.terminal_text(row), begin)
+
+
+def _pane_lock(data_root: Path, sid: str) -> Path:
+    return lock_path(termlib.folder(data_root) / ("deliver-" + sid))
 
 
 def try_terminal(data_root: Path, msg_id: str) -> tuple[bool, str]:
@@ -348,9 +388,8 @@ def try_terminal(data_root: Path, msg_id: str) -> tuple[bool, str]:
     sid = row["terminal_sid"] or terminal_of(data_root, agent)
     if not re.fullmatch(r"t[0-9a-f]{8}", sid):
         return False, "the chat has no live terminal in Slightly Parallel"
-    pane_lock = lock_path(termlib.folder(data_root) / ("deliver-" + sid))
     try:
-        with acquire_flock(pane_lock, timeout_s=0):
+        with acquire_flock(_pane_lock(data_root, sid), timeout_s=0):
             return _try_in_pane(data_root, sid, msg_id)
     except FileSafetyError:
         return False, "another message is being typed into this terminal"
@@ -423,3 +462,68 @@ def retry_waiting(data_root: Path) -> int:
     # must be picked up next round, even when all earlier rows were delivered.
     _last_seen[key] = (st.st_mtime, st.st_size, len(rows) > typed)
     return typed
+
+
+def _not_answered_recently(root: Path, agent: str, now: float, seconds: int) -> bool:
+    meta = chat_meta(root, agent) or {}
+    if not meta.get("message_count") or meta.get("pending_turn") is not None or meta.get("helper"):
+        return False
+    ended = epoch_of(meta.get("last_answer_at", meta.get("last_active")))
+    return ended is not None and now - ended >= seconds
+
+
+def _ping_one(root: Path, path: Path, now: float, seconds: int) -> bool:
+    agent = path.stem
+    if not pingstate.due(pingstate.read(path), now, seconds) or not _not_answered_recently(root, agent, now, seconds):
+        return False
+    sid = terminal_of(root, agent)
+    if not re.fullmatch(r"t[0-9a-f]{8}", sid):
+        return False
+    nonce, text = pingstate.envelope()
+    columns = len(text) + 5
+
+    def begin() -> bool:
+        return (
+            check(root, agent, idle_only=True, columns=columns) == (sid, "")
+            and _not_answered_recently(root, agent, now, seconds)
+            and pingstate.reserve(path, nonce, sid, now, seconds)
+        )
+
+    def submit() -> bool:
+        return (
+            check(root, agent, idle_only=True, expected=text, columns=columns) == (sid, "")
+            and pingstate.read(path).get("enabled") is True
+        )
+
+    with acquire_flock(_pane_lock(root, sid), timeout_s=0):
+        if check(root, agent, idle_only=True, columns=columns) != (sid, ""):
+            return False
+        return _paste(root, sid, nonce, text, begin, submit)
+
+
+def ping_due(root: Path, *, now: datetime | None = None) -> int:
+    """Try the enrolled chats once. The ordinary terminal proof still has to pass."""
+    paths = sorted((root / pingstate.DIRECTORY).glob("*.json"))
+    if not paths:
+        return 0
+    now = now or datetime.now().astimezone()
+    settings = app_settings.load(root)
+    quiet_hours = settings["ping.quiet_hours"]
+    if quiet_hours:
+        start, end = quiet_hours.split("-")
+        local = now.strftime("%H:%M")
+        in_quiet_hours = start <= local < end if start <= end else local >= start or local < end
+        if in_quiet_hours:
+            return 0
+    seconds = int(settings["ping.interval_minutes"]) * 60
+    sent = 0
+    for path in paths:
+        if not pingstate.AGENT_RE.fullmatch(path.stem):
+            continue
+        try:
+            sent += _ping_one(root, path, now.timestamp(), seconds)
+        except FileSafetyError:
+            continue  # another sender holds the pane
+        except (OSError, ValueError, TypeError, termlib.TmuxError):
+            log.warning("keep-alive could not be sent to %s", path.stem, exc_info=True)
+    return sent

@@ -33,11 +33,12 @@ from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 from .hookshared import (
     MESSAGE_MARK_RE, NOT_OPERATOR, command_text, message_mark_kinds, pick_task_hit, plain_text, yymm_dd as _yymm_dd,
 )
+from .pingstate import HEADER_SUFFIX
 from .task_refs import TASK_REF_RE, task_ids
 
 _TURN_RE = re.compile(r"^## Turn (\d+) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
@@ -60,6 +61,7 @@ class Turn:
     # the helpers' own seconds in that window.
     busy: list[tuple[datetime, datetime]] | None = None
     helper_sec: int = 0
+    ping: bool = False
 
 
 @dataclass
@@ -590,12 +592,22 @@ def _nows_of(
 
 
 def parse_turns(chat_path: Path) -> list[Turn]:
-    """All turns of one chat.md, with their full texts and header lines."""
+    """The work turns of one chat.md, with their full texts and header lines."""
     return parse_chat(chat_path)[0]
 
 
-def parse_chat(chat_path: Path) -> tuple[list[Turn], int]:
-    """(all turns of one chat.md, the number of lines in it).
+def work_chat_lines(lines: Iterable[str]) -> Iterator[str]:
+    """A raw chat excerpt with the captured keep-alive blocks removed."""
+    ping = False
+    for line in lines:
+        if _TURN_RE.match(line):
+            ping = line.rstrip("\r\n").endswith(HEADER_SUFFIX)
+        if not ping:
+            yield line
+
+
+def parse_chat(chat_path: Path, *, include_pings: bool = False) -> tuple[list[Turn], int]:
+    """(work turns of one chat.md by default, total number of lines in it).
 
     Handles both formats: one-line summaries (legacy) and multiline verbatim
     blocks (hook capture) — a **User**/**Agent** marker starts a block that
@@ -636,7 +648,7 @@ def parse_chat(chat_path: Path) -> tuple[list[Turn], int]:
             except ValueError:
                 continue
             flush()
-            turns.append(Turn(number=int(m.group(1)), at=at, line=i))
+            turns.append(Turn(number=int(m.group(1)), at=at, line=i, ping=line.endswith(HEADER_SUFFIX)))
             continue
         if not turns:
             continue
@@ -657,7 +669,7 @@ def parse_chat(chat_path: Path) -> tuple[list[Turn], int]:
         elif mode == "agent":
             agent_buf.append(line)
     flush()
-    return turns, len(lines)
+    return (turns if include_pings else [t for t in turns if not t.ping]), len(lines)
 
 
 # The tags a pasted block arrives in (Claude Code's <pasted_content id="…">):

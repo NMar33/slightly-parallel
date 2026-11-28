@@ -13,6 +13,7 @@ environment it first writes the breadcrumb the capture hook would write on a
 prompt: the processes above a hook this program started, nearest first —
 this program, then its shell. The server types into a terminal only for the
 chat that breadcrumb says runs there (msgdeliver.occupant_why).
+Set SP_FAKE_LIVE_INPUT to redraw the composer while text is being pasted.
 """
 
 from __future__ import annotations
@@ -40,6 +41,12 @@ if crumb and agent:
                                        "pids": [os.getpid(), *shared.ancestors()]}), encoding="utf-8")
 
 
+live_input = os.environ.get("SP_FAKE_LIVE_INPUT") == "1"
+if live_input:
+    import tty
+
+    tty.setcbreak(sys.stdin.fileno())
+
 got: list[str] = []
 
 
@@ -55,6 +62,9 @@ def draw(text: str) -> None:
         out += f"\x1b[1m›\x1b[0m {shown}\n\n  fake-model · ~/work\n"
     else:
         out += rule + f"\x1b[39m❯ {text}\n" + rule + "  ? for shortcuts\n"
+    if live_input:
+        row = (3 if tool == "codex" else 4) + min(len(got), 5)
+        out += f"\x1b[{row};{3 + len(text)}H"
     sys.stdout.write(out)
     sys.stdout.flush()
 
@@ -63,7 +73,18 @@ draw(typed)
 while True:
     ready, _, _ = select.select([sys.stdin], [], [], 0.2)
     if ready:
-        line = sys.stdin.readline()
+        if live_input:
+            raw = os.read(sys.stdin.fileno(), 4096).decode("utf-8")
+            if not raw:
+                break
+            typed += raw
+            if "\n" not in typed:
+                draw(typed)
+                continue
+            line, _, typed = typed.partition("\n")
+            line += "\n"
+        else:
+            line = sys.stdin.readline()
         if not line:
             break
         with open(log, "a", encoding="utf-8") as fh:

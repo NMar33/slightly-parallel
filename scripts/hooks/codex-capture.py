@@ -64,8 +64,10 @@ def resolve_project(data_root: Path, cwd: str) -> str:
 
 def joined(value) -> str:
     if isinstance(value, list):
-        return "\n".join(str(v) for v in value if v).strip()
-    return str(value or "").strip()
+        text = "\n".join(str(v) for v in value if v)
+    else:
+        text = str(value or "")
+    return text if text.strip() else ""
 
 
 def main() -> int:
@@ -101,7 +103,7 @@ def main() -> int:
         # the name this adapter shipped with; never emitted by Codex
         or event.get("last-agent-message")
         or event.get("last_agent_message")
-    )
+    ).strip()
     try:
         cap = TurnCapture(data_root, project, f"codex-{shared.session_key('codex', session)}")
         # The turn arrives only at its end: its start and its commit calls

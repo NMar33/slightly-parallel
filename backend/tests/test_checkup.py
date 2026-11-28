@@ -41,7 +41,11 @@ def test_this_chat_is_recorded_when_its_last_message_is_recent(client: TestClien
     from backend import sessions
     at = datetime(2026, 10, 20, 12, 0)
     monkeypatch.setattr(sessions, "chat_path", lambda store, aid: tmp_path / "chat.md" if aid == "cc-here0001" else None)
-    monkeypatch.setattr(sessions, "parse_turns", lambda path: [sessions.Turn(number=1, at=at, line=1)])
+    (tmp_path / "chat.md").write_text(
+        "## Turn 1 · 2026-10-20T10:00:00\n**User**: first prompt\n**Agent**: first answer\n"
+        f"## Turn 2 · {at.isoformat()} · ping\n**User**: [SP ping]\n**Agent**: ok\n",
+        encoding="utf-8",
+    )
     store = client.app.state.store
     assert checkup.this_chat(store, "cc-here0001", now=at.timestamp() + 60)["status"] == "ok"
     assert checkup.this_chat(store, "cc-here0001", now=at.timestamp() + checkup.CAPTURE_GRACE_S + 60)["status"] == "concern"
@@ -64,7 +68,10 @@ def test_a_guessed_chat_is_unknown_not_a_concern(client: TestClient, monkeypatch
     from datetime import datetime
     from backend import sessions
     monkeypatch.setattr(sessions, "chat_path", lambda store, aid: tmp_path / "chat.md")
-    monkeypatch.setattr(sessions, "parse_turns", lambda path: [sessions.Turn(number=1, at=datetime(2026, 10, 18), line=1)])
+    (tmp_path / "chat.md").write_text(
+        "## Turn 1 · 2026-10-18T00:00:00\n**User**: first prompt\n**Agent**: first answer\n",
+        encoding="utf-8",
+    )
     store, now = client.app.state.store, datetime(2026, 10, 20).timestamp()
     for source in ("shared-parent", "folder", ""):
         got = checkup.this_chat(store, "cc-other001", now, source)

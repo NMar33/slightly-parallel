@@ -35,6 +35,7 @@ from .actors import is_agent
 from .csvio import append_row
 from .date_utils import now_iso
 from .db import ViewStore
+from .sessions import parse_turns
 from .viewrows import agents_by_id
 
 #: The lists, by the name a route and the MCP tool use, and the mark kinds in each.
@@ -66,7 +67,10 @@ class _Chats:
         if agent_id not in self._turns:
             a = self.raw.get(agent_id) or {}
             path = str(a.get("_chat_path") or "")
-            self._turns[agent_id] = {n: (at, u, r) for n, at, u, r in hookshared.chat_turns(path)} if path else {}
+            self._turns[agent_id] = {
+                t.number: (t.at.isoformat(), t.user_summary, t.agent_summary)
+                for t in parse_turns(Path(path))
+            } if path else {}
         return self._turns[agent_id]
 
     def deliveries(self, agent_id: str) -> list[dict[str, Any]]:

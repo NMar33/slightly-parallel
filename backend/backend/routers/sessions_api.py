@@ -358,4 +358,4 @@ def _chat_excerpt(
             lines = [ln.rstrip("\n") for ln in islice(fh, start - 1, end)]
     except OSError:
         return ""
-    return "\n".join(lines).strip()
+    return "\n".join(sessions.work_chat_lines(lines)).strip()

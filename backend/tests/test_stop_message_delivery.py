@@ -30,7 +30,7 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-from backend import msgdeliver, msgledger, termlib
+from backend import msgdeliver, msgledger, pingstate, termlib
 from backend.server import create_app
 
 _HOOKS = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
@@ -441,13 +441,15 @@ def term(tmp_path: Path, monkeypatch):
     termlib.tmux(root, "kill-server")
 
 
-def _agent(c: TestClient, root: Path, work: Path, typed: str = "") -> tuple[str, Path]:
+def _agent(c: TestClient, root: Path, work: Path, typed: str = "", *,
+           live_input: bool = False) -> tuple[str, Path]:
     """The stand-in for Claude Code in an SP terminal, its meta naming that
     terminal and its breadcrumb holding the pane's shell (what the hook
     writes on a prompt)."""
     log = work / "worker.log"
     crumb = root / ".sessions" / "f0f0f0f0f0f0" / f"{WORKER}.json"
     cmd = (f"SP_FAKE_CRUMB={shlex.quote(str(crumb))} SP_FAKE_AGENT={WORKER} "
+           + ("SP_FAKE_LIVE_INPUT=1 " if live_input else "")
            + " ".join(shlex.quote(x) for x in (sys.executable, str(FAKE), str(log), "claude-code", typed)))
     got = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha", "command": cmd, "label": WORKER})
     assert got.status_code == 201, got.text
@@ -565,3 +567,25 @@ def test_stop_and_the_typer_at_once_deliver_each_message_once(term, in_sp_termin
     time.sleep(0.5)
     assert len(_lines(log, typed_total + 1, wait=0.3)) == typed_total
     assert msgdeliver.retry_waiting(root) == 0
+
+
+
+@needs_tmux
+def test_keep_alive_through_the_tty_and_capture_hook(term) -> None:
+    client, root, work, port = term
+    pane, log = _agent(client, root, work, live_input=True)
+    _chat(root, WORKER, terminal=pane, message_count=1)
+    pingstate.enroll(root, WORKER, enabled=True)
+    assert msgdeliver.ping_due(root) == 1
+    typed = _lines(log, 1)
+    assert len(typed) == 1 and typed[0].endswith(" Reply with one word.")
+    assert msgledger.inbox(root, WORKER)["unread"] == []
+    env = _env(SP_TERMINAL=pane, SP_PORT=port)
+    prompt = _hook(root, {"hook_event_name": "UserPromptSubmit", "session_id": SESSION, "prompt": typed[0]}, env)
+    assert not prompt.stdout and not prompt.stderr
+    assert _stop(root, env) == {}
+    folder = root / "projects" / "alpha" / "chats" / WORKER
+    assert " · ping\n" in (folder / "chat.md").read_text(encoding="utf-8")
+    assert json.loads((folder / "turns.jsonl").read_text(encoding="utf-8"))["ping"]
+    assert not (folder / "work.jsonl").exists()
+    assert msgdeliver.ping_due(root) == 0
