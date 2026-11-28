@@ -23,10 +23,10 @@ Three properties, in order of how much they matter:
    there, so it is the one about to cross into the next rung: every rung is
    fed by the one below it instead of starving behind the boundary.
 
-Three folders are left out (``EXCLUDE_DIRS``): ``tour_shots``, the tour's
+Machine-local folders are left out (``EXCLUDE_DIRS``): ``tour_shots``, the tour's
 page photographs — two thirds of the archive, and two minutes to regenerate —
-and ``monitor`` and ``terminal``, this machine's own record and its open
-terminals. Everything else goes in.
+and ``monitor``, ``terminal`` and ``diagnostics``, the machine's samples, terminal
+registry and local snapshots. Everything else goes in.
 
 Manual archives are the operator's own bookmarks: kept by count rather than
 by date. A pin overrules the ladder outright — on any archive, of either
@@ -75,12 +75,12 @@ EXCLUDE_GLOBS: tuple[str, ...] = ("*.lock", "operator.token")
 # two thirds of the archive by size, PNGs that gzip barely touches, and
 # regenerable in about two minutes by re-running the capture. ``monitor`` is
 # the system monitor's samples of this machine and ``terminal`` the registry
-# of its open terminals: neither is project data, neither means anything on
-# another day. Nothing else
+# of its open terminals. `diagnostics` holds local terminal snapshots,
+# which can contain private terminal output. Nothing else
 # belongs here — a backup that quietly leaves things out is the class of bug
 # this feature exists against, so both lists are reported by the API and
 # shown on the page rather than living only in this file.
-EXCLUDE_DIRS: tuple[str, ...] = ("tour_shots", "monitor", "terminal")
+EXCLUDE_DIRS: tuple[str, ...] = ("tour_shots", "monitor", "terminal", "diagnostics")
 _RESTORE_WORK_PREFIX = ".sp-restore-"
 
 KINDS = ("auto", "manual")

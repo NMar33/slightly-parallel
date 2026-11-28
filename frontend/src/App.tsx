@@ -12,6 +12,7 @@ import { useApplyTermScheme } from './features/terminal/useScheme'
 import { useSidebarCollapsed } from './hooks/useSidebarCollapsed'
 import { Sidebar } from './features/shell/Sidebar'
 import { Topbar } from './features/shell/Topbar'
+import { useDashboardRecordNavigation } from './features/aqua/app/dashboard'
 
 // The tour player loads only when the address asks for a tour (?tour=).
 const LiveTour = lazy(() => import('./features/tour/LiveTour').then((m) => ({ default: m.LiveTour })))
@@ -99,6 +100,7 @@ function Freshness() {
 
 export function App() {
   const appLocation = useLocation()
+  useDashboardRecordNavigation()
   // Skin, accent and interface scale — the operator's appearance choices.
   useApplyAppearance()
   // The terminal's colour scheme on the page's terminal tokens (the drawer, /term).

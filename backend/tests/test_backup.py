@@ -494,7 +494,7 @@ def test_the_state_endpoint_describes_the_ladder_and_the_source(client):
     assert body["source"]["files"] > 0
     assert [r["days"] for r in body["rungs"]] == [1, 3, 7, 14, 30, 90]
     assert body["keep"]["manual"] == 10
-    assert body["excluded"] == ["*.lock", "operator.token", "tour_shots/", "monitor/", "terminal/"]
+    assert body["excluded"] == ["*.lock", "operator.token", "tour_shots/", "monitor/", "terminal/", "diagnostics/"]
     assert body["backup_root"].endswith("-backups")
 
 
@@ -715,3 +715,16 @@ def test_a_restore_waits_until_every_file_can_be_copied_first(roots):
     finally:
         locked.chmod(0o644)
     assert locked.read_text(encoding="utf-8") == "only here\n"
+
+
+def test_terminal_diagnostics_stay_out_of_an_archive(roots):
+    data, dest = roots
+    diagnostics = data / "diagnostics"
+    diagnostics.mkdir()
+    capture = diagnostics / "terminal-example.json"
+    capture.write_text('{"screen":"local terminal transcript"}', encoding="utf-8")
+    archive = backup.create(data, dest, kind="manual")
+    assert archive.path is not None
+    with tarfile.open(archive.path) as tar:
+        assert not any(name.startswith(f"{data.name}/diagnostics") for name in tar.getnames())
+    assert capture.is_file()

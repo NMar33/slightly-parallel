@@ -14,3 +14,9 @@ describe('laneUpdate', () => {
     expect(laneUpdate('')).toEqual({})
   })
 })
+
+it('writes an empty row and a named unassigned row differently', () => {
+  expect(laneUpdate({ project: 'alpha', name: '' })).toEqual({ assignee: '', lane: '' })
+  expect(laneUpdate({ project: 'alpha', name: 'unassigned' }))
+    .toEqual({ assignee: 'unassigned', lane: 'unassigned' })
+})

@@ -1290,3 +1290,100 @@ def test_a_new_scheme_with_no_tmux_running_changes_nothing(env) -> None:
     assert c.post("/api/settings", json={"values": {"terminal.scheme": "nord"}}).status_code == 200
     if TMUX:
         assert termlib.tmux(root, "list-sessions").returncode != 0
+
+
+@pytest.mark.skipif(not TMUX, reason="tmux is not installed")
+def test_terminal_diagnostic_is_operator_only_and_changes_only_its_own_file(env) -> None:
+    c, root, work = env
+    _on(c)
+    tok = c.get("/api/terminal/state").json()["token"]
+    got = c.post("/api/terminal/sessions", json={
+        "kind": "shell", "project": "alpha", "command": "printf '\\033[31mdiagnostic-marker\\033[0m\\n'",
+    })
+    assert got.status_code == 201
+    sid = got.json()["session"]["id"]
+    route = f"/api/terminal/sessions/{sid}/diagnostics"
+    browser = {
+        "capturedAt": "2026-11-28T00:00:00.000Z",
+        "xterm": {"live": {"rows": 24, "cols": 80, "viewportY": 0, "rowsByIndex": []}, "reader": None},
+        "dom": {"live": ["diagnostic-marker"], "reader": None},
+        "scrollLayer": {"live": {"pos": 0, "target": 0, "max": 0, "rowH": 19}, "reader": None},
+    }
+    target = termlib.PREFIX + sid
+
+    def files(folder: Path) -> dict:
+        return {p.relative_to(folder): p.read_bytes() for p in folder.rglob("*") if p.is_file()}
+
+    with c.websocket_connect(f"/ws/terminal/{sid}?token={tok}&cols=80&rows=24") as ws:
+        seen = b""
+        while b"diagnostic-marker" not in seen:
+            seen += ws.receive_bytes()
+        before = files(root)
+        before_work = files(work)
+        tmux_before = termlib.tmux_read(root, "capture-pane", "-p", "-e", "-t", target).stdout
+        pane_before = termlib.pane_pos(root, sid)
+        other = TestClient(c.app)
+        try:
+            other.cookies.clear()
+            refused = other.post(route, json=browser)
+        finally:
+            other.close()
+        assert refused.status_code == 403
+        assert files(root) == before
+
+        response = c.post(route, json={**browser, "path": str(work / "outside.json")})
+        assert response.status_code == 201, response.text
+        assert response.json()["owner_only"] is (os.name != "nt")
+        path = Path(response.json()["path"])
+        assert path.parent == root.resolve() / "diagnostics" and sid in path.name
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        assert saved["terminal"] == sid and saved["browser"] == browser
+        assert saved["server"]["pane"]["flags"]["alternate_on"] is False
+        assert "mouse_any_flag" in saved["server"]["pane"]["flags"]
+        assert saved["server"]["panePty"] == {"rows": 24, "cols": 80}
+        assert any(client["pty"] == {"rows": 24, "cols": 80} for client in saved["server"]["tmuxClients"])
+        assert saved["server"]["tmuxCapture"] == tmux_before and "\x1b[31m" in tmux_before
+        assert termlib.pane_pos(root, sid) == pane_before
+        assert termlib.tmux_read(root, "capture-pane", "-p", "-e", "-t", target).stdout == tmux_before
+        assert files(root) == {**before, path.relative_to(root.resolve()): path.read_bytes()}
+        assert files(work) == before_work
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires an unprivileged directory symlink")
+def test_terminal_diagnostic_rejects_a_diagnostics_folder_outside_the_data_root(env) -> None:
+    c, root, work = env
+    _on(c)
+    got = c.post("/api/terminal/sessions", json={"kind": "shell", "project": "alpha"})
+    assert got.status_code == 201
+    sid = got.json()["session"]["id"]
+    (root / "diagnostics").symlink_to(work, target_is_directory=True)
+    response = c.post(f"/api/terminal/sessions/{sid}/diagnostics", json={
+        "capturedAt": "2026-11-28T00:00:00.000Z", "xterm": {}, "dom": {}, "scrollLayer": {},
+    })
+    assert response.status_code == 409
+    assert list(work.iterdir()) == []
+
+
+@pytest.mark.skipif(os.open not in os.supports_dir_fd, reason="requires POSIX directory descriptors")
+def test_terminal_diagnostics_refuse_a_folder_changed_during_capture(tmp_path, monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    from backend import terminal_diagnostics
+
+    root = tmp_path / "data"
+    folder = root / "diagnostics"
+    previous = root / "previous-diagnostics"
+    other = tmp_path / "other"
+    folder.mkdir(parents=True)
+    other.mkdir()
+
+    def changed_directory(*_args):
+        folder.rename(previous)
+        folder.symlink_to(other, target_is_directory=True)
+        return {}
+
+    monkeypatch.setattr(terminal_diagnostics, "_tmux_snapshot", changed_directory)
+    with pytest.raises(HTTPException) as error:
+        terminal_diagnostics.save(root, "te2e", "tmux", {}, None)
+    assert error.value.status_code == 409
+    assert list(other.iterdir()) == list(previous.iterdir()) == []

@@ -56,9 +56,10 @@ const EXCLUDE_PREFIXES = [
   'sp-aqua-workspace',
   'sp-aqua-ws-tabs',
   'sp-aqua-tab-order',
-  // Sidebar/window placement belongs to this desktop profile.
+  // Sidebar/window placement and the selected side belong to this desktop profile.
   'sp-aqua-sidebar-mode',
   'sp-aqua-window-layout',
+  'sp-aqua-window-side',
 ]
 
 export function isSyncable(key: string): boolean {

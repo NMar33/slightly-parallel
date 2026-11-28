@@ -52,4 +52,16 @@ function observeFullscreen(receive) {
   }
 }
 
-contextBridge.exposeInMainWorld('spWindow', { postMessage, metrics, restoreOffer, saveDraft, observeFullscreen })
+function setDashboardView(visible, titleHeight) {
+  ipcRenderer.send('sp-dashboard-view', visible === true, titleHeight)
+}
+
+function openDashboardRecord(id) {
+  ipcRenderer.send('sp-dashboard-record', id)
+}
+
+if (location.pathname === '/term') {
+  contextBridge.exposeInMainWorld('spWindow', {
+    postMessage, metrics, restoreOffer, saveDraft, observeFullscreen, setDashboardView, openDashboardRecord,
+  })
+}
