@@ -9,7 +9,7 @@ import time
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
 from .. import hookshared, limits, thinklib, titlelib
-from ..csvio import rewrite_rows
+from ..csvio import read_rows, rewrite_rows
 from ..db import ViewStore
 from ..docs_md import resolve_under
 from ..entities import (
@@ -25,13 +25,16 @@ from .deps import (
     AGENT_REFUSED, etag_for, get_store, iso_moment, json_response, maybe_304,
     not_found, refuse_agent,
 )
-from .lenses import check_enum_fields, doc_path, task_membership
+from .lenses import doc_path, task_membership
+from ..refusals import Reasons
+from ..vocab import enum_problems
 # What a task's status, archive and comeback date set off — whoever moves it:
 # the board, an agent, #done, #undo (tasklib.py; the libraries call it there).
 from ..tasklib import (  # noqa: F401
     AGENT_TAGS, AGENT_TAGS_MAX, AGENT_TITLE_MAX, agent_tags, DESCRIPTION_MAX, TASK_STATUSES, TITLE_MAX, _board_lanes,
     _gate_agent_create, _lane_for, _operator_command, _set_archived, _task_doc, _write_task_doc,
-    after_status_change, create_task, maybe_resurface, resurface_sweep, OWN_CARD_FIELDS, own_card_refusal,
+    after_status_change, choose_lane, create_task, promote_lane, save_board_lane,
+    maybe_resurface, resurface_sweep, OWN_CARD_FIELDS, own_card_refusal,
 )
 
 
@@ -74,6 +77,61 @@ from ..taskevents import DEFAULT_ACTOR as _DEFAULT_ACTOR, append_events as _appe
 from .deps import HOUSE_ACTORS as _HOUSE_ACTORS  # noqa: E402 — the one list of house actors
 
 
+# Task status belongs to the operator. An agent may move a card only when the
+# task opts in (auto_manage) — and the honest path even then is POST
+# /api/tasks/{id}/report, which moves it to review and stamps the badge.
+STATUS_REFUSAL = ("task status belongs to the operator: this task does not "
+                  "allow auto-manage. Report your result instead: "
+                  "MCP tool task_report {{id: \"{task_id}\", summary}}.")
+
+
+def _own_drop(body: dict, row: dict, actor: str) -> bool:
+    """"Drop it": an agent may archive a card it created in the ``agent``
+    column (/task) when the user waves it off — the one status it sets."""
+    return (str(body.get("status") or "") == "done-archived"
+            and str(row.get("status") or "") == "agent"
+            and str(row.get("agent_id") or "") == actor)
+
+
+def _lane_action(body: dict, *, promote: bool = False) -> tuple[str, str]:
+    if identity_of(body) not in _HOUSE_ACTORS:
+        refuse_agent("choosing a board lane is the operator's action")
+    lane = body.get("lane")
+    project = body.get("project", "")
+    if not isinstance(lane, str) or not lane.strip() or len(lane) > 80 or not lane.isprintable():
+        raise HTTPException(status_code=422, detail="send a lane name of at most 80 characters")
+    if promote and (not isinstance(project, str) or not project.strip()):
+        raise HTTPException(status_code=422, detail="send the lane's project")
+    return lane.strip(), project
+
+
+@router.get("/api/tasks/lanes")
+def tasks_saved_lanes(project: str = Query(...), store: ViewStore = Depends(get_store)) -> dict:
+    return {"lanes": hookshared.saved_board_lanes(store.data_root, project)}
+
+
+@router.post("/api/tasks/lanes")
+def tasks_save_lane(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    lane, project = _lane_action(body, promote=True)
+    op = body.get("op")
+    previous = body.get("previous", "")
+    if op not in ("add", "remove", "rename") or not isinstance(previous, str) or (op == "rename" and not previous):
+        raise HTTPException(status_code=422, detail="send add, remove, or rename with its previous lane name")
+    return {"lanes": save_board_lane(store, project, lane, op, previous)}
+
+
+@router.post("/api/tasks/lanes/promote")
+def tasks_promote_lane(body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    lane, project = _lane_action(body, promote=True)
+    return promote_lane(store, project, lane)
+
+
+@router.post("/api/tasks/{task_id}/lane-choice")
+def tasks_choose_lane(task_id: str, body: dict = Body(...), store: ViewStore = Depends(get_store)) -> dict:
+    lane, _ = _lane_action(body)
+    return choose_lane(store, task_id, lane)
+
+
 @router.post("/api/tasks/{task_id}/update", status_code=200)
 def tasks_update(
     task_id: str,
@@ -87,86 +145,117 @@ def tasks_update(
     concurrent updates cannot lose each other's changes.
     """
     ent = ENTITIES["task"]
-    check_enum_fields("task", body)
     csv_path = store.data_root / ent.csv
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="tasks.csv not found")
+    # Every reason at once (tk_90c1ba5f), all before anything moves. A task
+    # that is not there is the only reason; then who may change what (the
+    # mark, the operator's switches, the card's owner), then the values.
+    # The row read here decides the owner and the status; the same checks
+    # run again in mutate, under the lock, for a card changed meanwhile.
+    current = next((r for r in read_rows(csv_path) if r.get("id") == task_id), None)
+    if current is None:
+        raise not_found("task", task_id)
+    why = Reasons()
 
     actor = identity_of(body)
     is_agent = actor not in _HOUSE_ACTORS
     if is_agent:
         if "think" in body:
-            refuse_agent(f"the «{thinklib.MARK}» mark is the operator's", "only the operator sets or removes it")
+            why.add(f"the «{thinklib.MARK}» mark is the operator's", "only the operator sets or removes it",
+                    code="operator_field", field="think")
         moving = {k: body[k] for k in ("status", "lane", "assignee") if k in body}
         if moving:
-            thinklib.refusal(store, task_id, actor, f"changing its {', '.join(moving)}", moving)
+            why.add_pair(thinklib.reason(store, task_id, actor, f"changing its {', '.join(moving)}", moving),
+                         code="think")
         held = sorted(k for k in body if k in _OPERATOR_FIELDS)
         if held:
-            refuse_agent(
+            why.add(
                 f"{', '.join(held)} is the operator's switch",
                 "an agent does not set it. Report your result instead: "
                 f"MCP tool task_report {{id: \"{task_id}\", summary}}.",
+                code="operator_field",
             )
         if "turn" in body:
             # The rounds after the first are the operator's, added on the
             # card; an agent adds its own words after the text as a comment.
-            refuse_agent("a task's later rounds are the operator's",
-                         f"add your words after the text: task_update {{id: \"{task_id}\", comment}}.")
-        if "tags" in body:
-            tags = agent_tags(body.get("tags"))
-            bad = [t for t in tags if t not in AGENT_TAGS]
-            if bad or len(tags) > AGENT_TAGS_MAX:
-                refuse_agent(
-                    ("unknown tag(s) " + ", ".join(bad) + ": " if bad else "")
-                    + f"an agent's tags are {', '.join(AGENT_TAGS)}, at most {AGENT_TAGS_MAX}",
-                    "the operator's tags stay as they are; set yours from that list.",
-                )
-            body["_agent_tags"] = tags
-    if "title" in body and len(str(body.get("title") or "")) > TITLE_MAX:
-        raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
+            why.add("a task's later rounds are the operator's",
+                    f"add your words after the text: task_update {{id: \"{task_id}\", comment}}.",
+                    code="operator_field", field="turn")
+        if "description" in body and store.query_one(
+                "SELECT task_id FROM task_events_mutual WHERE task_id = ? AND field IN ('started', 'filed') "
+                "AND new_value LIKE '%#now%'", (task_id,)):
+            # The operator's #now message is the card's text, kept as written.
+            why.add("a #now task's text is the operator's message, kept as it was written",
+                    f"add yours after it: task_update {{id: \"{task_id}\", comment}}",
+                    code="own_card", field="description")
     # A task made from a message (titlelib): its title waits for the source
     # chat's agent, who sets it once; no other agent, and none after the
     # operator renamed it. A task with no such row keeps the usual rules.
     title_wait = titlelib.state_of(store.data_root, task_id) if "title" in body else None
+    title_refused = None
     if title_wait is not None and is_agent:
-        refused = titlelib.agent_refusal(title_wait, actor, task_id)
-        if refused:
-            refuse_agent(*refused)
-        given = str(body.get("title") or "").strip()
-        if not given or len(given) > AGENT_TITLE_MAX:
-            raise HTTPException(status_code=422, detail=(
-                f"the title is 1–{AGENT_TITLE_MAX} characters ({len(given)} sent)"))
-        body["title"] = given
+        title_refused = titlelib.agent_refusal(title_wait, actor, task_id)
+        why.add_pair(title_refused, code="own_card", field="title")
     # The title, the text and the day of a card are its creator's: an agent
-    # changes them only on a card it created (tasklib.own_card_refusal, asked
-    # in mutate against the row). The waiting title above is the exception.
+    # changes them only on a card it created (tasklib.own_card_refusal). The
+    # waiting title above is the exception.
     own_fields = [f for f in OWN_CARD_FIELDS
                   if f in body and not (f == "title" and title_wait is not None)] if is_agent else []
-    every =str(body.get("resurface_every_days") or "").strip()
+    if own_fields:
+        why.add_pair(own_card_refusal(current, actor, task_id, own_fields), code="own_card")
+    if is_agent and "status" in body and not _own_drop(body, current, actor) \
+            and str(current.get("auto_manage") or "") != "yes":
+        why.add(STATUS_REFUSAL.format(task_id=task_id), code="operator_field", field="status")
+    # The values.
+    for field, line in enum_problems("task", body):
+        why.add(line, code="vocabulary", field=field)
+    if is_agent and "tags" in body:
+        tags = agent_tags(body.get("tags"))
+        bad = [t for t in tags if t not in AGENT_TAGS]
+        if bad or len(tags) > AGENT_TAGS_MAX:
+            why.add(
+                ("unknown tag(s) " + ", ".join(bad) + ": " if bad else "")
+                + f"an agent's tags are {', '.join(AGENT_TAGS)}, at most {AGENT_TAGS_MAX}",
+                "the operator's tags stay as they are; set yours from that list.",
+                code="vocabulary", field="tags",
+            )
+        else:
+            body["_agent_tags"] = tags
+    if "title" in body and len(str(body.get("title") or "")) > TITLE_MAX:
+        why.add(f"title is at most {TITLE_MAX} characters", code="length", field="title")
+    elif title_wait is not None and is_agent and title_refused is None:
+        given = str(body.get("title") or "").strip()
+        if not given or len(given) > AGENT_TITLE_MAX:
+            why.add(f"the title is 1–{AGENT_TITLE_MAX} characters ({len(given)} sent)", code="length", field="title")
+        body["title"] = given
+    every = str(body.get("resurface_every_days") or "").strip()
     if every.isdigit() and int(every) > RESURFACE_EVERY_MAX:
         # A day count past the calendar raised OverflowError: a 500. Text
         # that is not a number is stored and never acted on, as before.
-        raise HTTPException(status_code=422,
-                            detail=f"resurface_every_days is at most {RESURFACE_EVERY_MAX} days")
+        why.add(f"resurface_every_days is at most {RESURFACE_EVERY_MAX} days", code="length",
+                field="resurface_every_days")
     comment = str(body.get("comment") or "").strip()
     if "comment" in body and not comment:
-        raise HTTPException(status_code=422, detail="a comment needs its text")
-    if is_agent and "description" in body and store.query_one(
-            "SELECT task_id FROM task_events_mutual WHERE task_id = ? AND field IN ('started', 'filed') "
-            "AND new_value LIKE '%#now%'", (task_id,)):
-        # The operator's #now message is the card's text, kept as written.
-        refuse_agent("a #now task's text is the operator's message, kept as it was written",
-                     f"add yours after it: task_update {{id: \"{task_id}\", comment}}")
+        why.add("a comment needs its text", code="empty", field="comment")
+    elif len(comment) > limits.MAX_TEXT:
+        why.add(f"a comment is at most {limits.MAX_TEXT} characters", code="length", field="comment")
+    if any(k in body for k in ("l2", "l3", "l4", "body")):
+        # Whoever sent it: a task has no levels. Said before anything moves.
+        why.add("a task holds a title and a description: send `description` "
+                "(the task's text). Adding the next round is the operator's act.", status=AGENT_REFUSED,
+                code="shape")
+    for k, v in body.items():
+        if k in _MUTABLE_FIELDS and isinstance(v, (list, dict)) and not (k == "tags" and is_agent) \
+                and not any(r.field == k for r in why.items):
+            # A list would be stored as its Python text ("['ag_bug']"); a
+            # field the vocabulary already refused is not said twice.
+            why.add(f"{k} is text, not a list or an object", code="shape", field=k)
+    why.raise_if_any()
     ignored = sorted(
         k for k in body
         if k not in _MUTABLE_FIELDS and k not in _UPDATE_META_KEYS and k not in ("l2", "l3", "l4", "body")
     )
-    if any(k in body for k in ("l2", "l3", "l4", "body")):
-        # Whoever sent it: a task has no levels. Said before anything moves.
-        raise HTTPException(status_code=AGENT_REFUSED, detail=(
-            "a task holds a title and a description: send `description` "
-            "(the task's text). Adding the next round is the operator's act."
-        ))
     changes: list[tuple[str, str, str]] = []
     # What the status change sets off on other cards. Written after the
     # rewrite lands: a refused update used to leave a stack event behind.
@@ -176,27 +265,14 @@ def tasks_update(
         target = next((r for r in rows if r.get("id") == task_id), None)
         if target is None:
             raise not_found("task", task_id)
+        # Asked again on the row under the lock: the card may have changed
+        # since the checks above read it.
         not_yours = own_card_refusal(target, actor, task_id, own_fields) if own_fields else None
         if not_yours:
             refuse_agent(*not_yours)
-        # Task status belongs to the operator. An agent may move a card
-        # only when the task opts in (auto_manage) — and the honest path
-        # even then is POST /api/tasks/{id}/report, which moves it to
-        # review and stamps the badge.
-        # The one exception: "drop it" — an agent may archive a card it
-        # created in the `agent` column (/task) when the user waves it off.
-        own_drop = (
-            is_agent
-            and str(body.get("status") or "") == "done-archived"
-            and str(target.get("status") or "") == "agent"
-            and str(target.get("agent_id") or "") == actor
-        )
-        if is_agent and "status" in body and not own_drop and str(target.get("auto_manage") or "") != "yes":
-            refuse_agent(
-                "task status belongs to the operator: this task does not "
-                "allow auto-manage. Report your result instead: "
-                f"MCP tool task_report {{id: \"{task_id}\", summary}}."
-            )
+        if is_agent and "status" in body and not _own_drop(body, target, actor) \
+                and str(target.get("auto_manage") or "") != "yes":
+            refuse_agent(STATUS_REFUSAL.format(task_id=task_id))
         if not is_agent and "status" in body:
             # The operator's verdict clears the agent's pending report.
             for stamp_field in ("agent_done_at", "agent_done_by", "agent_done_note"):
@@ -232,6 +308,15 @@ def tasks_update(
             if new_v != old_v:
                 changes.append((k, old_v, new_v))
             target[k] = new_v
+
+        if any(field in ("lane", "assignee") for field, _old, _new in changes):
+            name = hookshared.task_lane_name(target)
+            project = str(target.get("project") or "")
+            peers = (row for row in rows if row is not target)
+            kinds = hookshared.board_lanes(peers, project, hookshared.saved_board_lanes(store.data_root, project))
+            target["lane_kind"] = next((kind for lane, kind in kinds.items()
+                                        if hookshared.fold_lane(lane) == hookshared.fold_lane(name) and kind == "agent"), "")
+            target["lane_choice"] = ""
 
         old_status = next((old for f, old, _new in changes if f == "status"), None)
         after_status_change(store, rows, target, old_status, changes, deferred=side_events)

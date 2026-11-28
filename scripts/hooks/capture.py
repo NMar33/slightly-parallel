@@ -405,39 +405,89 @@ def ledger_stats(data_root: Path) -> list | str | None:
     return [st.st_size, st.st_mtime_ns, st.st_ino]
 
 
+_LEGACY_WHERE_TOLD_LIMIT = 100
+
+
+def _task_append_offset(previous: object, current: os.stat_result) -> int | None:
+    """The saved boundary of a ledger that appears to have grown by appending.
+
+    Product edits replace the file atomically. An external in-place truncate
+    and regrow can look like an append in the legacy stat and re-announce old ids.
+    """
+    if not isinstance(previous, list) or len(previous) != 3:
+        return None
+    size, modified, inode = previous
+    if (type(size) is int and type(modified) is int and current.st_ino != 0
+            and inode == current.st_ino and 0 < size < current.st_size
+            and modified <= current.st_mtime_ns):
+        return size
+    return None
+
+
 def _tasks_made(data_root: Path, agent: str, meta: dict) -> list[dict[str, str]]:
-    """The tasks this chat made that it was not told the place of yet:
-    «tk_… → project · lane» on the next turn (note nt_258a7ed7 §6). tasks.csv
-    is read only when its stat moved; the first look marks what is there
-    as told."""
+    """Announce each task this chat makes once, with its project and lane."""
+    path = data_root / "tasks.csv"
     try:
-        st = os.stat(data_root / "tasks.csv")
-        sig = [st.st_size, st.st_mtime_ns, st.st_ino]
-    except OSError:
+        st = path.stat()
+    except FileNotFoundError:
         meta.setdefault("where_told", [])    # no tasks yet: the first look is done
         return []
-    if meta.get("tasks_seen") == sig:
+    except OSError:
         return []
+    sig = [st.st_size, st.st_mtime_ns, st.st_ino]
     first = "where_told" not in meta
-    told = [t for t in meta.get("where_told") or [] if isinstance(t, str)]
-    mine = [r for r in _read_csv(data_root / "tasks.csv") if (r.get("agent_id") or "") == agent]
-    new = [r for r in mine if r.get("id") and r["id"] not in told]
+    told = meta.get("where_told") or []
+    # The old hook discarded ids and could rotate them out in any order.
+    # For a capped chat, baseline old rows while preserving any complete
+    # records appended after the last observation of the same ledger.
+    legacy = not meta.get("where_told_complete") and len(told) == _LEGACY_WHERE_TOLD_LIMIT
+    if not legacy and meta.get("tasks_seen") == sig:
+        return []
+
+    seen = dict.fromkeys(task_id for task_id in told if isinstance(task_id, str))
+    new = []
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            append_at = _task_append_offset(meta.get("tasks_seen"), os.fstat(fh.fileno())) if legacy else None
+            def complete_lines():
+                # readline keeps tell available at each CSV record boundary.
+                for line in iter(fh.readline, ""):
+                    if not line.endswith(("\n", "\r")):
+                        raise csv.Error("task ledger has an unterminated line")
+                    yield line
+
+            rows = csv.DictReader(complete_lines(), strict=True)
+            pending = not legacy
+            if append_at is not None:
+                pending = rows.fieldnames is not None and fh.tell() == append_at
+            malformed_tail = False
+            for row in rows:
+                # A later valid row turns a short write into a broken record
+                # in the middle. Only a broken last row can still be finished.
+                malformed_tail = None in row or None in row.values()
+                task_id = row.get("id")
+                if not malformed_tail and row.get("agent_id") == agent and task_id and task_id not in seen:
+                    seen[task_id] = None
+                    if pending:
+                        new.append(row)
+                if append_at is not None and not pending:
+                    pending = fh.tell() == append_at
+            if malformed_tail:
+                return []
+    except (OSError, csv.Error, UnicodeError):
+        return []
+
     meta["tasks_seen"] = sig
-    meta["where_told"] = (told + [r["id"] for r in new])[-100:]
+    meta["where_told"] = list(seen)
+    meta["where_told_complete"] = True
     if first:
         return []
     return [{"id": r["id"], "project": r.get("project") or "", "lane": (r.get("lane") or "").strip()} for r in new]
 
 
-def _board_lanes(data_root: Path, project: str) -> list[str]:
-    lanes: dict[str, str] = {}
-    for r in _read_csv(data_root / "tasks.csv"):
-        if r.get("project") != project or (r.get("archived_at") or "").strip():
-            continue
-        name = (r.get("lane") or r.get("assignee") or "").strip()
-        if name:
-            lanes.setdefault(name.lower(), name)
-    return sorted(lanes.values(), key=str.lower)
+def _board_lanes(data_root: Path, project: str) -> dict[str, str]:
+    return shared.board_lanes(_read_csv(data_root / "tasks.csv"), project,
+                              shared.saved_board_lanes(data_root, project))
 
 
 def task_where(data_root: Path, project: str, agent: str, user_text: str,
@@ -650,7 +700,16 @@ def where_notice(where: dict) -> str:
     told = (f"→ {where.get('project')}" + (f" · lane {where['lane']}" if where.get("lane") else "")
             + " (the braces set the project and the lane; "
             + _backend_module("mcp_args").send_project(str(where.get("project") or "")) + ").")
-    if where.get("ask"):
+    if lane := where.get("promote_lane"):
+        told += f" Writing the card moves lane „{lane}“ from agents to the board."
+    if choice := where.get("lane_choice"):
+        told += " Write it now, with no lane."
+        if question := where.get("project_ask"):
+            told += f" Once it is filed, first ask the operator in one line: {question} Then tell the operator: "
+        else:
+            told += " Once it is filed, tell the operator: "
+        told += shared.lane_choice_notice(choice)
+    elif where.get("ask"):
         # A lane the braces leave unclear: the card is written now, in the
         # default lane, and the operator is asked after (tk_970d6b2d).
         told += (" The lane is unclear, so the card goes to the default lane: write it now, with no lane, "
@@ -820,7 +879,9 @@ class TurnCapture:
         # The same message delivered twice while the previous turn is still
         # unanswered (interrupt + resend, or a retried hook event) is one
         # turn, not two — answered before any ledger is read for it.
-        text_key = user_text.strip()
+        # Leading whitespace distinguishes an indented quotation from a
+        # terminal notice. Ignore only trailing whitespace, as the chat log does.
+        text_key = user_text.rstrip()
         if (
             meta.get("pending_turn") is not None
             and meta.get("pending_user_text") == text_key
@@ -866,6 +927,16 @@ class TurnCapture:
                 self._lost("message marker not read", exc)
             if message_stray is not None:
                 user_text = msgs.wrap_stray(message_stray, user_text)
+        late_notice = None
+        if message_in and message_in.get("already_notified"):
+            late_notice = message_in["id"]
+        elif not quiet and message_in is None and message_stray is None:
+            try:
+                user_text, late_notice = msgs.strip_late_notice(
+                    self.data_root, self.agent_name, user_text, int(meta.get("message_count", 0)) + 1,
+                )
+            except Exception as exc:  # noqa: BLE001 — keep the operator's prompt
+                self._lost("late message marker not read", exc)
         settings = _load_settings(self.data_root)
         # A helper chat (a codex exec, a claude -p another chat started): its
         # messages are recorded, and nothing in them acts — no command, no
@@ -1052,7 +1123,9 @@ class TurnCapture:
             if tell_identity else None,
             # This prompt is a message from another agent (its marker).
             "message_in": {"id": message_in["id"], "from": message_in["from_agent"],
-                           "reply_to": message_in.get("reply_to") or ""} if message_in else None,
+                           "reply_to": message_in.get("reply_to") or ""}
+            if message_in and not message_in.get("already_notified") else None,
+            "message_late": late_notice,
             # This prompt is a message for another chat, typed here by mistake.
             "message_stray": {"id": message_stray["id"], "from": message_stray["from_agent"],
                               "to": message_stray["to_agent"]} if message_stray else None,
@@ -2233,6 +2306,50 @@ def _read_done_outcome(root: str, agent: str, turn: int) -> dict:
     return {}
 
 
+def terminal_types(root: str, agent: str, meta_path: Path) -> bool:
+    """Does Slightly Parallel's server type this chat's waiting messages into
+    the terminal it runs in? Asked by Claude Code's Stop hook before it blocks
+    a Stop for a message (tk_40450bfa): a block shows as "Stop hook reported a
+    problem", the typed prompt does not. True only when the hook itself runs
+    in an SP terminal (SP_TERMINAL), the chat's meta names that terminal (the
+    one the server types into), and the server of this data root says it
+    types there (GET /api/messages/terminal, msgdeliver.stop_leaves: the same
+    check that picks "terminal"). Anything else, an unreachable server
+    included, is False: the Stop blocks as before."""
+    from http.client import HTTPException
+    from secrets import token_hex
+    from urllib.parse import urlencode
+    from urllib.request import ProxyHandler, Request, build_opener
+
+    here = os.environ.get("SP_TERMINAL", "").strip()
+    if not here:
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(meta, dict) or str(meta.get("terminal") or "") != here:
+        return False
+    try:
+        key = meta_path.parent / msgs.STOP_TOKEN_FILE
+        try:
+            token = json.loads(key.read_text(encoding="utf-8"))["token"]
+        except FileNotFoundError:
+            token = token_hex(32)
+            _atomic_write_json(key, {"token": token})
+        if not isinstance(token, str):
+            return False
+        params = urlencode({"agent_id": agent, "terminal": here})
+        request = Request(f"{server_url()}/api/messages/terminal?{params}",
+                          headers={msgs.STOP_PROOF_HEADER: msgs.stop_proof(root, token)})
+        with build_opener(ProxyHandler({})).open(request, timeout=DONE_LOOKUP_TIMEOUT_S) as response:
+            got = json.load(response)
+    except (OSError, ValueError, TypeError, KeyError, HTTPException):
+        return False
+    # Older servers return a broader verdict without checking the proof.
+    return isinstance(got, dict) and len(got) == 1 and got.get("types") is True
+
+
 def _done_outcome_notice(outcome: dict) -> str:
     tasks = outcome.get("tasks") or []
     moved = [row["id"] for row in tasks if row["result"] == "moved"]
@@ -2385,6 +2502,8 @@ def format_signals(signals: dict, tool: str = "claude-code") -> str:
             f"{w.get('turn')}; give it a title now (≤ 80 characters, what it is about, in the operator's "
             f"language) with task_update {{id: \"{w.get('task_id')}\", title}}. Its title for now: "
             f"\"{w.get('provisional') or ''}\". The skill write-a-task holds the rule.")
+    if late := signals.get("message_late"):
+        notes.append(f"[slightly-parallel] message {late} was already delivered. Ignore this late terminal notice.")
     got = signals.get("message_in")
     if got:
         notes.append(

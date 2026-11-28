@@ -3,8 +3,9 @@
 A task with the think mark is the operator's to think about. An agent never
 picks it up, starts it or finishes it: the server refuses an agent's status
 change, lane or assignee change, its report of done, its archive and moving
-it to another project while the mark is on (``refusal``). An agent may still read it, comment, write
-notes, attach evidence and links, propose options and ask.
+it to another project while the mark is on (``refusal``). An agent may still
+read it, comment, write notes, attach evidence and links, propose options and
+ask.
 
 The mark is two task columns: ``think_at`` (when it was set) and
 ``think_by`` (who set it: the operator). Only the operator sets or removes
@@ -81,10 +82,21 @@ def refusal(store: "ViewStore", task_id: str, actor: str, what: str,
     write that changes one of those fields is refused. A #think the operator
     just typed is applied first, so the mark is on before the agent's next
     call."""
-    from .actors import is_agent, refuse_agent
+    from .actors import refuse_agent
+
+    got = reason(store, task_id, actor, what, asked)
+    if got is not None:
+        refuse_agent(*got)
+
+
+def reason(store: "ViewStore", task_id: str, actor: str, what: str,
+           asked: dict[str, Any] | None = None) -> tuple[str, str] | None:
+    """``refusal``'s ``(reason, instead)``, or None: for a check that names
+    every reason at once (refusals.Reasons)."""
+    from .actors import is_agent
 
     if not is_agent(actor):
-        return
+        return None
     # The chat the operator just typed in may not be in the store yet. A
     # failure here (an unreadable think.csv) is logged, never the agent's
     # error: the mark on the row is checked all the same.
@@ -100,14 +112,15 @@ def refusal(store: "ViewStore", task_id: str, actor: str, what: str,
     row = store.query_one("SELECT * FROM tasks_mutual WHERE id = ?", (task_id,))
     if asked is not None and row is not None and all(
             str(v if v is not None else "") == str(row.get(k) or "") for k, v in asked.items()):
-        return
-    if marked(row):
-        refuse_agent(
-            f"{task_id} carries the operator's «{MARK}» mark: {what} is refused while it is on",
-            "the operator thinks this task through himself. You may comment (task_update {id, comment}), "
-            "add notes, evidence and links, propose options and ask the operator; only the operator "
-            "removes the mark",
-        )
+        return None
+    if not marked(row):
+        return None
+    return (
+        f"{task_id} carries the operator's «{MARK}» mark: {what} is refused while it is on",
+        "the operator thinks this task through himself. You may comment (task_update {id, comment}), "
+        "add notes, evidence and links, propose options and ask the operator; only the operator "
+        "removes the mark",
+    )
 
 
 # ---------------------------------------------------------------------------

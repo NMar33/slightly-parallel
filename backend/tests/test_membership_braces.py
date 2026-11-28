@@ -130,6 +130,16 @@ TABLE: list[tuple[str, tuple[str, str, str]]] = [
     ("#now-todo {writing-tracker} later", (MEMBER, "", "")),
     ("#mute #task {writing-tracker} x", None),                                       # muted: no command
     ("#task {ui} x ###now {writing-tracker} y", (MEMBER, "", "")),                    # ### reads that one
+    # Every refusal at once (tk_90c1ba5f), joined by "; " for the notice.
+    ("#task {merkht} {writing-tracer} x",
+     ("", "", near("merkht", "merkhet") + "; " + near("writing-tracer", "writing-tracker"))),
+    ("#task {project:nowhere} {lane:} x",
+     ("", "", "{project:nowhere}: nowhere is not a project of this agent; {lane:} names no lane")),
+    ("#task {merkhet} {writing-tracker} {ui} {backend} x",
+     ("", "", "two projects in braces (merkhet, writing-tracker): name one; "
+              "two lanes in braces (ui, backend): name one")),
+    # No access is said alone: nothing about the rest of the braces.
+    ("#task {shopfront} {ui} {backend} x", ("", "", NOT_SHOPFRONT)),
 ]
 
 
@@ -159,15 +169,15 @@ ASKS: dict[str, str] = {
     "#task {release} x": "{release} is both a project and a lane — did you mean project writing-tracker "
                          "or lane release? (to name one: {project:release} or {lane:release})",
     "#task {ui2} x": "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
-                     "(to name a new one: {lane:ui2})",
+                     "(choose on the card)",
     "#now {ui} {ui2} x": "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
-                         "(to name a new one: {lane:ui2})",
+                         "(choose on the card)",
     "#now {release} {ui2} x": "{release} is both a project and a lane — did you mean project writing-tracker "
                               "or lane release? (to name one: {project:release} or {lane:release}) Also: "
                               "{ui2} is not a lane of merkhet's board — did you mean ui, or a new lane ui2? "
-                              "(to name a new one: {lane:ui2})",
+                              "(choose on the card)",
     "#task {writing-tracker} {doc} x": "{doc} is not a lane of writing-tracker's board — did you mean docs, "
-                                       "or a new lane doc? (to name a new one: {lane:doc})",
+                                       "or a new lane doc? (choose on the card)",
 }
 
 
@@ -178,7 +188,10 @@ def test_the_hook_says_write_now_and_ask_after_for_an_unclear_lane(world) -> Non
     for text, ask in ASKS.items():
         notice = capture.where_notice(capture.task_where(root, HOME, A, text))
         assert "Refused" not in notice and "No card" not in notice, notice
-        assert "write it now" in notice and notice.endswith("ask the operator in one line: " + ask), notice
+        if "lane_choice" in capture.task_where(root, HOME, A, text):
+            assert "Write it now" in notice and "use its lane chip" in notice, notice
+        else:
+            assert "write it now" in notice and notice.endswith("ask the operator in one line: " + ask), notice
     # A new lane the operator names: written there, nothing to ask.
     notice = capture.where_notice(capture.task_where(root, HOME, A, "#now-todo {Growth} plan the launch"))
     assert notice.startswith(f"→ {HOME} · lane Growth") and "ask the operator" not in notice, notice
@@ -220,7 +233,7 @@ def test_an_agents_now_todo_with_an_unclear_lane_is_made_and_says_ask(world) -> 
     assert r.status_code == 201, r.text
     out = r.json()
     assert out["metadata"]["lane"] == "Now" and out["metadata"]["status"] == "todo"
-    assert out["ask"] == "ask the operator in one line: " + ASKS["#task {ui2} x"]
+    assert out["lane_notice"] == "Card created, lane not chosen: use its lane chip to create new „ui2“ or pick one of: ui."
     assert "make the timeline readable" in json.dumps(c.get(f"/api/tasks/{out['metadata']['id']}").json())
 
 
@@ -441,3 +454,339 @@ def test_the_hook_notice_and_the_servers_refusal_name_the_project_alike(world) -
     c.app.state.store.rebuild()
     r = _agent_task(c, HOME)
     assert r.status_code == 403 and r.json()["detail"].endswith(want), r.text
+
+
+# -- every reason at once (tk_90c1ba5f) ---------------------------------------
+
+def test_the_braces_give_each_refusal_as_a_reason(world) -> None:
+    c, root = world
+    text = "#task {merkht} {writing-tracer} x"
+    server = tasklib.task_braces(c.app.state.store, A, text)
+    hook = capture.task_where(root, HOME, A, text)
+    assert server["reasons"] == hook["reasons"] == [near("merkht", "merkhet"),
+                                                    near("writing-tracer", "writing-tracker")]
+    assert tasklib.task_braces(c.app.state.store, A, "#task {wt} x")["reasons"] == []
+
+
+def test_two_refused_braces_refuse_the_agents_create_with_both(world) -> None:
+    c, root = world
+    _say(root, "#task {merkht} {writing-tracer} check it")
+    c.app.state.store.rebuild()
+    before = tree(root)
+    r = _agent_task(c, HOME)
+    assert r.status_code == 403
+    assert r.json()["detail"] == near("merkht", "merkhet") + "\n" + near("writing-tracer", "writing-tracker")
+    assert len(r.json()["reasons"]) == 2
+    assert tree(root) == before
+
+
+def test_the_agents_create_names_status_lane_title_and_tags_together(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    before = tree(root)
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "", "tags": "nonsense",
+                                   "status": "doing", "lane": "ui2"}, headers=VIA)
+    assert r.status_code == 422, r.text
+    got = r.json()["detail"].split("\n")
+    assert len(got) == 4, got
+    assert got[0].startswith("an agent creates tasks only in the `agent` column")
+    assert got[1].startswith("the lane 'ui2' is not on the board")
+    assert got[2] == "an agent task needs a title"
+    assert got[3].startswith("unknown tag(s) nonsense")
+    assert tree(root) == before
+
+
+def test_a_long_title_and_too_many_tags_are_both_named(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "t" * 81,
+                                   "tags": ",".join(tasklib.AGENT_TAGS)}, headers=VIA)
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].split("\n") == [
+        f"an agent task title is at most {tasklib.AGENT_TITLE_MAX} characters (81 sent)",
+        f"an agent task carries at most {tasklib.AGENT_TAGS_MAX} tags ({len(tasklib.AGENT_TAGS)} sent)"]
+
+
+def test_one_bad_field_of_the_agents_create_reads_as_before(world) -> None:
+    c, root = world
+    _say(root, "#task check the login timeout")
+    c.app.state.store.rebuild()
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "created_date": "2611-20",
+                                   "created_time": "10:06", "title": "", "tags": "ag_bug"}, headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (422, "an agent task needs a title")
+
+
+def test_typo_suggestions_cover_keyboard_layout_and_transpositions(world) -> None:
+    c, root = world
+    for typed, expected in (("гш", "ui"), ("relase", "release"), ("phsae-1", "phase-1")):
+        text = f"#now {{lane:{typed}}} task"
+        server = tasklib.task_braces(c.app.state.store, A, text)
+        hook = capture.task_where(root, HOME, A, text)
+        assert hook is not None
+        assert server["lane_choice"] == hook["lane_choice"]
+        assert server["lane"] == "" and expected in server["lane_choice"]["options"]
+
+
+def test_agent_lane_can_be_used_refused_as_typo_and_promoted(world) -> None:
+    c, root = world
+    _ask(root, "#task check the login")
+    c.app.state.store.rebuild()
+
+    def create(title: str, lane: str):
+        return c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+                      "title": title, "tags": "ag_idea", "lane": lane}, headers=VIA)
+
+    first = create("First issue", "bug")
+    assert first.status_code == 201, first.text
+    assert first.json()["metadata"]["lane_kind"] == "agent"
+    other = create("Second issue", "bugs")
+    assert other.status_code == 422 and "did you mean bug" in other.text
+    exact = create("Use the board spelling", "UI")
+    assert exact.status_code == 201 and exact.json()["metadata"]["lane"] == "ui"
+
+    where = capture.task_where(root, HOME, A, "#now {bug} classify the issues")
+    assert where and "moves lane „bug“ from agents to the board" in capture.where_notice(where)
+    _ask(root, "#now-todo {bug} classify the issues")
+    c.app.state.store.rebuild()
+    r = create("Classify the issues", "")
+    assert r.status_code == 201, r.text
+    assert r.json()["metadata"]["lane"] == "bug"
+    assert not c.get(f"/api/tasks/{first.json()['metadata']['id']}").json()["metadata"]["lane_kind"]
+
+
+def test_choose_lane_in_place_after_the_operator_writes_again(world) -> None:
+    c, root = world
+    _say(root, "#now-todo {ui2} make the timeline readable", minutes_ago=5)
+    c.app.state.store.rebuild()
+    cards = c.get("/api/tasks", params={"project": HOME}).json()["tasks"]
+    card = next(t for t in cards if "timeline" in t["title"])
+    assert json.loads(card["lane_choice"]) == {"name": "ui2", "options": ["ui"]}
+    _ask(root, "Use the existing lane")
+    path = f"/api/tasks/{card['id']}/lane-choice"
+    assert c.post(path, json={"lane": "elsewhere"}).status_code == 422
+    assert c.post(path, json={"lane": "ui"}).status_code == 200
+    kept = c.get(f"/api/tasks/{card['id']}").json()
+    assert kept["metadata"]["lane"] == "ui" and not kept["metadata"]["lane_choice"]
+    assert "#now-todo {ui2} make the timeline readable" in json.dumps(kept)
+
+
+def test_empty_operator_lane_is_known_to_both_writers(world) -> None:
+    c, root = world
+    path = "/api/tasks/lanes"
+    assert c.post(path, json={"project": HOME, "lane": "Design system", "op": "add"}).status_code == 200
+    assert "Design system" in c.get(path, params={"project": HOME}).json()["lanes"]
+    text = "#task {design systm} create tokens"
+    server = tasklib.task_braces(c.app.state.store, A, text)
+    hook = capture.task_where(root, HOME, A, text)
+    assert hook and hook["lane_choice"] == server["lane_choice"]
+    assert server["lane_choice"]["options"] == ["Design system"]
+
+
+@pytest.mark.parametrize("actor", ["operator", A])
+def test_moving_a_card_inherits_only_the_destination_lane_kind(world, actor: str) -> None:
+    c, root = world
+    _ask(root, "file the sound tasks")
+    c.app.state.store.rebuild()
+    assert c.post(f"/api/agents/{A}/membership", json={"op": "level", "value": 3}).status_code == 200
+    incoming = c.post("/api/tasks", json={"project": HOME, "title": "Move sound", "lane": "Audio"})
+    existing = c.post("/api/tasks", json={"agent_id": A, "project": MEMBER,
+                      "title": "Agent sound", "lane": "audio", "tags": "ag_bug"}, headers=VIA)
+    assert incoming.status_code == existing.status_code == 201, (incoming.text, existing.text)
+    task_id = incoming.json()["metadata"]["id"]
+    moved = c.post(f"/api/tasks/{task_id}/move", json={"actor": actor, "to": MEMBER},
+                   headers=VIA if actor == A else {})
+    assert moved.status_code == 200, moved.text
+    metadata = c.get(f"/api/tasks/{task_id}").json()["metadata"]
+    assert (metadata["lane"], metadata["lane_kind"]) == ("audio", "agent")
+    assert tasklib._board_lanes(c.app.state.store, MEMBER)["audio"] == "agent"
+
+
+def test_a_lane_only_brace_cannot_promote_in_another_member_project(world) -> None:
+    c, root = world
+    _ask(root, "file the sound tasks")
+    c.app.state.store.rebuild()
+    assert c.post(f"/api/agents/{A}/membership", json={"op": "level", "value": 3}).status_code == 200
+    for project in (HOME, MEMBER):
+        card = c.post("/api/tasks", json={"agent_id": A, "project": project,
+                      "title": "Agent sound", "lane": "audio", "tags": "ag_bug"}, headers=VIA)
+        assert card.status_code == 201, card.text
+    _ask(root, "#task {audio} retake sound")
+    card = {"agent_id": A, "title": "Retake sound", "tags": "ag_bug"}
+    wrong = c.post("/api/tasks", json={**card, "project": MEMBER}, headers=VIA)
+    assert wrong.status_code == 403 and HOME in wrong.text
+    right = c.post("/api/tasks", json={**card, "project": HOME}, headers=VIA)
+    assert right.status_code == 201, right.text
+    assert "moved from agents" in right.json()["lane_notice"]
+    assert tasklib._board_lanes(c.app.state.store, MEMBER)["audio"] == "agent"
+
+
+def test_project_question_survives_a_lane_typo_in_the_same_message(world) -> None:
+    c, root = world
+    text = "#now-todo {release} {ui2} check the player"
+    where = capture.task_where(root, HOME, A, text)
+    assert where is not None
+    notice = capture.where_notice(where)
+    question = "did you mean project writing-tracker or lane release?"
+    assert question in notice and notice.index(question) < notice.index("use its lane chip")
+
+    _ask(root, text)
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+              "title": "Check the player", "tags": "ag_bug"}, headers=VIA)
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert question in out["ask"]
+    assert "use its lane chip" in out["lane_notice"]
+    assert out["metadata"]["lane"] == "Now"
+
+
+def test_two_distinct_fuzzy_lane_groups_are_refused_without_filing(world) -> None:
+    c, root = world
+    text = "#now-todo {ui2} {lane:relase} check two lanes"
+    where = capture.task_where(root, HOME, A, text)
+    assert where and "two lanes in braces" in where["refusal"]
+    _ask(root, text)
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+              "title": "Check two lanes", "tags": "ag_bug"}, headers=VIA)
+    assert r.status_code == 403 and "two lanes in braces" in r.text
+
+
+@pytest.mark.parametrize(("canonical", "alternative"), [("Straße", "STRASSE"), ("Café", "Cafe\u0301")])
+def test_lane_matching_folds_case_and_unicode_for_braces_and_fields(world, canonical, alternative) -> None:
+    c, root = world
+    r = c.post("/api/tasks/lanes", json={"project": HOME, "lane": canonical, "op": "add"})
+    assert r.status_code == 200, r.text
+    where = capture.task_where(root, HOME, A, f"#task {{lane:{alternative}}} check the lane")
+    assert where and where["lane"] == canonical
+    _ask(root, "file where it belongs")
+    created = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+                     "title": "Check the lane", "tags": "ag_bug", "lane": alternative}, headers=VIA)
+    assert created.status_code == 201, created.text
+    assert created.json()["metadata"]["lane"] == canonical
+    assert not created.json()["metadata"]["lane_kind"]
+
+
+def test_legacy_empty_lane_preferences_migrate_to_project_lanes(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    for code in (HOME, MEMBER):
+        (root / "projects" / code).mkdir(parents=True)
+    (root / "boards.json").write_text(json.dumps({"boards": [
+        {"id": "bd_demo", "projects": [MEMBER, HOME]},
+    ]}), encoding="utf-8")
+    (root / "ui_prefs.json").write_text(json.dumps({
+        f"sp-lanes:{HOME}": '["Empty studio"]',
+        "sp-lanes:bd_demo": '["Sound review"]',
+    }), encoding="utf-8")
+    with TestClient(create_app(data_root=root, watch=False)) as c:
+        for code, lane in ((HOME, "Empty studio"), (MEMBER, "Sound review")):
+            assert c.get("/api/tasks/lanes", params={"project": code}).json()["lanes"] == [lane]
+        imported = c.post("/api/prefs", json={"values": {f"sp-lanes:{MEMBER}": '["Local notes"]'}})
+        assert imported.status_code == 200
+        assert set(c.get("/api/tasks/lanes", params={"project": MEMBER}).json()["lanes"]) == {"Sound review", "Local notes"}
+        assert c.post("/api/tasks/lanes", json={"project": HOME, "lane": "Empty studio", "op": "remove"}).status_code == 200
+    with TestClient(create_app(data_root=root, watch=False)) as c:
+        assert c.get("/api/tasks/lanes", params={"project": HOME}).json()["lanes"] == []
+
+
+def test_an_agent_cannot_import_operator_lane_preferences(world) -> None:
+    c, _root = world
+    assert c.post("/api/settings", json={"values": {"agents.mcp_only": False}}).status_code == 200
+    key = f"sp-lanes:{HOME}"
+    r = c.post("/api/prefs", json={"agent_id": A, "values": {key: '["An agent lane"]'}}, headers=VIA)
+    assert r.status_code in (403, 422), r.text
+    assert key not in c.get("/api/prefs").json()["prefs"]
+
+
+
+def test_cross_project_move_retires_a_lane_choice_from_the_old_board(world) -> None:
+    c, root = world
+    _ask(root, "#now-todo {ui2} make the player readable")
+    posted = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+                    "title": "Readable player", "tags": "ag_bug"}, headers=VIA)
+    assert posted.status_code == 201, posted.text
+    metadata = posted.json()["metadata"]
+    assert metadata["lane_choice"]
+    path = f"/api/tasks/{metadata['id']}"
+    moved = c.post(f"{path}/move", json={"to": MEMBER})
+    assert moved.status_code == 200, moved.text
+    stored = c.get(path).json()["metadata"]
+    assert stored["project"] == MEMBER
+    assert not stored["lane_choice"]
+    assert c.post(f"{path}/lane-choice", json={"lane": "ui2"}).status_code == 409
+
+
+def test_legacy_blank_card_does_not_turn_a_named_unassigned_lane_into_a_board_lane(world) -> None:
+    c, _root = world
+    blank = c.post("/api/tasks", json={"project": HOME, "title": "Legacy blank", "lane": "unassigned", "assignee": ""})
+    assert blank.status_code == 201, blank.text
+    named = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "title": "Named lane",
+                   "lane": "Unassigned", "tags": "ag_bug"}, headers=VIA)
+    assert named.status_code == 201, named.text
+    assert named.json()["metadata"]["lane_kind"] == "agent"
+    assert tasklib._board_lanes(c.app.state.store, HOME)["Unassigned"] == "agent"
+
+
+def test_saved_standalone_board_lanes_can_be_edited_before_any_tasks(world) -> None:
+    c, root = world
+    created = c.post("/api/boards", json={"name": "Empty studio"})
+    assert created.status_code == 201, created.text
+    board = created.json()
+    code = board["projects"][0]
+    assert not (root / "projects" / code).exists()
+    key = f"sp-lanes:{board['id']}"
+    assert c.post("/api/prefs", json={"values": {key: '["Café"]'}}).status_code == 200
+    url = "/api/tasks/lanes"
+    assert c.get(url, params={"project": code}).json()["lanes"] == ["Café"]
+    for op, lane, previous, expected in [
+        ("remove", "Café", "", []), ("add", "Audio", "", ["Audio"]),
+        ("rename", "Recording", "Audio", ["Recording"]),
+    ]:
+        r = c.post(url, json={"project": code, "op": op, "lane": lane, "previous": previous})
+        assert r.status_code == 200, r.text
+        assert r.json()["lanes"] == expected
+
+
+@pytest.mark.parametrize("lane", ["ui", "New studio", "ui2"])
+def test_a_lane_only_brace_for_a_main_lane_stays_in_its_project(world, lane: str) -> None:
+    c, root = world
+    assert c.post(f"/api/agents/{A}/membership", json={"op": "level", "value": 3}).status_code == 200
+    _ask(root, f"#task {{lane:{lane}}} check the studio")
+    card = {"agent_id": A, "title": "Check the studio", "tags": "ag_bug"}
+    wrong = c.post("/api/tasks", json={**card, "project": MEMBER}, headers=VIA)
+    assert wrong.status_code == 403 and HOME in wrong.text
+    right = c.post("/api/tasks", json={**card, "project": HOME}, headers=VIA)
+    assert right.status_code == 201, right.text
+    metadata = right.json()["metadata"]
+    if lane == "ui2":
+        assert json.loads(metadata["lane_choice"]) == {"name": "ui2", "options": ["ui"]}
+    else:
+        assert metadata["lane"] == lane
+
+
+def test_agent_lane_and_assignee_can_use_canonically_equivalent_spellings(world) -> None:
+    c, _ = world
+    r = c.post("/api/tasks", json={"agent_id": A, "project": HOME,
+               "title": "Check the studio", "tags": "ag_bug", "lane": "Café", "assignee": "Cafe\u0301"}, headers=VIA)
+    assert r.status_code == 201, r.text
+    assert r.json()["metadata"]["lane"] == "Café"
+
+
+def test_legacy_operator_create_cannot_hide_a_new_blank_card_in_named_unassigned(world) -> None:
+    c, _root = world
+    named = c.post("/api/tasks", json={"agent_id": A, "project": HOME, "title": "Named agent lane",
+                   "lane": "Unassigned", "tags": "ag_bug"}, headers=VIA)
+    assert named.status_code == 201 and named.json()["metadata"]["lane_kind"] == "agent", named.text
+
+    blank = c.post("/api/tasks", json={"project": HOME, "title": "Blank operator card",
+                   "lane": "unassigned", "assignee": ""})
+    assert blank.status_code == 201, blank.text
+    row = blank.json()["metadata"]
+    assert not row["lane"] and not row["assignee"] and not row["lane_kind"]
+
+    explicit = c.post("/api/tasks", json={"project": HOME, "title": "Explicit named lane",
+                      "lane": "unassigned", "assignee": "Unassigned"})
+    assert explicit.status_code == 201, explicit.text
+    assert explicit.json()["metadata"]["lane_kind"] == "agent"

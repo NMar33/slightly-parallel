@@ -40,6 +40,7 @@ from .. import entrypointlib as E
 from .. import keeplib
 from ..actors import identity_of, is_agent
 from ..db import ViewStore
+from ..refusals import Reason, Refused
 from .deps import etag_for, get_store, json_response, maybe_304, not_found, operator_only, written_by_agent
 
 router = APIRouter()
@@ -49,7 +50,11 @@ _MEDIA = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "
 
 
 def _refused(exc: E.EntryRefused) -> HTTPException:
-    return HTTPException(status_code=422, detail=str(exc))
+    status = 403 if isinstance(exc, E.EntryForbidden) else 422
+    if len(exc.lines) > 1:
+        # Every reason at once (tk_90c1ba5f): detail and reasons.
+        return Refused([Reason(line, status=status) for line in exc.lines])
+    return HTTPException(status_code=status, detail=str(exc))
 
 
 def _row(store: ViewStore, ep_id: str) -> dict[str, str]:

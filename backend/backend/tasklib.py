@@ -8,22 +8,26 @@ undolib call them here, so neither imports a router."""
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import date
+from threading import Lock
+from typing import Any
 
 from fastapi import HTTPException
 
 from . import app_settings, hookshared, limits, mcp_args, thinklib, titlelib
 from .actors import HOUSE_ACTORS as _HOUSE_ACTORS
-from .actors import identity_of, refuse_agent
+from .actors import AGENT_REFUSED, identity_of, refuse_agent
 from .answers import create_answer, not_found
-from .csvio import as_int, rewrite_rows
+from .csvio import as_int, read_rows, rewrite_rows
 from .db import ViewStore
 from .docs_md import build_detail, resolve_under
 from .entities import ENTITIES, is_done
 from .entitylib import create_entity
-from .file_safety import atomic_write
+from .file_safety import atomic_write, edit_json, safe_read_json
+from .refusals import Reasons
 from .frontmatter import block as fm_block
 from .taskevents import DEFAULT_ACTOR as _DEFAULT_ACTOR
 from .taskevents import append_events as _append_events
@@ -34,6 +38,7 @@ TASK_STATUSES = ENUM_FIELDS["task"]["status"]
 TITLE_MAX = limits.MAX_TASK_TITLE
 DESCRIPTION_MAX = limits.MAX_TASK_DESCRIPTION
 log = logging.getLogger("sp.tasks")
+_LANE_CREATE = Lock()
 
 
 def _set_archived(store: ViewStore, task_id: str, value: str, actor: str) -> dict:
@@ -321,13 +326,13 @@ def _catch_up(store: ViewStore) -> None:
         log.warning("catching up the chats before an agent's create failed; the gate reads chat.md", exc_info=True)
 
 
-def _refuse_not_captured(agent: str, status: str) -> None:
+def _not_captured(agent: str, status: str) -> tuple[str, str]:
     """The agent's chat is not in the store yet, even after a rebuild: the
     operator's message (a #now in it, likely) cannot be read. An agent card
     is offered only for a write no #now asked for: a #now card filed there
     would lose the message, and a tool without the hook, which never gets a
     chat, must not be left retrying."""
-    refuse_agent(
+    return (
         f"the operator's latest message in this chat ({agent}) is not captured yet, "
         f"so the status {status!r} cannot be checked against its #now",
         "retry the same write in a few seconds; if it is refused again, tell the operator in one line. "
@@ -335,18 +340,179 @@ def _refuse_not_captured(agent: str, status: str) -> None:
     )
 
 
-def _board_lanes(store: ViewStore, project: str) -> list[str]:
-    """The lanes the project's board shows: every assignee (lane) a live card has."""
-    rows = store.query(
-        "SELECT lane, assignee, archived_at FROM tasks_mutual WHERE project = ?", (project,))
-    seen: dict[str, str] = {}
-    for r in rows:
-        if str(r.get("archived_at") or "").strip():
+def _board_lanes(store: ViewStore, project: str) -> dict[str, str]:
+    return hookshared.board_lanes(read_rows(store.data_root / ENTITIES["task"].csv), project,
+                                  hookshared.saved_board_lanes(store.data_root, project))
+
+
+LEGACY_BOARD_LANE_KEYS = ("sp-lanes:", "merkhet-lanes:", "merkhet.lanes:")
+
+
+def _lane_json(store: ViewStore, file: str) -> dict[str, Any]:
+    try:
+        value = safe_read_json(store.data_root / file, retries=0)
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _lane_board_targets(store: ViewStore) -> dict[str, str]:
+    """Known board IDs and project codes, including standalone boards without tasks."""
+    targets = {project.code: project.code for project in store.projects}
+    saved = _lane_json(store, "boards.json").get("boards")
+    for board in saved if isinstance(saved, list) else []:
+        if not isinstance(board, dict) or not isinstance(board.get("projects"), list):
             continue
-        name = str(r.get("lane") or r.get("assignee") or "").strip()
-        if name:
-            seen.setdefault(name.lower(), name)
-    return sorted(seen.values(), key=str.lower)
+        board_id = board.get("id")
+        members = [code for code in board["projects"] if isinstance(code, str) and code]
+        for code in members:
+            targets.setdefault(code, code)
+        if isinstance(board_id, str) and members:
+            targets.setdefault(board_id, members[0])
+    return targets
+
+
+def migrate_legacy_board_lanes(store: ViewStore, prefs: dict[str, Any] | None = None) -> None:
+    """Import the old empty-lane lists once, including preferences uploaded late."""
+    pref_values = _lane_json(store, "ui_prefs.json") if prefs is None else prefs
+    legacy: dict[str, str] = {}
+    for prefix in LEGACY_BOARD_LANE_KEYS:
+        for key, value in pref_values.items():
+            if key.startswith(prefix) and isinstance(value, str):
+                legacy.setdefault(key[len(prefix):], value)
+    if not legacy:
+        return
+
+    file = hookshared.BOARD_LANES_FILE
+    marker = "$migrated-board-prefs"
+    old = _lane_json(store, file).get(marker)
+    migrated = {item for item in old if isinstance(item, str)} if isinstance(old, list) else set()
+    pending = {board: value for board, value in legacy.items() if board not in migrated}
+    if not pending:
+        return
+
+    targets = _lane_board_targets(store)
+
+    candidates: dict[str, tuple[str, list[str]]] = {}
+    for board, raw in pending.items():
+        code = targets.get(board)
+        if not code:
+            continue
+        try:
+            names = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(names, list):
+            candidates[board] = (code, [name.strip() for name in names
+                                       if isinstance(name, str) and name.strip()
+                                       and len(name) <= 80 and name.isprintable()])
+    if not candidates:
+        return
+
+    def import_lanes(data: dict[str, Any]) -> None:
+        old = data.get(marker)
+        imported = {item for item in old if isinstance(item, str)} if isinstance(old, list) else set()
+        for board, (code, names) in candidates.items():
+            if board in imported:
+                continue
+            current = data.get(code)
+            existing = current if isinstance(current, list) else []
+            lanes = {hookshared.fold_lane(name): name for name in existing if isinstance(name, str)}
+            for name in names:
+                lanes.setdefault(hookshared.fold_lane(name), name)
+            data[code] = list(lanes.values())
+            imported.add(board)
+        data[marker] = sorted(imported)
+
+    edit_json(store.data_root / file, import_lanes)
+    store.rebuild()
+
+
+def save_board_lane(store: ViewStore, project: str, lane: str, op: str, previous: str = "") -> list[str]:
+    """The names the operator added to the board, including its empty lanes."""
+    if project not in _lane_board_targets(store).values():
+        raise not_found("project", project)
+
+    def change(data: dict[str, Any]) -> None:
+        current = data.get(project)
+        lanes = [name for name in current if isinstance(name, str)] if isinstance(current, list) else []
+        removed = previous if op == "rename" else lane if op == "remove" else ""
+        lanes = [name for name in lanes if hookshared.fold_lane(name) != hookshared.fold_lane(removed)]
+        if op != "remove" and not any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) for name in lanes):
+            lanes.append(lane)
+        data[project] = lanes
+
+    data = edit_json(store.data_root / hookshared.BOARD_LANES_FILE, change)
+    store.rebuild()
+    return data[project]
+
+
+def _promote_rows(rows: list[dict[str, str]], project: str, lane: str) -> int:
+    changed = 0
+    for row in rows:
+        name = hookshared.task_lane_name(row)
+        if row.get("project") == project and hookshared.fold_lane(name) == hookshared.fold_lane(lane) and row.get("lane_kind") == "agent":
+            row["lane_kind"] = ""
+            changed += 1
+    return changed
+
+
+def promote_lane(store: ViewStore, project: str, lane: str) -> dict:
+    csv_path = store.data_root / ENTITIES["task"].csv
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail=f"lane {lane!r} is not on the board")
+    count = 0
+
+    def mutate(rows: list[dict[str, str]]) -> bool:
+        nonlocal count
+        count = _promote_rows(rows, project, lane)
+        if not count and not any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) for name in hookshared.board_lanes(rows, project)):
+            raise HTTPException(status_code=404, detail=f"lane {lane!r} is not on the board")
+        return bool(count)
+
+    if rewrite_rows(csv_path, ENTITIES["task"].columns, mutate):
+        store.rebuild()
+    return {"project": project, "lane": lane, "promoted": count}
+
+
+def choose_lane(store: ViewStore, task_id: str, lane: str) -> dict:
+    csv_path = store.data_root / ENTITIES["task"].csv
+    if not csv_path.exists():
+        raise not_found("task", task_id)
+    changes: list[tuple[str, str, str]] = []
+
+    def mutate(rows: list[dict[str, str]]) -> bool:
+        card = next((row for row in rows if row.get("id") == task_id), None)
+        if card is None:
+            raise not_found("task", task_id)
+        pending = card.get("lane_choice")
+        wanted = hookshared.fold_lane(lane)
+        if not pending:
+            if hookshared.fold_lane(card.get("lane") or "") == wanted:
+                return False
+            raise HTTPException(status_code=409, detail="this card's lane choice is already settled")
+        choice = hookshared.parse_lane_choice(pending)
+        if choice is None:
+            raise HTTPException(status_code=409, detail="this card's lane choice is unreadable")
+        new_lane = hookshared.fold_lane(choice["name"]) == wanted
+        if not new_lane and not any(hookshared.fold_lane(option) == wanted for option in choice["options"]):
+            raise HTTPException(status_code=422, detail="choose the new lane or one of the suggested lanes")
+        project = card["project"]
+        saved = hookshared.saved_board_lanes(store.data_root, project)
+        current = next((name for name in hookshared.board_lanes(rows, project, saved)
+                        if hookshared.fold_lane(name) == wanted), "")
+        if not current and not new_lane:
+            raise HTTPException(status_code=409, detail="the suggested lane has been removed")
+        selected = current or choice["name"]
+        _promote_rows(rows, project, selected)
+        changes.append(("lane", card.get("lane") or "", selected))
+        card.update(lane=selected, assignee=selected, lane_kind="", lane_choice="")
+        return True
+
+    if rewrite_rows(csv_path, ENTITIES["task"].columns, mutate):
+        _append_events(store, task_id, _DEFAULT_ACTOR, changes)
+        store.rebuild()
+    return {"task_id": task_id, "lane": lane}
 
 
 def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
@@ -356,7 +522,7 @@ def _lane_for(store: ViewStore, project: str, command: str, named: str) -> str:
     #now's own lane from Settings, and #task's none ("unassigned")."""
     if named:
         for lane in _board_lanes(store, project):
-            if lane.lower() == named.lower():
+            if hookshared.fold_lane(lane) == hookshared.fold_lane(named):
                 return lane
         return named
     if command == "now":
@@ -411,7 +577,7 @@ LEVEL_ONE = ("agent {agent} may create tasks only in its home {home} (level 1). 
              "Name the project in braces, or the operator raises the level on the agent card")
 
 
-NO_BRACES: dict[str, str] = {"project": "", "lane": "", "refusal": "", "ask": ""}
+NO_BRACES: dict[str, Any] = {"project": "", "lane": "", "refusal": "", "ask": "", "reasons": []}
 
 
 def unclear_lane_note(ask: str) -> str:
@@ -419,7 +585,7 @@ def unclear_lane_note(ask: str) -> str:
     return f"the braces left the lane unclear, so the card went to the default lane: {ask}"
 
 
-def task_braces(store: ViewStore, agent: str, message: str, kind: str = "") -> dict[str, str]:
+def task_braces(store: ViewStore, agent: str, message: str, kind: str = "") -> dict[str, Any]:
     """The project and the lane the braces of the operator's #task / #now
     name (hookshared.resolve_braces, the hook's own rule), for ``agent``:
     ``{"project", "lane", "refusal", "ask"}``; NO_BRACES without a command. Each
@@ -457,10 +623,9 @@ def _check_level(store: ViewStore, agent: str, body: dict, named: str = "") -> N
         raise HTTPException(status_code=403, detail=LEVEL_ONE.format(agent=agent, home=view.home))
 
 
-def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
-    """Apply the /task contract to an agent's create; return the fields
-    dropped, and the line to ask the operator when the braces left the lane
-    unclear (hookshared.resolve_braces ``ask``: the card is made all the same).
+def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], dict[str, Any]]:
+    """Apply the /task contract to an agent's create and return dropped fields
+    and the operator's resolved braces.
 
     A house actor (the board) passes untouched. The operator's message
     decides the column and the lane: ``#task`` → the `agent` column,
@@ -470,7 +635,7 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
     """
     agent = identity_of(body)
     if agent in _HOUSE_ACTORS:
-        return [], ""
+        return [], dict(NO_BRACES)
     _refuse_in_helper(store, agent)
     command, named, column, message, said_turn = _operator_said(store, agent)
     now_written = command == "now" and _now_card_written(store, agent, said_turn)
@@ -483,26 +648,37 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
         command, named, column, message = "", "", "agent", ""
     else:
         braces = task_braces(store, agent, message) if command else dict(NO_BRACES)
-    if braces["refusal"]:
-        raise HTTPException(status_code=403, detail=braces["refusal"])
-    if braces["project"] and str(body.get("project") or "").strip() != braces["project"]:
+    # Each refusal of the braces, one reason each (hookshared.resolve_braces):
+    # the server answers with ``reasons``; the joined ``refusal`` is the hook's.
+    why = Reasons()
+    for line in braces["reasons"]:
+        why.add(line, status=403, code="braces")
+    why.raise_if_any()
+    destination = braces["project"] or braces.get("lane_project")
+    if destination and str(body.get("project") or "").strip() != destination:
+        reason = (f"the operator named {destination} in braces" if braces["project"]
+                  else f"the operator's lane was resolved in {destination}")
         raise HTTPException(status_code=403, detail=(
-            f"the operator named {braces['project']} in braces: this task goes to {braces['project']}, "
+            f"{reason}: this task goes to {destination}, "
             f"not {str(body.get('project') or '').strip() or '(none)'} — "
-            + mcp_args.send_project(braces["project"])))
+            + mcp_args.send_project(destination)))
     named = braces["lane"]
     _check_level(store, agent, body, braces["project"])
+    # The rest are named together (tk_90c1ba5f): the status, the text, the
+    # lane, the title, the tags.
+    why = Reasons()
     status = str(body.get("status") or "").strip() or (column if command == "now" else "agent")
     if command == "now" and status != column:
-        refuse_agent(
+        why.add(
             f"the operator's #now puts this task in `{column}`",
-            f"send status \"{column}\" (or none), not {status!r}",
+            f"send status \"{column}\" (or none), not {status!r}", code="status", field="status",
         )
     if command == "now":
         if str(body.get("description") or "").strip():
-            refuse_agent(
+            why.add(
                 "a #now task's text is the operator's message, kept as it was written",
                 "send the title and tags only; the server writes the message in as the text",
+                code="own_card", field="description",
             )
         body["description"] = message
     if status != "agent":
@@ -516,16 +692,18 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
         last = next((r for r in nowlib.rows(store) if r.get("agent_id") == agent
                      and as_int(r.get("turn")) == (-1 if now_turn is None else now_turn)), None)
         if last:
-            refuse_agent(
+            why.add(
                 f"the server already wrote the #now task as {last['task_id']}: "
                 "the turn ended without one",
                 f"give it a title with task_update {{id: \"{last['task_id']}\", title}}; do not write it again",
+                code="written", field="status",
             )
-        if command != "now":
+        elif command != "now":
             from .sessions import chat_path
             if not now_written and chat_path(store, agent) is None:
-                _refuse_not_captured(agent, status)
-            refuse_agent(
+                why.add_pair(_not_captured(agent, status), code="not_captured", field="status")
+            else:
+                why.add_pair((
                 "an agent creates tasks only in the `agent` column",
                 f"send status \"agent\" (or none), not {status!r}; the operator "
                 "classifies the card from there"
@@ -534,58 +712,66 @@ def _gate_agent_create(body: dict, store: ViewStore) -> tuple[list[str], str]:
                 + (" (the #now in the operator's latest message already has its card; "
                    "a task written after it is an agent card)" if now_written
                    else "" if command else " (#now in the operator's message starts a task in `doing`)"),
-            )
+                ), code="status", field="status")
     body["status"] = status
-    # The lane comes from the operator's message, never from the agent.
-    lane = _lane_for(store, str(body.get("project") or ""), command, named)
-    # A lane the agent names itself: a new one is the operator's to make
-    # (vision vs_5dd903f1, tk_79e9f2cd). One the board has, or the one the
-    # operator's braces named (made at once), and any when the braces named
-    # one, is dropped as before: the lane comes from the operator's message,
-    # never from the agent.
-    on_board = _board_lanes(store, str(body.get("project") or ""))
-    board = {x.lower() for x in on_board}
+    project = str(body.get("project") or "")
+    lane = _lane_for(store, project, command, named)
+    kind = ""
+    dropped: set[str] = set()
+    given: dict[str, str] = {}
     for key in ("lane", "assignee"):
-        own = str(body.get(key) or "").strip()
-        if own and not named and own.lower() not in board and own.lower() != lane.lower():
-            refuse_agent(
-                f"the lane {own!r} is not on the board",
-                ("the board's lanes: " + ", ".join(on_board) if on_board else "the board has no lanes yet")
-                + " — ask the operator which, in one line; a new lane is the operator's to make",
-            )
-    dropped = {k for k in ("lane", "assignee") if str(body.pop(k, None) or "").strip()}
+        value = body.pop(key, None)
+        if value is None or value == "":
+            continue
+        if not isinstance(value, str):
+            why.add(f"{key} is text", code="shape", field=key)
+        elif value.strip():
+            given[key] = value.strip()
+    if command == "now" or named or braces.get("ask"):
+        dropped.update(given)
+    elif given:
+        if len({hookshared.fold_lane(value) for value in given.values()}) > 1:
+            why.add("lane and assignee name different lanes", "send one lane name", code="lane", field="lane")
+        else:
+            key, own = next(iter(given.items()))
+            on_board = _board_lanes(store, project)
+            exact = next((name for name in on_board if hookshared.fold_lane(name) == hookshared.fold_lane(own)), "")
+            if len(own) > 80 or not own.isprintable():
+                why.add("a lane name is at most 80 characters on one line", code="length", field=key)
+            elif matches := [] if exact else hookshared.lane_matches(own, list(on_board)):
+                why.add(f"the lane {own!r} is not on the board", "did you mean " + ", ".join(matches) + "?",
+                        code="lane", field=key)
+            else:
+                lane = exact or own
+                kind = on_board.get(exact, "agent")
     if lane:
         body["lane"] = body["assignee"] = lane
     if command == "now" and column == "doing":
         body["today_on"] = date.today().isoformat()
     title = str(body.get("title") or "").strip()
     if not title:
-        raise HTTPException(status_code=422, detail="an agent task needs a title")
-    if len(title) > AGENT_TITLE_MAX:
-        raise HTTPException(
-            status_code=422,
-            detail=f"an agent task title is at most {AGENT_TITLE_MAX} characters ({len(title)} sent)",
-        )
+        why.add("an agent task needs a title", code="empty", field="title")
+    elif len(title) > AGENT_TITLE_MAX:
+        why.add(f"an agent task title is at most {AGENT_TITLE_MAX} characters ({len(title)} sent)",
+                code="length", field="title")
     tags = agent_tags(body.get("tags"))
     bad = [t for t in tags if t not in AGENT_TAGS]
     if not tags or bad:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                ("unknown tag(s) " + ", ".join(bad) + " — " if bad else "an agent task needs tags — ")
-                + f"1–{AGENT_TAGS_MAX} of: " + ", ".join(AGENT_TAGS)
-            ),
-        )
-    if len(tags) > AGENT_TAGS_MAX:
-        raise HTTPException(
-            status_code=422,
-            detail=f"an agent task carries at most {AGENT_TAGS_MAX} tags ({len(tags)} sent)",
-        )
+        why.add(("unknown tag(s) " + ", ".join(bad) + " — " if bad else "an agent task needs tags — ")
+                + f"1–{AGENT_TAGS_MAX} of: " + ", ".join(AGENT_TAGS), code="vocabulary", field="tags")
+    elif len(tags) > AGENT_TAGS_MAX:
+        why.add(f"an agent task carries at most {AGENT_TAGS_MAX} tags ({len(tags)} sent)",
+                code="length", field="tags")
+    why.raise_if_any()
     body["tags"] = ",".join(tags)
     ignored = sorted(k for k in list(body) if k not in _AGENT_CREATE_FIELDS)
     for k in ignored:
         body.pop(k, None)
-    return sorted(set(ignored) | dropped), braces.get("ask", "")
+    if kind == "agent":
+        body["lane_kind"] = kind
+    if choice := braces.get("lane_choice"):
+        body["lane_choice"] = json.dumps(choice, ensure_ascii=False)
+    return sorted(set(ignored) | dropped), braces
 
 
 def _title_from_message(store: ViewStore, body: dict) -> str:
@@ -611,7 +797,7 @@ def _title_from_message(store: ViewStore, body: dict) -> str:
 
 
 def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPTION_MAX,
-                chosen: bool = False) -> dict:
+                chosen: bool = False, operator_braces: dict[str, Any] | None = None) -> dict:
     """One task, as POST /api/tasks makes it — the operator's board, an
     agent through the /task gate, the server's own #now card (nowlib). The
     answer is create_answer's: ``existing`` true when the same task was
@@ -637,6 +823,8 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
         title_wait = _title_from_message(store, body)
         body.pop(titlelib.TITLE_FROM_FIELD, None)
         body.pop(titlelib.TITLE_SOURCE_FIELD, None)
+    if "lane_kind" in body or "lane_choice" in body:
+        raise HTTPException(status_code=422, detail="the server sets lane_kind and lane_choice")
     agent_create = identity_of(body) not in _HOUSE_ACTORS and not chosen
     if agent_create:
         _catch_up(store)
@@ -647,19 +835,44 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     # #now one already has its card: that one is the agent's finding.
     think = bool(said[0]) and thinklib.wants_mark(hookshared.command_text(said[3])) and not (
         started_now and _now_card_written(store, identity_of(body), said[4]))
-    ignored, ask = ([], "") if chosen else _gate_agent_create(body, store)
-    if think:
-        body.update(thinklib.mark_fields())
-    if len(str(body.get("title") or "")) > TITLE_MAX:
-        raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
-    description = str(body.pop("description", "") or "").strip()
-    # A #now card's text is the operator's message, put in by the gate: it is
-    # kept whole, as the server's own card keeps it (nowlib._write_card).
-    if text_max is not None and not started_now and len(description) > text_max:
-        raise HTTPException(status_code=422, detail=f"description is at most {text_max} characters")
-    out = create_entity(store, ENTITIES["task"], body, seed_extra=description)
+    # Keep another agent from choosing a near-duplicate between the lane
+    # check and the ledger append.
+    with _LANE_CREATE:
+        ignored, braces = ([], dict(NO_BRACES)) if chosen else _gate_agent_create(body, store)
+        if operator_braces is not None:
+            braces = operator_braces
+            if choice := braces.get("lane_choice"):
+                body["lane_choice"] = json.dumps(choice, ensure_ascii=False)
+        elif not agent_create:
+            raw_lane = body.get("lane") or body.get("assignee")
+            if isinstance(raw_lane, str) and raw_lane:
+                lane = hookshared.task_lane_name(body)
+                if not lane:
+                    body["lane"] = body["assignee"] = ""
+                else:
+                    kinds = _board_lanes(store, str(body.get("project") or ""))
+                    if any(hookshared.fold_lane(name) == hookshared.fold_lane(lane) and kind == "agent"
+                           for name, kind in kinds.items()):
+                        body["lane_kind"] = "agent"
+        ask = braces.get("ask", "")
+        if think:
+            body.update(thinklib.mark_fields())
+        if len(str(body.get("title") or "")) > TITLE_MAX:
+            raise HTTPException(status_code=422, detail=f"title is at most {TITLE_MAX} characters")
+        description = str(body.pop("description", "") or "").strip()
+        # A #now card's text is the operator's message, put in by the gate: it is
+        # kept whole, as the server's own card keeps it (nowlib._write_card).
+        if text_max is not None and not started_now and len(description) > text_max:
+            raise HTTPException(status_code=422, detail=f"description is at most {text_max} characters")
+        out = create_entity(store, ENTITIES["task"], body, seed_extra=description)
     meta = dict(out.get("metadata") or {})
     task_id = str(meta.get("id") or "")
+    promotion = str(braces.get("promote_lane") or "")
+    promotion_project = str(braces.get("lane_project") or "")
+    lane_promoted = bool(task_id and promotion and promotion_project
+                         and meta.get("project") == promotion_project and meta.get("lane") == promotion)
+    if lane_promoted:
+        promote_lane(store, promotion_project, promotion)
     md_ref = str(meta.get("md_ref") or "")
     fm, turns = _task_doc(store, md_ref, meta, task_id, for_write=bool(out.get("existing")))
     if description and not turns and md_ref:
@@ -697,9 +910,13 @@ def create_task(store: ViewStore, body: dict, *, text_max: int | None = DESCRIPT
     }
     if ignored:
         result["ignored"] = ignored
-    if ask:
-        # The card is made; the agent asks the operator now, in one line.
-        result["ask"] = f"ask the operator in one line: {ask}"
+    question = braces.get("project_ask") or (ask if not braces.get("lane_choice") else "")
+    if question:
+        result["ask"] = f"ask the operator in one line: {question}"
+    if choice := hookshared.parse_lane_choice(meta.get("lane_choice")):
+        result["lane_notice"] = hookshared.lane_choice_notice(choice)
+    if lane_promoted:
+        result["lane_notice"] = f"Lane „{promotion}“ moved from agents to the board."
     return create_answer(result, existing=bool(out.get("existing")),
                          warnings=out.get("warnings"))
 
@@ -717,10 +934,11 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     ``to`` and ``projects`` loses the old one, so the card leaves its board;
     the column and ``md_ref`` stay; the lane stays when a live card in ``to``
     carries it, else it is cleared; a topic of the old project and a stack
-    in it are let go. The history says «moved from A to B, by …». Refused in
-    one line, writing nothing, the most general reason first: no such
-    project, the same project; an agent below level 3 or not in ``to``; a
-    done or archived task; for an agent, the operator's think mark."""
+    in it are let go. The history says «moved from A to B, by …». Refused with
+    every reason at once, writing nothing, the most general first: no such
+    task or project (alone); an agent below level 3 or not in ``to`` (no
+    access: alone); a done or archived task, the same project and, for an
+    agent, the operator's think mark."""
     from . import memberships
     from .entitylib import project_codes
     from .entities import ENTITIES
@@ -730,34 +948,40 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     to = str(to or "").strip()
     if not to:
         raise HTTPException(status_code=422, detail="to names the project the task moves to")
+    # Every reason at once, all before any write (tk_90c1ba5f). A missing
+    # task or project is the only reason; no access (the source by the gate,
+    # then the level and ``to``) ends the answer, naming nothing about the
+    # task; then a closed task, the same project and, for an agent, the
+    # operator's think mark, together.
     row = store.query_one("SELECT * FROM tasks_mutual WHERE id = ?", (task_id,))
     if row is None:
         raise not_found("task", task_id)
     old = str(row.get("project") or "")
     if to not in memberships.existing_codes(store.data_root):
         raise HTTPException(status_code=404, detail=f"no project «{to}»")
-    if to == old:
-        raise HTTPException(status_code=409, detail=f"{task_id} is in {to} already")
+    why = Reasons()
     if actor not in _HOUSE_ACTORS:
         view = memberships.agent_view(store, actor)
         if view is None:
             raise HTTPException(status_code=403, detail=memberships.UNINDEXED.format(agent=actor))
         if view.level < MOVE_LEVEL:
-            raise HTTPException(status_code=403, detail=(
-                f"agent {actor} may not move tasks (level {view.level}); the operator raises it to "
-                f"level {MOVE_LEVEL} on the agent card"))
+            why.add(f"agent {actor} may not move tasks (level {view.level}); the operator raises it to "
+                    f"level {MOVE_LEVEL} on the agent card", status=403, code="level")
         ok, line = memberships.may_write(store, actor, to)
         if not ok:
-            raise HTTPException(status_code=403, detail=line)
-    # The most general refusal first, all before any write: no access
-    # (level, membership) above, then a closed task, then the think mark.
+            why.add(line, status=403, code="not_member", field="to")
+        why.raise_if_any()
     if str(row.get("archived_at") or "").strip() or is_done(str(row.get("status") or "")):
-        raise HTTPException(status_code=409, detail=f"{task_id} is done or archived: a closed task is not moved")
+        why.add(f"{task_id} is done or archived: a closed task is not moved", status=409, code="closed")
+    if to == old:
+        why.add(f"{task_id} is in {to} already", status=409, code="same_project", field="to")
     # A task the operator thinks through is not moved by an agent. The
     # operator's move keeps the mark (it is in the task's columns).
-    thinklib.refusal(store, task_id, actor, "moving it to another project")
-    lane = str(row.get("lane") or row.get("assignee") or "").strip()
-    kept_lane = next((x for x in _board_lanes(store, to) if lane and x.lower() == lane.lower()), "")
+    why.add_pair(thinklib.reason(store, task_id, actor, "moving it to another project"),
+                 status=AGENT_REFUSED, code="think")
+    why.raise_if_any()
+    lane = hookshared.task_lane_name(row)
+    kept_lane = ""
     ep_id = topics_by_task(store).get(task_id) or ""
     topic = entry_of(store, ep_id) if ep_id else None
     drop_topic = topic is not None and str(topic.get("project") or "") != to
@@ -777,13 +1001,19 @@ def move_task(store: ViewStore, task_id: str, to: str, actor: str) -> dict:
     ent = ENTITIES["task"]
 
     def mutate(rows: list[dict[str, str]]) -> bool:
+        nonlocal lane, kept_lane
         target = next((r for r in rows if r.get("id") == task_id), None)
         if target is None or str(target.get("project") or "") != old:
             raise HTTPException(status_code=409, detail=f"{task_id} changed while moving; nothing was written")
+        lane = hookshared.task_lane_name(target)
+        saved = hookshared.saved_board_lanes(store.data_root, to)
+        destination = hookshared.board_lanes(rows, to, saved)
+        kept_lane = next((name for name in destination if hookshared.fold_lane(name) == hookshared.fold_lane(lane)), "")
         target["project"] = to
         target["projects"] = projects
-        if lane and not kept_lane:
-            target["lane"] = target["assignee"] = ""
+        target["lane"] = target["assignee"] = kept_lane
+        target["lane_kind"] = "agent" if destination.get(kept_lane) == "agent" else ""
+        target["lane_choice"] = ""
         if stack:
             # The stack stays in A: the card leaves it as a card leaving its
             # column does, so the next one there becomes its head.

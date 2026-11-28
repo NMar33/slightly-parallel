@@ -429,3 +429,43 @@ def test_no_copy_of_the_old_same_project_check_is_left() -> None:
     assert not found, found
     for name in ("notelib.py", "publishlib.py", "entrypointlib.py", "routers/lenses.py"):
         assert "memberships.may_write_row(" in (backend / name).read_text(encoding="utf-8"), name
+
+
+
+# -- every reason at once (tk_90c1ba5f) ---------------------------------------
+
+def test_two_foreign_codes_are_both_named(op: TestClient, root: Path) -> None:
+    (root / "projects" / "DELTA").mkdir()
+    before = tree(root)
+    r = op.post("/api/tasks", json={"agent_id": A, "project": "GAMMA", "projects": "GAMMA,ALPHA,DELTA",
+                                    "created_date": "2611-20", "created_time": "10:00",
+                                    "title": "x", "tags": "ag_bug"}, headers=VIA)
+    assert r.status_code == 403
+    assert r.json()["detail"] == not_member("GAMMA") + "\n" + not_member("DELTA")
+    assert [x["code"] for x in r.json()["reasons"]] == ["not_member", "not_member"]
+    assert tree(root) == before
+
+
+def test_a_link_between_two_foreign_tasks_names_both_ends(op: TestClient, root: Path) -> None:
+    (root / "projects" / "DELTA").mkdir()
+    with (root / "tasks.csv").open("a", encoding="utf-8") as fh:
+        fh.write("tk_delta_one,2611-20,10:00,DELTA,operator,Delta task,todo,med,"
+                 ",,,,10,,,,,DELTA,,,,,,,,,,,\n")
+    op.app.state.store.rebuild()
+    before = tree(root)
+    r = op.post(f"/api/tasks/{GAMMA_TASK}/link", json={"agent_id": A, "to": "tk_delta_one", "kind": "relates"},
+                headers=VIA)
+    assert r.status_code == 403
+    assert r.json()["detail"] == not_member_task("GAMMA") + "\n" + not_member_task("DELTA")
+    assert tree(root) == before
+
+
+def test_one_foreign_code_reads_as_before_and_carries_its_reason(op: TestClient) -> None:
+    r = op.post("/api/decisions", json=decision("GAMMA"), headers=VIA)
+    assert r.json()["detail"] == not_member("GAMMA")
+    assert r.json()["reasons"] == [{"reason": not_member("GAMMA"), "instead": "", "code": "not_member"}]
+
+
+def test_an_unrecorded_agent_is_one_reason_however_many_codes(op: TestClient) -> None:
+    r = op.post("/api/decisions", json={**decision("ALPHA", STRANGER), "projects": "BETA,GAMMA"}, headers=VIA)
+    assert (r.status_code, r.json()["detail"]) == (403, UNINDEXED.format(agent=STRANGER))
