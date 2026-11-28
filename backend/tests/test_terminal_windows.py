@@ -167,6 +167,10 @@ def test_the_program_in_a_plain_windows_terminal_comes_from_its_process_tree(
     process_name = psutil.Process.name
 
     def name(process: psutil.Process) -> str:
+        # Both processes use the same interpreter. Give the outer process
+        # its own name so finding it instead of the ready leaf fails the test.
+        if process.pid == shell.pid:
+            return "stand-shell"
         # Reproduce macOS returning the loader name on the first lookup.
         if process.ppid() == shell.pid and not ready.exists():
             deadline = time.monotonic() + 10

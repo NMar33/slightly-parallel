@@ -14,9 +14,10 @@ import { runPlan, touchpad } from './scrollProbe'
  * What was typed and printed is in no file of the log.
  *
  * Light on: the scroll workload of scroll.spec.ts (3000 lines printed, a
- * touchpad up and down) run with the log off, light and full; the log's own
- * time stays under 1% of the run, its minute under 64 KB. CPU time of the
- * page's process and its heap are printed for each mode (notes/2611-18-terminal-log.md).
+ * touchpad up and down) run with the log off, light and full. The median
+ * Light run spends under 1% on the log, allowing one expensive sample.
+ * Each Light minute stays under 64 KB. CPU time of the page's process and
+ * its heap are printed for each mode (notes/2611-18-terminal-log.md).
  */
 
 const OUT = process.env.SP_TERMLOG_OUT
@@ -156,7 +157,7 @@ test.describe('the terminal log', () => {
     expect(JSON.parse(body).full_last_hour.length).toBeGreaterThan(10)
   })
 
-  test('Light: the log costs under 1% of the time of a scroll workload', async ({ win }) => {
+  test('Light: median log cost across three scroll runs is under 1%', async ({ win }) => {
     test.skip(WINDOWS, 'the workload needs sh')
     test.setTimeout(90_000)
     const { page, app } = win

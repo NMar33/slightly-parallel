@@ -479,7 +479,11 @@ _COMMAND_APPROVAL = re.compile(
     r"(?m)^ *Would you like to run the following command\? *$"
     r".*?^ *\$ (?P<command>.*?)^ *› (?P<choice>[^\n]+)", re.DOTALL,
 )
-_COMMAND_APPROVAL_CHOICE = re.compile(r"[1-9]\. (?:No|[^\n]+ \([a-z]+\))")
+_COMMAND_APPROVAL_CHOICE = re.compile(
+    r"(?:1\. Yes, proceed \(y\)"
+    r"|2\. Yes, and don't ask again(?: for commands that start with `[^\n]+`)? \(p\)"
+    r"|[23]\. No, and tell Codex what to do differently \(esc\))",
+)
 RULE_INTERPRETATION = core_mcp.RULE_TEXT
 
 
