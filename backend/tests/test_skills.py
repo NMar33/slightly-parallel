@@ -6,8 +6,10 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from shutil import copytree
 
 from backend import keeplib, skilllib
+from backend.db import FIXTURES, ViewStore
 from tests.conftest import make_chat
 
 AGENT = "alpha-lead-2608-01"
@@ -496,3 +498,14 @@ def test_an_install_that_wrote_nothing_leaves_the_stamp_alone(client, tmp_path):
                                                   "skill_md": GOOD.replace("pytest -q", "pytest -vv")})
     assert client.post(f"/api/skills/{kid}/install", json={"project": "ALPHA"}).json()["action"] == "updated"
     assert row()["version"] > first["version"] and ledger.read_bytes() != before
+
+
+def test_shipped_builtin_skill_fixtures_match_the_templates(tmp_path: Path) -> None:
+    staged = Path(copytree(FIXTURES, tmp_path / "fixtures"))
+    before = (staged / "skills.csv").read_bytes()
+    updated = skilllib.seed_builtin_skills(ViewStore(staged))
+    assert not updated and (staged / "skills.csv").read_bytes() == before, (
+        f"Built-in skills in fixtures/ are stale ({updated}). "
+        "Run backend/.venv/bin/python scripts/refresh_builtin_skill_fixtures.py "
+        "and commit the fixture changes."
+    )

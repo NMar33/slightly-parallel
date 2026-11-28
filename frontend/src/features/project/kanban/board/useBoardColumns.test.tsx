@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 
 import { useBoardColumns } from './useBoardColumns'
-import type { TaskRow } from '../model'
+import { laneKey, type TaskRow } from '../model'
 
 afterEach(() => { localStorage.clear(); vi.unstubAllGlobals() })
 
@@ -46,4 +46,21 @@ describe('a hidden fallback column', () => {
     const { result } = renderHook(() => useBoardColumns({ ...props('b'), tasks }), { wrapper })
     expect(Object.values(result.current.tasksByStatus).flat()).toHaveLength(0)
   })
+})
+
+
+it('indexes the combined board cells and counts by project and folded lane name', () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })))
+  const qc = new QueryClient()
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  const tasks: TaskRow[] = [
+    { id: 'a', status: 'todo', project: 'alpha', assignee: 'Audio' },
+    { id: 'b', status: 'todo', project: 'beta', assignee: 'audio', lane_kind: 'agent' },
+    { id: 'c', status: 'todo', project: 'beta', assignee: 'AUDIO', lane_kind: 'agent' },
+  ]
+  const { result } = renderHook(() => useBoardColumns({ ...props('combined'), tasks }), { wrapper })
+  const { cells, laneN } = result.current.byLaneCol
+  expect(cells.get(`${laneKey('alpha', 'audio')}\ntodo`)?.map((task) => task.id)).toEqual(['a'])
+  expect(cells.get(`${laneKey('beta', 'audio')}\ntodo`)?.map((task) => task.id)).toEqual(['b', 'c'])
+  expect(laneN.get(laneKey('beta', 'audio'))).toBe(2)
 })

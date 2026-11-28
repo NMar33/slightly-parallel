@@ -32,6 +32,7 @@ import duckdb
 from . import chatstore, membership_fold
 from .data_root import home_data_root, named_data_root
 from .entities import ENTITIES, LEDGERS, Entity
+from .hookshared import BOARD_LANES_FILE
 
 log = logging.getLogger("sp.db")
 
@@ -304,6 +305,7 @@ FILE_SOURCES: tuple[str, ...] = (
     "marks.csv",        # the ★ (marklib.py)
     "done.csv",         # #done in a chat (donelib.py): statistics and analytics read it
     "now.csv",          # the #now cards the server wrote (nowlib.py): the task thread reads it
+    BOARD_LANES_FILE,   # operator lanes with or without cards
 )
 # Documents kept as numbered versions under a project (versioned.py).
 VERSIONED_KINDS: tuple[str, ...] = ("map",)

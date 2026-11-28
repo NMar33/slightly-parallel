@@ -47,8 +47,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture import (TurnCapture, _turntimes, format_signals, msgs, record_failure, shared,  # noqa: E402
-                     terminal_types, usage_only)
+from capture import TurnCapture, _turntimes, format_signals, msgs, record_failure, shared, usage_only  # noqa: E402
 
 
 _PREFIX = {"claude-code": "cc", "codex": "codex"}
@@ -906,18 +905,9 @@ def main() -> int:
                                    if not x.get("helper") and x.get("effort")), "")
                     cap.record_facts(turn, facts.appended, facts.tools, [warned[0]] if warned else [], effort)
             if not payload.get("stop_hook_active"):
-                # Claude Code labels every blocked Stop as a problem. In SP's
-                # own terminal the server types the message as the next
-                # prompt instead, once the input line is empty: left for it
-                # here. Elsewhere the block stays, and its reason opens with
-                # a line saying it is a message, not an error. Each message is
-                # taken once either way (msgledger: under the ledger's lock).
-                cc = args.tool == "claude-code"
-                if not (cc and msgs.stop_waiting(args.data_root, agent)
-                        and terminal_types(args.data_root, agent, cap.meta_path)):
-                    notice = msgs.stop_notice(args.data_root, agent, opening=cc)
-                    if notice:
-                        response.update(decision="block", reason=notice)
+                notice = msgs.stop_notice(args.data_root, agent)
+                if notice:
+                    response.update(decision="block", reason=notice)
             if response:
                 print(json.dumps(response, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001 — capture must never take down the session it observes

@@ -11,6 +11,7 @@ history.
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import memberships, mcp
+from backend import csvio, memberships, mcp
 from backend import membership_fold as mf
 from backend.server import create_app
 
@@ -185,3 +186,126 @@ def test_a_resumed_chat_reads_the_same_origins_as_the_server(root: Path) -> None
     members, home, _aliases, _codes = capture.agent_projects(root, "alpha", A)
     assert members == ["alpha", "beta"] and home == "alpha"
     assert "→ beta (" in _turn(cap, "#task {beta} check it")
+
+
+@pytest.mark.parametrize("legacy_truncated", [False, True])
+def test_a_long_chat_only_announces_the_new_task(root: Path, legacy_truncated: bool) -> None:
+    tasks = root / "tasks.csv"
+    old_ids = [f"tk_{i:08x}" for i in range(150)]
+    tasks.write_text(
+        "id,project,agent_id,title,status,lane,assignee\n"
+        + "".join(f"{task_id},alpha,{A},old,agent,,\n" for task_id in old_ids),
+        encoding="utf-8",
+    )
+    cap = _cap(root)
+    if legacy_truncated:
+        # An affected installation may have rotated out newer ids too.
+        meta = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+        meta["where_told"] = old_ids[20:120]
+        meta.pop("where_told_complete", None)
+        cap.meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        assert "where the tasks" not in _turn(cap, "first turn after upgrading")
+
+    with tasks.open("a", encoding="utf-8") as fh:
+        fh.write("tk_other001,beta,cc-other,theirs,agent,,\n")
+    assert "where the tasks" not in _turn(cap, "an unrelated task changed the ledger")
+    with tasks.open("a", encoding="utf-8") as fh:
+        fh.write(f"tk_made0002,beta,{A},new,agent,docs,docs\n")
+    out = _turn(cap, "the chat made a new task")
+    notices = [line for line in out.splitlines() if "where the tasks" in line]
+    assert notices == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_made0002 → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    with tasks.open("a", encoding="utf-8") as fh:
+        fh.write("tk_other002,beta,cc-other,theirs,agent,,\n")
+    assert "where the tasks" not in _turn(cap, "the ledger changed again")
+
+
+def _legacy_task_ledger(root: Path, old_count: int):
+    tasks = root / "tasks.csv"
+    old_ids = [f"tk_{i:08x}" for i in range(old_count)]
+    with tasks.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["id", "project", "agent_id", "title", "status", "lane"])
+        writer.writerows((task_id, "alpha", A, "Прежняя\nзадача", "agent", "") for task_id in old_ids)
+    cap = _cap(root)
+    meta = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+    # Use a real observation from the hook, with the old list format. A
+    # rotated list can omit even the most recently created known task.
+    start = 20 if old_count > 100 else 0
+    meta["where_told"] = old_ids[start:start + 100]
+    meta.pop("where_told_complete", None)
+    cap.meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    return cap, tasks, meta
+
+
+@pytest.mark.parametrize("old_count", [100, 150])
+def test_upgrade_announces_task_appended_after_legacy_observation(root: Path, old_count: int) -> None:
+    cap, tasks, _meta = _legacy_task_ledger(root, old_count)
+    with tasks.open("a", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerow(["tk_made0003", "beta", A, "Новая\nзадача", "agent", "docs"])
+    out = _turn(cap, "first turn after upgrading")
+    assert [line for line in out.splitlines() if "where the tasks" in line] == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_made0003 → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    with tasks.open("a", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerow(["tk_other003", "alpha", "cc-other", "theirs", "agent", ""])
+    assert "where the tasks" not in _turn(cap, "an unrelated task changed the ledger")
+
+
+@pytest.mark.parametrize("incomplete", ["open_quote", "missing_column", "missing_terminator"])
+def test_upgrade_waits_for_a_complete_appended_task(root: Path, incomplete: str) -> None:
+    cap, tasks, before = _legacy_task_ledger(root, 150)
+    prefix = f'tk_made0004,beta,{A},"Новая\n'
+    ends = {
+        "open_quote": ("", 'задача",agent,docs\r\n'),
+        "missing_column": ('задача",agent\r\n', ',docs\r\n'),
+        "missing_terminator": ('задача",agent,docs', '\r\n'),
+    }
+    partial, rest = ends[incomplete]
+    with tasks.open("ab") as fh:
+        fh.write((prefix + partial).encode("utf-8"))
+    assert "where the tasks" not in _turn(cap, "append is incomplete")
+    after = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+    for field in ("tasks_seen", "where_told", "where_told_complete"):
+        assert after.get(field) == before.get(field)
+
+    with tasks.open("r+b") as fh:
+        # A short row that already has a terminator is repaired in place.
+        if incomplete == "missing_column":
+            fh.seek(-len("\r\n"), 2)
+        else:
+            fh.seek(0, 2)
+        fh.write(rest.encode("utf-8"))
+    assert [line for line in _turn(cap, "append is complete").splitlines() if "where the tasks" in line] == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_made0004 → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    with tasks.open("a", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerow(["tk_other004", "alpha", "cc-other", "theirs", "agent", ""])
+    assert "where the tasks" not in _turn(cap, "the ledger changed again")
+
+
+def test_task_placement_resumes_after_a_short_record(root: Path) -> None:
+    cap, tasks, before = _legacy_task_ledger(root, 150)
+    interrupted = "tk_interrupted"
+    with tasks.open("ab") as fh:
+        fh.write(f"{interrupted},beta,{A},Short write".encode("utf-8"))
+    assert "where the tasks" not in _turn(cap, "append is incomplete")
+
+    columns = ["id", "project", "agent_id", "title", "status", "lane"]
+    csvio.append_row(tasks, columns, {
+        "id": "tk_next", "project": "beta", "agent_id": A,
+        "title": "Next task", "status": "agent", "lane": "docs",
+    })
+    assert [line for line in _turn(cap, "the next task was made").splitlines() if "where the tasks" in line] == [
+        "[slightly-parallel] where the tasks of your last turn went: tk_next → beta · lane docs. "
+        "Say it in your reply if you have not."
+    ]
+    after = json.loads(cap.meta_path.read_text(encoding="utf-8"))
+    assert after["tasks_seen"] != before["tasks_seen"]
+    assert interrupted not in after["where_told"]
+    csvio.append_row(tasks, columns, {"id": "tk_other", "project": "alpha", "agent_id": "cc-other"})
+    assert "where the tasks" not in _turn(cap, "the ledger changed again")
