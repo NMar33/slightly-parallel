@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, renderHook } from '@testing-library/react'
+import { act, fireEvent, render, renderHook } from '@testing-library/react'
 
+import { toast } from '../../../../components/primitives'
 import { useSelection } from './useSelection'
 import type { TaskRow } from '../model'
 import type { Patch } from './writes'
 
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 const row = (id: string, position: string | undefined, status = 'todo'): TaskRow =>
   ({ id, title: id, status, position } as unknown as TaskRow)
@@ -58,4 +59,26 @@ describe('a selection dropped on a column lands in whole positions', () => {
     expect(before[0]!.position).toBe('')
     expect(written[0]!.find((w) => w.id === 'agent')!.patch.position).toBe('20')
   })
+})
+
+
+
+it.each(['move', 'group'] as const)('undoing %s restores a legacy blank lane with empty fields', async (action) => {
+  const success = vi.spyOn(toast, 'success')
+  const legacy = { ...row('legacy', '20'), lane: 'unassigned', assignee: '' }
+  const named = { ...row('named', '10'), lane: 'unassigned', assignee: 'unassigned' }
+  const { result, written } = selection([named, legacy])
+  act(() => { result.current.toggleSelect(named.id); result.current.toggleSelect(legacy.id) })
+  await act(async () => {
+    if (action === 'group') await result.current.groupSelection()
+    else await result.current.moveSelection('doing')
+  })
+  const undo = success.mock.calls.at(-1)?.[1]?.action
+  expect(undo).toMatchObject({ label: 'Undo' })
+  if (!undo || typeof undo !== 'object' || !('onClick' in undo)) throw new Error('Undo action is missing')
+  const { getByRole } = render(<button onClick={undo.onClick}>Undo</button>)
+  fireEvent.click(getByRole('button', { name: 'Undo' }))
+  expect(written.at(-1)?.find((item) => item.id === legacy.id)?.patch).toMatchObject({ assignee: '', lane: '' })
+  expect(written.at(-1)?.find((item) => item.id === named.id)?.patch)
+    .toMatchObject({ assignee: 'unassigned', lane: 'unassigned' })
 })

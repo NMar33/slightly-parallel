@@ -8,7 +8,7 @@ import { fail, getJson, postJson } from '../../../lib/getJson'
 import { useEvidenceAsk } from '../../project/kanban/board/evidenceAsk'
 import { readRecord, readStrings } from '../../project/kanban/board/prefs'
 import {
-  laneOf, laneUpdate, normalizeStatus, orderLanes, readStoredView, sortTasks, taskText, VIEW_COLUMNS, type TaskRow,
+  taskLaneName, laneUpdate, normalizeStatus, orderLanes, readStoredView, sortTasks, taskText, VIEW_COLUMNS, type TaskRow,
 } from '../../project/kanban/model'
 import { OPERATOR_ACTOR } from '../../project/types'
 import { projectTasksKey, useProjectTasks, type TaskAnswer } from '../../tasks/data'
@@ -23,7 +23,7 @@ const EMPTY_TASKS: TaskRow[] = []
 const detailKey = (id: string) => ['tasks', 'inspector-detail', id]
 const endpoint = (id: string) => `/api/tasks/${encodeURIComponent(id)}`
 const columnLabel = (key: string) => VIEW_COLUMNS.workflow.find((column) => column.key === key)?.label ?? key
-const laneLabel = (key: string) => key === 'unassigned' ? t('Unassigned') : key
+const laneLabel = (key: string) => key || t('No lane')
 const selectClass = 'aq-btn line w-full min-w-0 text-12'
 
 export interface InspectorTasksProps {
@@ -102,16 +102,16 @@ function ProjectTasks({ project, agent, onAppend }: InspectorTasksProps) {
   const append = useMutation({
     mutationFn: async ({ text }: { id: string; text: string }) => onAppend(text),
   })
-  const laneNames = orderLanes(
-    [...new Set(['unassigned', ...tasks.map(laneOf), ...readStrings(`sp-lanes:${project}`).filter(Boolean)])],
+  const laneNames = ['', ...orderLanes(
+    [...new Set([...tasks.map(taskLaneName), ...readStrings(`sp-lanes:${project}`)].filter(Boolean))],
     readStrings(`sp-lanes-order:${project}`),
-  )
+  )]
   const boardColumns = VIEW_COLUMNS[readStoredView(project)]
   const hidden = readRecord<boolean>(`sp-kanban-cols:${project}`)
   const detail = details.data
   const current = detail?.metadata ?? selected
   const currentStatus = normalizeStatus(current?.status)
-  const currentLane = current ? laneOf(current) : 'unassigned'
+  const currentLane = current ? taskLaneName(current) : ''
   const columns = boardColumns.filter((column) => !hidden[column.key] || column.key === currentStatus)
   const rounds = detail?.turns?.filter((round) => round.text.trim()) ?? []
   const loading = tasksQuery.isPending || (chatScope && chatQuery.isPending)
@@ -191,7 +191,7 @@ function ProjectTasks({ project, agent, onAppend }: InspectorTasksProps) {
                             <select aria-label={t('Lane')} className={selectClass} value={currentLane} disabled={move.isPending}
                               onChange={(event) => {
                                 const next = event.target.value
-                                if (next !== currentLane) move.mutate({ id: task.id, patch: laneUpdate(next) })
+                                if (next !== currentLane) move.mutate({ id: task.id, patch: laneUpdate({ project, name: next }) })
                               }}>
                               {!laneNames.includes(currentLane) &&
                                 <option value={currentLane}>{laneLabel(currentLane)}</option>}

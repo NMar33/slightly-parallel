@@ -55,6 +55,8 @@ import { TypingBatcher } from './typing'
 import { useWorkBeats } from '../../time/beats'
 import { TimerGroup } from './timer'
 import { useWindowScheme } from './scheme'
+import { terminalLimitPending, useTerminalLimit } from '../../../lib/terminalLimit'
+import { TerminalLimitPanel } from './TerminalLimitPanel'
 import { useWindowPreferences, WindowSettings } from './WindowSettings'
 import { HealthLayer, HealthTint, HealthTitle, useHealthEdge, useHealthRuntime } from './health'
 import { factsOf, markNamed, noteOscTitle, tabTitle, useNamed, useOscTitles, useTabInfo } from './tabs/facts'
@@ -197,6 +199,7 @@ function AquaWindow({ status }: { status: Status }) {
   const vp = useViewport()
   // The colour scheme (Settings › Terminal › Colour scheme) on the window's tokens.
   const scheme = useWindowScheme()
+  const pendingTerminal = useTerminalLimit()
   const [fullscreen, setFullscreen] = useState(false)
   useEffect(() => observeFullscreen(setFullscreen), [])
   const fullscreenLabel = fullscreen ? t('Exit fullscreen') : t('Enter fullscreen')
@@ -615,6 +618,7 @@ function AquaWindow({ status }: { status: Status }) {
   useEffect(() => {
     // Capture: the terminal takes every key it sees, so the window's chords are read before it.
     const onKey = (e: KeyboardEvent) => {
+      if (terminalLimitPending()) return
       if (e.target instanceof Element && e.target.closest('[data-inspector-edit]')) return
       const f = keysRef.current[chordOf(e)]
       if (!f || e.isComposing) return
@@ -1016,7 +1020,10 @@ function AquaWindow({ status }: { status: Status }) {
           <div className="flex flex-col min-w-0 relative" style={{ width: termW }}>
             {stripEl}
             {!fixedSidebarControls && foldedToggles}
-            {body}
+            <div ref={(element) => { if (element) element.inert = pendingTerminal !== null }}>{body}</div>
+            {pendingTerminal && <div className="absolute inset-x-0 bottom-0 z-[19] flex flex-col" style={{ top: strip }}>
+              <TerminalLimitPanel pending={pendingTerminal} className="flex-1" />
+            </div>}
             {health && <HealthLayer top={strip} project={workProject} />}
           </div>
           {rightSeated.map(panel)}
