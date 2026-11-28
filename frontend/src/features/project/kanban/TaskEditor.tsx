@@ -18,6 +18,7 @@ import {
   readModalPrefs,
   readPinnedSprint,
   storeModalPrefs,
+  taskLaneName,
 } from './model'
 import { stepClash } from './parts'
 import type { ModalPrefs, TaskRow } from './model'
@@ -154,7 +155,7 @@ export function TaskAddModal({
   const milestoneProject = Array.from(new Set([existingTask?.project || projects[0] || projectCode, ...projects, ...(boardProjects ?? [])].filter(Boolean))).join(',')
   const { milestones, milestoneId, setMilestoneId, syncMilestone } = useMilestone(milestoneProject, existingTask)
   const { coreOptions, cores, setCores, syncCores } = useTaskCoreField(existingTask?.project || projects[0] || projectCode, existingTask, initialCores)
-  const [assignee, setAssignee] = useState(existingTask?.assignee ?? initialAssignee ?? '')
+  const [assignee, setAssignee] = useState(existingTask ? taskLaneName(existingTask) : initialAssignee ?? '')
   const [dueDate, setDueDate] = useState(existingTask?.due_date ?? initialDue ?? '')
   const [tags, setTags] = useState(existingTask?.tags ?? '')
   const [body, setBody] = useState(isEdit ? '' : (initialDescription ?? ''))
@@ -289,7 +290,7 @@ export function TaskAddModal({
           novelty,
           assignee: assignee.trim(),
           due_date: dueDate.trim(),
-          lane: assignee.trim() || 'unassigned',
+          lane: assignee.trim(),
           tags: tags.trim(),
           sprint_id: sprintId,
           auto_manage: autoManage ? 'yes' : '',
@@ -303,7 +304,7 @@ export function TaskAddModal({
         }
         const was = (k: string) => {
           const v = (existingTask as unknown as Record<string, unknown>)[k]
-          if (k === 'lane') return String(existingTask.lane || existingTask.assignee || '') || 'unassigned'
+          if (k === 'lane') return taskLaneName(existingTask)
           if (k === 'projects') return String(existingTask.projects || existingTask.project || '')
           if (k === 'resurface_to') return String(v || 'todo')
           return v === null || v === undefined ? '' : String(v)
@@ -345,7 +346,7 @@ export function TaskAddModal({
           remember: remember ? 'yes' : '',
           assignee: assignee.trim(),
           due_date: dueDate.trim(),
-          lane: assignee.trim() || 'unassigned',
+          lane: assignee.trim(),
           tags: tags.trim(),
           position: String(999 + chainSeq),
           stack_id: chainStack,
@@ -374,7 +375,7 @@ export function TaskAddModal({
               project: homeProject, projects: projects.join(','), agent_id: OPERATOR_ACTOR,
               created_date: dateStr, created_time: timeStr, title: step, status,
               priority, impact, effort, tokens, novelty, sprint_id: sprintId,
-              assignee: assignee.trim(), lane: assignee.trim() || 'unassigned',
+              assignee: assignee.trim(), lane: assignee.trim(),
               tags: tags.trim(), stack_id: madeId, position: String(1000 + i),
             }).catch(() => null)
             const sid = String(sr?.metadata?.id ?? '')

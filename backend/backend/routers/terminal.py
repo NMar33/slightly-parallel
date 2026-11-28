@@ -50,7 +50,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Res
 from anyio import from_thread as anyio_from_thread
 from fastapi.concurrency import run_in_threadpool
 
-from .. import app_settings, conpty, termlib, termlog, timeauto
+from .. import app_settings, conpty, terminal_diagnostics, termlib, termlog, timeauto
 from ..config import Settings
 from ..db import ViewStore
 from .deps import foreign_origin, get_store, not_found, operator_only, to_int
@@ -67,7 +67,7 @@ TMUX_PANE_RESIZE_POLL_S = 0.015
 # The folder rule moved to termlib; the old name stays for its callers.
 resolve_terminal_cwd = termlib.resolve_cwd
 
-_MAX_SESSIONS = 32
+_MAX_SESSIONS = 36
 # What a terminal asks the screen (who are you, where is the cursor): kept
 # out of a replay, or the new screen answers into the shell as if typed.
 _QUERIES = re.compile(rb"\x1b\[[>=?]?[0-9;]*c|\x1b\[[56]n")
@@ -752,6 +752,32 @@ def build_router(settings: Settings) -> APIRouter:  # noqa: ARG001 — kept for 
         if mode != "screen":
             raise HTTPException(status_code=422, detail="mode must be screen, last, range, history or selection")
         return {**termlib.capture(root, sid), "mode": "screen"}
+
+    @router.post("/api/terminal/sessions/{sid}/diagnostics", status_code=201)
+    async def terminal_diagnostic(sid: str, request: Request) -> dict[str, str]:
+        _guard(request)
+        if not _operator_page(request.headers, request.app):
+            raise HTTPException(status_code=403, detail="only the operator can capture terminal diagnostics")
+        if not termlib.SAFE_ID.fullmatch(sid):
+            raise HTTPException(status_code=404, detail="no such terminal")
+        browser = await terminal_diagnostics.read_browser(request)
+        root = request.app.state.settings.data_root
+
+        def capture() -> Path:
+            row = termlib.get(root, sid)
+            if not row:
+                raise HTTPException(status_code=404, detail="no such terminal")
+            backend = "tmux" if row.get("backend") == "tmux" else "plain"
+            with lock:
+                session = sessions.get(sid)
+                size = terminal_diagnostics.fd_size(session.fd) if session and not session.closed else None
+            return terminal_diagnostics.save(root, sid, backend, browser, size)
+
+        try:
+            path = await run_in_threadpool(capture)
+        except OSError as exc:
+            raise HTTPException(status_code=409, detail="the terminal snapshot could not be saved") from exc
+        return {"path": str(path)}
 
     @router.post("/api/terminal/sessions/{sid}/type")
     def terminal_type(sid: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:

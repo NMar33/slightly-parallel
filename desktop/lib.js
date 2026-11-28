@@ -14,19 +14,27 @@ function sizeOf(text) {
   return [Math.max(MIN_W, Number(m[1])), Math.max(MIN_H, Number(m[2]))]
 }
 
-function sameSite(base, url) {
+function webUrl(value, base) {
   try {
-    const a = new URL(base), b = new URL(url)
-    return a.protocol === b.protocol && a.hostname === b.hostname && a.port === b.port
-  } catch { return false }
+    const url = new URL(value, base)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url : null
+  } catch { return null }
+}
+
+function sameSite(base, url) {
+  const a = webUrl(base)
+  const b = webUrl(url)
+  return a !== null && b !== null && a.origin === b.origin
 }
 
 /** The address a window may open: a path of the app, or a full address of
  *  the same server. Anything else is not a page of ours. */
 function pageUrl(base, pathOrUrl) {
   const v = String(pathOrUrl || '')
-  if (v.startsWith('/') && !v.startsWith('//')) return base.replace(/\/+$/, '') + v
-  return sameSite(base, v) ? v : null
+  const home = webUrl(base)
+  if (!home || v.startsWith('//') || v.startsWith('/\\')) return null
+  const target = v.startsWith('/') ? webUrl(v, home) : webUrl(v)
+  return target?.origin === home.origin ? target.href : null
 }
 
 /** Where a window stands and how wide it is after growing by `left` and
@@ -158,6 +166,6 @@ function startPlan(choice, saved) {
 }
 
 module.exports = {
-  MIN_W, MIN_H, sizeOf, sameSite, pageUrl, grown, num, parseArgs,
+  MIN_W, MIN_H, sizeOf, webUrl, sameSite, pageUrl, grown, num, parseArgs,
   RESTORE_KEY, RESTORE_CHOICES, restoreChoice, isWayland, windowRecord, savedText, readSaved, onScreen, startPlan,
 }
